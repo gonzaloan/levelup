@@ -121,7 +121,11 @@ export function StarChart({
           const isLocked = n.state === "locked";
           const isCurrent = n.state === "current";
           const isMastered = n.state === "mastered";
-          const col = isLocked ? "var(--locked)" : accent(n.track);
+          // Locked stars stay dim but keep a hint of their track hue so the
+          // flagship clay constellation reads as clay, not generic violet.
+          const col = isLocked
+            ? (n.track === "ai" ? "var(--ai-dim)" : "var(--locked)")
+            : accent(n.track);
           return (
             <g key={n.id}
               transform={`translate(${cx},${cy})`}
