@@ -58,18 +58,25 @@ export function LandingChart({ locale }: { locale: Locale }) {
             style={{ transition: `stroke-dashoffset 800ms cubic-bezier(.16,1,.3,1) ${i * 60}ms` }} />
         );
       })}
-      {/* stars */}
+      {/* edges are drawn above; stars sit on top with stronger presence */}
       {STARS.map(([x, y, mag, mastered], i) => {
-        const r = mag === 3 ? 7 : mag === 2 ? 5 : 3.5;
+        const r = mag === 3 ? 8 : mag === 2 ? 6 : 4;
         const isCurrent = i === 3; // the frontier star
-        const col = mastered ? "var(--gen)" : isCurrent ? "var(--gen-accent)" : "var(--text-3)";
+        const col = mastered ? "var(--gen)" : isCurrent ? "var(--gen-accent)" : "var(--gen-deep)";
         return (
           <g key={i} transform={`translate(${px(x)},${py(y)})`}>
-            {(mastered || isCurrent) && <circle r={r * 3} fill="url(#lg-glow)" opacity={isCurrent ? 0.8 : 0.4} />}
-            <circle r={on ? r : 0} fill={mastered || isCurrent ? col : "none"} stroke={col} strokeWidth={mastered || isCurrent ? 0 : 1}
-              opacity={mastered || isCurrent ? 1 : 0.6}
+            {(mastered || isCurrent) && <circle r={r * 3.4} fill="url(#lg-glow)" opacity={isCurrent ? 0.95 : 0.55} />}
+            {isCurrent && (
+              <circle r={r + 4} fill="none" stroke={col} strokeWidth={1} opacity={0.7}>
+                <animate attributeName="r" values={`${r + 2};${r + 8};${r + 2}`} dur="2.8s" repeatCount="indefinite" />
+                <animate attributeName="opacity" values="0.7;0.1;0.7" dur="2.8s" repeatCount="indefinite" />
+              </circle>
+            )}
+            <circle r={on ? r : 0} fill={mastered || isCurrent ? col : "var(--surface)"} stroke={col}
+              strokeWidth={mastered || isCurrent ? 0 : 1.25}
+              opacity={mastered || isCurrent ? 1 : 0.85}
               style={{ transition: `r 500ms cubic-bezier(.2,1.4,.4,1) ${i * 50}ms` }} />
-            {mag === 3 && <path d={`M0,${-r - 4} L0,${r + 4} M${-r - 4},0 L${r + 4},0`} stroke={col} strokeWidth={0.6} opacity={0.5} />}
+            {mag === 3 && <path d={`M0,${-r - 5} L0,${r + 5} M${-r - 5},0 L${r + 5},0`} stroke={col} strokeWidth={0.75} opacity={0.6} />}
           </g>
         );
       })}

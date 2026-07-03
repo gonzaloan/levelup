@@ -27,6 +27,13 @@ export interface ChartNode {
 const W = 900;
 const H = 560;
 
+// Keep chart labels short so they don't collide. Uses the first 2-3 words.
+function shortLabel(title: string): string {
+  const words = title.split(/\s+/);
+  const s = words.slice(0, 3).join(" ");
+  return s.length > 22 ? s.slice(0, 20) + "…" : s;
+}
+
 export function StarChart({
   nodes,
   locale,
@@ -96,7 +103,8 @@ export function StarChart({
             y2={H - (i % 4 === 0 ? 22 : 26)} stroke="var(--arc-line)" strokeWidth={0.75} />
         ))}
 
-        {/* constellation edges (catalog lines) */}
+        {/* constellation edges (catalog lines) — visible even when unlit so the
+            shape of the constellation reads before anything is earned. */}
         {edges.map((e, i) => {
           const x1 = px(e.from.x), y1 = py(e.from.y), x2 = px(e.to.x), y2 = py(e.to.y);
           const len = Math.hypot(x2 - x1, y2 - y1);
@@ -104,15 +112,24 @@ export function StarChart({
             <line
               key={i}
               x1={x1} y1={y1} x2={x2} y2={y2}
-              stroke={e.lit ? accent(e.to.track) : "var(--hairline)"}
-              strokeWidth={e.lit ? 1.25 : 0.75}
+              stroke={e.lit ? accent(e.to.track) : (e.to.track === "ai" ? "var(--ai-dim)" : "var(--gen-deep)")}
+              strokeWidth={e.lit ? 1.5 : 1}
               strokeDasharray={len}
               strokeDashoffset={drawn ? 0 : len}
-              opacity={e.lit ? 0.8 : 0.35}
+              opacity={e.lit ? 0.85 : 0.5}
               style={{ transition: reduce ? undefined : `stroke-dashoffset 700ms cubic-bezier(.16,1,.3,1) ${i * 40}ms` }}
             />
           );
         })}
+
+        {/* L-band labels along the left margin — the vertical axis is the climb */}
+        {[
+          { lvl: "L7", y: 0.16 }, { lvl: "L6", y: 0.34 }, { lvl: "L5", y: 0.54 },
+          { lvl: "L4", y: 0.72 }, { lvl: "L3", y: 0.9 },
+        ].map((b) => (
+          <text key={b.lvl} x={12} y={py(b.y)} fontSize={10} fontFamily="var(--font-mono)"
+            fill="var(--text-4)" letterSpacing="0.1em" dominantBaseline="middle">{b.lvl}</text>
+        ))}
 
         {/* stars (nodes) */}
         {nodes.map((n) => {
@@ -152,16 +169,27 @@ export function StarChart({
               )}
               <circle
                 r={drawn ? r : 0}
-                fill={isLocked ? "none" : col}
+                fill={isLocked ? "var(--surface)" : col}
                 stroke={col}
-                strokeWidth={isLocked ? 1 : 0}
-                opacity={isLocked ? 0.5 : 1}
+                strokeWidth={isLocked ? 1.25 : 0}
+                opacity={isLocked ? 0.75 : 1}
                 style={{ transition: reduce ? undefined : "r 500ms cubic-bezier(.2,1.4,.4,1)" }}
               />
               {/* magnitude-3 stars get a subtle 4-point diffraction spike */}
               {n.magnitude === 3 && !isLocked && (
                 <path d={`M0,${-r - 5} L0,${r + 5} M${-r - 5},0 L${r + 5},0`} stroke={col} strokeWidth={0.75} opacity={0.5} />
               )}
+              {/* persistent short label so the chart reads as a map, not dots */}
+              <text
+                x={0} y={r + 14}
+                textAnchor="middle"
+                fontSize={10}
+                fontFamily="var(--font-head)"
+                fill={isLocked ? "var(--text-4)" : "var(--text-2)"}
+                style={{ pointerEvents: "none" }}
+              >
+                {shortLabel(n.title)}
+              </text>
             </g>
           );
         })}

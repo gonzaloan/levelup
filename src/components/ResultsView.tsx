@@ -43,22 +43,29 @@ export function ResultsView({ locale }: { locale: Locale }) {
           {t(roadmap.summary, locale)}
         </h1>
         <div className="stack" style={{ gap: "var(--s-4)" }}>
-          {weakSteps.map((step) => {
+          {weakSteps.map((step, i) => {
             const gap = result.axes.find((a) => a.axis === step.axis)?.calibrationGap;
+            // Only one axis is "the" highest leverage; the rest are "next".
+            const rankLabel = i === 0
+              ? { en: "start here", es: "empieza aquí" }
+              : { en: "then this", es: "luego esto" };
+            // Vary the calibration note so two cards are never verbatim identical.
+            const overNote = i === 0
+              ? { en: "You rate yourself higher here than your answers do. That gap is usually where the surprise in a promo packet lives.", es: "Aquí te calificas más alto de lo que dicen tus respuestas. Esa brecha suele ser donde vive la sorpresa en un paquete de ascenso." }
+              : { en: "Another spot where your confidence runs ahead of the evidence — revisit it before you lean on it.", es: "Otro punto donde tu confianza va por delante de la evidencia — revísalo antes de apoyarte en él." };
+            const underNote = i === 0
+              ? { en: "You sell yourself short here; the answers say you're stronger than you think.", es: "Aquí te vendes corto; las respuestas dicen que eres más fuerte de lo que crees." }
+              : { en: "Underrated again — worth claiming this one out loud.", es: "Subestimado otra vez — vale la pena reclamarlo en voz alta." };
             return (
               <article key={step.axis} className="card" data-track="general" style={{ borderLeft: "2px solid var(--gen)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--s-4)", flexWrap: "wrap", marginBottom: "var(--s-3)" }}>
                   <strong style={{ fontFamily: "var(--font-head)" }}>{t(step.headline, locale)}</strong>
-                  <span className="eyebrow" style={{ color: "var(--gen)" }}>
-                    {t({ en: "highest leverage", es: "mayor impacto" }, locale)}
-                  </span>
+                  <span className="eyebrow" style={{ color: "var(--gen)" }}>{t(rankLabel, locale)}</span>
                 </div>
                 <p style={{ color: "var(--text)" }}>{t(step.behavioralDelta, locale)}</p>
                 {gap && (
                   <p className="dim" style={{ fontSize: "var(--t-sm)", marginTop: "var(--s-3)" }}>
-                    {gap.direction === "over"
-                      ? t({ en: "Your answers suggest you may be rating yourself a notch high here — worth a second look.", es: "Tus respuestas sugieren que quizás te calificas un punto alto aquí — vale una segunda mirada." }, locale)
-                      : t({ en: "Your answers suggest you may be underrating yourself here.", es: "Tus respuestas sugieren que quizás te subestimas aquí." }, locale)}
+                    {t(gap.direction === "over" ? overNote : underNote, locale)}
                   </p>
                 )}
                 {step.modules.length > 0 && (

@@ -84,7 +84,7 @@ export interface Module {
   title: I18nText;
   tagline: I18nText;
   topics: Topic[];
-  retrieval: string[];        // item ids — forces recall, not recognition
+  retrieval: string[];        // item ids — a recognition check after reading
   fieldWork?: string;         // FieldWork id
   room?: string;              // Sjt id (the module's Room)
   prerequisites: string[];    // module ids — mastery gate (~90%)

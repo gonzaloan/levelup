@@ -82,7 +82,7 @@ export function cbmScore(responses: Response[]): number {
 
 // ── SJT partial-credit ratio ────────────────────────────────────────────
 export function sjtScore(
-  picks: { score: number; maxScore: number }[]
+  picks: { score: number; maxScore: number; minScore?: number }[]
 ): number | null {
   if (picks.length === 0) return null;
   let got = 0;
@@ -91,7 +91,9 @@ export function sjtScore(
   for (const p of picks) {
     got += p.score;
     max += p.maxScore;
-    min += Math.min(0, -2); // harmful floor
+    // Worst achievable on this item. When callers pass a per-item floor we use
+    // it; otherwise fall back to the harmful-option convention (−2).
+    min += typeof p.minScore === "number" ? p.minScore : -2;
   }
   if (max - min === 0) return 0.5;
   return clamp01((got - min) / (max - min));
@@ -125,15 +127,6 @@ export function toBand(comp: number): Band {
 }
 
 const HIGH_SEM = 0.85; // above this, placement is flagged provisional (§B3)
-
-// ── Confident-wrong cap: needs ≥2 corroborating signals (§B4) ─────────────
-export function confidentWrongSignals(responses: Response[]): {
-  count: number;
-  misconceptions: string[];
-} {
-  const cw = responses.filter((r) => !r.correct && r.confidence === "high");
-  return { count: cw.length, misconceptions: [] };
-}
 
 // ── Per-axis result assembly ─────────────────────────────────────────────
 export function scoreAxis(

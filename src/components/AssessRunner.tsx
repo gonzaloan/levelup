@@ -46,7 +46,12 @@ export function AssessRunner({ locale, items }: { locale: Locale; items: Item[];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [axis, responses.length]);
 
-  const totalTarget = AXES.length * Math.min(ITEMS_PER_AXIS, 5);
+  // Actual items asked = min(ITEMS_PER_AXIS, pool size) summed over axes, so the
+  // progress bar can't exceed 100%.
+  const totalTarget = AXES.reduce(
+    (sum, a) => sum + Math.min(ITEMS_PER_AXIS, (poolByAxis.get(a.id) ?? []).length),
+    0
+  );
   const answered = responses.length;
 
   function submitAnswer() {

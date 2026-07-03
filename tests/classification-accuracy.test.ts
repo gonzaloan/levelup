@@ -1,10 +1,15 @@
-// §B3 requirement: a Monte-Carlo fixture that simulates known-ability
-// responders and confirms the 3-band classifier is acceptably accurate
-// (target ≥80% correct band). If this fails, the honest fix is to add items
-// on decisive axes — NOT to loosen the bands.
+// Two fixtures:
+//  (1) theta-recovery precision under a self-consistent, well-calibrated
+//      responder — measures whether the estimator + band cuts recover ability.
+//      NOTE: this is intentionally self-consistent (SJT/CBM ≈ knowledge), so it
+//      tests estimation, not construct validity of the fusion weights.
+//  (2) a MIS-CALIBRATED responder — SJT/CBM decoupled from knowledge, an
+//      overconfident guesser — which CAN fail if the fusion or the
+//      confident-wrong cap misbehave. This is the test that has teeth.
 import { describe, it, expect } from "vitest";
-import { estimateTheta, thetaToUnit, composite, toBand, pCorrect } from "@/lib/scoring";
+import { estimateTheta, thetaToUnit, composite, toBand, pCorrect, scoreAxis } from "@/lib/scoring";
 import type { Band } from "@/lib/axes";
+import type { Response, Confidence, Difficulty } from "@/lib/types";
 import { ITEMS_PER_AXIS } from "@/lib/router";
 
 // Deterministic PRNG (mulberry32) so the test is reproducible.
@@ -47,8 +52,8 @@ function simulate(trueTheta: number, rand: () => number): Band {
   return toBand(composite(k, s, c));
 }
 
-describe("3-band classification accuracy (Monte-Carlo, §B3)", () => {
-  it("classifies simulated responders into the correct band ≥80% of the time (excluding boundary cases)", () => {
+describe("theta-recovery precision under a self-consistent responder (§B3)", () => {
+  it("recovers the correct band ≥80% of the time for a well-calibrated responder (excluding boundary cases)", () => {
     const rand = rng(12345);
     // Sample true abilities across the range, but skip a small dead-band around
     // each cut-score where even a perfect measure legitimately rounds either way.
@@ -85,5 +90,50 @@ describe("3-band classification accuracy (Monte-Carlo, §B3)", () => {
       if (Math.abs(order.indexOf(predicted) - order.indexOf(expected)) <= 1) within1++;
     }
     expect(within1 / total).toBeGreaterThanOrEqual(0.97);
+  });
+});
+
+// ── Fixture 2: the test with teeth — mis-calibrated responders ────────────
+function mkResp(correct: boolean, confidence: Confidence, difficulty: Difficulty): Response {
+  return { itemId: Math.random().toString(36).slice(2), optionId: "x", correct, confidence, axis: 1, difficulty, ts: 0 };
+}
+
+describe("mis-calibrated responders (the fusion + confident-wrong cap have teeth)", () => {
+  it("an overconfident guesser (mostly wrong, always 'high') is NOT placed Strong", () => {
+    // 6 wrong-at-high-confidence + 1 lucky right. A naive scorer that ignored
+    // correctness or calibration might drift up; ours must not.
+    const resp: Response[] = [
+      mkResp(false, "high", 0), mkResp(false, "high", 0), mkResp(false, "high", 1),
+      mkResp(false, "high", 0), mkResp(false, "high", -1), mkResp(false, "high", 0),
+      mkResp(true, "high", -1),
+    ];
+    const r = scoreAxis(1, resp, [], 0.9 /* self-rates high */, new Map());
+    expect(r.band).not.toBe("strong");
+    // and the overconfidence gap must surface
+    expect(r.calibrationGap?.direction).toBe("over");
+  });
+
+  it("a knowledgeable but under-confident responder is not dragged below Solid by low confidence alone", () => {
+    // All correct, but always hedged 'low'. Knowledge should still carry them;
+    // CBM is only a 15% modifier, so low confidence can't tank a right-answer run.
+    const resp: Response[] = [
+      mkResp(true, "low", 1), mkResp(true, "low", 1), mkResp(true, "low", 0),
+      mkResp(true, "low", 1), mkResp(true, "low", 0), mkResp(true, "low", 1),
+      mkResp(true, "low", 0),
+    ];
+    const r = scoreAxis(1, resp, [], 0.3 /* self-rates low */, new Map());
+    expect(r.band).not.toBe("developing");
+    // under-confidence gap surfaces
+    expect(r.calibrationGap?.direction).toBe("under");
+  });
+
+  it("a single confident-wrong does NOT cap a strong axis (needs ≥2 signals)", () => {
+    const resp: Response[] = [
+      mkResp(true, "high", 1), mkResp(true, "high", 1), mkResp(true, "high", 1),
+      mkResp(true, "high", 0), mkResp(true, "high", 1), mkResp(true, "high", 0),
+      mkResp(false, "high", -1),
+    ];
+    const r = scoreAxis(1, resp, [], undefined, new Map());
+    expect(r.band).toBe("strong");
   });
 });

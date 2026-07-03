@@ -1,6 +1,6 @@
 "use client";
-// Module reader → retrieval (recall, not recognition) → the Room → Field Work.
-// Mastery gate: ~90% on retrieval marks the module mastered and awards Signal.
+// Module reader → recognition check → the Room → Field Work.
+// Mastery gate: ~90% on the check marks the module mastered and awards Signal.
 import { useState } from "react";
 import Link from "next/link";
 import { masterModule } from "@/lib/store";
@@ -10,6 +10,7 @@ import { AXIS_BY_ID } from "@/lib/axes";
 import type { Module, Item, Sjt, FieldWork } from "@/lib/types";
 import { RoomPlayer } from "./RoomPlayer";
 import { FieldWorkView } from "./FieldWorkView";
+import { Diagram } from "./Diagram";
 
 type Stage = "read" | "retrieval" | "room" | "field";
 
@@ -36,7 +37,7 @@ export function ModuleView({
         {(["read", "retrieval", "room", "field"] as Stage[]).map((s) => {
           const labels: Record<Stage, { en: string; es: string }> = {
             read: { en: "Read", es: "Leer" },
-            retrieval: { en: "Recall", es: "Recordar" },
+            retrieval: { en: "Check", es: "Comprobar" },
             room: { en: "The Room", es: "La Sala" },
             field: { en: "Field Work", es: "Trabajo de Campo" },
           };
@@ -60,6 +61,7 @@ export function ModuleView({
               {t(topic.body, locale).split("\n").filter(Boolean).map((para, i) => (
                 <p key={i} style={{ marginBottom: "var(--s-3)" }}>{para}</p>
               ))}
+              {topic.diagram && <Diagram id={topic.diagram} locale={locale} />}
             </section>
           ))}
           <div>
@@ -124,7 +126,7 @@ function Retrieval({ locale, items, moduleId, onDone }: { locale: Locale; items:
 
   return (
     <div className="stack">
-      <span className="eyebrow">{t({ en: "Recall", es: "Recordar" }, locale)} · {idx + 1}/{items.length}</span>
+      <span className="eyebrow">{t({ en: "Check", es: "Comprobar" }, locale)} · {idx + 1}/{items.length}</span>
       <div className="card">
         <p style={{ color: "var(--text)", marginBottom: "var(--s-5)" }}>{t(item.stem, locale)}</p>
         <div className="stack">

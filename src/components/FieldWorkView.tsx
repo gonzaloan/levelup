@@ -68,7 +68,8 @@ export function FieldWorkView({ locale, fieldWork }: { locale: Locale; fieldWork
                 style={{ marginTop: 4, accentColor: "var(--gen)" }} />
               <span style={{ fontSize: "var(--t-sm)" }}>
                 {t(c.criterion, locale)}
-                <span className="mono dim" style={{ marginLeft: 6 }}>·{c.weight}</span>
+                <span className="mono" style={{ marginLeft: 8, color: "var(--gen-accent)", fontSize: "var(--t-xs)" }}
+                  title={locale === "es" ? "puntos" : "points"}>+{c.weight}</span>
               </span>
             </label>
           ))}

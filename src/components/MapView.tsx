@@ -64,7 +64,7 @@ export function MapView({ locale, modules }: { locale: Locale; modules: Module[]
           {t({ en: "The whole climb, one chart.", es: "Toda la subida, una carta." }, locale)}
         </h1>
         <p className="prose">
-          {t({ en: "Bright stars are earned. Dim ones are ahead. The clay constellation is the flagship AI-Engineering track — the 30% Gauntlet is live; the rest opens as the track lands.", es: "Las estrellas brillantes se ganan. Las tenues están por delante. La constelación arcilla es la ruta insignia de Ingeniería de IA — el Desafío del 30% ya está activo; el resto se abre cuando llegue la ruta." }, locale)}
+          {t({ en: "Bright stars are earned; dim ones are ahead. The terracotta cluster to the north is the flagship AI-Engineering track — its 30% Gauntlet is live now, and the rest opens as the track lands.", es: "Las estrellas brillantes se ganan; las tenues están por delante. El cúmulo terracota al norte es la ruta insignia de Ingeniería de IA — su Desafío del 30% ya está activo, y el resto se abre cuando llegue la ruta." }, locale)}
         </p>
       </div>
       <div className="card" style={{ padding: "var(--s-4)" }}>
