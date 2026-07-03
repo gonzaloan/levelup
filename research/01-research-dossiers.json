@@ -1,0 +1,506 @@
+[
+  {
+    "track": "General Engineering (non-AI spine to Staff/Principal)",
+    "summary": "The 2026 general-engineering body of knowledge for Staff/Principal splits cleanly into durable judgment (system design, architecture tradeoffs, reliability thinking) and craft/influence skills that AI is amplifying rather than replacing. Primary sources converge on a clear signal: AI coding tools (Copilot, agentic tools) accelerate the \"known 70%\" but the production-hardening 30% — edge cases, security, maintainability, architecture — remains squarely human, and measured code-quality metrics (churn, duplication, falling reuse) are trending the wrong way, making review, system thinking, and specification MORE valuable. The Staff bar in 2026 is defined less by manual coding throughput and more by design judgment under tradeoffs, technical writing (design docs/RFCs), and influence without authority. A curriculum should be organized so that deep distributed-systems knowledge (consistency, CAP/PACELC, sagas, caching, backpressure) is taught as tradeoff judgment (not interview trivia), reliability is taught via SLO/error-budget economics, and leadership modules teach the archetypes and mechanisms (design reviews, sponsorship, disagree-and-commit) by which ICs drive strategy. The distinctive 2026 framing is: AI raises the floor on code generation, so the platform must raise the ceiling on the things AI cannot do — judgment, boundaries, communication, and operational ownership.",
+    "key_findings": [
+      {
+        "finding": "SLOs must be built backward from user-facing SLIs, kept few, use percentiles not averages, and carry a deliberate internal safety margin tighter than the advertised external target",
+        "detail": "Google SRE canon: SLI = quantitative measure of service level; SLO = target/range on an SLI; SLA = SLO + consequences (test: 'what happens if missed?'). Recommended practice: choose a HANDFUL of indicators, prefer 99th/99.9th percentiles (treat metrics as distributions, verify normality), DON'T set targets from current performance, avoid absolutes ('always'/'infinite'), start loose and tighten. Error budget = 'an SLO for meeting other SLOs' — the allowed miss rate gates release velocity. Chubby deliberately injected planned outages when overly-available to flush out unreasonable hidden dependencies (Hyrum's Law).",
+        "why_it_matters": "This is the economic engine of modern reliability: error budgets convert 'reliability vs. velocity' from an argument into a shared number. A module must teach the control loop (measure SLI -> compare SLO -> act) and the anti-patterns, not just the definitions."
+      },
+      {
+        "finding": "Consistency models form a hierarchy of tradeoffs, and CAP is superseded in practice by PACELC — even with no partition, you still trade Latency vs. Consistency",
+        "detail": "Jepsen frames consistency models as safety properties defining the legal set of histories; models are often defined by phenomena they forbid (e.g. G1a aborted read) and by forbidden cycles in the operation dependency graph. Practitioners must command the ladder: linearizability (single-object real-time) -> serializability (multi-object txn order) -> snapshot isolation -> causal -> eventual. PACELC: if Partition then choose A/C, Else (normal operation) choose Latency/Consistency — this is the daily tradeoff, whereas CAP only applies during the rare partition. Partition tolerance is not optional on real networks, so CAP is really a C-vs-A choice during partitions.",
+        "why_it_matters": "Staff-level judgment is picking the weakest consistency model that still satisfies the business invariant. Teaching PACELC over CAP is the differentiator between interview-trivia and real system design."
+      },
+      {
+        "finding": "Sagas replace distributed 2PC across service-owned databases but trade away automatic rollback and isolation — you must hand-design compensating transactions and countermeasures",
+        "detail": "microservices.io: with Database-per-Service, a saga = chain of local ACID transactions; failure triggers compensating transactions to undo. Two coordination styles: choreography (services react to domain events, no central brain) vs. orchestration (central orchestrator issues commands). Costs vs. ACID/2PC: NO automatic rollback (developer writes compensations), and LACK of isolation (concurrent sagas cause anomalies needing explicit countermeasures). Reliable state-update+event-publish requires Transactional Outbox or Event Sourcing (dual-write problem).",
+        "why_it_matters": "Distributed transactions are where junior designs break in production. The curriculum must teach the outbox/idempotent-receiver/compensation triad as a set, plus when NOT to split the service at all."
+      },
+      {
+        "finding": "Idempotency, backpressure, and request-flow patterns are a distinct competency documented as a formal pattern catalog (Unmesh Joshi, 2023)",
+        "detail": "Patterns of Distributed Systems catalogs ~30 named patterns worth teaching by name: Idempotent Receiver (dedupe client retries), High/Low-Water Mark (replication progress + log GC), Lease (time-bound coordination), Quorum, Lamport/Hybrid Clock + Version Vector (ordering without reliable physical clocks), Write-Ahead/Replicated/Segmented Log, Request Pipeline/Batch/Waiting List (throughput + flow control), Singular Update Queue, Consistent Core (small strongly-consistent cluster coordinating a large one). Core tradeoff axis repeated throughout: consistency vs. latency/throughput, simplicity vs. fault tolerance.",
+        "why_it_matters": "These are the reusable building blocks behind Kafka, etcd, Kafka, DynamoDB, etc. A module organized around this catalog gives learners transferable vocabulary rather than one-off war stories."
+      },
+      {
+        "finding": "Caching is a top source of production incidents; the hard parts are thundering herd, cache coherence, negative caching, cold starts, and 'cache addiction' — not the read path",
+        "detail": "AWS Builders' Library: cache-aside (app-managed, client can compensate on cache failure) vs. inline/read-through/write-through (DAX, HTTP caches — cache is now IN the availability equation, no client compensation). Key techniques: soft+hard TTL (serve stale past soft TTL if downstream down, as AWS IAM client does), request coalescing to defeat thundering herd, negative caching to avoid hammering a down dependency, versioned serialization to avoid 'poison pills'. Pitfalls: cold-start bursts, fleet-proportional load on in-memory caches, and 'cache addiction' (service can't survive a cache outage). Best practice: regularly TEST with caching disabled.",
+        "why_it_matters": "Most 'scaling' interviews stop at cache-aside; real Staff work is designing the failure and consistency behavior of the cache. This maps directly to reliability + system design axes."
+      },
+      {
+        "finding": "Microservices carry a 'Microservice Premium' — a productivity tax justified only by complexity you can't otherwise manage; a well-structured monolith is often the correct Staff-level answer",
+        "detail": "Fowler: benefits = firm module boundaries, independent deploy, tech diversity. Costs = distribution (slow/unreliable remote calls), eventual consistency (no cross-service transaction, must handle inconsistency windows), operational complexity (needs CD, DevOps culture, tooling — else apps get 'traumatized'). Rule: 'if you can manage your system's complexity with a monolithic architecture then you shouldn't be using microservices.' Also don't split when the domain/boundaries aren't well understood — wrong boundaries turn the modularity advantage into a handicap.",
+        "why_it_matters": "Teaching restraint and 'monolith-first' is a maturity marker. The module should frame architecture choice as reversible-decision economics, not fashion."
+      },
+      {
+        "finding": "CQRS is a narrow, high-risk pattern — Fowler explicitly warns most real usages 'have not been so good'; apply only within a single Bounded Context",
+        "detail": "CQRS (Greg Young) = separate models for writes (Command) vs. reads (Query). Legit uses: genuinely complex domains (minority) and large read/write scaling disparity. Do NOT use for CRUD-shaped systems; if you only have heavy queries, use a ReportingDatabase instead of full CQRS. Pairs naturally with Event Sourcing/Event Collaboration. Risks: 'significant mental leap,' 'adds risky complexity,' 'difficult to use well.' Must be scoped to a Bounded Context, never system-wide.",
+        "why_it_matters": "A good curriculum teaches patterns WITH their contraindications. CQRS is the canonical example of a pattern that signals seniority by knowing when to refuse it — directly counters bootcamp cargo-culting."
+      },
+      {
+        "finding": "Observability is shifting to 'wide events' / high-cardinality structured events as the single source of truth, away from pre-aggregated three-pillars (metrics/logs/traces)",
+        "detail": "Modern practice (Honeycomb/Charity Majors 'Observability 2.0'): emit one wide, richly-dimensioned structured event per unit of work (canonical log line) carrying dozens-to-hundreds of high-cardinality fields (user id, build id, region, feature flags). Metrics/logs/traces become derived views of the same events rather than three disconnected, pre-aggregated silos. The core capability is asking arbitrary new questions about unknown-unknowns without pre-defining dashboards — enabled by high cardinality + high dimensionality, which classic metrics systems can't store cheaply.",
+        "why_it_matters": "This is a genuine 2026 shift the platform can own; teaching wide events (plus SLO-based alerting) rather than 'the three pillars' keeps the reliability track current and differentiated."
+      },
+      {
+        "finding": "Design docs / RFCs are the documented Staff superpower: writing skill 'reliably tracks with seniority' and is how senior ICs scale influence across projects they can't code-review",
+        "detail": "Google practice: written BEFORE coding to capture strategy + tradeoffs, not implementation. Standard sections: Context/Scope, Goals AND explicit Non-Goals, the Design (tradeoff-focused, diagrams/APIs, rarely code), Alternatives Considered (one of the MOST important sections), Cross-cutting concerns (security/privacy/observability). ~10-20 pages for big projects, 1-3 for mini. Skip the doc when it's just an implementation manual with no tradeoffs. Value of review isn't bug-finding but injecting org experience while change is cheap; docs become durable organizational memory ('where is the design doc?').",
+        "why_it_matters": "This is the concrete, teachable artifact bridging Craft and Leadership axes. A module should have learners write and defend real design docs with Alternatives-Considered sections."
+      },
+      {
+        "finding": "Staff-plus is not one role but four archetypes with different skill emphases; it's the intersection of role + behavior + impact + org recognition",
+        "detail": "StaffEng (Will Larson): Tech Lead (guides one team's execution; ~1 per 8 engineers; increasingly delegates coding to grow teammates), Architect (owns direction/quality/approach in a critical area via EARNED organizational authority from consistent good judgment), Solver (parachutes into ambiguous high-risk problems as trusted agent), Right Hand (rarest, ~hundreds of engineers, extends an exec's scope with borrowed authority). Staff problems are 'never purely technical' — spanning business, tech, people, process.",
+        "why_it_matters": "The leadership track shouldn't teach a single 'staff persona.' Mapping learner paths to archetypes lets the platform tailor influence/strategy/sponsorship content to where the learner actually creates impact."
+      },
+      {
+        "finding": "Trunk-based development (not GitFlow) is the empirically-backed enabler of Continuous Delivery and healthy DORA metrics",
+        "detail": "trunkbaseddevelopment.com: single main branch, short-lived branches for CI/review that land fast, feature flags to decouple deploy from release, branch-by-abstraction for big changes, integrate to trunk at least every 24h. Explicitly advises AGAINST GitFlow's long-running branches ('merge hell'). Endorsed by Continuous Delivery + DevOps Handbook (the DORA lineage). Google runs it with ~35,000 developers in one monorepo. Supports high deploy frequency + low change-failure rate.",
+        "why_it_matters": "Delivery craft has a right answer that many teams still get wrong. Teaching TBD + feature flags + small batch is concrete, measurable, and directly moves DORA outcomes."
+      },
+      {
+        "finding": "2024 DORA data shows AI adoption INCREASES individual productivity/flow/satisfaction but DECREASES team-level delivery stability and throughput — fundamentals matter more, not less",
+        "detail": "DORA 2024: AI 'significantly increases individual productivity, flow, and job satisfaction' while it 'negatively impacts software delivery stability and throughput.' Same pattern for internal developer platforms (help individuals, can hurt change stability/throughput). Other findings: user-centricity is the 'ultimate driver of performance'; unstable priorities hurt productivity and are 'highly resistant to mitigation'; transformational leadership reduces burnout; lift-and-shift cloud (without adopting flexibility) can be worse than a data center.",
+        "why_it_matters": "Hard evidence that AI is not a free lunch at the team level — reinforces that small batch size, testing, and delivery discipline are the counterweights. Critical framing for the 'what's changing in 2026' module."
+      },
+      {
+        "finding": "Measured code-quality data shows AI-assisted coding is increasing churn and duplication while reducing reuse — the maintainability bill is coming due",
+        "detail": "GitClear (153M lines, 2020-2023, largest structured code-change DB): code churn (lines reverted/reworked within 2 weeks) projected to DOUBLE in 2024 vs. 2021 pre-AI baseline; rising 'added' and 'copy/pasted' code relative to 'updated/deleted/moved'; falling code reuse — 2023 code likened to an 'itinerant contributor' violating DRY. GitHub's own claim is 55% faster coding, and >50% dev adoption by 2023. (Caveat: 2024 figures are projections.)",
+        "why_it_matters": "Quantitative backing for why REVIEW, refactoring judgment, and DRY discipline become premium skills as generation gets cheap. The platform can position code review as a craft, not a chore."
+      },
+      {
+        "finding": "The '70% problem': AI reaches 70% fast but the production-hardening 30% (edge cases, security, a11y, perf, maintainability) still needs human engineering — and AI helps seniors MORE than juniors",
+        "detail": "Addy Osmani: AI = 'infinitely patient pair programmer who can type really fast,' great at known/routine/prototyping, poor at edge cases (that crash apps), error messages, accessibility, security, performance — produces 'house of cards code.' The 'two steps back' loop: each AI fix creates two new problems for those lacking mental models. Knowledge paradox: AI accelerates what seniors already know but juniors can't judge output. Durable skills named: stronger system design/architectural thinking, requirement specification + communication, QA/validation, and setting boundaries/oversight for AI agents. 'Software quality was (perhaps) never primarily limited by coding speed.'",
+        "why_it_matters": "This is the thesis statement for a General track: teach the durable 30% (judgment, review, spec, oversight) explicitly, because that's exactly what AI does not deliver and what separates Staff from a prompt."
+      }
+    ],
+    "sources": [
+      "https://sre.google/sre-book/service-level-objectives/",
+      "https://martinfowler.com/articles/patterns-of-distributed-systems/",
+      "https://jepsen.io/consistency",
+      "https://microservices.io/patterns/data/saga.html",
+      "https://martinfowler.com/bliki/CQRS.html",
+      "https://martinfowler.com/articles/microservice-trade-offs.html",
+      "https://aws.amazon.com/builders-library/caching-challenges-and-strategies/",
+      "https://trunkbaseddevelopment.com/",
+      "https://dora.dev/research/2024/dora-report/",
+      "https://www.gitclear.com/coding_on_copilot_data_shows_ais_downward_pressure_on_code_quality",
+      "https://addyo.substack.com/p/the-70-problem-hard-truths-about",
+      "https://staffeng.com/guides/staff-archetypes/",
+      "https://www.industrialempathy.com/posts/design-docs-at-google/",
+      "https://www.honeycomb.io/blog/observability-2-0-and-the-database-for-it"
+    ],
+    "implications_for_build": [
+      "Organize the General track as 4 module clusters mapping to the axes: (1) Technical Depth — consistency models/PACELC, idempotency, backpressure, caching failure modes; (2) System Design — sagas/CQRS/event-driven WITH contraindications and the Microservice Premium; (3) Craft & Delivery — trunk-based dev, feature flags, testing strategy, code review as craft, design docs/RFCs; (4) Leadership/Influence — staff archetypes, driving strategy, sponsorship, design reviews, disagree-and-commit. Keep AI Engineering as the sibling track but thread a 'what's changing in 2026' lens through every General module.",
+      "Teach every pattern as a tradeoff with explicit 'when NOT to use it' — CQRS, microservices, and distributed transactions are the canonical restraint lessons. Assessments should reward choosing the SIMPLEST design that satisfies the invariant (monolith-first, weakest sufficient consistency model), not the most elaborate.",
+      "Make design docs the spine artifact of the platform: every capstone/module deliverable is a written design doc with a mandatory 'Alternatives Considered' and 'Non-Goals' section, peer-reviewed. This simultaneously trains the Craft axis (technical writing) and the Leadership axis (influence, org memory) — and is exactly the skill sources say tracks with seniority.",
+      "Position the reliability module on the SLO/error-budget economic model and modern wide-event observability, NOT the legacy 'three pillars.' Learners should compute error budgets, write SLOs backward from user journeys using percentiles, and instrument a service with high-cardinality canonical log events. This keeps the track differentiated and current to 2026.",
+      "Design the AI-shift narrative around evidence, not hype: use DORA 2024 (individual up / team stability down) and GitClear (rising churn/duplication, falling reuse) to justify that REVIEW, refactoring, spec-writing, and oversight are the premium durable skills. Build exercises where learners review and harden AI-generated code (the '30%') — find edge cases, security holes, DRY violations — as a graded competency.",
+      "Structure learner paths by Staff archetype (Tech Lead / Architect / Solver / Right Hand) so influence, strategy, and sponsorship content is tailored to how each learner actually creates impact, rather than a one-size 'staff persona.' Include an explicit influence-without-authority + disagree-and-commit + running-a-design-review skills strand.",
+      "Include a dedicated 'distributed systems building blocks' module keyed to the Unmesh Joshi pattern catalog (idempotent receiver, quorum, lease, water marks, WAL, request pipeline/backpressure) so learners acquire transferable vocabulary that maps onto real systems (Kafka, etcd, DynamoDB) instead of ad-hoc examples.",
+      "Bake measurable delivery outcomes (DORA four keys) into the Craft track and connect them to concrete practices — trunk-based dev, small batch, feature flags, test strategy — so the platform can show cause-and-effect and give learners a scoreboard rather than a syllabus checklist."
+    ]
+  },
+  {
+    "track": "Diagnostic Assessment Design (Dreyfus placement, radar + roadmap) for the \"level-up\" platform",
+    "summary": "The assessment should combine three signal sources per axis: (1) objective knowledge/judgment items scored with a lightweight Item-Response-Theory difficulty model, (2) Situational Judgment Test (SJT) scenarios that measure seniority/judgment rather than recall, and (3) calibrated self-report corrected via confidence-weighted (certainty-based) scoring to defeat the Dunning-Kruger over/under-confidence problem. Each axis is placed on a Dreyfus 1-5 scale (Novice→Expert) using behavioral anchors, not just percent-correct. A radar chart (directly modeled on the open-source \"Engineering Ladders\" 5-axis radar) visualizes strengths and gaps honestly, and the roadmap is generated deterministically from the two lowest / highest-gap axes with concrete next-stage behaviors. A full IRT-calibrated CAT is not feasible client-side without a pretested item bank, so the recommended lightweight design is a fixed-difficulty-tiered adaptive branch (medium-start, step up/down by tier) with a fixed-length stopping rule — a \"barely adaptive test\" that is rigorous without needing a psychometric calibration sample.",
+    "key_findings": [
+      {
+        "finding": "Dreyfus stages have concrete behavioral anchors usable directly as per-axis rubric text, keyed on rules→intuition and detachment→involvement",
+        "detail": "Novice: rigidly follows context-free rules, cannot read situational nuance, detached from outcomes. Advanced Beginner: applies experience-based maxims, notices situation-specific nuances, can get overwhelmed. Competent: deliberate planning, picks a perspective/goal, emotionally invested in outcomes but may inflexibly cling to a chosen plan. Proficient: reads situations intuitively but still consciously decides the action (involved in perception, detached in choosing). Expert: fluid intuitive action without deliberation, seamless perception-action, often cannot verbalize why. A 6th 'Mastery' stage transforms the domain.",
+        "why_it_matters": "Gives us ready-made, non-flattering rubric language for each of the 5 levels on each of the 5 axes. A placement is a level number PLUS a behavioral sentence, which is what makes it feel like a leveling framework and not a quiz score."
+      },
+      {
+        "finding": "The Dreyfus model is empirically contested — do not present stages as a hard scientific law",
+        "detail": "Gobet & Chassy argue there is no empirical evidence for discrete stages and that experts DO use slow deliberate search (e.g., chess look-ahead), contradicting the pure-intuition expert claim. Dreyfus's rebuttal invokes 'deliberative rationality.' The model is best treated as a descriptive scaffold, not a measurement instrument.",
+        "why_it_matters": "We should use Dreyfus for the language/shape of results but derive the actual placement from item performance + judgment + calibration, not claim psychometric validity for the stages themselves. Protects credibility."
+      },
+      {
+        "finding": "SJTs are the correct instrument for measuring seniority/judgment (not knowledge), and their construction method is copyable",
+        "detail": "Built from critical-incident job analysis → scenario with multiple candidate responses → expert panel ranks responses to form the scoring key. Formats: pick-best, best-worst pair, rank-all, or rate-each-on-a-scale. Consensual scoring (weight options by proportion of experts choosing them) or expert-target scoring. Knowledge-instruction phrasing ('what SHOULD you do') correlates with cognitive ability; behavioral-tendency phrasing ('what WOULD you do') correlates with personality. SJTs show incremental/progressive validity over raw cognitive tests and lower adverse impact.",
+        "why_it_matters": "Leadership/Influence, System Design tradeoffs, and Craft & Delivery judgment cannot be assessed with right/wrong recall. SJT scenarios with a graded scoring key (best answer = full, defensible-but-suboptimal = partial, harmful = zero/negative) are how we separate a senior from a mid engineer. Use 'what WOULD you do' framing plus a rationale to reduce faking."
+      },
+      {
+        "finding": "A full CAT needs a pretested item bank (~hundreds-1000 examinees) to calibrate IRT parameters — infeasible for a fresh client-side app",
+        "detail": "CAT loop = start at medium difficulty → pick item of maximum information at current ability estimate → update ability (MLE or Bayesian; Bayesian/MAP needed as fallback because MLE breaks on all-correct/all-wrong) → stop on precision (SE threshold) or fixed length. Requires calibrated a/b/c item parameters. Real CATs are often 'barely adaptive tests' constrained by content balancing. Simpler cousins: Multistage Testing (MST/CAST) and 'randomesque' selection (pick randomly among top-N informative items).",
+        "why_it_matters": "We cannot run true IRT-CAT at launch (no calibration data). We should ship MST-style routing: author items in 3 difficulty tiers per axis, start mid-tier, branch up/down based on running score. This is honest, adaptive-feeling, and needs zero psychometric sample. We can migrate toward real IRT later once we log responses."
+      },
+      {
+        "finding": "The 2PL/1PL IRT logistic is trivial to implement client-side and gives a principled difficulty-weighted score even without full calibration",
+        "detail": "P(correct)=c+(1-c)/(1+exp(-a*(theta-b))). 1PL/Rasch: c=0,a=1 → P=1/(1+exp(-(theta-b))). theta=ability, b=item difficulty. We can hand-assign b per item (tier -1/0/+1 or a 1-5 scale) instead of estimating it. Ability update can be a simple grid/Newton MLE over the response vector, with a Bayesian prior (normal, mean 0) to stabilize extreme vectors.",
+        "why_it_matters": "Lets us score 'got a hard item right' as worth more than 'got an easy item right' — the core of why this beats a Buzzfeed quiz — using ~15 lines of JS and author-assigned difficulty, no server, no calibration study."
+      },
+      {
+        "finding": "Dunning-Kruger is real but partly a statistical artifact; the practical takeaway is to MEASURE calibration, not just correct for it",
+        "detail": "Bottom-quartile performers self-ranked at the 62nd percentile (actual 12th). Mechanism = metacognitive: low performers can't recognize their own gaps. BUT critics (Nuhfer et al.) show regression-to-the-mean + better-than-average effect reproduces much of the pattern, especially for RELATIVE (peer) self-ratings; absolute self-ratings are less biased. Incentives don't fix it; only actually improving skill does.",
+        "why_it_matters": "Two design rules: (1) ask self-assessment in ABSOLUTE terms ('I can do X unaided') not relative ('better than peers') to reduce artifact bias; (2) explicitly compute a calibration gap = self-reported level minus measured level per axis, and surface it as its own honest insight ('You rate yourself Proficient on System Design but your answers place you at Competent — here's the gap')."
+      },
+      {
+        "finding": "Certainty-Based Marking (CBM) gives a proper-scoring-rule mechanism to combine confidence with correctness so honesty is the optimal strategy",
+        "detail": "Canonical LAPT/Gardner-Medwin 3-level scheme: Confidence Low (C1): correct=+1, wrong=0. Confidence Mid (C2): correct=+2, wrong=-2. Confidence High (C3): correct=+3, wrong=-6. The asymmetric penalty makes reporting your TRUE probability the score-maximizing choice (a proper scoring rule): bluffing high confidence on a shaky answer has negative expected value. Confident-wrong answers flag misconceptions (dangerous), not mere gaps. CBM is shown to improve reliability/validity of assessment data.",
+        "why_it_matters": "This is the rigorous engine for the confidence layer. Attach a confidence tag to each objective item; a confident-wrong answer is the strongest signal of a Dreyfus over-placement and should pull the axis DOWN and generate a targeted 'misconception to unlearn' roadmap item. Gives us a defensible, literature-backed alternative to naive self-report."
+      },
+      {
+        "finding": "The 'Engineering Ladders' open-source framework is a near-exact precedent for our 5-axis radar and can be adapted directly",
+        "detail": "5 axes: Technology, System, People, Process, Influence (Influence treated as orthogonal, applying across the others). Each axis scored 1-5 with a single action verb per level, e.g. Technology: Adopts→Specializes→Evangelizes→Masters→Creates; System: Enhances→Designs→Owns→Evolves→Leads; People: Learns→Supports→Mentors→Coordinates→Manages. Rule: 'every level includes the previous one(s).' Plotted as a radar to show shape/gaps, explicitly 'as guidance for career conversations,' not a checklist.",
+        "why_it_matters": "Validates our 5-axis-radar-1-to-5 structure and gives us proven verb-based level anchors to remap onto our axes (Technical Depth, System Design, AI Engineering, Leadership/Influence, Craft & Delivery). The 'each level includes previous' rule dictates our scoring must be cumulative/monotonic, not additive points."
+      },
+      {
+        "finding": "Real company leveling/calibration compares against a ladder rubric, not against peers, and reads written evidence rather than pitches",
+        "detail": "From Larson's calibration model: inputs = self + peer + upward + manager review synthesized into a provisional rating, then a calibration session. Four rules: (1) collaborative consistency, not defending scores; (2) READ the written review, don't let people PRESENT (presentation skill shouldn't win); (3) compare each person against LADDER expectations, not against each other (peer comparison adds false equivalence); (4) study the distribution, don't enforce a stack rank. Levels defined by scope/complexity of responsibility.",
+        "why_it_matters": "Our scoring should map each engineer to fixed ladder anchors (absolute, criterion-referenced) rather than percentile-ranking them against other users — this is both more honest and matches how promotion actually works. Reinforces criterion-referenced placement over norm-referenced quiz scoring."
+      },
+      {
+        "finding": "Concrete item-writing rules to avoid test-wiseness and build misconception-based distractors",
+        "detail": "Rules distilled from CITL/Haladyna-style guidance: stem = one explicit question, move repeated words into stem; distractors must be plausible and drawn from COMMON ERRORS/misconceptions of the less-skilled; keep all options equal length (never make the key longest); grammatically parallel and consistent with stem (avoid 'an ___' cueing a vowel answer); avoid verbal associations echoing stem words in the key; use 4+ options; distribute the key position randomly; use 'all/none of the above' sparingly and let them sometimes be correct; avoid absolute terms (always/never) that cue false, and hedges (usually/often) that cue true.",
+        "why_it_matters": "Directly drives our item-authoring checklist. Distractors sourced from real engineering misconceptions are what let CBM flag dangerous confident-wrong answers, and length/grammar discipline stops a test-wise engineer from gaming placement without knowledge."
+      },
+      {
+        "finding": "Distractor rationale ('why each wrong answer is wrong') doubles as the roadmap/learning content",
+        "detail": "SJT and MCQ best practice pairs each option with a defensibility rationale; consensual/graded scoring already requires knowing why suboptimal answers are suboptimal. Storing a per-distractor explanation converts every missed item into a targeted learning nugget.",
+        "why_it_matters": "We get the personalized roadmap almost for free: a wrong/confident-wrong answer maps to its stored rationale + linked resource, aggregated by axis and Dreyfus sub-skill. The roadmap is generated from the specific gaps the diagnostic found, not generic advice."
+      },
+      {
+        "finding": "Fixed-length stopping with per-axis item budget is the right lightweight termination rule",
+        "detail": "CAT stopping options: precision-based (stop when SE < threshold) or fixed-length. Precision-based needs calibrated info functions; fixed-length is simpler and gives every user a comparable, bounded experience. Set min/max length to avoid exhausting a small bank.",
+        "why_it_matters": "For a client-side app with a modest item bank, a fixed ~6-9 items per axis (spanning 3 difficulty tiers) with tier-branching is the pragmatic stopping rule: predictable length (~35-45 items total, ~20-25 min), no risk of running out of items, and still adaptive-feeling."
+      }
+    ],
+    "sources": [
+      "https://en.wikipedia.org/wiki/Dreyfus_model_of_skill_acquisition",
+      "https://en.wikipedia.org/wiki/Situational_judgement_test",
+      "https://en.wikipedia.org/wiki/Computerized_adaptive_testing",
+      "https://en.wikipedia.org/wiki/Dunning%E2%80%93Kruger_effect",
+      "https://en.wikipedia.org/wiki/Item_response_theory",
+      "https://en.wikipedia.org/wiki/Multiple_choice",
+      "https://www.engineeringladders.com/",
+      "https://lethain.com/perf-management-system/",
+      "https://www.ucl.ac.uk/lapt/laptlite/",
+      "https://tmedwin.net/cbm/",
+      "https://citl.illinois.edu/citl-101/measurement-evaluation/exam-scoring/improving-your-test-questions"
+    ],
+    "implications_for_build": [
+      "Adopt a THREE-SIGNAL scoring model per axis, combined into one Dreyfus 1-5 placement: (A) objective knowledge/judgment items difficulty-weighted via a 1PL/2PL logistic P=1/(1+exp(-a*(theta-b))) with author-assigned difficulty b (no calibration sample needed); (B) SJT scenario score from a graded key (best/partial/harmful); (C) confidence-calibration score via CBM. Store all three so we can show the breakdown, not just a number.",
+      "Do NOT build a true IRT-CAT at launch. Build a Multistage/'barely adaptive' router: author 6-9 items per axis across 3 difficulty tiers, start at the mid tier, branch up a tier after a correct+confident answer and down after wrong/low-confidence, fixed total length (~35-45 items, 20-25 min). Log every response now so we can calibrate real IRT parameters later.",
+      "Implement CBM with the canonical 3-level scheme (Low correct +1/wrong 0; Mid +2/-2; High +3/-6) as a proper scoring rule. Every objective item carries a confidence tag. A confident-WRONG answer is the highest-signal event: it caps the axis placement (a Dreyfus over-placement) and spawns a 'misconception to unlearn' roadmap item using that distractor's stored rationale.",
+      "Compute and DISPLAY a per-axis calibration gap = self-reported Dreyfus level minus measured level. Ask self-assessment in ABSOLUTE, behavior-anchored terms ('I can design a system to handle 10x traffic unaided') not relative ('better than most peers') to reduce Dunning-Kruger/regression artifacts. Surface over- and under-confidence as an explicit, named insight.",
+      "Placement must be CRITERION-referenced against fixed Dreyfus/ladder behavioral anchors per axis (borrow Engineering Ladders' cumulative verb model: each level subsumes the lower ones, so scoring is a monotonic threshold, not additive points), NOT norm-referenced percentile ranking against other users. This is both more honest and matches real promotion calibration.",
+      "Make the radar honest, not flattering: render the 5 axes 1-5 (Recharts/SVG), show the filled shape plus the calibration-gap overlay. Rank axes by gap-to-next-level and lead the results with the WEAKEST 1-2 axes framed as 'highest-leverage growth,' each with the specific behavioral delta needed to reach the next Dreyfus stage (pull the exact next-stage descriptor from the rubric).",
+      "Author items with a strict checklist: distractors built from real engineering misconceptions; equal option length; no grammatical/verbal-association cues; 4 options; no absolute-term giveaways; randomized key position. Require every distractor to carry a 'why this is wrong' rationale + a linked resource — this rationale store IS the roadmap content generator.",
+      "Use SJT scenarios (branching, 'what WOULD you do' + rationale) as the PRIMARY instrument for Leadership/Influence, System Design tradeoffs, and Craft & Delivery judgment, since recall MCQs cannot distinguish seniority there. Score with a graded key (defensible-but-suboptimal answers earn partial credit) rather than single-right-answer.",
+      "Generate the roadmap deterministically from diagnostic output: for each axis below target, concatenate (missed-item rationales) + (confident-wrong misconceptions, prioritized) + (the next Dreyfus stage's behavioral descriptor as the goal). This produces a specific, evidence-backed path per user with no LLM required, though an LLM can later narrate it.",
+      "Add a credibility disclaimer in-product: present Dreyfus stages as a descriptive growth scaffold (note it is empirically contested re: discrete stages) while grounding the actual score in item performance + judgment + calibration. Rigor comes from the scoring model, not from claiming the stage theory is proven."
+    ]
+  },
+  {
+    "track": "Visual & Product Design — anti-AI-slop, hand-crafted premium direction for level-up",
+    "summary": "The \"AI-generated\" look is now a recognizable cluster of defaults: violet/indigo gradients, Inter-everywhere, a centered hero over three equal rounded feature cards, emoji bullets, glassmorphism, stock isometric/3D blobs, uniform 16px+ radii, and even vertical rhythm with no editorial tension. Escaping it is not about one trick — it's about a real point of view expressed through a distinctive type pairing with genuine hierarchy, intentional asymmetry on a real grid, restrained-but-characterful motion (custom cubic-beziers, springs, sub-300ms, reduced-motion aware), custom SVG iconography/diagrams, and subtle texture. Award-caliber references (Linear, Vercel/Geist, Stripe, Anthropic, Every.to, Awwwards editorial sites) all win by encoding *intent* into every token — Geist's color steps \"encode intent, not just lightness,\" Stripe hand-builds devices in CSS, Emil Kowalski keeps motion under 300ms with ease-out. get-certified already has an excellent bones system (deep navy #080d14, Inter/DM Serif Display/JetBrains Mono, per-domain accent gradients, spring easing) that level-up should evolve — not copy — with its own editorial voice, a game-console/observatory metaphor for the skill tree and radar, and per-track identity (General vs AI Engineering). The recommendation below is opinionated: a stronger display face than DM Serif, a monospace-driven \"instrument panel\" motif, a hand-drawn constellation skill tree, and 6 signature details that read as senior-designer craft rather than template.",
+    "key_findings": [
+      {
+        "finding": "The 2026 'AI slop' look is a specific, enumerable checklist of defaults — treat it as a do-not-do list",
+        "detail": "The recognizable tells: (1) purple/violet→indigo diagonal gradient (135deg #7c5cff-ish) as hero background; (2) Inter (or its clones) used for EVERYTHING with no display contrast; (3) centered hero headline + subhead + two pill buttons, then a row of exactly 3 equal-width rounded cards with an emoji or generic line-icon at top; (4) emoji as bullet points (✨🚀🎯); (5) glassmorphism (frosted blur + 1px white border) applied everywhere; (6) uniform heavy border-radius (16-24px on everything including buttons and images); (7) stock isometric/3D 'blob' illustrations or Corporate-Memphis figures; (8) evenly-spaced, dead vertical rhythm with everything centered and no asymmetry; (9) generic soft drop shadows on white cards; (10) faux-badge social proof ('Trusted by 10,000+') with logo salad; (11) gradient text on headings; (12) content that reads like listicle filler with no opinion.",
+        "why_it_matters": "The owner's #1 requirement is 'must NOT look AI-generated.' You can only reliably avoid a look you can name. Every one of these is a concrete pattern to consciously reject — most importantly the centered-hero-+-3-cards template and purple gradient, since get-certified's CCA accent (#7c5cff) is exactly the slop color and must be handled carefully."
+      },
+      {
+        "finding": "Vercel's Geist proves the antidote: tokens that 'encode intent, not just lightness'",
+        "detail": "Geist's non-background color scale runs 10 steps where each step maps to PURPOSE not brightness (100 default bg, 200 hover, 300 active, 400 border, 700 solid fill, 900 secondary text, 1000 primary text). Radii stay TIGHT (6px controls, 12px menus/modals, 16px only for fullscreen, 9999px pills) — the opposite of over-rounded slop. Spacing is a strict 4px scale with a 3-step rhythm: 8px within a group, 16px between groups, 32-40px between sections. Every accent ships both sRGB hex AND an oklch() P3 variant for wide-gamut. Motion is minimal: 'often 0ms is best,' 150ms for state changes, 200ms popovers, 300ms overlays, easing cubic-bezier(0.175,0.885,0.32,1.1), always honoring prefers-reduced-motion.",
+        "why_it_matters": "This is the concrete recipe for 'looks like a senior designer made it': semantic tokens, tight radii, disciplined spacing rhythm, wide-gamut color, and motion that is felt not seen. level-up should adopt Geist's tight-radius discipline to differentiate from get-certified's more generous --r-lg:16px/--r-xl:24px and from generic over-rounding."
+      },
+      {
+        "finding": "Stripe's craft signal is doing things the hard way in the browser — hand-built CSS, custom easing, no built-in timing functions",
+        "detail": "Stripe builds devices (laptop) entirely in CSS 'weighing less than 1KB' using layered linear-gradients and inset box-shadows; renders 3D cubes as DOM with a simulated light source shading faces via color interpolation; uses CSS Grid + transform:skewY(-12deg) for their signature tilted stripes (grid avoids the '1px gap between two stripes' rounding bug). Their rule: 'You almost never want to use a built-in timing-function' — define custom cubic-bezier variables. Their demo uses cubic-bezier(.2,1,.2,1). Animate only transform/opacity, offload with will-change, stay under 500ms, trigger on scroll via Intersection Observer, respect prefers-reduced-motion.",
+        "why_it_matters": "Hand-authored inline SVG diagrams (already in the spec) plus custom-tuned easing are exactly what separates crafted from templated. level-up's cubic-bezier(.2,1.4,.4,1) spring (inherited from get-certified) is a strong signature — keep custom curves, never default eases."
+      },
+      {
+        "finding": "Emil Kowalski's motion rules give exact numbers for 'restrained motion with personality'",
+        "detail": "Animations should usually be UNDER 300ms; target 60fps or other principles 'become useless'; use ease-out for UI ('starts fast, slows at the end') for a snappy responsive feel; spring animations (stiffness/damping/mass) mimic real physics because 'nothing in the world around us disappears or appears instantly'; animations must be INTERRUPTIBLE; NEVER animate keyboard-initiated/repeated actions (feels slow); animate only transform+opacity; respect prefers-reduced-motion by animating opacity only instead of movement (via CSS media query or useReducedMotion).",
+        "why_it_matters": "For a gamified product with XP gains, skill-tree lighting, and radar reveals, motion is core to 'feel' but is also the easiest thing to overdo into slop. These are the guardrails: personality via springs on reward moments, restraint (sub-300ms, ease-out) everywhere else, and a hard prefers-reduced-motion path that swaps movement for opacity/instant."
+      },
+      {
+        "finding": "Accessible dark-mode premium requires NOT pure black and desaturated accents — get-certified's #080d14 is already correct",
+        "detail": "Material dark theme: base surface #121212 (never #000 — pure black causes harsh contrast/eye strain and kills depth); build elevation via semi-transparent WHITE overlays layered on the dark surface (1dp=5%, 2dp=7%, 4dp=9%, 8dp=12%, 24dp=16% opacity) rather than shadows; saturated colors 'vibrate' against dark and reduce legibility, so lighten+desaturate accents toward the 200-50 tonal range instead of vivid 500s; body text needs ≥4.5:1 contrast. NN/g adds: don't force dark by default — always let users toggle, and dark benefits low-vision/cataract users and long-form reading.",
+        "why_it_matters": "get-certified's system already does this well: #080d14 bg with layered --bg-card/--bg-hover/--bg-raised surfaces (the overlay-elevation approach) and *-accent tokens that are lighter/desaturated (#80deea, #82b1ff, #c4b5ff) for text-on-dark while the vivid version is reserved for fills/glows. level-up should inherit this discipline and add explicit ≥4.5:1 checks plus a light-mode toggle (NN/g)."
+      },
+      {
+        "finding": "Radar charts are the right hero viz for a 5-axis competency model BUT have real distortion pitfalls to design around",
+        "detail": "Radar/spider chart pitfalls: (a) AREA is misleading — the enclosed area scales with the square of values and depends on axis ORDER, so reordering axes changes the apparent 'size' of someone's profile; (b) overlapping filled series become unreadable mush past ~2-3; (c) too many axes (>~8) get cramped and unlabelable; (d) viewers over-read the shape. Best practices: keep to a handful of axes (the spec's 5 — Technical Depth, System Design, AI Engineering, Leadership/Influence, Craft & Delivery — is ideal), fix a sensible axis order and keep it stable, use low fill opacity or stroke-only, compare at most 2 shapes (current vs target level), and consider small-multiples or a parallel bar/lollipop as the accessible companion view.",
+        "why_it_matters": "The radar is the product's signature output ('output is a radar, not a single number'). Designing it as bespoke — fixed axis order, single filled current-shape at ~15-20% opacity with a dotted 'target level' overlay, per-axis accent-colored vertices, animated draw-on with springs — makes it look authored, not Chart.js-default. Always pair with a numeric/bar breakdown for accessibility and to counter area-distortion misreading."
+      },
+      {
+        "finding": "Linear's brand discipline = restraint, room to breathe, and a desaturated signature color",
+        "detail": "Linear's primary brand color is 'a subtle desaturated blue,' typically reserved for backgrounds; supporting neutrals are precise (Mercury White #F4F5F8, Nordic Gray #222326); the guiding spatial principle is 'make them big or make them small, but give them room to breathe' — no cramped/cluttered layouts. The system is monochrome-first with intentional accent use, not gradient-soup.",
+        "why_it_matters": "Directly counters the AI-slop 'everything gradient, everything crowded' tell. level-up should lean on generous negative space, a mostly-monochrome dark canvas, and let the per-track accent gradients appear sparingly (skill nodes, radar, level-up moments) rather than as full-bleed hero washes."
+      },
+      {
+        "finding": "Editorial / hand-crafted feel comes from a distinctive type PAIRING with real hierarchy, not more fonts",
+        "detail": "Every.to and award-typography sites establish periodical identity through: bespoke cover art per article (not stock), named recurring sections/columns, custom animated hero icons with distinct hover states, and strong serif/sans contrast. Google Fonts' pairing principles: combine serif+sans for hierarchy, drive pairings with CONTRAST (weight/size/structure) so faces don't compete, and superfamilies harmonize reliably. Awwwards editorial darlings favor high-personality display faces — Druk, Editorial New, Canela, Bebas — over Inter-for-headlines. get-certified uses Inter + DM Serif Display + JetBrains Mono.",
+        "why_it_matters": "'Inter everywhere' is a top AI tell. level-up needs a display face with more personality than DM Serif Display (which is common) to signal a distinct sibling identity — e.g. a characterful serif (Fraunces variable, or an Editorial-New-style) or a bold grotesque display, paired with Inter for body and JetBrains Mono as an INTENTIONAL 'instrument/terminal' voice for XP, levels, and data labels."
+      },
+      {
+        "finding": "get-certified's existing token system is a strong, non-generic foundation to evolve",
+        "detail": "Concrete inherited tokens: bg #080d14, layered surfaces #0d1520/#111d2c/#162032, per-domain gradients (AIF cyan #00bcd4, CLF blue #1976d2, CCA violet #7c5cff each with -dim/-accent/-glow/-grad variants), Anthropic clay #d97757 as an accent, orange #FF9900 focus/brand, semantic success/error/warning/info, radii 4/6/10/16/24/999, timings 120/220/450ms, --spring cubic-bezier(.2,1.4,.4,1) and --eout cubic-bezier(.16,1,.3,1), fonts Inter/DM Serif Display/JetBrains Mono. Glow shadows (0 0 30px accent) create the 'lit from within' dark aesthetic.",
+        "why_it_matters": "level-up should EVOLVE not copy: keep the deep-navy canvas, layered-surface elevation, glow language, and custom springs (they're already premium and consistent), but assert its own identity via a new display face, a distinct two-track color system, tighter radii, and the skill-tree/observatory motif. The CCA violet #7c5cff must be used carefully since it's the exact AI-slop purple — reserve it, don't headline with it."
+      },
+      {
+        "finding": "The skill-tree / constellation is the signature UI and should be hand-authored SVG, not a library graph",
+        "detail": "A bespoke constellation reads as craft when: nodes are positioned on an intentional (slightly irregular, hand-tuned) layout rather than an auto-force-directed blob; connecting 'edges' are thin strokes that light up progressively (stroke-dashoffset draw-on) as prerequisites complete; locked nodes are dim/desaturated, unlocked nodes glow with the track accent (reuse --*-glow 0 0 30px), the current frontier pulses; a faint starfield/grain texture sits behind; hovering a node reveals a custom tooltip. Techniques: SVG <line>/<path> between <circle> nodes, radial gradients for glow, CSS/WAAPI for the draw-on and pulse, all gated by prefers-reduced-motion (show final lit state instantly).",
+        "why_it_matters": "This is what makes the product memorable and un-templated — nobody's Chart.js/generic-course-platform does a hand-drawn observatory skill map. It directly delivers 'differentiated & cool, signature gamification' from the spec while showcasing the inline-SVG craft the spec already mandates."
+      },
+      {
+        "finding": "Texture, grain, and optical detail separate premium dark UI from flat template dark",
+        "detail": "Concrete crafted-detail moves seen across references: subtle film grain/noise overlay on dark backgrounds (breaks the flat #080d14 into something that feels like a surface); very-low-opacity dot or line grid behind hero/dashboard areas; 1px borders using rgba(255,255,255,.06-.08) (get-certified's --border) instead of solid gray; inner highlights (inset box-shadow top 1px white ~8%) to fake a lit top edge on cards; optical alignment and true-black avoidance; JetBrains Mono for numeric data so figures feel 'instrument-grade.' Rauno Freiberg's craft canon ('Invisible Details of Interaction Design,' 'Designing Depth') centers exactly these micro-details.",
+        "why_it_matters": "AI-generated dark UIs are flat and shadow-templated. Grain + inner-highlight + hairline borders + mono numerals are cheap-to-implement, high-signal details that make the whole thing read as authored by someone who cares. These are prime candidates for the 'signature details' list."
+      },
+      {
+        "finding": "Per-track identity (General vs AI Engineering) should be a color/motif split, not two different designs",
+        "detail": "Approach: one shared dark shell, type system, and motion language; the two tracks differ by accent family and a subtle motif. Recommendation — General Engineering: a cool structural palette (evolve get-certified's CLF blue #1976d2 → a refined steel/azure with a blueprint/grid motif signalling foundations & systems). AI Engineering (the flagship): a distinctive warm-tech signature that avoids the slop-purple — e.g. Anthropic-adjacent clay/rust #d97757 paired with a cyan/teal (#00bcd4) 'signal' accent, with a neural-constellation motif. Each track gets its own gradient (following get-certified's 3-stop 135deg pattern) used ONLY on that track's skill tree, radar axis, and level-up moments.",
+        "why_it_matters": "Delivers the spec's 'distinct per-track identity' and the brand's flagship 'Real World AI Engineering' emphasis, while consciously steering the flagship AWAY from the generic purple-gradient AI aesthetic — using clay (a real brand-adjacent color) instead is itself an anti-slop statement."
+      },
+      {
+        "finding": "XP/level/progress viz should look 'instrument-grade,' not like a generic gamification widget",
+        "detail": "Avoid the slop gamification look (bright rounded progress bar + confetti + generic star icons). Instead: segmented/ticked progress meters rendered in SVG with mono numerals; level badges as custom-drawn geometric sigils (not emoji medals); streaks shown as a compact contribution-graph-style grid; 'boss battle' framed as a distinct high-contrast state (accent glow intensifies, subtle scanline). Reserve the spring easing (--spring overshoot) for genuine reward moments (level-up, node unlock) so celebration feels earned; keep everyday progress updates calm (ease-out, <300ms).",
+        "why_it_matters": "Gamification is where products most easily tip into childish/templated. Instrument-grade, restrained treatment keeps it credible for a Staff/Principal engineer audience while still being rewarding — matching the brand's 'what actually works in production' seriousness."
+      }
+    ],
+    "sources": [
+      "https://vercel.com/design",
+      "https://linear.app/brand",
+      "https://every.to/",
+      "https://stripe.com/blog/connect-front-end-experience",
+      "https://emilkowal.ski/ui/great-animations",
+      "https://www.nngroup.com/articles/dark-mode/",
+      "https://m2.material.io/design/color/dark-theme.html",
+      "https://fonts.google.com/knowledge/choosing_type/pairing_typefaces",
+      "https://www.awwwards.com/websites/typography/",
+      "https://rauno.me/craft"
+    ],
+    "implications_for_build": [
+      "Ban the slop checklist explicitly in the design system README: no full-bleed purple/violet hero gradient, no centered-hero-+-3-equal-cards template, no emoji bullets, no glassmorphism-everywhere, no uniform 16px+ radii, no stock isometric/blob art, no gradient headline text. Add a lint/review step against these.",
+      "Adopt Geist-style discipline: tighten radii to ~6px controls / 10-12px cards / 9999px pills (tighter than get-certified's 16-24px default) and enforce the 4px spacing rhythm (8 within group, 16 between groups, 32-40 between sections). Convert accent tokens to semantic 10-step scales and ship oklch()/P3 variants alongside hex.",
+      "Keep the deep-navy canvas (#080d14) and layered-surface elevation from get-certified, but assert level-up's identity with a NEW display typeface of higher personality than DM Serif Display (recommend Fraunces variable or an Editorial-New-style serif, OR a bold grotesque) paired with Inter body + JetBrains Mono for all numerals/data/XP. Never headline in Inter.",
+      "Define two track themes on one shared shell: General Engineering = steel/azure + blueprint-grid motif; AI Engineering (flagship) = Anthropic clay #d97757 + cyan #00bcd4 signal + neural-constellation motif. Explicitly avoid #7c5cff as a track headline color; if used, reserve it for tertiary/locked states.",
+      "Build the competency radar as bespoke inline SVG: exactly 5 fixed-order axes, single current-profile shape at ~15-20% fill opacity, dotted target-level overlay, per-axis accent vertices, spring draw-on animation, and a paired bar/lollipop breakdown for accessibility and to counter area-distortion misreading. Never ship a default Chart.js radar.",
+      "Build the skill tree as a hand-tuned SVG constellation (not force-directed): dim locked nodes, accent-glow unlocked nodes, pulsing frontier, stroke-dashoffset edge draw-on as prerequisites clear, faint starfield/grain behind, custom tooltips. This is the memorable centerpiece — invest here.",
+      "Codify motion: custom cubic-beziers only (keep --spring cubic-bezier(.2,1.4,.4,1) and --eout cubic-bezier(.16,1,.3,1)), everyday transitions ease-out <300ms, springs reserved for reward moments (level-up, unlock), all animations interruptible, never animate keyboard-repeated actions, and a full prefers-reduced-motion path that swaps movement for opacity/instant final states.",
+      "Enforce accessible dark premium: no pure black, elevation via white-overlay surfaces, desaturate accents for text (≥4.5:1), keep vivid accents for fills/glows only, and provide a user-facing light/dark toggle per NN/g. Add contrast checks to CI/Playwright visual verification.",
+      "Add texture/craft layer: subtle film-grain or low-opacity dot-grid over dark surfaces, hairline rgba(255,255,255,.06-.08) borders, inset top-highlight on cards, mono numerals for data — cheap, high-signal anti-flatness details.",
+      "Ship a documented list of 6 signature details so they're intentional and reused: (1) hand-drawn observatory constellation skill tree; (2) bespoke 5-axis radar with target-overlay; (3) instrument-grade mono numerals + segmented SVG meters; (4) grain + inner-highlight dark surfaces; (5) custom-tuned spring easing on reward moments; (6) per-track motif (blueprint-grid vs neural-constellation). These become the product's visual fingerprint.",
+      "Give the product a real point of view in copy and iconography (custom SVG icons, opinionated section names, no listicle filler) — the spec's originality mandate is itself an anti-AI-slop lever; pair the visual craft with authored voice so the two reinforce each other."
+    ]
+  },
+  {
+    "track": "Gamification & learning mechanics that drive mastery/retention in senior engineers",
+    "summary": "The evidence is unambiguous on the learning-science core: retrieval practice, spacing, interleaving, deliberate practice, and mastery learning produce durable skill, and they work precisely because they feel harder in the moment (Bjork's \"desirable difficulties\"). These should be the load-bearing mechanics, not decoration. The gamification evidence is far more conditional: meta-analyses show large learning-outcome effects (Hedges' g ~0.78-0.82), but multiple studies find points/badges/leaderboards (PBLs) improve behavior/performance while failing to raise — or even lowering — intrinsic motivation, and Self-Determination Theory predicts extrinsic rewards attached to already-valued activity crowd out intrinsic drive (overjustification). For a sophisticated senior-engineer audience the winning design uses White Hat / intrinsic drives (competence feedback, autonomy, mastery, epic meaning) as the spine and treats streaks/leagues as optional habit scaffolding that can be turned off. Credibility with this audience comes from proof-of-work (real projects, code that runs, defensible judgment under scenario pressure) modeled on cognitive apprenticeship and situational judgment tests — not multiple-choice theater. Anything that reads as arbitrary points, cartoon mascots, fake urgency, or generated filler will be instantly dismissed as a toy.",
+    "key_findings": [
+      {
+        "finding": "Retrieval practice beats rereading, and the gap widens over time — this is the single highest-leverage mechanic",
+        "detail": "Roediger & Karpicke (2006, Psych Science 17:249-255; Science 2008 319:966-968): restudied material shows HIGHER immediate recall but tested material wins as delay grows. Karpicke & Blunt (2011, Science 331:772-775) found retrieval practice out-learns elaborate concept-mapping. The 'retrieval effort hypothesis': difficult-but-successful retrievals build memory more than easy ones; even failed retrieval attempts help (Kornell, Hays & Bjork 2009).",
+        "why_it_matters": "Every unit should force the learner to produce/recall/reconstruct from memory, not recognize from a list. This is also the anti-'passive video course' differentiator: passive rereading produces an 'illusion of learning' (familiarity mistaken for mastery)."
+      },
+      {
+        "finding": "'Desirable difficulties' means the product should deliberately feel harder than competitors — and say so",
+        "detail": "Bjork (1994): spacing, interleaving, testing, delayed feedback, and varying practice conditions all depress performance during practice but improve long-term retention. The 'challenge point framework' defines an optimal difficulty; a difficulty is only desirable if the task remains achievable. Bahrick's 'permastore': spaced study yields lifetime retention.",
+        "why_it_matters": "Senior engineers distrust things that feel easy. Framing friction as intentional ('this feels hard because that's what makes it stick') converts the usual UX complaint into a credibility signal. But you must keep tasks in the achievable band or they disengage."
+      },
+      {
+        "finding": "Interleaving (mixing problem types) beats blocked practice, especially for choosing the right approach — but learners hate it during practice",
+        "detail": "Rohrer & Taylor math studies: interleaved practice groups score dramatically higher on delayed tests despite worse practice-session performance. Mechanism: interleaving forces DISCRIMINATION — you must first decide WHICH strategy applies, which is the real-world skill; blocked practice lets you autopilot one method. Practical caveat from Learning Scientists: don't switch too fast (that's just multitasking).",
+        "why_it_matters": "For engineers this maps perfectly: real work never says 'this is a concurrency problem, now apply pattern X.' Quests/reviews should mix problem types so the learner practices problem RECOGNITION, not just solution execution. Warn users their in-session score will feel worse — it's working."
+      },
+      {
+        "finding": "Deliberate practice requires 5 conditions Ericsson specified — most 'courses' violate 2-3 of them",
+        "detail": "Ericsson's criteria: (1) well-defined task with specific goal, (2) learner-performable, (3) IMMEDIATE feedback, (4) repeatable, (5) designed by a teacher, at the edge of ability. Without appropriate feedback, practice is 'ineffective or even detrimental.' Meta-analytic correlation of deliberate practice to performance ~0.40 (necessary but not sufficient; talent/other factors also matter). Ericsson explicitly rejected the raw '10,000 hours' framing — it's how you practice, not hours logged.",
+        "why_it_matters": "Design each activity around a single named sub-skill at the edge of the user's current ability, with instant, specific feedback. Avoid open-ended 'build whatever' with no feedback loop — that's naive practice."
+      },
+      {
+        "finding": "Mastery learning: gate progression on demonstrated competence (~90%), with corrective loops — effect size ~0.59, Bloom's '2 sigma'",
+        "detail": "Bloom's mastery learning: learners must hit a mastery threshold on prerequisites before advancing; those who fall short get correctives (re-teach, tutoring) and are retested until they pass. Average effect size ~0.59; tutoring approaches Bloom's famous 2-sigma advantage. Higher mastery thresholds correlate with stronger later performance.",
+        "why_it_matters": "This justifies a skill tree with real GATES (you cannot unlock the distributed-systems boss until you've proven the prerequisite), which is both pedagogically sound AND the source of the 'meaningful' feeling in a progression system. Fake gates (just click next) destroy credibility."
+      },
+      {
+        "finding": "Generation effect: making the learner produce the answer/artifact beats giving it to them",
+        "detail": "Slamecka & Graf (1978, canonical): self-generated information is remembered better than read information. Mechanisms debated (lexical activation, procedural reinstatement, transfer-appropriate processing). Caveat: the effect weakens for genuinely UNFAMILIAR material — so pure generation on brand-new topics can backfire; scaffold first, then require generation.",
+        "why_it_matters": "Favor 'write the code / draft the design / predict the output before we tell you' over 'watch then repeat.' Brilliant operationalizes this as 'test before teach' (pretest before revealing the procedure). But for net-new concepts, provide a worked example first (see cognitive apprenticeship modeling)."
+      },
+      {
+        "finding": "Spaced repetition works, but for skills you want ADAPTIVE half-life scheduling, not fixed Leitner boxes",
+        "detail": "Ebbinghaus forgetting curve; expanding intervals (Mace's 1/2/4/8 days; Pimsleur's graduated recall). Debate on expanding vs uniform: Karpicke & Roediger (2007) found expanding aids short-term, uniform aids long-term; Karpicke & Bauernschmidt (2011) — absolute spacing matters more than the expansion pattern. Duolingo's Half-Life Regression (Settles & Meeder 2016, ACL, trained on 13M learning traces) estimates per-item memory half-life via ML and schedules reviews before predicted forgetting; Tabibian et al. (2019 PNAS) argue optimal schedule is learner-dependent.",
+        "why_it_matters": "Don't ship a naive fixed-interval flashcard system. Model decay per skill per user and resurface concepts (as review questions embedded in new quests) right before predicted forgetting. This is invisible, sophisticated, and non-childish."
+      },
+      {
+        "finding": "Self-Determination Theory is the design constitution: autonomy + competence + relatedness, and rewards must be INFORMATIONAL not CONTROLLING",
+        "detail": "Deci & Ryan: three needs — autonomy (causal agency), competence (mastery), relatedness (connection). Overjustification (Deci 1971): paying for an intrinsically-motivated task, then stopping, drops engagement BELOW baseline. Critical nuance from Cognitive Evaluation Theory: verbal praise / positive competence feedback INCREASES intrinsic motivation because it isn't perceived as controlling; controlling rewards decrease it. Choice itself raises intrinsic motivation; people even pay to have caused an outcome themselves.",
+        "why_it_matters": "Frame every reward as competence FEEDBACK ('you can now reason about X'), never as a bribe or quota. Give real choices (which skill to pursue, which project). If you attach heavy extrinsic rewards to activities engineers already find interesting, you risk crowding out the intrinsic drive that got them there."
+      },
+      {
+        "finding": "PBLs (points/badges/leaderboards) have a documented failure mode: they can raise performance while LOWERING participation and motivation",
+        "detail": "Gamification-of-learning meta-analyses show large outcome effects (2023 Frontiers, 41 studies/5,071 ppl, Hedges' g=0.822; 2024 BJET, g=0.782). BUT a calculus study found leaderboards improved learning performance yet did NOT improve motivation or self-efficacy; a Software Engineering study (98 students) found the gamified group did better on practical assignments but WORSE on written tasks and had LOWER class participation. Ian Bogost's critique: PBL-only gamification is 'simplistic and manipulative' and doesn't reflect what actually makes games motivating.",
+        "why_it_matters": "Points and leaderboards are not free wins. Make competitive/extrinsic layers optional and non-default for a senior audience; lead with mastery and real artifacts. A leaderboard of 'XP' among Staff engineers reads as juvenile; a leaderboard of shipped, peer-reviewed solutions might not."
+      },
+      {
+        "finding": "Streaks and leagues are habit scaffolding built on loss aversion — powerful but anxiety-inducing and gameable",
+        "detail": "Duolingo's streak + streak-freeze mechanic leverages loss aversion / commitment devices; their research infrastructure includes ML-optimized reminder notifications (Yancey & Settles, KDD 2020, 200M notifications). Octalysis classifies streaks/scarcity/urgency as 'Black Hat' drives — effective at driving action but 'leave a bad taste' and, once removed, motivation drops below baseline (same crowding-out as SDT).",
+        "why_it_matters": "A streak that punishes a senior engineer for a busy on-call week produces resentment, not habit. If you use streaks: make them forgiving (freezes, weekly not daily targets), tie them to learning cadence not vanity, and let power users disable them. Never make streak-loss the emotional core."
+      },
+      {
+        "finding": "Skill trees feel meaningful only when choices involve real TRADEOFFS and specialization — otherwise they're a glorified progress bar",
+        "detail": "From game design (Octalysis Core Drive 2 'Development & Accomplishment' + Core Drive 4 'Ownership'): satisfying trees give agency (you chose THIS build), visible progress, and meaningful, mutually-exclusive-ish choices that create build identity. A tree where you eventually unlock everything in a fixed order is a gimmick. Csikszentmihalyi's flow needs clear goals + immediate feedback + challenge-skill balance — a tree makes the challenge ladder visible.",
+        "why_it_matters": "Design the progression map as a 'constellation' where a senior picks a specialization path (e.g., Distributed Systems vs. Developer Experience vs. ML Infra) with genuine opportunity cost, not a linear checklist. The choice IS the autonomy-support from SDT. Show the whole map (aspirational) but gate by demonstrated mastery."
+      },
+      {
+        "finding": "Cognitive apprenticeship is the blueprint for teaching Staff-level tacit judgment: model → coach → scaffold → articulate → reflect → explore",
+        "detail": "Collins, Brown & Newman: experts fail to teach because their reasoning is tacit. The fix: (1) MODEL — expert thinks aloud through a real problem exposing heuristics; (2) COACH — feedback while learner attempts; (3) SCAFFOLD then fade; (4) ARTICULATION — force the learner to verbalize their reasoning; (5) REFLECTION — compare learner's approach to expert's; (6) EXPLORATION — remove supports. Situated in real context, in the Zone of Proximal Development.",
+        "why_it_matters": "This is how you build 'judgment' content that senior engineers respect. A boss battle should show an expert's annotated reasoning on a similar case (modeling), make the learner articulate WHY they chose an approach (not just what), then let them compare against a Staff engineer's write-up (reflection)."
+      },
+      {
+        "finding": "Situational Judgment Tests are the validated format for assessing judgment — and they predict job performance years out",
+        "detail": "SJTs present realistic scenarios; test-taker ranks/rates responses by effectiveness. One study: interpersonal-judgment SJTs predicted job performance 9 years later. Scoring options: expert consensus, expert-novice differencing, target scoring, consensual (%-based) scoring. Behavioral-tendency items correlate with personality; knowledge items with general mental ability. Custom-built by design, not off-the-shelf. Criticism: brevity can reduce realism.",
+        "why_it_matters": "For 'boss battles' assessing Staff judgment (design review, incident command, arch tradeoffs), use SJT structure: realistic scenario, multiple defensible responses, score against a panel of senior engineers' consensus rather than one 'right' answer. This is credible precisely because it mirrors how real seniority is judged — and defensible/multi-answer scoring signals sophistication."
+      },
+      {
+        "finding": "Credibility for engineers = proof-of-work that RUNS and defensible reasoning under pressure, not multiple-choice",
+        "detail": "Synthesis across Boot.dev (code executes in-browser, real projects), Execute Program (spaced retrieval on real code behavior), Brilliant (interactive/do-not-tell, test-before-teach, Socratic tutor that 'asks instead of tells'). The common thread: the artifact or the executed prediction IS the evidence. Multiple-choice recall is dismissed as theater. Peer/expert review and consensus scoring (from SJT literature) add credibility that auto-graders can't for open-ended judgment.",
+        "why_it_matters": "A quest is credible to a senior when success is verifiable and non-fakeable: code that passes hidden tests, a design doc reviewed against a rubric derived from real staff engineers, an incident sim where your decisions have downstream consequences. 'Complete the module' is not proof of work; 'your service survived the load test / your design handled the failure injection' is."
+      },
+      {
+        "finding": "Concrete anti-patterns that make a product read as a toy or AI slop to smart adults",
+        "detail": "Derived from Bogost (manipulative PBL), SDT (controlling rewards, overjustification), Octalysis (Black-Hat over-reliance = gambling-like, no sense of control), and the mastery/proof-of-work literature: (a) arbitrary points with no informational meaning; (b) cartoon mascots / infantilizing tone / confetti as the reward substance; (c) fake urgency and manufactured scarcity; (d) single-'right-answer' judgment questions; (e) unlock-everything-linearly trees with no tradeoffs; (f) unforgiving daily streaks that punish adult schedules; (g) generic, obviously-templated content with no specific expert voice or war stories; (h) rewards decoupled from real competence so they can be farmed.",
+        "why_it_matters": "This is the direct 'what to avoid' list. The through-line: senior engineers reject anything where the reward is decoupled from real competence, where the tone talks down to them, or where content lacks a specific, opinionated expert voice. Substance (real difficulty, real judgment, real artifacts) is the aesthetic they respect."
+      }
+    ],
+    "sources": [
+      "https://en.wikipedia.org/wiki/Testing_effect",
+      "https://en.wikipedia.org/wiki/Desirable_difficulty",
+      "https://en.wikipedia.org/wiki/Practice_(learning_method)",
+      "https://en.wikipedia.org/wiki/Self-determination_theory",
+      "https://en.wikipedia.org/wiki/Situational_judgement_test",
+      "https://en.wikipedia.org/wiki/Cognitive_apprenticeship",
+      "https://en.wikipedia.org/wiki/Interleaving_(learning)",
+      "https://www.learningscientists.org/blog/2016/8/11-1",
+      "https://en.wikipedia.org/wiki/Spaced_repetition",
+      "https://github.com/duolingo/halflife-regression",
+      "https://en.wikipedia.org/wiki/Generation_effect",
+      "https://en.wikipedia.org/wiki/Mastery_learning",
+      "https://en.wikipedia.org/wiki/Flow_(psychology)",
+      "https://en.wikipedia.org/wiki/Gamification_of_learning",
+      "https://yukaichou.com/gamification-examples/octalysis-complete-gamification-framework/",
+      "https://www.brilliant.org/about/"
+    ],
+    "implications_for_build": [
+      "Make the learning-science core the product's spine, not a skin: every unit ends in RETRIEVAL (produce/recall, not recognize), concepts resurface on an ADAPTIVE spaced schedule (model per-skill memory half-life à la Duolingo HLR, don't use fixed Leitner boxes), and quests INTERLEAVE problem types so users practice recognizing which approach applies — the actual senior skill.",
+      "Gate the skill tree on demonstrated MASTERY (~90% competence on prerequisites with corrective retry loops, per Bloom), not on clicking 'next.' Real gates are what make the progression feel earned and non-fake; they also give the pedagogical 2-sigma benefit.",
+      "Design the progression as a specialization CONSTELLATION with genuine tradeoffs (e.g., Distributed Systems vs Developer Experience vs ML Infra paths), showing the full aspirational map but requiring proven mastery to unlock. The meaningful CHOICE is the autonomy-support that SDT says sustains intrinsic motivation — a linear unlock-everything tree is a gimmick.",
+      "Frame ALL rewards as informational competence feedback ('you can now reason about consistency tradeoffs'), never as controlling bribes or quotas — Cognitive Evaluation Theory shows controlling rewards crowd out intrinsic motivation while competence feedback amplifies it.",
+      "Treat streaks/leagues/XP as OPTIONAL, off-by-default habit scaffolding for a senior audience. If used: forgiving cadence (weekly targets, freezes, no shame on on-call weeks), and never make streak-loss the emotional core. Avoid Black-Hat scarcity/urgency mechanics that read as manipulative to smart adults.",
+      "Build 'boss battles' as Situational Judgment Tests for Staff-level judgment: realistic scenario (design review, incident command, arch decision), multiple DEFENSIBLE responses, scored against a panel-of-senior-engineers consensus rather than one 'right' answer — multi-answer defensible scoring is itself a sophistication signal.",
+      "Structure judgment content via cognitive apprenticeship: expert thinks aloud on a similar case (modeling), learner must ARTICULATE their reasoning (not just pick an option), then compare against an annotated Staff-engineer write-up (reflection), with scaffolding that fades.",
+      "Make credibility come from proof-of-work that RUNS: code passing hidden tests, design docs reviewed against staff-derived rubrics, incident sims where decisions have downstream consequences. Ban pure multiple-choice recall as the assessment of record — engineers read it as theater. Consider peer/expert review for open-ended artifacts.",
+      "Use 'test before teach' and the generation effect: have users predict/attempt before revealing the solution — BUT scaffold net-new concepts with a worked example first, since the generation effect weakens for unfamiliar material.",
+      "Explicitly market the friction: tell users the product feels harder on purpose (desirable difficulties) and that their in-session scores may look worse while retention improves. For this audience, intentional difficulty is a trust signal, not a UX defect — but keep every task inside the achievable challenge band (flow channel) or they disengage.",
+      "Hard anti-pattern list to enforce in design review: no arbitrary meaningless points, no infantilizing mascots/tone, no confetti-as-substance, no fake urgency, no single-right-answer judgment items, no farmable rewards decoupled from competence, and no generic templated content — ship a specific, opinionated expert voice with real war stories or it reads as AI slop."
+    ]
+  },
+  {
+    "track": "Staff+/Principal Engineering Competency Frameworks",
+    "summary": "The definitive Staff+ literature converges on a single thesis that must be the spine of level-up: advancement past Senior is NOT about coding better — it is about scope, judgment under ambiguity, and leverage/influence-without-authority. Will Larson (StaffEng.com) supplies four operating archetypes (Tech Lead, Architect, Solver, Right Hand) and five shared responsibilities (technical direction, sponsorship, engineering perspective in the room, exploration, glue). Tanya Reilly (\"The Staff Engineer's Path\") organizes the same competency space into three teachable pillars — Big Picture, Execution, Leveling Up Others — and her \"Being Glue\" essay names the career trap. Public ladders (levels.fyi, Dropbox, Rent the Runway, CircleCI) independently converge on three measurable axes — ambiguity, scope/blast radius, and impact — with Dropbox explicitly stating coding-craft expectations plateau at L4 while everything above grows via scope, strategy, and talent development. Charity Majors, Gergely Orosz, Camille Fournier, and Lara Hogan supply the behavioral color: the engineer/manager pendulum, sponsorship-over-mentorship, and the longer feedback loops that define the senior-IC experience.",
+    "key_findings": [
+      {
+        "finding": "Larson's four Staff archetypes are OPERATING MODES, not a single ladder — a Staff engineer picks a shape based on org needs",
+        "detail": "Tech Lead: guides approach/execution of one team or cluster of teams (roughly 1 per 8 engineers), delegates coding to grow others, is the PM's close partner and first call when the roadmap shifts. Architect: owns a specific enduring technical domain (API design, storage, cloud), advocates via 'organizational authority they've earned,' some still code some don't. Solver: a trusted agent who goes deep on knotty high-execution-risk problems leadership pre-identifies, leaves once 'contained' (creates a 'feeling of transience'). Right Hand: rarest, operates as a senior org leader without direct reports using a leader's borrowed authority, attends the leader's staff meetings, 'dives into a fire, edits the approach, delegates execution, pops to the next fire.' Tech Lead/Architect build community over years; Solver/Right Hand bounce fire-to-fire.",
+        "why_it_matters": "level-up should let a learner self-select or be diagnosed into an archetype rather than assume a single Staff persona. The assessment can surface which archetype a learner is closest to and which they aspire to — very different roadmaps."
+      },
+      {
+        "finding": "Larson's five shared Staff responsibilities are the concrete behavior set that spans all archetypes",
+        "detail": "(1) Setting technical direction as a 'part-time product manager for technology' — 'accountable to the business and organization first and yourself second.' (2) Mentorship & sponsorship — 'a moderate amount of mentorship with considerably more sponsorship.' (3) Providing engineering perspective — getting 'pulled into the room' for reorgs/roadmap/hiring decisions, representing 'the interests of all of engineering, not just your own.' (4) Exploration — ambiguous high-risk problems that 'hill-climbing' can't solve. (5) Being glue — 'needed but often invisible tasks.' On coding: 'Most write some, some write none, but none write as much as they used to.'",
+        "why_it_matters": "These five map almost 1:1 to assessment axes. They are observable and gradable, unlike vague 'seniority.'"
+      },
+      {
+        "finding": "Reilly's three pillars give a teachable, chapter-by-chapter curriculum spine that already reads like a roadmap",
+        "detail": "Pillar I Big Picture: role definition & leadership-without-management (Ch1), 'Three Maps' — locator/topographical/treasure maps to navigate org and see where work heads (Ch2), creating technical vision/strategy docs via approach-write-launch (Ch3). Pillar II Execution: 'Finite Time' — choosing/defending projects under resource constraints (Ch4), 'Leading Big Projects' lifecycle: context, structure, explore, design, code, communicate (Ch5), 'Why Have We Stopped?' — diagnosing stalled projects: blocked, lost, or built on shaky foundation (Ch6). Pillar III Leveling Up: 'You're a Role Model Now' — competence, self-awareness, creating calm, ownership (Ch7), 'Good Influence at Scale' — advice, teaching, guardrails, opportunity for individuals AND groups (Ch8), 'What's Next?' career planning (Ch9).",
+        "why_it_matters": "This is the single cleanest 3-axis framework to base assessment scoring on; each chapter is a roadmap module with concrete sub-skills. Big Picture / Execution / Leveling Up can be three of the five assessment axes directly."
+      },
+      {
+        "finding": "Public ladders independently converge on the SAME three measurable axes: ambiguity, scope, and impact/blast radius",
+        "detail": "levels.fyi framework: Senior — moderate/complex components, blast radius = immediate team, low-moderate ambiguity, hands-on coding, the 'career level' where most engineers stay. Staff (<10% of company) — leads complex initiatives, shifts 'more towards design than implementation,' sets vision/strategy, team/multi-team blast radius, moderate-high ambiguity. Principal (very few) — business-critical, sets vision for an org or multiple orgs, 'operates fully autonomously,' 'rarely does any day-to-day coding,' HIGHEST ambiguity ('loosely defined' role parameters). The consistent trend: coding decreases, ambiguity increases, blast radius widens.",
+        "why_it_matters": "Gives level-up defensible, industry-validated axis definitions. The assessment can score a learner on each axis and map to Senior/Staff/Principal bands using these exact descriptors."
+      },
+      {
+        "finding": "Dropbox's public ladder EXPLICITLY states technical craft plateaus at L4 — proof the shift is away from coding",
+        "detail": "IC5 Staff: 'I set the multi-year, multi-team technical strategy'; influences roadmaps of OTHER teams; favors 'priorities of the wider engineering org rather than locally optimal outcomes'; leads decisions 'even when making unpopular decisions.' IC6 Principal: 'org/company-wide multi-year goals,' 'transcend organizational boundaries,' partners with Directors/senior EPD leadership, handles decisions with 'no one clearly correct answer' whose consequences are 'sweeping.' CRITICAL: on both, 'The expectations for code fluency do not go beyond L4' and software design plateaus at L5. Growth above is scope, strategy authority, leadership tier, and talent development — NOT deeper coding.",
+        "why_it_matters": "This is the hardest evidence for level-up's core value prop. It lets the platform tell learners bluntly: getting better at coding will NOT get you promoted past Senior — and back it with a Big Tech public ladder."
+      },
+      {
+        "finding": "Reilly's 'Being Glue' names the career trap: invisible integrative work that keeps teams shipping but doesn't get you promoted",
+        "detail": "Glue work = noticing the broken process and fixing it, mentoring, writing the docs, reviewing designs, coordinating projects, onboarding, unblocking others. Reilly's argument: this work is essential but 'non-promotable' — it's often not on the ladder criteria, and disproportionately falls on women and underrepresented engineers, crowding out the technical work promotion committees actually reward. Advice: do glue work with eyes open, be deliberate about how much, ensure your core technical/strategic contributions remain visible, and negotiate to make the leadership work your actual recognized role rather than an invisible tax. Larson's StaffEng deliberately defers to this essay rather than 'a watery rehash.'",
+        "why_it_matters": "level-up must teach glue work as a double-edged sword — coach learners to do it strategically and make it visible, not just do more of it. A blind spot for many stalled Seniors."
+      },
+      {
+        "finding": "Sponsorship (Lara Hogan) beats mentorship for advancing others — and it is a gradable Staff+ behavior",
+        "detail": "Mentorship = giving advice; sponsorship = 'feeling on the hook to help get someone promoted,' spending your own capital. Concrete sponsorship behaviors: suggest someone as lead on a new project, recommend them as postmortem facilitator, forward their work email to a new audience 'underscoring why it was interesting,' cite their insight to influential groups, get them a talk/blog post. Underrepresented engineers usually need 'opportunity and visibility,' not more advice. Sponsorship can be invisible — 'you can sponsor someone without them even knowing it.' Larson echoes: effective Staff engineers use 'considerably more sponsorship' than mentorship.",
+        "why_it_matters": "The 'Leveling Up Others' axis should score sponsorship specifically, not generic mentoring. Gives concrete, observable behaviors to assess and coach toward."
+      },
+      {
+        "finding": "Charity Majors' engineer/manager pendulum reframes the IC track as a first-class, non-terminal path",
+        "detail": "'Fuck the whole idea that only managers get career progression.' 'Management is NOT a promotion... it's a change of profession.' 'The best frontline eng managers are never more than 2-3 years removed from hands-on work.' A tech lead 'IS a manager' (prioritizes the task over people) who needs the full manager toolset. Advocates swinging between IC and management serially (not simultaneously — the hybrid is 'an unstable combination' because deep eng requires blocking interruptions while management is interruptive). Draining senior engineers into management robs orgs of 'the great mentors and elder wizards we need.'",
+        "why_it_matters": "level-up should position the Staff+ IC track as equal to management and teach management-adjacent skills (running projects, influence, the 'manager toolset') without requiring a management title."
+      },
+      {
+        "finding": "The defining experiential shift is the FEEDBACK LOOP, not the skill list",
+        "detail": "StaffEng: the core challenge of operating at Staff is 'a much slower feedback cycle' — replacing the immediate 'coding REPL' with 'the uneven progress of mentorship, relationship building, and strategy'; feedback loops stretch to weeks, months, years. Katie Sylor-Miller: the myth that you'll be 'in control of the work you do and everyone will listen to you' is 'the opposite of what happens.' Joy Ebertz: 'the more senior you get, the less your job is about code.'",
+        "why_it_matters": "level-up must set expectations that Staff+ growth feels slow and ambiguous, and design its own feedback/practice loops to compensate — e.g. simulations and scenario judgment rather than code-graded exercises."
+      },
+      {
+        "finding": "Influence-without-authority has concrete named sub-skills in the StaffEng canon",
+        "detail": "'Stay aligned with authority' — Staff leadership runs on 'proxied authority from a (usually managerial) leader,' so you must be 'aligned, trustworthy, and predictable.' 'To lead, you have to follow' — 'blend your vision with the visions of your peers and leadership.' 'Learn to never be wrong' — shift 'towards understanding and communication' rather than winning, to avoid spending social capital 'repairing relationships frayed by conflict.' 'Build a network of peers' to vet decisions once authority starts to 'temper feedback.' 'Create space for others.'",
+        "why_it_matters": "Influence is often treated as a soft platitude; StaffEng decomposes it into 5 teachable, assessable behaviors that can become roadmap modules."
+      },
+      {
+        "finding": "Larson's 'Work on What Matters' gives a concrete anti-pattern taxonomy for judgment/prioritization",
+        "detail": "Avoid: Snacking (easy low-impact work), Preening (low-impact HIGH-visibility work — requires 'near invulnerability to criticism of your actual impact'), Chasing ghosts (high-effort low-impact, common when new leaders 'misjudge the familiar as the essential'). Focus instead on: Existential issues (companies run 'iterative elimination tournaments'), work with 'room and attention,' Glue work, Fostering growth ('your legacy'), Editing (small high-leverage changes), Finishing things ('we only get value from finishing projects'), and 'what only you can do.'",
+        "why_it_matters": "This is a ready-made rubric for the judgment/prioritization axis — learners can be given scenarios and scored on whether they snack/preen/chase ghosts vs. pick existential/high-leverage work."
+      },
+      {
+        "finding": "Writing is a load-bearing Staff+ skill, not a nice-to-have — strategy docs and RFCs are the primary artifacts of influence",
+        "detail": "StaffEng lists 'Writing engineering strategy' as a core operating skill: a doc guiding how the org supports business objectives via 'architecture, technology selection, and organizational structure.' Reilly Ch3 is a whole chapter on writing technical vision/strategy docs (approach-write-launch). Reilly's Squarespace RFC work shows the mechanism: an 'opinionated RFC template' with named approvers who say 'yes' or 'yes, if' (not gate-keeping 'no'), plus a small Architecture Review (~10 people, 50 min discuss / 10 min decide, 'rough consensus') — used for org-wide decisions like adopting Go and gRPC.",
+        "why_it_matters": "level-up should make written artifacts (strategy docs, RFCs, design proposals) a graded deliverable — arguably the single most transferable, evidenceable Staff+ skill."
+      },
+      {
+        "finding": "Gergely Orosz confirms the Staff+ title hierarchy and that Senior is the terminal/'career' level at most companies",
+        "detail": "Staff+ hierarchy above Senior: 'Staff, Senior Staff, Principal, Senior Principal, Distinguished or Fellow.' Staff is 'the level which follows senior engineer at Big Tech' for ICs 'of greater scope than senior.' levels.fyi corroborates Senior as 'the career level' where most engineers spend their careers and never need to progress further; Staff is <10%, Principal is 'very few.'",
+        "why_it_matters": "Frames level-up's market honestly: going Senior->Staff+ is a minority path requiring a deliberate behavioral change, which justifies a dedicated platform rather than generic upskilling."
+      }
+    ],
+    "sources": [
+      "https://staffeng.com/guides/staff-archetypes/",
+      "https://staffeng.com/guides/what-do-staff-engineers-actually-do/",
+      "https://staffeng.com/guides/operating-at-staff/",
+      "https://staffeng.com/guides/",
+      "https://staffeng.com/guides/staff-career-ladders/",
+      "https://lethain.com/work-on-what-matters/",
+      "https://lethain.com/durably-excellent-teams/",
+      "https://www.oreilly.com/library/view/the-staff-engineers/9781098118723/",
+      "https://www.levels.fyi/blog/swe-level-framework.html",
+      "https://charity.wtf/2017/05/11/the-engineer-manager-pendulum/",
+      "https://dropbox.github.io/dbx-career-framework/",
+      "https://dropbox.github.io/dbx-career-framework/ic5_staff_software_engineer.html",
+      "https://dropbox.github.io/dbx-career-framework/ic6_principal_software_engineer.html",
+      "https://dresscode.renttherunway.com/blog/ladder",
+      "https://larahogan.me/blog/what-sponsorship-looks-like/",
+      "https://engineering.squarespace.com/blog/2019/the-power-of-yes-if",
+      "https://newsletter.pragmaticengineer.com/p/what-is-a-staff-engineer"
+    ],
+    "implications_for_build": [
+      "Base the assessment's 5 axes on the convergent industry framework rather than inventing one. Recommended: (1) Scope & Blast Radius, (2) Judgment Under Ambiguity, (3) Technical Direction & Strategy (incl. writing), (4) Influence Without Authority, (5) Leveling Up Others (sponsorship). This maps cleanly onto Reilly's 3 pillars + Larson's 5 responsibilities + the levels.fyi/Dropbox axes, so it is externally defensible.",
+      "Score each axis on a Senior/Staff/Principal band using the exact public-ladder descriptors: Senior = immediate-team blast radius, low-moderate ambiguity, hands-on; Staff = multi-team, design over implementation, moderate-high ambiguity; Principal = org/multi-org, fully autonomous, highest ambiguity, rarely codes. This gives learners a concrete, credible 'you are here' verdict.",
+      "Lead the product narrative with the Dropbox 'code fluency plateaus at L4' fact. level-up's core promise should be explicit: coding skill will not promote you past Senior — we train the judgment/leverage/direction that does. This is a sharp, evidence-backed differentiator vs. LeetCode/coding-course competitors.",
+      "Do NOT grade primarily on code. Because Staff+ has weeks-to-years feedback loops and is about judgment, build the assessment around scenario/situational-judgment items and written artifacts (strategy docs, RFCs, prioritization calls) rather than auto-graded coding exercises.",
+      "Make written artifacts a first-class graded deliverable: a technical strategy doc (Reilly Ch3 approach-write-launch) and an RFC using a yes/'yes, if' approver model (Reilly's Squarespace pattern). This is the most transferable and evidenceable Staff+ skill.",
+      "Turn Larson's 'Work on What Matters' taxonomy into a prioritization mini-assessment: present realistic backlogs and score whether the learner snacks/preens/chases ghosts vs. targets existential and high-leverage work. This directly measures the judgment axis.",
+      "Diagnose and let learners choose an archetype (Tech Lead / Architect / Solver / Right Hand). Each archetype needs a distinct roadmap — a Solver's path (deep problem-solving, transience) differs sharply from a Tech Lead's (team, PM partnership, delegation). One-size-fits-all roadmap would be wrong.",
+      "Build a dedicated 'Leveling Up Others' module that teaches sponsorship as distinct from mentorship, with Hogan's concrete behaviors (amplify in rooms they're not in, hand off stretch/lead work, cite their work to influential groups) as gradable actions.",
+      "Include an explicit 'Being Glue' coaching module: teach learners to identify glue work, do it strategically, keep core technical/strategic contributions visible, and negotiate leadership work into their recognized role. Critical for stalled Seniors, especially women/underrepresented engineers.",
+      "Position the Staff+ IC track as equal to management (Charity Majors) and teach the 'manager toolset' (running big projects, influence-without-authority, stakeholder alignment) without requiring a management title — this defines level-up's lane.",
+      "Set expectations in onboarding that Staff+ growth feels slow and ambiguous with delayed feedback, and design the platform's own tight practice/feedback loops (simulations, peer review, scenario replays) to counteract the naturally long real-world feedback cycle."
+    ]
+  }
+]
