@@ -28,24 +28,29 @@ export interface Roadmap {
  */
 const BEHAVIORAL_DELTA: Record<AxisId, Partial<Record<Band, I18nText>>> = {
   1: {
-    developing: { en: "You apply named patterns, but not yet by cost. Start choosing the weakest consistency model that still holds your invariant — and be able to say why.", es: "Aplicas patrones con nombre, pero aún no por su costo. Empieza a elegir el modelo de consistencia más débil que aún sostiene tu invariante — y sabe explicar por qué." },
-    solid: { en: "You reason about tradeoffs deliberately. The L5 move: design the failure behavior first (thundering herd, dual-write, cache addiction), not the happy path.", es: "Razonas sobre compromisos deliberadamente. El salto a L5: diseña primero el comportamiento ante fallos (estampida, doble escritura, adicción a caché), no el camino feliz." },
+    developing: { en: "You apply named patterns, but not yet by cost. Start choosing the weakest consistency model that still holds your invariant, and be able to say why.", es: "Aplicas patrones con nombre, pero aún no por su costo. Empieza a elegir el modelo de consistencia más débil que aún sostiene tu invariante, y sabe explicar por qué." },
+    solid: { en: "You reason about tradeoffs deliberately. The next move is to design the failure behavior first (thundering herd, dual-write, cache addiction), not the happy path.", es: "Razonas sobre compromisos deliberadamente. El siguiente paso es diseñar primero el comportamiento ante fallos (estampida, doble escritura, adicción a caché), no el camino feliz." },
+    strong: { en: "Your depth is real. The way you compound it now is to become the person others escalate their hardest failure-surface problems to, and to write down the reasoning so it scales past you.", es: "Tu profundidad es real. La forma de multiplicarla ahora es volverte la persona a quien otros escalan sus problemas de fallo más difíciles, y dejar el razonamiento escrito para que escale más allá de ti." },
   },
   2: {
-    developing: { en: "You can build to spec. The next behavior: surface the alternatives and the non-goals before you design — the Microservice Premium is a choice, not a default.", es: "Puedes construir según especificación. El siguiente comportamiento: expón las alternativas y los no-objetivos antes de diseñar — el 'Microservice Premium' es una elección, no un default." },
-    solid: { en: "You weigh alternatives. The L5 move: frame architecture as reversible-decision economics and refuse patterns when contraindicated — CQRS outside a bounded context, for instance.", es: "Sopesas alternativas. El salto a L5: encuadra la arquitectura como economía de decisiones reversibles y rechaza patrones cuando están contraindicados — CQRS fuera de un contexto acotado, por ejemplo." },
+    developing: { en: "You can build to spec. The next move is to surface the alternatives and the non-goals before you design; the Microservice Premium is a choice, not a default.", es: "Puedes construir según especificación. El siguiente paso es exponer las alternativas y los no-objetivos antes de diseñar; el 'Microservice Premium' es una elección, no un default." },
+    solid: { en: "You weigh alternatives. The next move is to frame architecture as reversible-decision economics and refuse patterns when contraindicated, like CQRS outside a bounded context.", es: "Sopesas alternativas. El siguiente paso es encuadrar la arquitectura como economía de decisiones reversibles y rechazar patrones cuando están contraindicados, como CQRS fuera de un contexto acotado." },
+    strong: { en: "Your judgment holds under pressure. Consolidate it by setting the reference designs a domain reuses, so your restraint becomes the team's default instead of a lucky exception.", es: "Tu criterio se sostiene bajo presión. Consolídalo fijando los diseños de referencia que reutiliza un dominio, para que tu contención sea el default del equipo y no una excepción con suerte." },
   },
   3: {
-    developing: { en: "You ship when asked. The next behavior: write SLOs backward from a real user journey, in percentiles, and treat code review as design — not typos.", es: "Entregas cuando te lo piden. El siguiente comportamiento: escribe SLOs hacia atrás desde un recorrido de usuario real, en percentiles, y trata la revisión de código como diseño — no como ortografía." },
-    solid: { en: "You practice trunk-based delivery. The L5 move: run the error-budget control loop as the release throttle, and harden the 30% AI can't judge — the security hole, the p99 cliff.", es: "Practicas entrega trunk-based. El salto a L5: usa el presupuesto de error como acelerador de releases, y endurece el 30% que la IA no puede juzgar — el hueco de seguridad, el acantilado p99." },
+    developing: { en: "You ship when asked. The next move is to write SLOs backward from a real user journey, in percentiles, and treat code review as design rather than typo-hunting.", es: "Entregas cuando te lo piden. El siguiente paso es escribir SLOs hacia atrás desde un recorrido de usuario real, en percentiles, y tratar la revisión de código como diseño, no como cacería de erratas." },
+    solid: { en: "You practice trunk-based delivery. The next move is to run the error-budget loop as the release throttle, and harden the 30% AI can't judge: the security hole, the p99 cliff.", es: "Practicas entrega trunk-based. El siguiente paso es usar el presupuesto de error como acelerador de releases, y endurecer el 30% que la IA no puede juzgar: el hueco de seguridad, el acantilado p99." },
+    strong: { en: "Your delivery is solid. Push it outward: set the reliability standards and review bar that move the whole org's DORA outcomes, not just your own team's.", es: "Tu entrega es sólida. Llévala hacia afuera: fija los estándares de fiabilidad y el listón de revisión que mueven los resultados DORA de toda la organización, no solo los de tu equipo." },
   },
   4: {
-    developing: { en: "Your opinions live in Slack. The next behavior: write the design doc with a real Alternatives-Considered and Non-Goals section, and disagree-and-commit in the open.", es: "Tus opiniones viven en Slack. El siguiente comportamiento: escribe el design doc con una sección real de Alternativas-Consideradas y No-Objetivos, y disiente-y-comprométete en público." },
-    solid: { en: "You write docs when required. The L5 move: influence without authority — 'yes, if' instead of gate-keeping 'no', and get pulled into the room by being the person who favors understanding over winning.", es: "Escribes docs cuando se requiere. El salto a L5: influye sin autoridad — 'sí, si' en vez de un 'no' que bloquea, y te llaman a la sala por ser quien prioriza entender sobre ganar." },
+    developing: { en: "Your opinions live in chat. The next move is to write the design doc with a real Alternatives-Considered and Non-Goals section, and disagree-and-commit in the open.", es: "Tus opiniones viven en el chat. El siguiente paso es escribir el design doc con una sección real de Alternativas-Consideradas y No-Objetivos, y disentir-y-comprometerte en público." },
+    solid: { en: "You write docs when required. The next move is influence without authority: 'yes, if' instead of a gate-keeping 'no', earning your way into the room by favoring understanding over winning.", es: "Escribes docs cuando se requiere. El siguiente paso es influir sin autoridad: 'sí, si' en vez de un 'no' que bloquea, ganándote la entrada a la sala por priorizar entender sobre ganar." },
+    strong: { en: "You already shape decisions. Consolidate it by setting multi-team technical direction and holding an unpopular call when the evidence is on your side.", es: "Ya das forma a las decisiones. Consolídalo fijando dirección técnica entre varios equipos y sosteniendo una decisión impopular cuando la evidencia está de tu lado." },
   },
   5: {
-    developing: { en: "You mentor reactively. The next behavior: do glue work strategically and keep it visible — and start sponsoring, not just advising, one person.", es: "Mentoras de forma reactiva. El siguiente comportamiento: haz el trabajo de pegamento estratégicamente y mantenlo visible — y empieza a apadrinar, no solo aconsejar, a una persona." },
-    solid: { en: "You mentor deliberately. The L5 move: sponsor — spend your own capital. Hand off the stretch work, amplify others in rooms they're not in, and cite their work to the groups that decide.", es: "Mentoras deliberadamente. El salto a L5: apadrina — gasta tu propio capital. Delega el trabajo de crecimiento, amplifica a otros en salas donde no están, y cita su trabajo ante los grupos que deciden." },
+    developing: { en: "You mentor reactively. The next move is to do glue work strategically and keep it visible, and to start sponsoring, not just advising, one person.", es: "Mentoras de forma reactiva. El siguiente paso es hacer el trabajo de pegamento estratégicamente y mantenerlo visible, y empezar a apadrinar, no solo aconsejar, a una persona." },
+    solid: { en: "You mentor deliberately. The next move is to sponsor: spend your own capital. Hand off the stretch work, amplify others in rooms they're not in, and cite their work to the groups that decide.", es: "Mentoras deliberadamente. El siguiente paso es apadrinar: gasta tu propio capital. Delega el trabajo de crecimiento, amplifica a otros en salas donde no están, y cita su trabajo ante los grupos que deciden." },
+    strong: { en: "You grow the people around you. Scale it: make talent development a primary output, so the team's capability outlasts any single project you touch.", es: "Haces crecer a la gente a tu alrededor. Escálalo: haz del desarrollo de talento un resultado primario, para que la capacidad del equipo sobreviva a cualquier proyecto que toques." },
   },
 };
 
@@ -62,11 +67,14 @@ export function generateRoadmap(
   const weakestIds = new Set(result.weakest);
 
   const steps: RoadmapStep[] = sorted.map((ar) => {
-    const leverage: RoadmapStep["leverage"] = weakestIds.has(ar.axis)
-      ? "highest"
-      : ar.band === "strong"
+    // A "Strong" axis is never highest-leverage growth — it's a maintain/scale.
+    // Highest leverage = one of the weakest axes AND not already Strong.
+    const leverage: RoadmapStep["leverage"] =
+      ar.band === "strong"
         ? "maintain"
-        : "high";
+        : weakestIds.has(ar.axis)
+          ? "highest"
+          : "high";
     const delta =
       BEHAVIORAL_DELTA[ar.axis][ar.band] ??
       BEHAVIORAL_DELTA[ar.axis].solid ??
@@ -74,10 +82,11 @@ export function generateRoadmap(
 
     const axisName = AXIS_BY_ID[ar.axis].name;
     const lvl = nextLevelLabel(ar.band);
-    const headline: I18nText = {
-      en: `${axisName.en}: the one behavior between you and ${lvl}`,
-      es: `${axisName.es}: el único comportamiento entre tú y ${lvl}`,
-    };
+    // Headline framing depends on band: growth for developing/solid, scale for strong.
+    const headline: I18nText =
+      ar.band === "strong"
+        ? { en: `${axisName.en}: strong — now make it scale`, es: `${axisName.es}: fuerte — ahora hazlo escalar` }
+        : { en: `${axisName.en}: the one behavior between you and ${lvl}`, es: `${axisName.es}: el comportamiento que te separa de ${lvl}` };
 
     // Misconceptions first (confident-wrong = highest signal), then modules.
     const misconceptions = ar.topMisconceptions.map((slug) => {

@@ -29,7 +29,10 @@ export function ResultsView({ locale }: { locale: Locale }) {
   }
 
   const roadmap = generateRoadmap(result, ITEMS_BY_ID, MODULES);
-  const weakSteps = roadmap.steps.filter((s) => s.leverage === "highest");
+  // Hero shows highest-leverage growth axes; if everything is Strong, fall back
+  // to the two lowest-scoring axes so the hero is never empty.
+  const highest = roadmap.steps.filter((s) => s.leverage === "highest");
+  const weakSteps = highest.length > 0 ? highest : roadmap.steps.slice(0, 2);
 
   return (
     <div className="stack" style={{ gap: "var(--s-12)" }}>
