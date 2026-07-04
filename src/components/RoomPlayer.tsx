@@ -5,6 +5,7 @@
 // tradeoff verdicts. Harmful picks can branch to a downstream scenario.
 import { useState } from "react";
 import { update, awardSignal } from "@/lib/store";
+import { fireReward } from "./Reward";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import type { Sjt } from "@/lib/types";
@@ -20,8 +21,18 @@ export function RoomPlayer({ locale, room, onDone }: { locale: Locale; room: Sjt
   function commit() {
     if (!picked || rationale.trim().length < 8) return;
     setRevealed(true);
-    if (chosen && chosen.score >= best.score) awardSignal(15);
+    const optimal = !!chosen && chosen.score >= best.score;
+    if (optimal) awardSignal(15);
     update((p) => ({ ...p, roomsCleared: p.roomsCleared.includes(room.id) ? p.roomsCleared : [...p.roomsCleared, room.id] }));
+    fireReward({
+      kind: "room",
+      track: room.track,
+      signal: optimal ? 15 : 0,
+      title: t({ en: "THE ROOM · CLEARED", es: "LA SALA · SUPERADA" }, locale),
+      body: optimal
+        ? t({ en: "You made the call a senior reviewer would defend. That judgment is the level.", es: "Tomaste la decisión que un revisor senior defendería. Ese criterio es el nivel." }, locale)
+        : t({ en: "Committed and reasoned — now read the key. The gap between your call and the best one is where the level is.", es: "Te comprometiste y razonaste — ahora lee la clave. La brecha entre tu decisión y la mejor es donde está el nivel." }, locale),
+    });
   }
 
   return (

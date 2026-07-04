@@ -1,5 +1,6 @@
 "use client";
-// Bespoke 5-axis competency radar. NOT a Chart.js default.
+// Bespoke competency radar (driven by AXES — 6 axes incl. the flagship AI one).
+// NOT a Chart.js default.
 // - fixed axis order (area distorts if reordered)
 // - dotted target-level overlay
 // - spring draw-on, reduced-motion → final state instantly
@@ -51,7 +52,7 @@ export function Radar({
         viewBox={`0 0 ${SIZE} ${SIZE}`}
         width="100%"
         role="img"
-        aria-label={t({ en: "Competency radar across five axes", es: "Radar de competencias en cinco ejes" }, locale)}
+        aria-label={t({ en: `Competency radar across ${AXES.length} axes`, es: `Radar de competencias en ${AXES.length} ejes` }, locale)}
         style={{ maxWidth: SIZE, overflow: "visible" }}
       >
         {/* concentric rings — instrument gauge, not decoration */}
@@ -85,10 +86,12 @@ export function Radar({
           <circle key={i} cx={p.x} cy={p.y} r={3} fill={accent} stroke="var(--bg)" strokeWidth={1.5}
             style={{ transition: reduce ? undefined : "all 900ms cubic-bezier(.2,1.4,.4,1)" }} />
         ))}
-        {/* axis labels (short form — ES-safe) */}
+        {/* axis labels (short form — ES-safe). The flagship AI axis is tinted clay
+            so the radar itself signals which vertex is the flagship. */}
         {AXES.map((a, i) => {
           const p = point(i, n, R + 26);
           const anchor = Math.abs(p.x - C) < 6 ? "middle" : p.x > C ? "start" : "end";
+          const isAi = a.id === 6;
           return (
             <text
               key={a.id}
@@ -98,7 +101,8 @@ export function Radar({
               dominantBaseline="middle"
               fontSize={11}
               fontFamily="var(--font-mono)"
-              fill="var(--text-2)"
+              fill={isAi ? "var(--ai)" : "var(--text-2)"}
+              fontWeight={isAi ? 600 : 400}
             >
               {t(a.short, locale)}
             </text>

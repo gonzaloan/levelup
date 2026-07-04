@@ -4,7 +4,7 @@
 // internal scaffold only. See research/04-brief-amendments-v2.md §A2.
 import type { I18nText } from "@/i18n/config";
 
-export type AxisId = 1 | 2 | 3 | 4 | 5;
+export type AxisId = 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface Axis {
   id: AxisId;
@@ -63,6 +63,20 @@ export const AXES: Axis[] = [
     measures: {
       en: "Sponsorship over mentorship, strategic glue, growing the org's capability.",
       es: "Padrinazgo sobre mentoría, pegamento estratégico, crecer la capacidad del equipo.",
+    },
+  },
+  {
+    // The flagship axis. Restored per spec §A (design.md:38-39) and pinned to the
+    // 70/30 thesis: as agents write the routine 70%, judgment over the hard 30% —
+    // evals, retrieval, agent design, LLM security, unit economics — is the axis
+    // that increasingly separates Staff-level engineers. A clean hexagon vertex.
+    id: 6,
+    key: "ai-engineering",
+    name: { en: "Real World AI Engineering", es: "IA en el Mundo Real" },
+    short: { en: "AI Eng", es: "IA" },
+    measures: {
+      en: "Evals as engineering, retrieval and agent design, LLM security, and owning cost-per-successful-task in production.",
+      es: "Evals como ingeniería, diseño de recuperación y agentes, seguridad de LLM, y ser dueño del costo por tarea exitosa en producción.",
     },
   },
 ];

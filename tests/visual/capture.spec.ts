@@ -9,10 +9,11 @@ test("capture full journey (en)", async ({ page }) => {
   await page.goto("/en/assess/");
   await page.getByRole("button", { name: /Begin/i }).click();
   await page.screenshot({ path: "test-results/review-02-self.png", fullPage: true });
-  // answer self-ratings (pick "Usually" for each axis)
-  for (let i = 0; i < 5; i++) {
-    const cards = page.locator(".card");
-    await cards.nth(i).getByRole("button", { name: /Usually/i }).click();
+  // answer self-ratings (pick "Usually" for each axis — six axes incl. AI Eng)
+  const selfCards = page.locator(".card");
+  const axisCount = await selfCards.count();
+  for (let i = 0; i < axisCount; i++) {
+    await selfCards.nth(i).getByRole("button", { name: /Usually/i }).click().catch(() => {});
   }
   await page.getByRole("button", { name: /Next/i }).click();
   await page.screenshot({ path: "test-results/review-03-item.png", fullPage: true });

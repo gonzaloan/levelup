@@ -24,7 +24,7 @@ export const MESSAGES = {
   "assess.of":       { en: "of", es: "de" },
 
   "results.title":       { en: "Where you stand", es: "Dónde estás" },
-  "results.axes":        { en: "Your five axes", es: "Tus cinco ejes" },
+  "results.axes":        { en: "Your six axes", es: "Tus seis ejes" },
   "results.gap":         { en: "The gap worth naming", es: "La brecha que vale nombrar" },
   "results.roadmap":     { en: "Your highest-leverage next moves", es: "Tus próximos pasos de mayor impacto" },
   "results.provisional": { en: "Provisional placement — see how it's scored",

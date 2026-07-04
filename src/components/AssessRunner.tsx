@@ -20,6 +20,7 @@ const SELF_PROMPTS: Record<AxisId, { en: string; es: string }> = {
   3: { en: "I write SLOs from user journeys and run releases against an error budget.", es: "Escribo SLOs desde recorridos de usuario y ejecuto releases contra un presupuesto de error." },
   4: { en: "My design docs include real Alternatives-Considered and Non-Goals, and I get pulled into decisions.", es: "Mis design docs incluyen Alternativas-Consideradas y No-Objetivos reales, y me involucran en decisiones." },
   5: { en: "I sponsor other engineers — I spend my own capital to get them opportunities.", es: "Apadrino a otros ingenieros — gasto mi propio capital para conseguirles oportunidades." },
+  6: { en: "I ship AI features on evals, not vibes, and I can name how an agent with tool access gets prompt-injected.", es: "Entrego features de IA con evals, no por intuición, y sé nombrar cómo se inyecta un prompt en un agente con acceso a herramientas." },
 };
 
 export function AssessRunner({ locale, items }: { locale: Locale; items: Item[]; rooms?: Sjt[] }) {
@@ -95,7 +96,7 @@ export function AssessRunner({ locale, items }: { locale: Locale; items: Item[];
           {t({ en: "Twenty minutes. No login. An honest result.", es: "Veinte minutos. Sin cuenta. Un resultado honesto." }, locale)}
         </h1>
         <p className="prose">
-          {t({ en: "You'll answer a set of judgment questions across five axes. Each one asks how sure you are — because being confidently wrong is the most useful thing we can find. We place you in a band per axis, name the gap worth closing, and never flatter you.", es: "Responderás preguntas de juicio en cinco ejes. Cada una pregunta qué tan seguro estás — porque estar seguro y equivocado es lo más útil que podemos encontrar. Te ubicamos en una banda por eje, nombramos la brecha que vale cerrar, y nunca te adulamos." }, locale)}
+          {t({ en: `You'll answer a set of judgment questions across ${AXES.length} axes, including Real World AI Engineering. Each one asks how sure you are, because being confidently wrong is the most useful thing we can find. We place you in a band per axis, name the gap worth closing, and never flatter you.`, es: `Responderás preguntas de juicio en ${AXES.length} ejes, incluyendo IA en el Mundo Real. Cada una pregunta qué tan seguro estás, porque estar seguro y equivocado es lo más útil que podemos encontrar. Te ubicamos en una banda por eje, nombramos la brecha que vale cerrar, y nunca te adulamos.` }, locale)}
         </p>
         <div>
           <button className="btn btn-primary" onClick={() => setPhase("self")}>{m("assess.start", locale)}</button>

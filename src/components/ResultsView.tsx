@@ -8,6 +8,7 @@ import { generateRoadmap } from "@/lib/roadmap";
 import { AXIS_BY_ID, BAND_RANGE } from "@/lib/axes";
 import { ITEMS_BY_ID, MODULES } from "@/content/registry";
 import { Radar } from "./Radar";
+import { Reveal } from "./Motion";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 
@@ -57,23 +58,25 @@ export function ResultsView({ locale }: { locale: Locale }) {
               ? { en: "You sell yourself short here; the answers say you're stronger than you think.", es: "Aquí te vendes corto; las respuestas dicen que eres más fuerte de lo que crees." }
               : { en: "Underrated again — worth claiming this one out loud.", es: "Subestimado otra vez — vale la pena reclamarlo en voz alta." };
             return (
-              <article key={step.axis} className="card" data-track="general" style={{ borderLeft: "2px solid var(--gen)" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--s-4)", flexWrap: "wrap", marginBottom: "var(--s-3)" }}>
-                  <strong style={{ fontFamily: "var(--font-head)" }}>{t(step.headline, locale)}</strong>
-                  <span className="eyebrow" style={{ color: "var(--gen)" }}>{t(rankLabel, locale)}</span>
-                </div>
-                <p style={{ color: "var(--text)" }}>{t(step.behavioralDelta, locale)}</p>
-                {gap && (
-                  <p className="dim" style={{ fontSize: "var(--t-sm)", marginTop: "var(--s-3)" }}>
-                    {t(gap.direction === "over" ? overNote : underNote, locale)}
-                  </p>
-                )}
-                {step.modules.length > 0 && (
-                  <div style={{ marginTop: "var(--s-4)" }}>
-                    <Link href={`/${locale}/module/${step.modules[0]}`} className="btn">{m("cta.continue", locale)}</Link>
+              <Reveal as="article" key={step.axis} index={i} className="card" style={{ borderLeft: "2px solid var(--gen)", display: "block" }}>
+                <div data-track="general">
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: "var(--s-4)", flexWrap: "wrap", marginBottom: "var(--s-3)" }}>
+                    <strong style={{ fontFamily: "var(--font-head)" }}>{t(step.headline, locale)}</strong>
+                    <span className="eyebrow" style={{ color: "var(--gen)" }}>{t(rankLabel, locale)}</span>
                   </div>
-                )}
-              </article>
+                  <p style={{ color: "var(--text)" }}>{t(step.behavioralDelta, locale)}</p>
+                  {gap && (
+                    <p className="dim" style={{ fontSize: "var(--t-sm)", marginTop: "var(--s-3)" }}>
+                      {t(gap.direction === "over" ? overNote : underNote, locale)}
+                    </p>
+                  )}
+                  {step.modules.length > 0 && (
+                    <div style={{ marginTop: "var(--s-4)" }}>
+                      <Link href={`/${locale}/module/${step.modules[0]}`} className="btn">{m("cta.continue", locale)}</Link>
+                    </div>
+                  )}
+                </div>
+              </Reveal>
             );
           })}
         </div>

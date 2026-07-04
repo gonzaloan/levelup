@@ -1,0 +1,157 @@
+{
+  "topic": "Staff-level AI Engineer curriculum (late 2025 / 2026): the flagship production-AI-engineering track — evals, RAG, agents/MCP, security (OWASP LLM Top 10 2025), cost/latency economics, observability, guardrails, and model lifecycle",
+  "findings": [
+    {
+      "claim": "Evals must be taught as the core engineering artifact, not a post-hoc QA step. The track should split them into offline eval sets (golden datasets, curated + synthetically-augmented, versioned in git/DVC), CI regression suites that gate deploys, and online evals (production sampling, A/B, shadow traffic, user-signal proxies like thumbs/edit-distance/retry rate). The load-bearing skill is dataset construction: mining real failure traces into cases, slicing by cohort/intent, and treating a flaky eval like a flaky test. Metrics beyond accuracy: pass@k, exact-match vs semantic, groundedness/faithfulness (for RAG), tool-call correctness, and cost/latency per case as first-class outputs.",
+      "sourceOrBasis": "Industry consensus 2024-2026 (Hamel Husain's 'Your AI product needs evals', OpenAI/Anthropic eval cookbooks, Braintrust/LangSmith/Arize eval tooling); the recurring failure mode is teams shipping on vibes then regressing silently.",
+      "confidence": "high"
+    },
+    {
+      "claim": "LLM-as-judge must be taught with its failure modes front and center, or students will build eval harnesses that lie to them. Named pitfalls: position/order bias (judge favors first or second response), verbosity/length bias, self-preference bias (a model rates its own family's outputs higher), sycophancy, and score compression (everything gets 7/10). Mitigations to teach concretely: pairwise comparison over absolute Likert scores, randomizing position and averaging, forcing chain-of-thought-then-score with an explicit rubric, few-shot calibration examples per score band, and — critically — validating the judge against human labels (measure judge-human agreement / Cohen's kappa) before trusting it. Reserve a human-labeled 'eval of the eval' holdout.",
+      "sourceOrBasis": "MT-Bench / 'Judging LLM-as-a-Judge' (Zheng et al.) documenting position & verbosity bias; widespread 2025 practitioner reports of self-preference and score compression.",
+      "confidence": "high"
+    },
+    {
+      "claim": "Rubric design is a distinct, teachable skill. Effective rubrics decompose a fuzzy quality ('is this answer good?') into binary or low-cardinality checkable criteria (grounded in sources? answers the actual question? no fabricated citations? correct format? refuses when it should?). Binary/checklist rubrics beat 1-10 scales for inter-rater reliability. Teach criteria-drift management (rubric versioning), and the 'reference-free vs reference-based' distinction. Pair rubric grading with code-based assertions (regex, JSON-schema validation, unit-test-style checks on structured output) since deterministic checks are cheaper and more reliable than a judge whenever the property is checkable.",
+      "sourceOrBasis": "Practitioner methodology (Hamel Husain 'What we learned from a year of building with LLMs', eval-driven-development writeups 2024-2025).",
+      "confidence": "high"
+    },
+    {
+      "claim": "RAG must be taught as a systems-architecture discipline, not 'embed + top-k'. Chunking: fixed-size is a baseline; teach semantic/recursive chunking, structure-aware splitting (Markdown/HTML/code), and late chunking / contextual retrieval (Anthropic's 2024 technique: prepend an LLM-generated document-context blurb to each chunk before embedding, cutting retrieval failure meaningfully). Retrieval: hybrid search (dense embeddings + BM25/sparse like SPLADE) with reciprocal rank fusion, then a cross-encoder reranker (Cohere Rerank, bge-reranker, Voyage) as a second stage. Metadata filtering and query rewriting/decomposition (multi-query, HyDE) are core. Evaluate retrieval separately from generation (recall@k, MRR, nDCG) so you can localize failures.",
+      "sourceOrBasis": "Anthropic 'Contextual Retrieval' (Sept 2024); standard IR + reranking practice; hybrid+RRF is the 2025 default in production RAG stacks.",
+      "confidence": "high"
+    },
+    {
+      "claim": "'Context engineering' has largely displaced 'prompt engineering' as the 2025 framing for the Staff-level skill: deciding what tokens occupy the finite context window and in what order/structure, across retrieval, tool outputs, memory, and system prompts. 'Context rot' is the empirically-demonstrated degradation of model performance as input length grows and as irrelevant/distractor content fills the window — it is NOT just the 'lost in the middle' positional effect but a broader accuracy decline even on long-context-capable models. Practical implications to teach: relevance-filter and compress before stuffing; prefer fewer high-precision chunks over many; summarize/prune tool outputs and conversation history; and measure end-task accuracy vs context length rather than trusting advertised context limits.",
+      "sourceOrBasis": "Chroma Research 'Context Rot' (2025); 'Lost in the Middle' (Liu et al. 2023) for the positional subset; the term 'context engineering' popularized across 2025 (Karpathy, LangChain, Anthropic).",
+      "confidence": "high"
+    },
+    {
+      "claim": "The long-context-vs-RAG debate must be taught as 'both, with a decision framework', not a winner. Million-token context windows (Gemini, Claude, GPT) did NOT kill RAG: cost scales with tokens-in (so stuffing is expensive at scale), context rot degrades needle-in-haystack recall, and there's no freshness/access-control story without retrieval. RAG wins on cost, freshness, source attribution, and permissioning; long-context wins for whole-document reasoning, low-corpus-volume tasks, and reduced retrieval-plumbing complexity. Prompt/KV caching changes the economics of repeatedly reusing a large fixed context. Teach students to pick per-workload and to combine (retrieve-then-long-context).",
+      "sourceOrBasis": "2024-2025 cost analyses and the persistence of RAG stacks despite 1M+ token models; KV/prompt caching pricing from Anthropic/Google/OpenAI.",
+      "confidence": "high"
+    },
+    {
+      "claim": "Agent architecture must be taught as a spectrum of increasing autonomy with explicit tradeoffs: (1) fixed workflows / chains (deterministic, most reliable — Anthropic's 'Building Effective Agents' argues you should exhaust these first), (2) ReAct-style single-agent loops (reason-act-observe; failure modes: loop non-termination, tool-thrashing, error accumulation), (3) plan-and-execute (plan upfront then execute — better for long-horizon, weaker at adaptation), and (4) orchestrator-worker / multi-agent (a lead agent decomposes and spawns specialized sub-agents in parallel). The Staff-level lesson: multi-agent multiplies token cost (Anthropic reported ~15x tokens vs chat) and adds coordination failure modes, so it's justified mainly for parallelizable, breadth-first tasks (research, wide search), not for tightly-coupled sequential work.",
+      "sourceOrBasis": "Anthropic 'Building Effective Agents' (Dec 2024) and 'How we built our multi-agent research system' (2025); ReAct (Yao et al. 2022); Plan-and-Solve literature.",
+      "confidence": "high"
+    },
+    {
+      "claim": "MCP (Model Context Protocol) is the single biggest 2025 ecosystem shift and must have dedicated depth. Open-sourced by Anthropic in Nov 2024, it standardizes how models connect to tools/data via a client-server protocol exposing tools, resources, and prompts — the 'USB-C for AI tools' analogy. 2025 saw broad adoption (OpenAI, Google, IDEs, and a large third-party server ecosystem) plus additions like remote servers with OAuth and the tightening of the spec. Teach it concretely: writing an MCP server, transports (stdio vs streamable HTTP/SSE), and — as a security unit — MCP-specific attack surface: tool poisoning (malicious tool descriptions), the 'lethal trifecta' (private data access + untrusted content exposure + external communication), confused-deputy, and rug-pull tool redefinition. MCP without auth/allowlisting is a prompt-injection amplifier.",
+      "sourceOrBasis": "Anthropic MCP spec/announcement (Nov 2024) and 2025 spec revisions; Simon Willison's 'lethal trifecta' framing; documented MCP tool-poisoning research (Invariant Labs 2025).",
+      "confidence": "high"
+    },
+    {
+      "claim": "Tool/function schema design is a core reliability lever, not boilerplate. Teach: unambiguous names and descriptions written FOR the model (the description is a prompt), tight JSON-Schema types with enums over free strings, required-vs-optional discipline, returning structured errors the model can recover from, idempotency and confirmation gates for destructive actions, and the token-cost of large tool menus (too many tools degrades selection accuracy — use tool namespacing, dynamic tool filtering/RAG-over-tools, or MCP server scoping). Cover parallel tool calls, and the difference between the model choosing a tool vs. constrained/forced tool use. A classic failure: overlapping tools where the model can't disambiguate, or tools that return raw dumps that blow the context budget.",
+      "sourceOrBasis": "Anthropic tool-use best practices, OpenAI function-calling guidance; 2025 findings on tool-count degradation and 'RAG over tools'.",
+      "confidence": "high"
+    },
+    {
+      "claim": "Agent memory is a distinct architecture topic. Teach the taxonomy: short-term/working memory (the context window + running scratchpad), long-term memory (episodic = past interactions, semantic = facts/user profile, procedural = learned skills/instructions), typically backed by a vector store + structured store. Techniques: conversation summarization/compaction when nearing context limits, memory write/read policies (what's worth persisting), reflection (agent summarizes and stores learnings), and memory retrieval as its own RAG problem with its own recall failures and staleness/contradiction handling. Emerging patterns: file-system-as-memory (agent reads/writes scratch files) and 'context compaction' loops used by coding agents.",
+      "sourceOrBasis": "LangGraph/LangMem and agent-memory frameworks 2024-2025; MemGPT/Letta (virtual context management); Anthropic/Cognition writeups on compaction in long agent runs.",
+      "confidence": "high"
+    },
+    {
+      "claim": "Security must be anchored on the OWASP GenAI Security Project 'Top 10 for LLM Applications' 2025 revision, taught as a threat model with hands-on exploits+defenses. The 2025 list reordered and renamed entries: LLM01 Prompt Injection, LLM02 Sensitive Information Disclosure (promoted), LLM03 Supply Chain, LLM04 Data and Model Poisoning, LLM05 Improper Output Handling, LLM06 Excessive Agency (increasingly central as agents/tools proliferate), LLM07 System Prompt Leakage (new in 2025), LLM08 Vector and Embedding Weaknesses (new — RAG-specific, e.g., embedding inversion, poisoned/cross-tenant retrieval), LLM09 Misinformation, LLM10 Unbounded Consumption (denial-of-wallet). Prompt injection stays #1 with the hard truth that there is no reliable full fix — defense is layered.",
+      "sourceOrBasis": "OWASP Top 10 for LLM Applications 2025 (GenAI Security Project); the 2025 revision explicitly added System Prompt Leakage and Vector/Embedding Weaknesses.",
+      "confidence": "high"
+    },
+    {
+      "claim": "Prompt injection (direct and indirect) deserves its own deep unit because it's the defining unsolved problem of agentic AI. Teach the distinction: direct (user-supplied jailbreak) vs indirect (malicious instructions hidden in retrieved docs, web pages, emails, tool outputs, even images/whitespace). Defenses to teach as defense-in-depth (none sufficient alone): privilege separation and least-privilege tool scoping, the dual-LLM / plan-then-execute isolation pattern, human-in-the-loop for high-impact actions, input/output content classification, spotlighting/delimiting untrusted content, output-handling hygiene (never eval/exec model output, never trust it for SQL/shell without parameterization), and the 'lethal trifecta' rule: never let one agent simultaneously have private-data access, exposure to untrusted content, and an exfiltration channel.",
+      "sourceOrBasis": "OWASP LLM01 2025; Simon Willison's indirect-injection and 'lethal trifecta' writeups; Microsoft 'spotlighting'; the CaMeL / dual-LLM isolation research (2025).",
+      "confidence": "high"
+    },
+    {
+      "claim": "Hardening model-written code is a mandatory unit as agentic coding goes mainstream. Risks to teach: hallucinated/nonexistent dependencies enabling 'slopsquatting' (attackers register the hallucinated package names), injected insecure patterns (SQL string-building, hardcoded secrets, weak crypto, missing authz), license contamination, and command/tool execution driven by injected instructions. Defenses: sandboxed/containerized execution with no ambient credentials, dependency allowlisting + lockfile pinning + SCA scanning, SAST/secret-scanning in CI on AI-generated diffs, mandatory human review for security-sensitive paths, and treating agent shell/file access as an untrusted-code boundary. Tie directly to LLM05 (Improper Output Handling) and LLM06 (Excessive Agency).",
+      "sourceOrBasis": "2025 'slopsquatting' research on package hallucination; OWASP LLM05/LLM06; secure-coding practice applied to Copilot/Cursor/Claude Code-style agents.",
+      "confidence": "high"
+    },
+    {
+      "claim": "Cost and latency economics must be taught quantitatively — a Staff engineer owns the unit economics. Core levers: prompt/context caching (Anthropic explicit cache_control with ~5-min TTL and ~90% read discount; OpenAI/Google automatic caching) which transforms repeated-long-context and multi-turn-agent costs; streaming (token-by-token) to cut perceived latency and TTFT; and token budgeting (compress prompts, cap retrieved chunks, prune history). Teach the metrics: TTFT vs total latency, tokens/sec, input:output token ratio, cost-per-successful-task (not per-call), and the outsized cost of reasoning models (hidden reasoning tokens) and multi-agent fan-out. Model-routing / cascades (cheap model first, escalate on low confidence) and batch APIs (~50% discount) are the main cost-optimization patterns.",
+      "sourceOrBasis": "Anthropic prompt-caching docs (cache_control, TTL, pricing), OpenAI/Gemini caching + Batch API pricing; standard 2025 cost-optimization patterns (routing/cascades).",
+      "confidence": "high"
+    },
+    {
+      "claim": "Observability must be taught on the emerging open standard: OpenTelemetry GenAI semantic conventions. This defines spans/attributes for LLM calls (model, token counts, temperature, gen_ai.* attributes), tool calls, and multi-step agent traces, so LLM telemetry flows into normal APM. Teach distributed tracing of agent runs (a trace = full agent loop; spans = each LLM/tool/retrieval step), capturing prompt/completion, token+cost per span, latency breakdown, and error/retry attribution. Tools like Langfuse, Arize Phoenix, LangSmith, Braintrust, and OTel-native backends. The Staff-level point: you cannot debug non-deterministic multi-step agents without full-trace capture, and traces double as the source of eval datasets.",
+      "sourceOrBasis": "OpenTelemetry GenAI semantic conventions (evolving through 2024-2025, gen_ai.* namespace); OpenLLMetry/Langfuse/Phoenix OTel integrations.",
+      "confidence": "high"
+    },
+    {
+      "claim": "Guardrails are a runtime-control layer distinct from evals (which are offline/measurement). Teach input guardrails (jailbreak/injection detection, PII redaction, topic/scope restriction), output guardrails (toxicity, PII leakage, groundedness/hallucination checks, format/schema validation, competitor-mention or policy filters), and structural techniques: constrained decoding / grammar-based generation for guaranteed-valid JSON, and validation-with-reask loops. Frameworks: NeMo Guardrails, Guardrails AI, Llama Guard / Prompt Guard, Azure/AWS content safety. Key tradeoff to teach: guardrails add latency and false-positive friction; layer them by risk and prefer deterministic validators where possible.",
+      "sourceOrBasis": "NeMo Guardrails, Guardrails AI, Meta Llama Guard 2/3 & Prompt Guard (2024-2025); constrained-decoding libraries (Outlines, XGrammar).",
+      "confidence": "high"
+    },
+    {
+      "claim": "Model selection and migration must be taught as a lifecycle discipline, not a one-time choice. Cover: capability/cost/latency/context-window/tool-support tradeoffs across families, the closed-vs-open (Llama/Qwen/DeepSeek/Mistral) and hosted-vs-self-hosted decision, and structured migration practice — because providers deprecate and re-price models on a cadence, prompts are not portable (behavior shifts across versions), and pinning to a snapshot vs 'latest' alias is a real risk decision. The migration playbook: freeze an eval suite as the contract, run the candidate model against it, diff behavior per-slice, watch for prompt-format and tool-calling regressions, and canary/shadow before cutover. Abstract the provider behind a gateway (LiteLLM/OpenRouter-style) but never assume drop-in equivalence.",
+      "sourceOrBasis": "Provider deprecation/versioning practices 2024-2026 and the reality that eval suites are the only safe migration contract; model-gateway patterns (LiteLLM/OpenRouter).",
+      "confidence": "high"
+    },
+    {
+      "claim": "Reasoning models are a genuinely new 2025 primitive requiring their own engineering guidance. Extended/inference-time thinking (o-series, Claude extended thinking, Gemini thinking, DeepSeek-R1) trades latency+hidden reasoning-token cost for accuracy on math/code/planning. Engineering implications to teach: don't over-prompt them (they self-elaborate — heavy CoT prompting can hurt), budget 'thinking' explicitly where the API allows, they change cost/latency profiles dramatically (reasoning tokens are billed and can dwarf output), and they're overkill for simple/retrieval tasks. Route reasoning models only to hard steps (e.g., planning in an orchestrator) and cheaper models to execution.",
+      "sourceOrBasis": "OpenAI o1/o3, DeepSeek-R1 (Jan 2025), Anthropic extended thinking, Gemini thinking (2025); provider guidance that reasoning models need different (lighter) prompting.",
+      "confidence": "high"
+    },
+    {
+      "claim": "Computer-use / GUI agents are an emerging capability worth a forward-looking unit but taught with sober reliability/security caveats. Models that take screenshots and emit mouse/keyboard actions (Anthropic Computer Use Oct 2024; OpenAI Operator/CUA 2025; Google Project Mariner) open automation of software without APIs — but accuracy on multi-step real tasks remains limited, latency is high, and they massively expand prompt-injection blast radius (a malicious webpage can drive the computer). Teach them as: run only in isolated VMs/containers, with strict action allowlists and human confirmation, and treat every screen as untrusted input.",
+      "sourceOrBasis": "Anthropic Computer Use (Oct 2024), OpenAI Operator/Computer-Using Agent (Jan 2025), Google Mariner; OSWorld/WebArena benchmark scores showing sub-human reliability in 2025.",
+      "confidence": "medium"
+    },
+    {
+      "claim": "Agentic coding and sub-agent orchestration are the fastest-moving 2025-2026 application area and should be an applied capstone. Concepts: coding agents that plan-edit-run-test in a loop (Claude Code, Cursor, Devin, OpenAI Codex-style), sub-agent delegation (a lead agent spawns scoped sub-agents with isolated context windows to avoid context pollution and parallelize), context compaction for long runs, and verification loops (the agent runs tests/typecheck and self-corrects). Teach the reliability patterns that make these work: tight tool/permission scoping, checkpointing, giving the agent a fast feedback signal (tests), and keeping each sub-agent's context small and single-purpose. This ties every prior module together (evals as the agent's feedback, guardrails on tool use, cost control on fan-out, tracing for debugging).",
+      "sourceOrBasis": "Claude Code / Cursor / Devin (2024-2025); Anthropic multi-agent + sub-agent writeups; Cognition/Devin engineering posts on long-horizon agent reliability.",
+      "confidence": "high"
+    }
+  ],
+  "recommendations": [
+    {
+      "idea": "Make evals the spine of the entire track: every module ends by producing an eval suite for that capability (RAG groundedness, tool-call correctness, injection-resistance, cost-per-task), and the capstone gates a deploy on a CI regression suite. Teach eval-driven development the way a CS track teaches TDD.",
+      "why": "Evals are the one skill that separates practitioners from prompt-tinkerers, and every other topic (migration, guardrails, agent reliability) depends on having a measurement contract. It also makes the track's own claims verifiable rather than 'vibes'.",
+      "impact": "high"
+    },
+    {
+      "idea": "Structure security as a hands-on adversarial lab built on the OWASP LLM Top 10 2025: students build a vulnerable RAG-agent, exploit it (indirect injection via a poisoned document, tool-poisoning via a malicious MCP server, denial-of-wallet), then layer defenses (least-privilege tools, dual-LLM isolation, human-in-loop, output hygiene) and re-test. Center it on the 'lethal trifecta'.",
+      "why": "Prompt injection is unsolved and excessive agency is the dominant risk as agents/MCP proliferate; a Staff engineer must reason about blast radius, not just filter strings. Red-team-then-defend cements it far better than a checklist.",
+      "impact": "high"
+    },
+    {
+      "idea": "Dedicate a full, current MCP module (write a server, wire it to a client, transports, auth, and the MCP-specific threat model) rather than mentioning it in passing. Pair it with tool-schema design as one 'tool interface engineering' unit.",
+      "why": "MCP is the biggest ecosystem shift of 2025 and is now the default integration substrate; it's also a concrete, buildable artifact that makes abstract 'tool use' tangible, and its security pitfalls are underappreciated.",
+      "impact": "high"
+    },
+    {
+      "idea": "Teach agent architecture as a decision framework that defaults to the simplest thing that works: fixed workflow -> single-agent ReAct -> plan-execute -> multi-agent, with explicit cost/reliability tradeoffs and a rule ('don't reach for multi-agent until parallel breadth justifies the ~10-15x token cost'). Include a build-the-same-task-three-ways exercise.",
+      "why": "The field's biggest 2025 failure mode is over-engineering autonomy; Anthropic's own guidance is 'use the least agency that solves it'. Framing it as a tradeoff, not a hierarchy of coolness, produces Staff-level judgment.",
+      "impact": "high"
+    },
+    {
+      "idea": "Add a quantitative 'unit economics of AI' module: students instrument a real app with OpenTelemetry GenAI tracing, compute cost-per-successful-task and latency breakdowns, then cut cost with prompt caching, model routing/cascades, batching, and token budgeting — and prove the savings against the eval suite (no accuracy regression).",
+      "why": "Cost/latency ownership is exactly what elevates an AI engineer to Staff; it's rarely taught rigorously, and tying it to tracing + evals makes it measurable rather than hand-wavy.",
+      "impact": "high"
+    },
+    {
+      "idea": "Include a 'context engineering' module that empirically demonstrates context rot: have students measure task accuracy vs. context length and vs. distractor volume on a real task, then apply reranking/compression/pruning. Frame the long-context-vs-RAG choice as a per-workload decision with a checklist (freshness, access control, corpus size, cost, attribution).",
+      "why": "Context rot and the LC-vs-RAG debate are the topics most misunderstood by mid-level engineers who trust advertised context limits; showing the degradation curve firsthand is uniquely persuasive and directly bleeding-edge.",
+      "impact": "high"
+    },
+    {
+      "idea": "Build the capstone as an agentic-coding system: an orchestrator that spawns scoped sub-agents, uses MCP tools, has memory/compaction, runs tests as a verification loop, is guarded and traced end-to-end, and is gated by an eval suite. It should force students to integrate every module.",
+      "why": "Agentic coding + sub-agent orchestration is the 2025-2026 frontier and the highest-signal thing a Staff AI engineer can demonstrate; a single integrative capstone proves synthesis better than isolated exercises.",
+      "impact": "high"
+    },
+    {
+      "idea": "Add a short, current 'model landscape' module covering reasoning models (when/when-not, thinking-token budgeting, lighter prompting), computer-use agents (with the isolation/security caveats), and open-vs-closed model selection — plus a migration playbook exercise (freeze eval suite as contract, canary a new model, diff per-slice).",
+      "why": "These are the most fast-moving 2025-2026 facts; teaching the reasoning-model prompting inversion and the migration-as-eval-contract discipline keeps the flagship track bleeding-edge and prevents the classic silent-regression-on-model-swap failure.",
+      "impact": "medium"
+    },
+    {
+      "idea": "Weave LLM-as-judge and rubric design into a standalone 'measuring the unmeasurable' unit with a mandatory judge-validation step (compute judge-vs-human agreement before trusting any judge), and teach the bias-mitigation toolkit (pairwise, position randomization, binary checklists over Likert).",
+      "why": "Most teams' evals are quietly broken because their judge is biased and unvalidated; teaching students to validate the judge is a differentiator that prevents building a whole eval program on sand.",
+      "impact": "high"
+    },
+    {
+      "idea": "Keep the whole track version-dated and traceable to primary sources (OWASP 2025 revision, MCP spec version, OTel GenAI conventions, provider pricing/deprecation pages), with a maintenance cadence, because half this material has a shelf life measured in months.",
+      "why": "A flagship 'bleeding-edge' track loses all credibility the moment it cites a superseded OWASP ordering or a deprecated model; explicit dating and source-pinning is what makes it read as practitioner-authored and keeps it maintainable.",
+      "impact": "medium"
+    }
+  ]
+}

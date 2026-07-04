@@ -1,5 +1,6 @@
 import { isLocale, type Locale, LOCALES, t } from "@/i18n/config";
 import { notFound } from "next/navigation";
+import { Reveal } from "@/components/Motion";
 
 export function generateStaticParams() {
   return LOCALES.map((locale) => ({ locale }));
@@ -39,13 +40,13 @@ export default async function MethodPage({ params }: { params: Promise<{ locale:
         {t({ en: "Honest by construction.", es: "Honesto por construcción." }, L)}
       </h1>
       {SECTIONS.map((s, i) => (
-        <section key={i} className="method-row" style={{ marginBottom: "var(--s-10)" }}>
+        <Reveal as="section" key={i} index={i} className="method-row" style={{ marginBottom: "var(--s-10)" }}>
           <div className="method-glyph" aria-hidden="true"><MethodGlyph i={i} /></div>
           <div>
             <h2 style={{ fontSize: "var(--t-h3)", marginBottom: "var(--s-3)" }}>{t(s.h, L)}</h2>
             <p className="prose">{t(s.p, L)}</p>
           </div>
-        </section>
+        </Reveal>
       ))}
     </div>
   );

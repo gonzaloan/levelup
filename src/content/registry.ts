@@ -1,20 +1,24 @@
-// Content registry. The content fleet writes into data/general-l5.json (which
-// always exists — seeded with a small hand-authored fallback so the app builds
-// and the full flow is demonstrable before the fleet lands).
+// Content registry. Merges the General track (data/general-l5.json) and the
+// flagship AI track (data/ai-l5.json). Both always exist so the app builds and
+// the full flow is demonstrable.
 import type { Item, Module, Sjt, FieldWork } from "@/lib/types";
-import data from "./data/general-l5.json";
+import general from "./data/general-l5.json";
+import ai from "./data/ai-l5.json";
 
-const gen = data as unknown as {
-  items: Item[];
-  modules: Module[];
-  rooms: Sjt[];
-  fieldwork: FieldWork[];
+type Bundle = {
+  items?: Item[];
+  modules?: Module[];
+  rooms?: Sjt[];
+  fieldwork?: FieldWork[];
 };
 
-export const ITEMS: Item[] = gen.items ?? [];
-export const MODULES: Module[] = gen.modules ?? [];
-export const ROOMS: Sjt[] = gen.rooms ?? [];
-export const FIELDWORK: FieldWork[] = gen.fieldwork ?? [];
+const gen = general as unknown as Bundle;
+const aiTrack = ai as unknown as Bundle;
+
+export const ITEMS: Item[] = [...(gen.items ?? []), ...(aiTrack.items ?? [])];
+export const MODULES: Module[] = [...(gen.modules ?? []), ...(aiTrack.modules ?? [])];
+export const ROOMS: Sjt[] = [...(gen.rooms ?? []), ...(aiTrack.rooms ?? [])];
+export const FIELDWORK: FieldWork[] = [...(gen.fieldwork ?? []), ...(aiTrack.fieldwork ?? [])];
 
 export const ITEMS_BY_ID = new Map(ITEMS.map((i) => [i.id, i]));
 export const MODULES_BY_ID = new Map(MODULES.map((m) => [m.id, m]));

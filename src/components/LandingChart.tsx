@@ -15,9 +15,11 @@ const EDGES: [number, number][] = [[0, 1], [1, 2], [1, 3], [3, 4], [3, 6], [2, 8
 
 export function LandingChart({ locale }: { locale: Locale }) {
   const [on, setOn] = useState(false);
+  const [reduce, setReduce] = useState(false);
   useEffect(() => {
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce) return setOn(true);
+    const r = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    setReduce(r);
+    if (r) return setOn(true);
     const id = setTimeout(() => setOn(true), 120);
     return () => clearTimeout(id);
   }, []);
@@ -55,7 +57,7 @@ export function LandingChart({ locale }: { locale: Locale }) {
             stroke={lit ? "var(--gen)" : "var(--hairline)"} strokeWidth={lit ? 1.25 : 0.75}
             opacity={lit ? 0.8 : 0.4}
             strokeDasharray={len} strokeDashoffset={on ? 0 : len}
-            style={{ transition: `stroke-dashoffset 800ms cubic-bezier(.16,1,.3,1) ${i * 60}ms` }} />
+            style={{ transition: reduce ? undefined : `stroke-dashoffset 800ms cubic-bezier(.16,1,.3,1) ${i * 60}ms` }} />
         );
       })}
       {/* edges are drawn above; stars sit on top with stronger presence */}
@@ -66,16 +68,19 @@ export function LandingChart({ locale }: { locale: Locale }) {
         return (
           <g key={i} transform={`translate(${px(x)},${py(y)})`}>
             {(mastered || isCurrent) && <circle r={r * 3.4} fill="url(#lg-glow)" opacity={isCurrent ? 0.95 : 0.55} />}
-            {isCurrent && (
+            {isCurrent && !reduce && (
               <circle r={r + 4} fill="none" stroke={col} strokeWidth={1} opacity={0.7}>
                 <animate attributeName="r" values={`${r + 2};${r + 8};${r + 2}`} dur="2.8s" repeatCount="indefinite" />
                 <animate attributeName="opacity" values="0.7;0.1;0.7" dur="2.8s" repeatCount="indefinite" />
               </circle>
             )}
+            {isCurrent && reduce && (
+              <circle r={r + 4} fill="none" stroke={col} strokeWidth={1} opacity={0.5} />
+            )}
             <circle r={on ? r : 0} fill={mastered || isCurrent ? col : "var(--surface)"} stroke={col}
               strokeWidth={mastered || isCurrent ? 0 : 1.25}
               opacity={mastered || isCurrent ? 1 : 0.85}
-              style={{ transition: `r 500ms cubic-bezier(.2,1.4,.4,1) ${i * 50}ms` }} />
+              style={{ transition: reduce ? undefined : `r 500ms cubic-bezier(.2,1.4,.4,1) ${i * 50}ms` }} />
             {mag === 3 && <path d={`M0,${-r - 5} L0,${r + 5} M${-r - 5},0 L${r + 5},0`} stroke={col} strokeWidth={0.75} opacity={0.6} />}
           </g>
         );

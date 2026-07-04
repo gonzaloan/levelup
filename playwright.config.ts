@@ -9,6 +9,9 @@ export default defineConfig({
     baseURL: "http://localhost:4180",
     trace: "off",
     screenshot: "only-on-failure",
+    // Freeze the ambient starfield + all motion so screenshots settle
+    // deterministically — and so we exercise the reduced-motion a11y path.
+    reducedMotion: "reduce",
   },
   webServer: {
     command: "npx --yes serve out -l 4180 --no-port-switching",
