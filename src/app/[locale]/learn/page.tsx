@@ -1,14 +1,13 @@
 import { isLocale, type Locale, LOCALES } from "@/i18n/config";
 import { notFound } from "next/navigation";
-import { Redirect } from "@/components/Redirect";
+import { LearnHub } from "@/components/LearnHub";
 
 export function generateStaticParams() {
   return LOCALES.map((locale) => ({ locale }));
 }
 
-// Retired: tracks are now a toggle inside /learn.
-export default async function TracksPage({ params }: { params: Promise<{ locale: string }> }) {
+export default async function LearnPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   if (!isLocale(locale)) notFound();
-  return <Redirect to={`/${locale as Locale}/learn`} />;
+  return <LearnHub locale={locale as Locale} />;
 }

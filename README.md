@@ -28,17 +28,51 @@ nobody wrote down. **level-up measures your 30% and trains it.**
    are earned, dim ones are ahead, the clay constellation is the flagship AI
    track.
 
+## The curriculum spine (the ordered plan)
+
+The `/path` view is the definitive, ordered climb: **6 domains × 5 levels
+(L3→L7) × 152 concepts**, every concept grounded in a named, checkable source
+(roadmap.sh, Kleppmann's DDIA, StaffEng/Larson, Reilly, Google SRE, DORA, OWASP
+LLM Top 10, Shostack threat-modeling, NIST AI RMF / EU AI Act, …) and ordered by
+a within-domain prerequisite DAG. The five ladder levels are spiral depth bands;
+the recommended path interleaves by level band. **30 checkpoint quizzes** (157
+judgment items, gated "miss at most one") sit at each domain×level cluster.
+Authored + adversarially fact-checked by multi-agent fleets, with a completeness
+audit closing 10 gaps (security/threat-modeling, large-scale migrations,
+execution leadership, stream processing, chaos engineering, self-scope, AI
+governance, performance engineering, decision-rights, agent orchestration).
+
+## Lessons (the teachable layer)
+
+Each domain×level cluster is a **Lesson** (`/lesson/{domain}-{level}`, 30 total,
+`src/content/data/lessons.json`): a single clean flow — overview ("the big
+picture") → each concept in order (plain explanation + an authored inline-SVG
+schematic + key takeaways) → a mid-lesson quick check → the checkpoint as the
+graded final test → the next lesson. `/path` opens with one unmistakable
+**Start here** entry point and a guided L3→L7 climb.
+
+## Themes
+
+Two full themes, toggled in the nav and persisted to `localStorage`:
+**Studio** (get-certified's editorial look — DM Serif Display, amber accent,
+vivid dark-navy, mono stats) and **Pixel** (a Mario-3 "overworld" reskin — Press
+Start 2P / Pixelify Sans, DawnBringer palette, zero-radius pixel frames). Both
+fully usable in EN/ES; theme tokens + `[data-theme="pixel"]` live in
+`globals.css`, applied pre-paint by a boot script in `layout.tsx`.
+
 ## Two tracks
 
-- **General Engineering** (seeded deeply: L5 "The Staff Threshold", 9 modules).
-- **Real World AI Engineering** (flagship; the 30% Gauntlet is live, full
-  curriculum lands next).
+- **General Engineering** — the five non-AI domains, charted L3→L7; the L5
+  "Staff Threshold" band is seeded to full module depth (9 modules).
+- **Real World AI Engineering** (flagship) — fully charted L3→L7; the 30%
+  Gauntlet is live, and its L5 modules are seeded deep.
 
 ## Stack
 
 - **Next.js** static export (like `personal-platform`), React 19, TypeScript.
-- **Content-as-data**: `src/content/data/general-l5.json` — every learner-facing
-  string is `{en, es}`. Authored, not machine-translated.
+- **Content-as-data**: `src/content/data/curriculum.json` (the L3→L7 spine +
+  checkpoints) and `general-l5.json` / `ai-l5.json` (deep modules) — every
+  learner-facing string is `{en, es}`. Authored, not machine-translated.
 - **Progress in `localStorage`** (`src/lib/store.ts`); Cognito+DynamoDB sync is a
   future phase.
 - **Hand-authored inline SVG** for the Radar and Star Chart. No raster this build.

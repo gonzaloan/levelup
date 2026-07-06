@@ -92,6 +92,99 @@ export interface Module {
   chart: { x: number; y: number; magnitude: 1 | 2 | 3; constellation: string };
 }
 
+// ── Curriculum spine (the ordered L3→L7 learning structure) ──────────────
+// Authored + fact-checked by the research fleet (research/ + curriculum.json).
+// The spine is the "plan to learn everything": every domain is a prerequisite
+// DAG; levels are spiral depth bands across it; concepts chunk into clusters;
+// each cluster ends in a checkpoint quiz gated by mastery before advancing.
+export interface Concept {
+  slug: string;
+  title: I18nText;
+  why: I18nText;              // the ONE judgment this concept trains
+  prerequisites: string[];    // concept slugs, within-domain
+  source: string;             // the real, checkable source that grounds it
+  moduleId?: string;          // deep authored module, when one exists for this concept
+}
+
+export interface CurriculumLevel {
+  level: Level;
+  intent: I18nText;           // what mastering this level in this domain means
+  concepts: Concept[];
+}
+
+export interface CurriculumDomain {
+  id: string;                 // axis key (technical-depth, ai-engineering, …)
+  axisId: AxisId;
+  levels: CurriculumLevel[];
+}
+
+export interface CheckpointItemOption {
+  text: I18nText;
+  correct: boolean;
+  rationale: I18nText;
+}
+export interface CheckpointItem {
+  concept: string;            // concept slug this item checks
+  stem: I18nText;
+  options: CheckpointItemOption[];
+}
+export interface Checkpoint {
+  id: string;
+  domainId: string;
+  axisId: AxisId;
+  afterLevel: Level;          // sits at the end of this level's cluster
+  coversConcepts: string[];   // concept slugs
+  items: CheckpointItem[];    // judgment questions (authored by the fleet)
+}
+
+export interface Curriculum {
+  domains: CurriculumDomain[];
+  checkpoints: Checkpoint[];
+}
+
+// ── Lesson content (the teachable layer over the spine) ─────────────────
+// A Lesson is one domain×level cluster, presenting the full learning flow:
+// overview → each concept (explanation + optional schematic + key points) →
+// a mid-lesson formative quiz. The end-of-level checkpoint is the final test.
+export interface DiagramNode { label: I18nText; note?: I18nText; }
+export interface DiagramColumn { title: I18nText; points: I18nText[]; }
+export interface Schematic {
+  kind: "flow" | "compare" | "stack" | "axes" | "none";
+  caption: I18nText;
+  nodes?: DiagramNode[];       // flow / stack
+  left?: DiagramColumn;        // compare
+  right?: DiagramColumn;       // compare
+  xAxis?: I18nText;            // axes
+  yAxis?: I18nText;            // axes
+}
+export interface ConceptLesson {
+  slug: string;
+  explanation: I18nText;       // authored prose, \n\n-separated paragraphs
+  keyPoints: I18nText[];
+  diagram: Schematic;
+}
+export interface QuizItem {
+  stem: I18nText;
+  options: { text: I18nText; correct: boolean; rationale: I18nText }[];
+}
+export interface Lesson {
+  lessonId: string;            // `${domainId}-${level.toLowerCase()}`
+  overview: I18nText;          // the general concept, read first
+  concepts: ConceptLesson[];
+  midQuiz: QuizItem[];
+}
+
+// A single step in the recommended cross-domain learning path.
+export interface PathStep {
+  kind: "concept" | "checkpoint";
+  level: Level;
+  domainId: string;
+  axisId: AxisId;
+  ref: string;                // concept slug or checkpoint id
+  title: I18nText;
+  moduleId?: string;          // if a deep module backs this concept
+}
+
 // ── Assessment run/result shapes ────────────────────────────────────────
 export interface Response {
   itemId: string;

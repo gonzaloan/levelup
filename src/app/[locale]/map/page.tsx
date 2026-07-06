@@ -1,18 +1,14 @@
 import { isLocale, type Locale, LOCALES } from "@/i18n/config";
 import { notFound } from "next/navigation";
-import { MapView } from "@/components/MapView";
-import { MODULES } from "@/content/registry";
+import { Redirect } from "@/components/Redirect";
 
 export function generateStaticParams() {
   return LOCALES.map((locale) => ({ locale }));
 }
 
+// Retired: the Star Chart is replaced by /ladder (roadmap-style level map).
 export default async function MapPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   if (!isLocale(locale)) notFound();
-  return (
-    <div className="wrap" style={{ paddingTop: "var(--s-10)", paddingBottom: "var(--s-16)" }}>
-      <MapView locale={locale as Locale} modules={MODULES} />
-    </div>
-  );
+  return <Redirect to={`/${locale as Locale}/ladder`} />;
 }

@@ -1,50 +1,47 @@
 import { isLocale, type Locale, t } from "@/i18n/config";
-import { m } from "@/i18n/messages";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { LandingChart } from "@/components/LandingChart";
 import { Reveal } from "@/components/Motion";
+import { LEVELS, LEVEL_LABEL, type Level } from "@/lib/axes";
+import { ORDERED_DOMAINS, totalConcepts, CHECKPOINTS } from "@/lib/curriculum";
+import { AXIS_BY_ID } from "@/lib/axes";
 
-const COPY = {
-  headline: {
-    en: "Getting better at code stops being enough around Senior.",
-    es: "Ser mejor programando deja de bastar cerca de Senior.",
-  },
+const C = {
+  eyebrow: { en: "The second half of an engineering career", es: "La segunda mitad de una carrera de ingeniería" },
+  h1a: { en: "The judgment to go from Senior toward ", es: "El criterio para pasar de Senior hacia " },
+  h1accent: { en: "Staff and Principal.", es: "Staff y Principal." },
   sub: {
-    en: "AI now writes the routine 70%. The promotion past Senior is decided in the 30% it can't judge for you — the failure modes, the security hole, the p99 cliff, the design nobody wrote down. That 30% is what we measure, and where we train.",
-    es: "La IA ya escribe el 70% rutinario. El ascenso más allá de Senior se decide en el 30% que no puede juzgar por ti — los modos de fallo, el hueco de seguridad, el acantilado p99, el diseño que nadie escribió. Ese 30% es lo que medimos, y donde entrenamos.",
+    en: "AI writes the routine 70%. The promotion past Senior is decided in the 30% it can't judge for you. This is the guide to that 30% — a clear, step-by-step climb across 6 domains and 5 levels, with a lesson, a diagram, quick quizzes and a final boss for each. Bilingual, EN/ES.",
+    es: "La IA escribe el 70% rutinario. El ascenso más allá de Senior se decide en el 30% que no puede juzgar por ti. Esta es la guía de ese 30% — una subida clara y paso a paso por 6 dominios y 5 niveles, con una lección, un diagrama, quizzes cortos y un jefe final en cada uno. Bilingüe, EN/ES.",
   },
-  proofTitle: {
-    en: "This is not opinion.",
-    es: "Esto no es opinión.",
-  },
-  proof: {
-    en: "Dropbox's public ladder states it outright: code-fluency expectations plateau at L4, software-design at L5. Everything above is scope, direction, and growing others. levels.fyi agrees — climbing means less coding, more ambiguity, wider blast radius. Senior is where most careers stop. We built the map for the part that comes after.",
-    es: "La escalera pública de Dropbox lo dice sin rodeos: las expectativas de fluidez en código se estancan en L4, las de diseño de software en L5. Todo lo de arriba es alcance, dirección y hacer crecer a otros. levels.fyi coincide — subir significa menos código, más ambigüedad, mayor radio de impacto. Senior es donde se detiene la mayoría. Construimos el mapa para lo que viene después.",
-  },
-  twoTracks: { en: "Two tracks, one spine", es: "Dos rutas, una columna" },
-  trackGen: { en: "General Engineering", es: "Ingeniería General" },
-  trackGenDesc: {
-    en: "The durable foundation: consistency and failure design, architecture restraint, reliability economics, the written influence that gets you into the room.",
-    es: "La base duradera: consistencia y diseño ante fallos, contención arquitectónica, economía de fiabilidad, y la influencia escrita que te lleva a la sala.",
-  },
-  trackAi: { en: "Real World AI Engineering", es: "IA en el Mundo Real" },
-  trackAiFlag: { en: "Flagship", es: "Insignia" },
-  trackAiDesc: {
-    en: "The production craft, not the hype: evals as first-class engineering, agent and RAG design, prompt-injection and the OWASP LLM risks, and hardening the code a model just wrote.",
-    es: "El oficio de producción, no el bombo: evals como ingeniería de primera clase, diseño de agentes y RAG, inyección de prompts y los riesgos OWASP para LLM, y endurecer el código que un modelo acaba de escribir.",
-  },
-  gauntletEyebrow: { en: "Playable now", es: "Jugable ahora" },
-  gauntletTitle: {
-    en: "Red-team the code a model just wrote.",
-    es: "Haz red-team al código que un modelo acaba de escribir.",
-  },
-  gauntletDesc: {
-    en: "The 30% Gauntlet drops you into a real AI-generated endpoint with planted flaws — the SQL injection, the indirect prompt-injection surface, the p99 cliff, the error it hides. Click the offending lines, classify each against the OWASP LLM Top 10, and get graded against a staff reviewer's key. No honor system. Just you and the 30% a model can't judge for itself.",
-    es: "El Desafío del 30% te mete en un endpoint real generado por IA con defectos plantados — la inyección SQL, la superficie de inyección indirecta de prompts, el acantilado p99, el error que esconde. Marca las líneas culpables, clasifica cada una contra el OWASP LLM Top 10, y recibe una nota contra la clave de un revisor staff. Sin sistema de honor. Solo tú y el 30% que un modelo no puede juzgar por sí mismo.",
-  },
-  gauntletCta: { en: "Enter the Gauntlet", es: "Entrar al Desafío" },
+  startTitle: { en: "Two ways to start", es: "Dos formas de empezar" },
+  pathAnum: { en: "Path A", es: "Ruta A" },
+  pathAtitle: { en: "Start from the beginning", es: "Empezar desde el principio" },
+  pathAhelp: { en: "New to this? Begin at L3 and climb one lesson at a time. Best if you'd rather build the full foundation.", es: "¿Recién empiezas? Comienza en L3 y sube una lección a la vez. Ideal si prefieres construir toda la base." },
+  pathActa: { en: "Open the guide", es: "Abrir la guía" },
+  pathBnum: { en: "Path B", es: "Ruta B" },
+  pathBtitle: { en: "Place me with a quiz", es: "Ubícame con un quiz" },
+  pathBhelp: { en: "Answer a short scenario diagnostic and we'll drop you at the right level and domain. Best if you already have experience.", es: "Responde un diagnóstico breve de escenarios y te ubicamos en el nivel y dominio correctos. Ideal si ya tienes experiencia." },
+  pathBcta: { en: "Take the diagnostic", es: "Hacer el diagnóstico" },
+  how: { en: "How it works", es: "Cómo funciona" },
+  s1t: { en: "Pick a domain", es: "Elige un dominio" },
+  s1d: { en: "Six domains of Staff-level judgment. Start anywhere; the ladder shows the order.", es: "Seis dominios de criterio nivel Staff. Empieza donde quieras; la escalera muestra el orden." },
+  s2t: { en: "Read + quick-check", es: "Lee + comprueba" },
+  s2d: { en: "Each concept: a plain explanation, one diagram, key terms, then a short quiz.", es: "Cada concepto: una explicación clara, un diagrama, términos clave y un quiz corto." },
+  s3t: { en: "Beat the Final Boss", es: "Vence al jefe final" },
+  s3d: { en: "Each level ends in a real-scenario boss. Clear it and the next level unlocks.", es: "Cada nivel termina en un jefe de escenario real. Supéralo y se abre el siguiente." },
+  climb: { en: "The five levels", es: "Los cinco niveles" },
+  domainsTitle: { en: "Six domains", es: "Seis dominios" },
 } as const;
+
+const LEVEL_WHAT: Record<Level, { en: string; es: string }> = {
+  L3: { en: "Build the foundations.", es: "Construye las bases." },
+  L4: { en: "Own your area's design.", es: "Dueño del diseño de tu área." },
+  L5: { en: "Set a team's approach.", es: "Fija el enfoque de un equipo." },
+  L6: { en: "Direct multiple teams.", es: "Dirige varios equipos." },
+  L7: { en: "Shape org strategy.", es: "Moldea la estrategia." },
+};
 
 export default async function Landing({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
@@ -53,159 +50,94 @@ export default async function Landing({ params }: { params: Promise<{ locale: st
 
   return (
     <>
-      {/* ── HERO — committed 7/5 asymmetric grid (§D1). No centered 3-card row. ── */}
-      <section className="wrap" style={{ paddingTop: "var(--s-16)", paddingBottom: "var(--s-12)" }}>
+      {/* HERO */}
+      <section className="wrap" style={{ paddingTop: "var(--s-16)", paddingBottom: "var(--s-10)" }}>
         <div className="hero-grid">
           <div className="hero-copy">
-            <p className="eyebrow" style={{ marginBottom: "var(--s-5)" }}>{m("landing.eyebrow", L)}</p>
+            <p className="eyebrow" style={{ marginBottom: "var(--s-5)" }}>{t(C.eyebrow, L)}</p>
             <h1 className="display" style={{ fontSize: "var(--t-hero)", marginBottom: "var(--s-6)" }}>
-              {t(COPY.headline, L)}
+              {t(C.h1a, L)}<span className="accent">{t(C.h1accent, L)}</span>
             </h1>
-            <p className="prose" style={{ fontSize: "1.125rem", marginBottom: "var(--s-8)" }}>
-              {t(COPY.sub, L)}
-            </p>
-            <div style={{ display: "flex", gap: "var(--s-4)", alignItems: "center", flexWrap: "wrap" }}>
-              <Link href={`/${L}/assess`} className="btn btn-primary" style={{ fontSize: "1rem", padding: "var(--s-4) var(--s-6)" }}>
-                {m("landing.cta", L)}
-              </Link>
-              <span className="eyebrow">{m("landing.cta.sub", L)}</span>
-            </div>
+            <p className="prose" style={{ fontSize: "1.125rem" }}>{t(C.sub, L)}</p>
           </div>
-          <div className="hero-viz blueprint" aria-hidden={false}>
-            <LandingChart locale={L} />
-          </div>
+          <div className="hero-viz blueprint"><LandingChart locale={L} /></div>
         </div>
       </section>
 
-      {/* ── PROOF band — the evidence, stated plainly, not a feature grid ── */}
+      {/* TWO START PATHS — the fork, made physical */}
+      <section className="wrap" style={{ padding: "var(--s-8) var(--s-6) var(--s-12)" }}>
+        <p className="eyebrow" style={{ marginBottom: "var(--s-5)" }}>{t(C.startTitle, L)}</p>
+        <div className="start-cards">
+          <Link href={`/${L}/learn`} className="start-path primary">
+            <span className="sp-num">{t(C.pathAnum, L)}</span>
+            <span className="sp-title">{t(C.pathAtitle, L)}</span>
+            <span className="sp-help">{t(C.pathAhelp, L)}</span>
+            <span className="sp-cta">{t(C.pathActa, L)} →</span>
+          </Link>
+          <Link href={`/${L}/assess`} className="start-path">
+            <span className="sp-num">{t(C.pathBnum, L)}</span>
+            <span className="sp-title">{t(C.pathBtitle, L)}</span>
+            <span className="sp-help">{t(C.pathBhelp, L)}</span>
+            <span className="sp-cta">{t(C.pathBcta, L)} →</span>
+          </Link>
+        </div>
+      </section>
+
+      {/* HOW IT WORKS */}
       <section style={{ background: "var(--bg-2)", borderBlock: "1px solid var(--hairline)" }}>
-        <div className="wrap proof-grid" style={{ padding: "var(--s-16) var(--s-6)", display: "grid", gap: "var(--s-6)", gridTemplateColumns: "minmax(0, 5fr) minmax(0, 7fr)" }}>
-          <Reveal as="h2" className="display" style={{ fontSize: "var(--t-h2)" }}>{t(COPY.proofTitle, L)}</Reveal>
-          <Reveal as="p" index={1} className="prose" style={{ fontSize: "1.0625rem" }}>{t(COPY.proof, L)}</Reveal>
+        <div className="wrap" style={{ padding: "var(--s-12) var(--s-6)" }}>
+          <p className="eyebrow" style={{ marginBottom: "var(--s-6)" }}>{t(C.how, L)}</p>
+          <div className="steps-grid">
+            {[[C.s1t, C.s1d], [C.s2t, C.s2d], [C.s3t, C.s3d]].map(([tt, dd], i) => (
+              <Reveal as="div" key={i} index={i} className="step-card">
+                <span className="step-badge">{i + 1}</span>
+                <div>
+                  <strong style={{ fontFamily: "var(--font-head)", fontSize: "1rem", display: "block", marginBottom: 4 }}>{t(tt, L)}</strong>
+                  <p style={{ fontSize: "var(--t-sm)", color: "var(--text-2)" }}>{t(dd, L)}</p>
+                </div>
+              </Reveal>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* ── TRACKS — asymmetric, opinionated, the flagship given real weight ── */}
-      <section className="wrap" style={{ padding: "var(--s-16) var(--s-6)" }}>
-        <p className="eyebrow" style={{ marginBottom: "var(--s-8)" }}>{t(COPY.twoTracks, L)}</p>
-        <div className="tracks-grid" style={{ display: "grid", gap: "var(--s-6)", gridTemplateColumns: "minmax(0, 5fr) minmax(0, 7fr)", alignItems: "stretch" }}>
-          <Reveal as="article" className="card" style={{ display: "flex", flexDirection: "column" }}>
-            <div data-track="general" style={{ display: "contents" }}>
-              <div className="eyebrow" style={{ color: "var(--gen)", marginBottom: "var(--s-3)" }}>{t(COPY.trackGen, L)}</div>
-              <p style={{ flex: 1 }}>{t(COPY.trackGenDesc, L)}</p>
-              <div style={{ marginTop: "var(--s-5)", display: "flex", gap: 6 }}>
-                {["L3", "L4", "L5", "L6", "L7"].map((lv) => (
-                  <span key={lv} className="level-tag">{lv}</span>
-                ))}
-              </div>
+      {/* THE FIVE LEVELS */}
+      <section className="wrap" style={{ padding: "var(--s-12) var(--s-6)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "var(--s-5)", flexWrap: "wrap", gap: "var(--s-2)" }}>
+          <p className="eyebrow">{t(C.climb, L)}</p>
+          <Link href={`/${L}/ladder`} className="eyebrow" style={{ color: "var(--amber)" }}>{t({ en: "See the full ladder", es: "Ver la escalera completa" }, L)} →</Link>
+        </div>
+        <div className="climb-strip">
+          {LEVELS.map((lv) => (
+            <div key={lv} className="climb-rung">
+              <div className="cr-code">{lv}</div>
+              <div className="cr-name">{t(LEVEL_LABEL[lv], L).split("·")[1]?.trim()}</div>
+              <div className="cr-what">{t(LEVEL_WHAT[lv], L)}</div>
             </div>
-          </Reveal>
-
-          {/* Flagship — larger tile, clay glow, its own mini clay/cyan constellation. */}
-          <Reveal
-            as="article"
-            index={1}
-            className="card"
-            style={{
-              borderColor: "var(--ai-dim)",
-              background: "radial-gradient(120% 90% at 85% 10%, var(--ai-glow), transparent 55%), linear-gradient(180deg, var(--film-2), transparent 40%), var(--surface)",
-              boxShadow: "0 0 0 1px color-mix(in oklab, var(--ai) 18%, transparent), 0 0 48px color-mix(in oklab, var(--ai) 10%, transparent), var(--edge-hi)",
-              display: "grid",
-              gridTemplateColumns: "1fr auto",
-              gap: "var(--s-6)",
-              alignItems: "start",
-            }}
-          >
-            <div data-track="ai">
-              <div style={{ display: "flex", alignItems: "center", gap: "var(--s-3)", marginBottom: "var(--s-3)", flexWrap: "wrap" }}>
-                <span className="eyebrow" style={{ color: "var(--ai)" }}>{t(COPY.trackAi, L)}</span>
-                <span className="level-tag" style={{ borderColor: "var(--ai)", color: "var(--ai-accent)", background: "color-mix(in oklab, var(--ai) 12%, transparent)" }}>
-                  {t(COPY.trackAiFlag, L)}
-                </span>
-              </div>
-              <p style={{ fontSize: "1.0625rem" }}>{t(COPY.trackAiDesc, L)}</p>
-              <div style={{ marginTop: "var(--s-5)", display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {["L3", "L4", "L5", "L6", "L7"].map((lv) => (
-                  <span key={lv} className="level-tag" style={{ borderColor: "var(--ai)", color: "var(--ai-accent)", background: "color-mix(in oklab, var(--ai) 12%, transparent)" }}>{lv}</span>
-                ))}
-              </div>
-              <div style={{ marginTop: "var(--s-6)" }}>
-                <Link href={`/${L}/gauntlet`} className="btn btn-ai btn-primary" style={{ fontSize: "var(--t-sm)" }}>
-                  {t(COPY.gauntletCta, L)} →
-                </Link>
-              </div>
-            </div>
-            <div className="flagship-constellation" aria-hidden="true" style={{ opacity: 0.9 }}>
-              <MiniConstellation />
-            </div>
-          </Reveal>
+          ))}
         </div>
       </section>
 
-      {/* ── GAUNTLET showcase — the novel, playable, "never seen this" feature ── */}
-      <section style={{ borderTop: "1px solid var(--hairline)", background: "var(--bg-2)" }}>
-        <div className="wrap gauntlet-grid" style={{ padding: "var(--s-16) var(--s-6)", display: "grid", gap: "var(--s-10)", gridTemplateColumns: "minmax(0, 6fr) minmax(0, 6fr)", alignItems: "center" }} data-track="ai">
-          <Reveal>
-            <p className="eyebrow" style={{ color: "var(--ai-signal)", marginBottom: "var(--s-4)" }}>{t(COPY.gauntletEyebrow, L)}</p>
-            <h2 className="display" style={{ fontSize: "var(--t-h2)", marginBottom: "var(--s-5)" }}>{t(COPY.gauntletTitle, L)}</h2>
-            <p className="prose" style={{ fontSize: "1.0625rem", marginBottom: "var(--s-6)" }}>{t(COPY.gauntletDesc, L)}</p>
-            <Link href={`/${L}/gauntlet`} className="btn btn-ai btn-primary">{t(COPY.gauntletCta, L)} →</Link>
-          </Reveal>
-          <Reveal index={1}>
-            <GauntletPreview locale={L} />
-          </Reveal>
+      {/* SIX DOMAINS */}
+      <section className="wrap" style={{ padding: "0 var(--s-6) var(--s-16)" }}>
+        <p className="eyebrow" style={{ marginBottom: "var(--s-5)" }}>{t(C.domainsTitle, L)} · {totalConcepts()} {t({ en: "concepts", es: "conceptos" }, L)} · {CHECKPOINTS.length} {t({ en: "bosses", es: "jefes" }, L)}</p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--s-3)" }}>
+          {ORDERED_DOMAINS.map((d, i) => (
+            <Link key={d.id} href={`/${L}/learn`} className="card card-interactive" style={{ padding: "var(--s-4)", display: "flex", gap: "var(--s-3)", alignItems: "flex-start" }}>
+              <span className="mono" style={{ color: "var(--amber)", fontWeight: 700 }}>{i + 1}</span>
+              <div>
+                <strong style={{ fontFamily: "var(--font-head)", fontSize: "var(--t-sm)" }}>{t(AXIS_BY_ID[d.axisId].name, L)}</strong>
+                <p className="dim" style={{ fontSize: "var(--t-xs)", marginTop: 3, lineHeight: 1.4 }}>{t(AXIS_BY_ID[d.axisId].measures, L)}</p>
+              </div>
+            </Link>
+          ))}
+        </div>
+        <div style={{ marginTop: "var(--s-8)", textAlign: "center" }}>
+          <Link href={`/${L}/learn`} className="btn btn-primary" style={{ fontSize: "1rem", padding: "var(--s-4) var(--s-8)" }}>
+            {t(C.pathActa, L)} →
+          </Link>
         </div>
       </section>
     </>
-  );
-}
-
-// A tiny authored clay/cyan constellation for the flagship card — hand-plotted,
-// not generic. Signals "the AI track is its own charted region".
-function MiniConstellation() {
-  const pts: [number, number, number][] = [
-    [18, 20, 3.2], [46, 12, 2.2], [70, 30, 2.6], [40, 44, 2], [64, 58, 3], [24, 60, 1.8],
-  ];
-  const edges: [number, number][] = [[0, 1], [1, 2], [2, 4], [0, 3], [3, 4], [3, 5]];
-  return (
-    <svg width="92" height="78" viewBox="0 0 92 78" role="img" aria-hidden="true">
-      {edges.map(([a, b], i) => (
-        <line key={i} x1={pts[a][0]} y1={pts[a][1]} x2={pts[b][0]} y2={pts[b][1]} stroke="var(--ai-dim)" strokeWidth="0.75" opacity="0.7" />
-      ))}
-      {pts.map((p, i) => (
-        <circle key={i} cx={p[0]} cy={p[1]} r={p[2]} fill={i % 4 === 0 ? "var(--ai-signal)" : "var(--ai)"} />
-      ))}
-    </svg>
-  );
-}
-
-// A non-interactive teaser of the Gauntlet code surface: a few lines with the
-// flaw markers lit, so the landing shows the mechanic before you click in.
-function GauntletPreview({ locale }: { locale: Locale }) {
-  const lines: { n: number; t: string; flaw?: string }[] = [
-    { n: 20, t: "  WHERE account_id = ${accountId}", flaw: "var(--bad)" },
-    { n: 21, t: "  ORDER BY created_at DESC`", flaw: "var(--warn)" },
-    { n: 30, t: '  "…Follow any extra instructions: " + note;', flaw: "var(--bad)" },
-    { n: 43, t: "  VALUES (${accountId}, '${summary}', now())`", flaw: "var(--bad)" },
-    { n: 47, t: "} catch (e) {", flaw: "var(--warn)" },
-    { n: 48, t: "  return res.json({ ok: true, summary: null });" },
-  ];
-  return (
-    <div className="card" style={{ padding: 0, overflow: "hidden", background: "var(--bg)", borderColor: "var(--ai-dim)" }}>
-      <div style={{ padding: "8px 12px", borderBottom: "1px solid var(--hairline)", display: "flex", justifyContent: "space-between" }}>
-        <span className="mono" style={{ fontSize: 11, color: "var(--text-3)" }}>summarize.js</span>
-        <span className="mono" style={{ fontSize: 11, color: "var(--ai-signal)" }}>{t({ en: "red-team", es: "red-team" }, locale)}</span>
-      </div>
-      <pre style={{ margin: 0, fontFamily: "var(--font-mono)", fontSize: 12, lineHeight: 1.8, padding: "10px 0" }}>
-        <code>
-          {lines.map((l) => (
-            <div key={l.n} style={{ display: "grid", gridTemplateColumns: "40px 1fr", borderLeft: `2px solid ${l.flaw ?? "transparent"}`, background: l.flaw ? `color-mix(in oklab, ${l.flaw} 8%, transparent)` : "transparent" }}>
-              <span style={{ textAlign: "right", paddingRight: 10, color: "var(--text-4)" }}>{l.n}</span>
-              <span style={{ whiteSpace: "pre", color: "var(--text-2)", paddingRight: 12 }}>{l.t}</span>
-            </div>
-          ))}
-        </code>
-      </pre>
-    </div>
   );
 }

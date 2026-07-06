@@ -1,12 +1,15 @@
 import type { Metadata } from "next";
-import { Inter, Space_Grotesk, Instrument_Serif, JetBrains_Mono } from "next/font/google";
+import {
+  Inter, Space_Grotesk, DM_Serif_Display, JetBrains_Mono,
+  Press_Start_2P, Pixelify_Sans,
+} from "next/font/google";
 import "./globals.css";
 import { Sky } from "@/components/Sky";
 
 const inter = Inter({
   subsets: ["latin"],
   variable: "--f-inter",
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700", "800", "900"],
   display: "swap",
 });
 const grotesk = Space_Grotesk({
@@ -15,9 +18,10 @@ const grotesk = Space_Grotesk({
   weight: ["500", "600", "700"],
   display: "swap",
 });
-const instrument = Instrument_Serif({
+// get-certified's display face: DM Serif Display — editorial, high-character.
+const dmSerif = DM_Serif_Display({
   subsets: ["latin"],
-  variable: "--f-instrument",
+  variable: "--f-serif",
   weight: ["400"],
   style: ["normal", "italic"],
   display: "swap",
@@ -28,6 +32,19 @@ const mono = JetBrains_Mono({
   weight: ["400", "600"],
   display: "swap",
 });
+// Pixel theme (Mario-3 overworld) faces.
+const pressStart = Press_Start_2P({
+  subsets: ["latin"],
+  variable: "--f-press",
+  weight: ["400"],
+  display: "swap",
+});
+const pixelify = Pixelify_Sans({
+  subsets: ["latin"],
+  variable: "--f-pixelify",
+  weight: ["400", "500", "600", "700"],
+  display: "swap",
+});
 
 export const metadata: Metadata = {
   title: "level-up — the second half of an engineering career",
@@ -36,20 +53,17 @@ export const metadata: Metadata = {
   metadataBase: new URL("https://levelup.gonzalo-munoz.com"),
 };
 
+// Apply the saved theme before paint so there's no flash. Static-export safe.
+const THEME_BOOT = `(function(){try{var t=localStorage.getItem('levelup.theme');if(t==='pixel')document.documentElement.setAttribute('data-theme','pixel');}catch(e){}})();`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
+      </head>
       <body
-        className={`${inter.variable} ${grotesk.variable} ${instrument.variable} ${mono.variable}`}
-        style={
-          {
-            // Bind next/font CSS variables to the design-system font tokens.
-            ["--font-body" as string]: "var(--f-inter), system-ui, sans-serif",
-            ["--font-head" as string]: "var(--f-grotesk), system-ui, sans-serif",
-            ["--font-display" as string]: "var(--f-instrument), Georgia, serif",
-            ["--font-mono" as string]: "var(--f-mono), ui-monospace, monospace",
-          } as React.CSSProperties
-        }
+        className={`${inter.variable} ${grotesk.variable} ${dmSerif.variable} ${mono.variable} ${pressStart.variable} ${pixelify.variable}`}
       >
         <Sky />
         {children}

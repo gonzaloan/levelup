@@ -57,7 +57,10 @@ export function useReveal<T extends HTMLElement = HTMLDivElement>(opts?: {
       { threshold: opts?.threshold ?? 0.15, rootMargin: "0px 0px -8% 0px" }
     );
     io.observe(el);
-    return () => io.disconnect();
+    // Safety net: if IO somehow never fires (offscreen-but-not-observed edge
+    // cases, headless capture), reveal after a beat so content is never stuck.
+    const t = setTimeout(() => setShown(true), 1200);
+    return () => { io.disconnect(); clearTimeout(t); };
   }, [opts?.threshold, opts?.once]);
   return { ref, armed, shown };
 }

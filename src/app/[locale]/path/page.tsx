@@ -6,8 +6,8 @@ export function generateStaticParams() {
   return LOCALES.map((locale) => ({ locale }));
 }
 
-// Retired: tracks are now a toggle inside /learn.
-export default async function TracksPage({ params }: { params: Promise<{ locale: string }> }) {
+// Retired: the curriculum lives in /learn now.
+export default async function PathPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   if (!isLocale(locale)) notFound();
   return <Redirect to={`/${locale as Locale}/learn`} />;

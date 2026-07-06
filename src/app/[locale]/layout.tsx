@@ -2,6 +2,10 @@ import { notFound } from "next/navigation";
 import { LOCALES, isLocale, type Locale } from "@/i18n/config";
 import { Nav } from "@/components/Nav";
 import { RewardHost } from "@/components/Reward";
+import { HtmlLang } from "@/components/HtmlLang";
+import { RouteProgress } from "@/components/RouteProgress";
+import { Loader } from "@/components/Loader";
+import { MobileTabBar } from "@/components/MobileTabBar";
 import { m } from "@/i18n/messages";
 
 export function generateStaticParams() {
@@ -20,8 +24,12 @@ export default async function LocaleLayout({
 
   return (
     <>
+      <HtmlLang locale={locale} />
+      <Loader />
+      <RouteProgress />
       <Nav locale={locale} />
       <main>{children}</main>
+      <MobileTabBar locale={locale} />
       <RewardHost />
       <footer style={{ borderTop: "1px solid var(--hairline)", marginTop: "var(--s-24)" }}>
         <div className="wrap" style={{ display: "flex", justifyContent: "space-between", padding: "var(--s-8) var(--s-6)", flexWrap: "wrap", gap: "var(--s-4)" }}>

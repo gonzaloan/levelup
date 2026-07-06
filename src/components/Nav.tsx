@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { m } from "@/i18n/messages";
 import { OTHER_LOCALE, LOCALE_LABEL, type Locale } from "@/i18n/config";
+import { ThemeToggle } from "./ThemeToggle";
 
 // An authored observatory mark: a small sextant/star reticle. Gives the brand a
 // glyph it didn't have — crosshair + a charted star, in the instrument voice.
@@ -42,10 +43,11 @@ export function Nav({ locale }: { locale: Locale }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  // Simplified nav (get-certified model): a tiny, unambiguous set of verbs.
   const links: { href: string; key: Parameters<typeof m>[0] }[] = [
-    { href: `/${locale}/assess`, key: "nav.assess" },
-    { href: `/${locale}/map`, key: "nav.map" },
-    { href: `/${locale}/tracks`, key: "nav.tracks" },
+    { href: `/${locale}/learn`, key: "nav.learn" },
+    { href: `/${locale}/ladder`, key: "nav.ladder" },
+    { href: `/${locale}/practice`, key: "nav.practice" },
     { href: `/${locale}/me`, key: "nav.me" },
   ];
 
@@ -78,11 +80,12 @@ export function Nav({ locale }: { locale: Locale }) {
         </div>
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--s-3)" }}>
+          <ThemeToggle labelStudio={m("theme.studio", locale)} labelPixel={m("theme.pixel", locale)} />
           <Link href={otherHref} className="eyebrow" aria-label="Switch language"
             style={{ border: "1px solid var(--hairline-2)", borderRadius: "var(--r-xs)", padding: "3px 8px" }}>
             {LOCALE_LABEL[OTHER_LOCALE[locale]]}
           </Link>
-          <Link href={`/${locale}/assess`} className="btn btn-primary nav-cta-desktop" style={{ padding: "var(--s-2) var(--s-4)" }}>
+          <Link href={`/${locale}/learn`} className="btn btn-primary nav-cta-desktop" style={{ padding: "var(--s-2) var(--s-4)" }}>
             {m("nav.start", locale)}
           </Link>
           {/* Mobile hamburger */}
@@ -126,7 +129,7 @@ export function Nav({ locale }: { locale: Locale }) {
                 </Link>
               );
             })}
-            <Link href={`/${locale}/assess`} className="btn btn-primary" onClick={() => setOpen(false)}
+            <Link href={`/${locale}/learn`} className="btn btn-primary" onClick={() => setOpen(false)}
               style={{ marginTop: "var(--s-2)", justifyContent: "center" }}>
               {m("nav.start", locale)}
             </Link>

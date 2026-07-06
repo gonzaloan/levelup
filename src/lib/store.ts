@@ -14,6 +14,9 @@ export interface Progress {
   fieldWork: Record<string, { submittedAt: number; selfScore?: number; artifact?: string }>;
   roomsCleared: string[];
   gauntlets: Record<string, { firstScore: number; bestScore: number; attempts: number; clearedAt?: number }>;
+  conceptsRead: string[];           // curriculum concept slugs the learner has opened
+  checkpointsCleared: string[];     // checkpoint ids cleared at the mastery gate
+  checkpointScores: Record<string, number>; // checkpointId -> best score 0..1
   signal: number;                   // "XP" as competence feedback
   cadence: { enabled: boolean; weeks: string[] }; // opt-in, forgiving
   archetype?: string;
@@ -26,6 +29,9 @@ const EMPTY: Progress = {
   fieldWork: {},
   roomsCleared: [],
   gauntlets: {},
+  conceptsRead: [],
+  checkpointsCleared: [],
+  checkpointScores: {},
   signal: 0,
   cadence: { enabled: false, weeks: [] },
 };
@@ -89,6 +95,49 @@ export function masterModule(moduleId: string, score: number, threshold = 0.8): 
 
 export function isUnlocked(moduleId: string, prerequisites: string[], p: Progress): boolean {
   return prerequisites.every((pre) => p.mastered.includes(pre));
+}
+
+// ── Curriculum progress ───────────────────────────────────────────────────
+// Concepts are "read" (lightweight — opening the concept counts); checkpoints
+// are the real gate (a scored quiz you must clear). A level band is complete for
+// a domain once its checkpoint is cleared. This keeps the honest distinction
+// between exposure (read) and demonstrated understanding (checkpoint cleared).
+export function markConceptRead(slug: string): Progress {
+  return update((p) =>
+    p.conceptsRead.includes(slug) ? p : { ...p, conceptsRead: [...p.conceptsRead, slug] }
+  );
+}
+
+// Mark a set of concept slugs read at once (a whole lesson's concepts).
+export function markConceptsRead(slugs: string[]): Progress {
+  return update((p) => {
+    const set = new Set(p.conceptsRead);
+    let changed = false;
+    for (const s of slugs) if (!set.has(s)) { set.add(s); changed = true; }
+    return changed ? { ...p, conceptsRead: [...set] } : p;
+  });
+}
+
+export interface CheckpointOutcome {
+  progress: Progress;
+  newlyCleared: boolean;
+  score: number;
+}
+
+// A checkpoint clears at ≥0.85 (Bloom mastery-learning threshold, per the
+// pedagogy research). Records the best score; only the first clear awards Signal.
+export function recordCheckpoint(id: string, score: number, threshold = 0.85): CheckpointOutcome {
+  const before = load();
+  const already = before.checkpointsCleared.includes(id);
+  const cleared = score >= threshold;
+  const newlyCleared = cleared && !already;
+  const progress = update((p) => ({
+    ...p,
+    checkpointScores: { ...p.checkpointScores, [id]: Math.max(score, p.checkpointScores[id] ?? 0) },
+    checkpointsCleared: newlyCleared ? [...p.checkpointsCleared, id] : p.checkpointsCleared,
+    signal: p.signal + (newlyCleared ? 30 : 0),
+  }));
+  return { progress, newlyCleared, score };
 }
 
 // Record a Gauntlet attempt. Keeps the best score, counts attempts, and marks

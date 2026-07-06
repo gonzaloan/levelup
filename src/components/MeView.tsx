@@ -29,8 +29,8 @@ export function MeView({ locale }: { locale: Locale }) {
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: "var(--s-4)" }}>
         <Stat label={m("signal.label", locale)} value={p.signal} accent="var(--gen)" />
+        <Stat label={t({ en: "Checkpoints cleared", es: "Puntos de control superados" }, locale)} value={p.checkpointsCleared.length} suffix="/30" accent="var(--gen)" />
         <Stat label={t({ en: "Modules mastered", es: "Módulos dominados" }, locale)} value={p.mastered.length} accent="var(--ai)" />
-        <Stat label={t({ en: "Rooms cleared", es: "Salas superadas" }, locale)} value={p.roomsCleared.length} accent="var(--ai-signal)" />
         <Stat
           label={t({ en: "Gauntlet (cold read)", es: "Desafío (a ciegas)" }, locale)}
           value={Math.round((p.gauntlets["gen-l5-gauntlet"]?.firstScore ?? 0) * 100)}
@@ -89,9 +89,9 @@ export function MeView({ locale }: { locale: Locale }) {
           can't deliver from a static export. Just points at the work. */}
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--s-4)", flexWrap: "wrap" }}>
         <span className="dim" style={{ fontSize: "var(--t-sm)" }}>
-          {t({ en: "Progress is saved on this device. Pick up where the chart is dim.", es: "El progreso se guarda en este dispositivo. Retoma donde la carta está tenue." }, locale)}
+          {t({ en: "The curriculum is the ordered plan: six domains, five levels, one climb. Follow it, or let the diagnostic place you at your frontier.", es: "El temario es el plan ordenado: seis dominios, cinco niveles, una subida. Síguelo, o deja que el diagnóstico te ubique en tu frontera." }, locale)}
         </span>
-        <Link href={`/${locale}/map`} className="btn">{m("nav.map", locale)} →</Link>
+        <Link href={`/${locale}/learn`} className="btn">{m("nav.learn", locale)} →</Link>
       </div>
     </div>
   );
