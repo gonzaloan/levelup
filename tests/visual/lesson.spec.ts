@@ -5,10 +5,11 @@ import { test, expect, type Page } from "@playwright/test";
 // default-hidden — the Cycle-2 regression), and it holds up in the pixel theme.
 async function enterFirstConcept(page: Page) {
   await page.goto("/en/lesson/technical-depth-l5/");
+  await page.waitForTimeout(700); // let the intro loader fade
   // overview → first concept ("Begin"/"Start")
   const start = page.getByRole("button", { name: /→/ }).first();
   await start.click();
-  await page.waitForTimeout(200);
+  await page.waitForTimeout(300);
 }
 
 test("lesson concept pane renders the three-column workbench (studio)", async ({ page }) => {

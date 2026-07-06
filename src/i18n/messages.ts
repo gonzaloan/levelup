@@ -145,6 +145,11 @@ export const MESSAGES = {
   "lesson.pitfalls":    { en: "Common pitfalls", es: "Errores comunes" },
   "lesson.analogy":     { en: "Think of it like", es: "Piénsalo así" },
   "lesson.walkthrough": { en: "Walkthrough", es: "Desarrollo" },
+  "boss.label":         { en: "Boss battle", es: "Batalla contra el jefe" },
+  "boss.engage":        { en: "Engage", es: "Enfrentar" },
+  "boss.hp":            { en: "HP", es: "PV" },
+  "boss.defeated":      { en: "Boss defeated", es: "Jefe derrotado" },
+  "boss.survived":      { en: "The boss stands — regroup and try again", es: "El jefe resiste — reagrúpate e inténtalo de nuevo" },
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES;

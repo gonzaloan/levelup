@@ -97,12 +97,25 @@ export function CodeRedTeam({ locale }: { locale: Locale }) {
 
   return (
     <div className="stack" style={{ gap: "var(--s-6)" }} data-track="ai">
-      <div>
-        <p className="eyebrow" style={{ color: "var(--ai-signal)" }}>
-          {t({ en: "Boss · Cross the Threshold", es: "Jefe · Cruza el Umbral" }, locale)}
-        </p>
-        <h2 className="display" style={{ fontSize: "var(--t-h2)" }}>{t(GAUNTLET.title, locale)}</h2>
-        <p className="prose">{t(GAUNTLET.brief, locale)}</p>
+      <div className="boss-card" data-track="ai" style={{ ["--boss-accent" as string]: "var(--ai-accent)" }}>
+        <div className="boss-head">
+          <span className="boss-sprite" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="72" height="72" className="pixel boss-glyph" style={{ imageRendering: "pixelated" }}>
+              <g fill="var(--ai-accent)">
+                <rect x="10" y="3" width="12" height="3" /><rect x="7" y="6" width="18" height="14" />
+                <rect x="5" y="10" width="2" height="8" /><rect x="25" y="10" width="2" height="8" />
+                <rect x="11" y="20" width="10" height="7" /><rect x="12" y="27" width="3" height="2" /><rect x="17" y="27" width="3" height="2" />
+              </g>
+              <rect x="11" y="10" width="4" height="4" fill="#140c1c" /><rect x="17" y="10" width="4" height="4" fill="#140c1c" />
+              <rect x="12" y="16" width="8" height="2" fill="#140c1c" />
+            </svg>
+          </span>
+          <div>
+            <p className="eyebrow boss-eyebrow">{t({ en: "Boss · Cross the Threshold", es: "Jefe · Cruza el Umbral" }, locale)}</p>
+            <h2 className="boss-name display" style={{ fontSize: "var(--t-h2)" }}>{t(GAUNTLET.title, locale)}</h2>
+            <p className="prose" style={{ marginTop: "var(--s-2)" }}>{t(GAUNTLET.brief, locale)}</p>
+          </div>
+        </div>
       </div>
 
       {/* HUD */}

@@ -13,6 +13,7 @@ import { m } from "@/i18n/messages";
 import { AXIS_BY_ID } from "@/lib/axes";
 import { recordCheckpoint } from "@/lib/store";
 import { fireReward } from "./Reward";
+import { BossIntro, BossHealth } from "./BossIntro";
 import type { Checkpoint, CheckpointItem } from "@/lib/types";
 
 // Mastery gate: you may miss at most one item. Expressed as a score threshold
@@ -88,22 +89,19 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
       {!started && !done && (
         <div className="stack" style={{ gap: "var(--s-5)" }}>
           <p className="prose" style={{ fontSize: "1.0625rem" }}>{m("chk.intro", locale)}</p>
-          <div className="card">
-            <div className="eyebrow" style={{ marginBottom: "var(--s-3)" }}>{m("chk.covers", locale)}</div>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s-2)" }}>
-              {[...new Set(items.map((it) => it.concept))].map((c) => (
-                <span key={c} className="mono" style={{ fontSize: "var(--t-xs)", padding: "3px 8px", borderRadius: "var(--r-xs)", border: "1px solid var(--hairline-2)", color: "var(--text-3)" }}>
-                  {c}
-                </span>
-              ))}
+          <BossIntro locale={locale} domainId={checkpoint.domainId} total={items.length} track={track} onEngage={() => setStarted(true)}>
+            <div className="card" style={{ background: "var(--film-1)" }}>
+              <div className="eyebrow" style={{ marginBottom: "var(--s-3)" }}>{m("chk.covers", locale)}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s-2)" }}>
+                {[...new Set(items.map((it) => it.concept))].map((c) => (
+                  <span key={c} className="mono" style={{ fontSize: "var(--t-xs)", padding: "3px 8px", borderRadius: "var(--r-xs)", border: "1px solid var(--hairline-2)", color: "var(--text-3)" }}>
+                    {c}
+                  </span>
+                ))}
+              </div>
+              <span className="eyebrow" style={{ display: "block", marginTop: "var(--s-3)" }}>{items.length} · {t(gateLabel, locale)}</span>
             </div>
-          </div>
-          <div style={{ display: "flex", gap: "var(--s-4)", alignItems: "center" }}>
-            <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} onClick={() => setStarted(true)}>
-              {m("chk.begin", locale)}
-            </button>
-            <span className="eyebrow">{items.length} · {t(gateLabel, locale)}</span>
-          </div>
+          </BossIntro>
           <Link href={`/${locale}/path`} className="eyebrow">← {m("chk.backToPath", locale)}</Link>
         </div>
       )}
@@ -111,6 +109,8 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
       {started && !done && item && (
         <div className="stack" style={{ gap: "var(--s-4)" }}>
           <span className="eyebrow">{m("chk.eyebrow", locale)} · {idx + 1}/{items.length}</span>
+          {/* boss HP drains as you clear questions correctly */}
+          <BossHealth remaining={items.length - correctCount} total={items.length} locale={locale} />
           <div className="meter" style={{ ["--meter-val" as string]: String(Math.round((idx / items.length) * 100)), ["--meter-accent" as string]: "var(--track)" }} />
           <div className="card">
             <p style={{ color: "var(--text)", marginBottom: "var(--s-5)", fontSize: "1.0625rem" }}>{t(item.stem, locale)}</p>
