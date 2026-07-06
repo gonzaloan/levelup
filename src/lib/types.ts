@@ -157,11 +157,35 @@ export interface Schematic {
   xAxis?: I18nText;            // axes
   yAxis?: I18nText;            // axes
 }
+// A code sample with optional per-line annotations — the "show the code" layer.
+export interface ConceptCode {
+  lang: string;                // e.g. "python", "ts", "go", "sql", "text"
+  snippet: string;             // raw source (NOT i18n — code is code)
+  caption?: I18nText;
+  annotations?: { line: number; note: I18nText }[];
+}
+// A defined term surfaced in the context rail as a keyword chip.
+export interface ConceptKeyword { term: I18nText; def: I18nText; }
+// A worked example: a concrete scenario + its walkthrough.
+export interface ConceptExample { scenario: I18nText; walkthrough: I18nText; }
+// Reference to an interactive widget from the viz kit (src/components/viz).
+export interface ConceptVisual { widgetId: string; params?: Record<string, unknown>; }
+
 export interface ConceptLesson {
   slug: string;
   explanation: I18nText;       // authored prose, \n\n-separated paragraphs
   keyPoints: I18nText[];
   diagram: Schematic;
+  // ── enriched layer — all optional, additive; old renderers ignore these ──
+  depth?: I18nText;            // extended "read more" prose (second layer)
+  keywords?: ConceptKeyword[]; // key terms for the context rail
+  code?: ConceptCode;          // a real code sample, when code clarifies
+  example?: ConceptExample;    // a worked concrete example
+  architecture?: Schematic;    // a richer/animated schematic (system view)
+  visual?: ConceptVisual;      // an interactive widget from the viz kit
+  pitfalls?: I18nText[];       // common traps / "how this goes wrong"
+  analogy?: I18nText;          // a plain-language analogy that makes it click
+  source?: string;             // checkable citation for enriched claims
 }
 export interface QuizItem {
   stem: I18nText;
