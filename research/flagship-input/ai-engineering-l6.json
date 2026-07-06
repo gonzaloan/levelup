@@ -1,0 +1,185 @@
+{
+ "lessonId": "ai-engineering-l6",
+ "concepts": [
+  {
+   "slug": "ai-observability",
+   "title": {
+    "en": "Observability for AI Systems",
+    "es": "Observabilidad para sistemas de IA"
+   },
+   "why": {
+    "en": "Trains you to expect production behavior to diverge from offline evals and to instrument for that gap with tracing, online eval, and user-feedback loops.",
+    "es": "Te entrena a esperar que el comportamiento en producción diverja de las evaluaciones offline y a instrumentar para esa brecha con trazas, evaluación en línea y ciclos de retroalimentación del usuario."
+   },
+   "source": "Chip Huyen, AI Engineering, Ch.10 'AI Engineering Architecture and User Feedback' — Monitoring and Observability, User Feedback",
+   "explanation": {
+    "en": "Your offline eval said 94%. Production is a dumpster fire of complaints. This is normal, not a failure of your eval — it's the gap. Real users send inputs you never imagined, your retrieval pulls stale documents, a model version changes under you, and latency spikes at the tail. If you only measure offline, you are blind to all of it. The first move at platform scale is to assume divergence and instrument for it.\n\nThree layers cover the gap. Tracing: capture the full trace of every request — the rendered prompt, the retrieved context, each tool call and its result, model id and version, token counts, and latency per step. When something breaks you need to replay the exact chain, not guess. Online eval: sample a slice of live traffic and run judges (LLM-as-judge, heuristics, or regex checks) against real outputs, so you catch quality drift the day it starts, not the quarter it's noticed. User feedback: explicit signals (thumbs, ratings) are sparse and biased, so lean on implicit ones — did the user edit your output, regenerate, copy it, or abandon the session? Those tell you more than a survey.\n\nThe judgment call is what to alert on. Don't alert on raw model metrics nobody acts on; alert on the things that map to user harm — refusal rate climbing, groundedness dropping, p95 latency past your budget, cost per request doubling. And feed production traces back into your eval set. The failures you see live are the most valuable test cases you'll ever get; a platform that doesn't recycle them keeps re-learning the same lesson.",
+    "es": "Tu eval offline decía 94%. Producción es un incendio de quejas. Esto es normal, no un fallo de tu eval: es la brecha. Los usuarios reales mandan entradas que jamás imaginaste, tu recuperación trae documentos viejos, una versión del modelo cambia sin avisarte y la latencia se dispara en la cola. Si solo mides offline, estás ciego ante todo eso. El primer movimiento a escala de plataforma es asumir la divergencia e instrumentar para ella.\n\nTres capas cubren la brecha. Trazado: captura la traza completa de cada solicitud — el prompt renderizado, el contexto recuperado, cada llamada a herramienta y su resultado, id y versión del modelo, conteo de tokens y latencia por paso. Cuando algo se rompe necesitas reproducir la cadena exacta, no adivinar. Eval online: muestrea una porción del tráfico vivo y corre jueces (LLM-como-juez, heurísticas o checks con regex) sobre las salidas reales, para atrapar la deriva de calidad el día que empieza, no el trimestre en que alguien la nota. Feedback del usuario: las señales explícitas (pulgares, calificaciones) son escasas y sesgadas, así que apóyate en las implícitas — ¿el usuario editó tu salida, la regeneró, la copió o abandonó la sesión? Eso dice más que una encuesta.\n\nEl juicio clave es sobre qué alertar. No alertes sobre métricas crudas del modelo que nadie va a accionar; alerta sobre lo que se traduce en daño al usuario — tasa de rechazo subiendo, fundamentación cayendo, latencia p95 fuera de tu presupuesto, costo por solicitud duplicándose. Y realimenta las trazas de producción a tu conjunto de eval. Los fallos que ves en vivo son los casos de prueba más valiosos que tendrás; una plataforma que no los recicla vuelve a aprender la misma lección una y otra vez."
+   },
+   "keyPoints": [
+    {
+     "en": "Assume production diverges from offline eval; instrument the gap instead of trusting the offline number.",
+     "es": "Asume que producción diverge del eval offline; instrumenta la brecha en vez de confiar en el número offline."
+    },
+    {
+     "en": "Trace everything (prompt, context, tool calls, model version, tokens, latency) so you can replay failures, not guess.",
+     "es": "Traza todo (prompt, contexto, llamadas a herramientas, versión del modelo, tokens, latencia) para reproducir fallos, no adivinarlos."
+    },
+    {
+     "en": "Implicit feedback — edits, regenerations, abandonment — beats sparse thumbs-up ratings.",
+     "es": "El feedback implícito — ediciones, regeneraciones, abandono — supera a los escasos pulgares arriba."
+    },
+    {
+     "en": "Recycle live failures into your eval set; alert on user-harm signals, not vanity model metrics.",
+     "es": "Recicla los fallos en vivo hacia tu eval; alerta sobre señales de daño al usuario, no métricas de vanidad."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "ai-architecture-guardrails",
+   "title": {
+    "en": "AI Platform Architecture and Guardrails",
+    "es": "Arquitectura de plataforma de IA y guardarraíles"
+   },
+   "why": {
+    "en": "Trains you to build platform primitives — model router/gateway, caches, guardrails, context enhancement — that let many teams ship AI safely without each reinventing them.",
+    "es": "Te entrena a construir primitivas de plataforma —enrutador/gateway de modelos, cachés, guardarraíles, enriquecimiento de contexto— que permitan a muchos equipos publicar IA de forma segura sin reinventarlas cada uno."
+   },
+   "source": "Chip Huyen, AI Engineering, Ch.10 — Architecture (Enhance Context, Guardrails, Model Router/Gateway, Caches, Agent Patterns)",
+   "explanation": {
+    "en": "Watch what happens without a platform: team A writes its own retry logic and prompt-injection filter, team B hardcodes a model name into forty services, team C logs raw PII to disk. Each reinvents the same primitives, badly, and you have no single place to fix anything. The platform architect's job is to build the shared primitives once, well, and put them behind a gateway everyone routes through.\n\nThe gateway (or model router) is the keystone. It's a single choke point in front of the models where you enforce auth, rate limits, per-team cost attribution, structured logging, and — critically — model swapping without touching caller code. When a cheaper or better model ships, you change routing config, not forty repos. On top of that sit the other primitives: caches (exact-match for identical prompts, semantic for near-duplicates) to kill redundant spend and latency; guardrails on both sides — input guardrails to block prompt injection and strip PII before it hits the model, output guardrails to catch toxic, ungrounded, or policy-violating responses before they reach a user; and context enhancement (the retrieval and tool layer) so teams get RAG and function-calling as a service instead of each wiring it from scratch.\n\nThe judgment is what to centralize versus what to leave to teams. Centralize the cross-cutting, safety-critical, expensive-to-get-right pieces: the gateway, guardrails, caching, cost tracking, and the retrieval substrate. Leave the domain logic — which prompts, which tools, which business rules — to the teams, because they know their product and you don't. Over-centralize and you become the bottleneck every team curses; under-centralize and you get forty inconsistent, unsafe reimplementations. The gateway is also your emergency brake: one config change can disable a compromised tool or block a bad model version across the whole org.",
+    "es": "Mira qué pasa sin plataforma: el equipo A escribe su propia lógica de reintentos y su filtro de inyección de prompts, el equipo B incrusta un nombre de modelo en cuarenta servicios, el equipo C escribe PII cruda a disco. Cada uno reinventa las mismas primitivas, mal, y no tienes un solo lugar donde arreglar nada. El trabajo del arquitecto de plataforma es construir las primitivas compartidas una vez, bien, y ponerlas detrás de un gateway por el que todos enruten.\n\nEl gateway (o router de modelos) es la piedra angular. Es un único punto de paso frente a los modelos donde impones autenticación, límites de tasa, atribución de costo por equipo, logging estructurado y — crítico — el cambio de modelo sin tocar el código de quien llama. Cuando sale un modelo más barato o mejor, cambias la configuración de enrutamiento, no cuarenta repos. Encima se apoyan las demás primitivas: cachés (exacta para prompts idénticos, semántica para casi duplicados) para matar gasto y latencia redundantes; guardrails en ambos lados — de entrada para bloquear inyección de prompts y quitar PII antes de que llegue al modelo, de salida para atrapar respuestas tóxicas, sin fundamento o que violan políticas antes de que lleguen al usuario; y mejora de contexto (la capa de recuperación y herramientas) para que los equipos reciban RAG y function-calling como servicio en lugar de cablearlo cada uno desde cero.\n\nEl juicio está en qué centralizar y qué dejar a los equipos. Centraliza lo transversal, crítico para la seguridad y caro de hacer bien: el gateway, los guardrails, el caché, el rastreo de costo y el sustrato de recuperación. Deja la lógica de dominio — qué prompts, qué herramientas, qué reglas de negocio — a los equipos, porque conocen su producto y tú no. Si centralizas de más te vuelves el cuello de botella que todos maldicen; si centralizas de menos obtienes cuarenta reimplementaciones inconsistentes e inseguras. El gateway es también tu freno de emergencia: un cambio de configuración puede desactivar una herramienta comprometida o bloquear una mala versión de modelo en toda la organización."
+   },
+   "keyPoints": [
+    {
+     "en": "A gateway/router is a single choke point for auth, rate limits, cost attribution, logging, and model swapping without caller changes.",
+     "es": "Un gateway/router es un único punto de paso para auth, límites de tasa, atribución de costo, logging y cambio de modelo sin tocar a quien llama."
+    },
+    {
+     "en": "Guardrails belong on both sides: input (injection, PII) and output (toxicity, groundedness, policy).",
+     "es": "Los guardrails van en ambos lados: entrada (inyección, PII) y salida (toxicidad, fundamentación, política)."
+    },
+    {
+     "en": "Centralize cross-cutting, safety-critical primitives (gateway, guardrails, cache, retrieval); leave domain logic to teams.",
+     "es": "Centraliza las primitivas transversales y críticas de seguridad (gateway, guardrails, caché, recuperación); deja la lógica de dominio a los equipos."
+    },
+    {
+     "en": "The gateway doubles as an org-wide emergency brake for compromised tools or bad model versions.",
+     "es": "El gateway funciona además como freno de emergencia de toda la organización ante herramientas comprometidas o malas versiones de modelo."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "unit-economics-at-scale",
+   "title": {
+    "en": "Unit Economics at Scale",
+    "es": "Economía unitaria a escala"
+   },
+   "why": {
+    "en": "Trains you to architect for the cost curve — caching, routing cheap vs expensive models, inference optimization — rather than negotiating the per-call price.",
+    "es": "Te entrena a diseñar para la curva de costo —caché, enrutamiento entre modelos baratos y caros, optimización de inferencia— en lugar de negociar el precio por llamada."
+   },
+   "source": "Chip Huyen, AI Engineering, Ch.9 'Inference Optimization' & Ch.10 (router/caches); Anthropic 'Building Effective Agents' — routing pattern (Haiku vs Sonnet)",
+   "explanation": {
+    "en": "When cost balloons, the junior instinct is to email the vendor for a discount. The staff instinct is to change the shape of the spend. Per-call price is a knob you barely control; the architecture around the call is a knob you fully control. Your real metric isn't cost per token — it's cost per successful task, because a cheap call that fails and gets retried three times is expensive.\n\nThree levers move the curve. Caching: an exact-match cache on identical prompts and a semantic cache on near-duplicates can wipe out a huge fraction of traffic in workloads with repetition — FAQ bots, classification, boilerplate generation. Routing: don't send every request to your biggest model. Use a cheap, fast model (think Haiku-class) for classification, routing, extraction, and easy turns, and reserve the expensive model (Sonnet-class) for genuinely hard reasoning. Anthropic's routing pattern is exactly this: a small model triages, and only the hard cases pay for the big one. Inference optimization: batching, prompt caching for long shared prefixes, quantization on self-hosted models, streaming to cut perceived latency, and shorter outputs where you control the format.\n\nThe judgment is doing the math before you optimize. Measure where the money actually goes — usually a few high-volume endpoints or a handful of runaway agent loops. Routing everything through the cheap model to save money is a trap if quality drops and users retry; you paid twice and lost trust. So gate routing decisions on measured quality per tier, not hope. And put hard budget ceilings and token caps in the gateway, because at scale a single buggy retry loop or a runaway agent can burn a month's budget in an afternoon. Architect the curve; don't negotiate the price.",
+    "es": "Cuando el costo se dispara, el instinto junior es escribirle al proveedor por un descuento. El instinto de staff es cambiar la forma del gasto. El precio por llamada es una perilla que apenas controlas; la arquitectura alrededor de la llamada es una perilla que controlas por completo. Tu métrica real no es costo por token — es costo por tarea exitosa, porque una llamada barata que falla y se reintenta tres veces sale cara.\n\nTres palancas mueven la curva. Caché: una caché exacta sobre prompts idénticos y una semántica sobre casi duplicados pueden eliminar una fracción enorme del tráfico en cargas con repetición — bots de preguntas frecuentes, clasificación, generación de plantillas. Enrutamiento: no mandes cada solicitud a tu modelo más grande. Usa un modelo barato y rápido (tipo Haiku) para clasificación, enrutamiento, extracción y turnos fáciles, y reserva el modelo caro (tipo Sonnet) para razonamiento genuinamente difícil. El patrón de enrutamiento de Anthropic es justo esto: un modelo pequeño hace el triaje, y solo los casos difíciles pagan por el grande. Optimización de inferencia: batching, prompt caching para prefijos largos compartidos, cuantización en modelos autoalojados, streaming para recortar la latencia percibida, y salidas más cortas donde controlas el formato.\n\nEl juicio está en hacer las cuentas antes de optimizar. Mide a dónde va de verdad el dinero — normalmente unos pocos endpoints de alto volumen o un puñado de bucles de agente desbocados. Enrutar todo por el modelo barato para ahorrar es una trampa si la calidad cae y los usuarios reintentan; pagaste dos veces y perdiste confianza. Así que condiciona las decisiones de enrutamiento a la calidad medida por nivel, no a la esperanza. Y pon techos de presupuesto y límites de tokens duros en el gateway, porque a escala un solo bucle de reintentos con bug o un agente desbocado puede quemar el presupuesto de un mes en una tarde. Arquitecta la curva; no negocies el precio."
+   },
+   "keyPoints": [
+    {
+     "en": "Optimize cost per successful task, not cost per token — retries make cheap calls expensive.",
+     "es": "Optimiza el costo por tarea exitosa, no por token — los reintentos encarecen las llamadas baratas."
+    },
+    {
+     "en": "Route by difficulty: cheap model for classification/extraction, expensive model only for hard reasoning.",
+     "es": "Enruta por dificultad: modelo barato para clasificación/extracción, caro solo para razonamiento difícil."
+    },
+    {
+     "en": "Caching (exact + semantic) and inference tricks (batching, prompt caching, quantization) bend the curve more than any discount.",
+     "es": "El caché (exacto + semántico) y los trucos de inferencia (batching, prompt caching, cuantización) doblan la curva más que cualquier descuento."
+    },
+    {
+     "en": "Enforce hard token/budget ceilings in the gateway; one runaway loop can burn a month of budget.",
+     "es": "Impón techos duros de tokens/presupuesto en el gateway; un bucle desbocado puede quemar el presupuesto de un mes."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "security-program-adversarial",
+   "title": {
+    "en": "From Threat Model to Security Program",
+    "es": "Del modelo de amenazas al programa de seguridad"
+   },
+   "why": {
+    "en": "Trains you to institutionalize red-teaming, supply-chain controls, poisoning defenses, and consumption limits as a standing org practice, not one-off audits.",
+    "es": "Te entrena a institucionalizar el red-teaming, los controles de cadena de suministro, las defensas contra envenenamiento y los límites de consumo como una práctica permanente de la organización, no como auditorías puntuales."
+   },
+   "source": "OWASP Top 10 for LLM Applications 2025 — LLM03 Supply Chain, LLM04 Data and Model Poisoning, LLM10 Unbounded Consumption; roadmap.sh ai-engineer (conducting adversarial testing)",
+   "explanation": {
+    "en": "A pentest once a year is theater. AI systems change weekly — new prompts, new tools, new model versions, new data flowing into retrieval — and attackers probe continuously. Security at platform scale is a standing program with owners, cadence, and automated gates, not a report that sits in a drawer until the next audit. The OWASP Top 10 for LLM Applications is your checklist of what the program must cover.\n\nFour areas carry most of the risk. Continuous red-teaming: a standing effort (internal team plus automated adversarial suites) that hammers prompt injection, jailbreaks, and data exfiltration on every release, with findings feeding your guardrails and eval set. Supply chain (LLM03): you're pulling models, adapters, embeddings, and libraries from third parties — pin versions, verify provenance, keep an SBOM, and treat a model file like any untrusted binary. Data and model poisoning (LLM04): if attackers can slip content into your training data or your RAG corpus, they can plant backdoors or steer answers — so validate provenance of ingested data and lock down who can write to the retrieval index. Unbounded consumption (LLM10): without per-user and per-key rate limits, token caps, and budgets, an attacker (or a bug) can run up a ruinous bill or DoS you — the same ceilings that protect unit economics protect you here.\n\nThe judgment is institutionalizing it so it survives turnover and doesn't depend on one paranoid engineer. Wire the checks into CI and the gateway: guardrail tests run on every deploy, dependency and model provenance scans block the pipeline, consumption limits are default-on and require sign-off to raise. Assign an owner and a review cadence. A one-off audit tells you that you were secure last March; a program tells you you're secure today, and keeps telling you.",
+    "es": "Un pentest una vez al año es teatro. Los sistemas de IA cambian cada semana — nuevos prompts, nuevas herramientas, nuevas versiones de modelo, nuevos datos entrando a la recuperación — y los atacantes sondean sin parar. La seguridad a escala de plataforma es un programa permanente con dueños, cadencia y controles automatizados, no un reporte que duerme en un cajón hasta la próxima auditoría. El Top 10 de OWASP para Aplicaciones LLM es tu lista de lo que el programa debe cubrir.\n\nCuatro áreas concentran la mayor parte del riesgo. Red-teaming continuo: un esfuerzo permanente (equipo interno más suites adversariales automatizadas) que golpea inyección de prompts, jailbreaks y exfiltración de datos en cada release, con hallazgos que alimentan tus guardrails y tu eval. Cadena de suministro (LLM03): estás trayendo modelos, adaptadores, embeddings y librerías de terceros — fija versiones, verifica procedencia, mantén un SBOM y trata un archivo de modelo como cualquier binario no confiable. Envenenamiento de datos y modelo (LLM04): si los atacantes logran colar contenido en tus datos de entrenamiento o en tu corpus de RAG, pueden plantar puertas traseras o dirigir respuestas — así que valida la procedencia de los datos ingeridos y restringe quién puede escribir en el índice de recuperación. Consumo ilimitado (LLM10): sin límites de tasa por usuario y por clave, topes de tokens y presupuestos, un atacante (o un bug) puede generar una factura ruinosa o tumbarte por DoS — los mismos techos que protegen la economía unitaria te protegen aquí.\n\nEl juicio está en institucionalizarlo para que sobreviva a la rotación y no dependa de un solo ingeniero paranoico. Conecta los controles a CI y al gateway: las pruebas de guardrails corren en cada deploy, los escaneos de dependencias y procedencia de modelos bloquean el pipeline, los límites de consumo vienen activados por defecto y requieren firma para subirlos. Asigna un dueño y una cadencia de revisión. Una auditoría puntual te dice que estabas seguro en marzo pasado; un programa te dice que estás seguro hoy, y te lo sigue diciendo."
+   },
+   "keyPoints": [
+    {
+     "en": "Run security as a standing program (owners, cadence, CI gates), not an annual audit.",
+     "es": "Opera la seguridad como programa permanente (dueños, cadencia, controles en CI), no como auditoría anual."
+    },
+    {
+     "en": "Cover the OWASP LLM risks: supply chain (pin/verify/SBOM), poisoning (validate data provenance), unbounded consumption (rate + budget caps).",
+     "es": "Cubre los riesgos OWASP LLM: cadena de suministro (fijar/verificar/SBOM), envenenamiento (validar procedencia), consumo ilimitado (topes de tasa y presupuesto)."
+    },
+    {
+     "en": "Continuous red-teaming feeds findings back into guardrails and the eval set.",
+     "es": "El red-teaming continuo realimenta hallazgos a los guardrails y al eval."
+    },
+    {
+     "en": "Wire checks into CI and the gateway so security doesn't depend on one vigilant person.",
+     "es": "Conecta los controles a CI y al gateway para que la seguridad no dependa de una sola persona vigilante."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "ai-governance-responsible-ai-program",
+   "title": {
+    "en": "AI Governance & Responsible-AI as an Org Function",
+    "es": "Gobernanza de IA y IA responsable como función organizacional"
+   },
+   "why": {
+    "en": "At Principal level this is board- and legal-facing. Shipping regulated AI in 2026 means you must orient your program to the NIST AI RMF and the EU AI Act's risk tiers, and run a repeatable model-card + red-team + bias-eval process — not a one-off memo.",
+    "es": "En nivel Principal esto se discute con el directorio y con legal. Enviar IA regulada en 2026 exige alinear tu programa al NIST AI RMF y a los niveles de riesgo de la EU AI Act, y correr un proceso repetible de model card + red-team + evaluación de sesgo, no un memo aislado."
+   },
+   "source": "NIST AI RMF 1.0 (2023); EU AI Act, Regulation (EU) 2024/1689; Mitchell et al., \"Model Cards for Model Reporting\" (FAT* 2019)",
+   "explanation": {
+    "en": "Governance is not a value you have; it's a cost you pay, and it should be proportional to the risk you create. The two anchors: NIST AI RMF 1.0 (voluntary, US, 2023) gives you a management structure via four functions — Govern, Map, Measure, Manage — where Govern is the culture/accountability layer that cuts across the other three. The EU AI Act (Reg. 2024/1689, entered into force Aug 2024, phased through ~2026–2027) is law with teeth, and it classifies by risk tier: unacceptable (banned — e.g. social scoring, most real-time biometric ID in public), high (allowed but heavily obligated — conformity assessment, risk management, logging, human oversight, technical documentation), limited (transparency only — tell people they're talking to a bot or seeing a deepfake), and minimal (no obligations). Your first governance act is classification: figure out which tier your system lands in, because that sets the whole obligation set. Over-governing a minimal-risk feature wastes credibility; under-governing a high-risk one is a legal and reputational bomb.\n\nThe minimum credible program for any consequential model is three artifacts working together. A model card (Mitchell et al. 2019) documents intended use, out-of-scope use, training data, and disaggregated performance across subgroups — it's the honest spec sheet that makes misuse a decision rather than an accident. Structured red-teaming is adversarial probing before and after launch: jailbreaks, prompt injection, data exfiltration, harmful-content elicitation, run by people who are not the builders and incentivized to break it. Bias/fairness evaluation measures performance and error rates across protected and salient subgroups against a defined metric, because 'seems fine' is not a measurement. None of the three alone is enough: the card without red-team is untested claims; red-team without a card has no baseline to test against; both without bias eval ignore who gets hurt.\n\nThe judgment move — the thing that separates Staff from Principal — is turning this into an org function instead of heroics. That means owned artifacts (someone's name on each model card), a gate in the release path (no high-risk model ships without sign-off), a cadence (red-team every major version, not once), and a decision record when you accept a known risk. If governance depends on one conscientious engineer remembering to do it, you don't have a program; you have a single point of failure. Make it boring, repeatable, and auditable — that's what survives a regulator, an incident review, and staff turnover.",
+    "es": "La gobernanza no es un valor que uno tiene; es un costo que uno paga, y debe ser proporcional al riesgo que uno genera. Los dos anclajes: el NIST AI RMF 1.0 (voluntario, EE. UU., 2023) te da una estructura de gestión con cuatro funciones — Govern, Map, Measure, Manage — donde Govern es la capa de cultura y rendición de cuentas que atraviesa a las otras tres. La EU AI Act (Reg. 2024/1689, en vigor desde agosto de 2024, con aplicación escalonada hacia 2026–2027) es ley con dientes y clasifica por nivel de riesgo: inaceptable (prohibido — p. ej. scoring social, casi toda identificación biométrica en tiempo real en espacios públicos), alto (permitido pero con fuertes obligaciones — evaluación de conformidad, gestión de riesgo, registro de logs, supervisión humana, documentación técnica), limitado (solo transparencia — avisar que se habla con un bot o que se ve un deepfake) y mínimo (sin obligaciones). Tu primer acto de gobernanza es clasificar: determinar en qué nivel cae tu sistema, porque eso define todo el conjunto de obligaciones. Gobernar de más una función de riesgo mínimo quema credibilidad; gobernar de menos una de riesgo alto es una bomba legal y reputacional.\n\nEl programa mínimo creíble para cualquier modelo con consecuencias son tres artefactos que funcionan juntos. Un model card (Mitchell et al. 2019) documenta el uso previsto, el uso fuera de alcance, los datos de entrenamiento y el desempeño desagregado por subgrupos — es la ficha técnica honesta que convierte el mal uso en una decisión y no en un accidente. El red-teaming estructurado es sondeo adversarial antes y después del lanzamiento: jailbreaks, inyección de prompts, exfiltración de datos, inducción de contenido dañino, ejecutado por personas que no construyeron el sistema y con el incentivo de romperlo. La evaluación de sesgo y equidad mide desempeño y tasas de error entre subgrupos protegidos y relevantes contra una métrica definida, porque 'parece bien' no es una medición. Ninguno de los tres alcanza solo: el card sin red-team son afirmaciones sin probar; el red-team sin card no tiene línea base contra la cual probar; ambos sin evaluación de sesgo ignoran a quién se perjudica.\n\nLa jugada de criterio — lo que separa a Staff de Principal — es convertir esto en una función organizacional en lugar de heroísmo individual. Eso significa artefactos con dueño (un nombre responsable en cada model card), una compuerta en el camino de release (ningún modelo de alto riesgo se envía sin aprobación), una cadencia (red-team en cada versión mayor, no una sola vez) y un registro de decisión cuando se acepta un riesgo conocido. Si la gobernanza depende de que un ingeniero consciente se acuerde de hacerla, no tienes un programa; tienes un punto único de falla. Hazla aburrida, repetible y auditable — eso es lo que sobrevive a un regulador, a una revisión de incidente y a la rotación de personal."
+   },
+   "keyPoints": [
+    {
+     "en": "Classify first: the EU AI Act tier (unacceptable/high/limited/minimal) determines your obligation set, so governance effort must be proportional to risk tier — over-governing minimal-risk burns credibility, under-governing high-risk is a legal bomb.",
+     "es": "Clasifica primero: el nivel de la EU AI Act (inaceptable/alto/limitado/mínimo) define tu conjunto de obligaciones, así que el esfuerzo de gobernanza debe ser proporcional al riesgo — gobernar de más lo mínimo quema credibilidad, gobernar de menos lo alto es una bomba legal."
+    },
+    {
+     "en": "Model card + structured red-team + bias/fairness eval is the minimum credible bundle: the card sets baseline claims, red-team tests them adversarially, and bias eval measures who gets hurt — each covers a gap the others leave.",
+     "es": "Model card + red-team estructurado + evaluación de sesgo es el paquete mínimo creíble: el card fija las afirmaciones base, el red-team las prueba de forma adversarial y la evaluación de sesgo mide a quién se perjudica — cada uno cubre un vacío que los otros dejan."
+    },
+    {
+     "en": "NIST AI RMF's Govern function is the cross-cutting accountability layer: it turns Map/Measure/Manage from tasks into a standing process with owners, gates, and cadence — that's what makes it an org function, not heroics.",
+     "es": "La función Govern del NIST AI RMF es la capa transversal de rendición de cuentas: convierte Map/Measure/Manage de tareas en un proceso permanente con dueños, compuertas y cadencia — eso lo vuelve función organizacional, no heroísmo."
+    },
+    {
+     "en": "If governance depends on one engineer remembering, you have a single point of failure, not a program; make it boring, repeatable, and auditable so it survives regulators, incident reviews, and turnover.",
+     "es": "Si la gobernanza depende de que un ingeniero se acuerde, tienes un punto único de falla, no un programa; hazla aburrida, repetible y auditable para que sobreviva a reguladores, revisiones de incidente y rotación."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  }
+ ]
+}

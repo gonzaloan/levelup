@@ -1,0 +1,277 @@
+{
+ "lessonId": "technical-depth-l5",
+ "concepts": [
+  {
+   "slug": "durability-and-crash-recovery",
+   "title": {
+    "en": "Durability, write-ahead logging and crash recovery",
+    "es": "Durabilidad, write-ahead log y recuperación ante fallos"
+   },
+   "why": {
+    "en": "Trains seeing durability as a write-ahead/redo log plus fsync discipline, so you know exactly what survives a crash and what an fsync actually buys you.",
+    "es": "Entrena ver la durabilidad como un write-ahead/redo log más disciplina de fsync, para saber exactamente qué sobrevive a un crash y qué compra realmente un fsync."
+   },
+   "source": "Kleppmann, DDIA, Ch.3 (Storage & Retrieval — Making B-Trees Reliable: write-ahead/redo log, crash recovery)",
+   "explanation": {
+    "en": "A write is not durable the instant your function returns. It's durable when the bytes are on stable storage and you've told the OS to stop buffering them. The write-ahead log (WAL, also called a redo log) is how databases make that guarantee cheap: before touching the actual B-tree pages, the engine appends the change to a sequential log and fsyncs it. If the process crashes mid-update, recovery replays the log from the last checkpoint and rebuilds the pages. The log — not the pages — is the source of truth for what happened.\n\nfsync is the whole game. Writing to a file only copies bytes into the OS page cache; a power loss there loses your data even though write() returned success. fsync forces those pages down to the physical device. What an fsync actually buys you is one promise: everything logged before this point survives a crash; everything after it may not. That is why Postgres with fsync=off is blazing fast and quietly lying about durability, and why cheap disks with a volatile write cache can lose acknowledged data on power loss.\n\nThe judgment: know exactly where your durability boundary is. If you ack a write to the client before the WAL is fsynced (group commit that batches too loosely, or async commit), you've chosen throughput over the guarantee — sometimes correctly. Just never let it be an accident. When someone says 'the database is ACID,' the D is only as strong as the last fsync that actually reached hardware.",
+    "es": "Una escritura no es durable en el instante en que tu función retorna. Es durable cuando los bytes están en almacenamiento estable y le dijiste al sistema operativo que deje de bufferearlos. El write-ahead log (WAL, también llamado redo log) es como las bases de datos hacen barata esa garantía: antes de tocar las páginas reales del B-tree, el motor agrega el cambio a un log secuencial y le hace fsync. Si el proceso crashea a mitad de una actualización, la recuperación reproduce el log desde el último checkpoint y reconstruye las páginas. El log —no las páginas— es la fuente de verdad de lo que ocurrió.\n\nEl fsync es todo el juego. Escribir en un archivo solo copia bytes al page cache del SO; una pérdida de energía ahí borra tus datos aunque write() haya devuelto éxito. El fsync fuerza esas páginas hasta el dispositivo físico. Lo que un fsync te compra de verdad es una sola promesa: todo lo registrado antes de este punto sobrevive un crash; todo lo posterior tal vez no. Por eso Postgres con fsync=off es velocísimo y miente en silencio sobre la durabilidad, y por eso los discos baratos con caché de escritura volátil pueden perder datos ya confirmados ante un corte de energía.\n\nEl criterio: saber exactamente dónde está tu frontera de durabilidad. Si confirmas una escritura al cliente antes de hacer fsync del WAL (un group commit demasiado laxo, o commit asíncrono), elegiste throughput sobre la garantía —a veces con razón. Pero que nunca sea por accidente. Cuando alguien dice 'la base es ACID', la D vale solo tanto como el último fsync que realmente llegó al hardware."
+   },
+   "keyPoints": [
+    {
+     "en": "Durability = logged and fsynced to stable storage, not just write() returned.",
+     "es": "Durabilidad = registrado y con fsync en almacenamiento estable, no solo que write() haya retornado."
+    },
+    {
+     "en": "The WAL is the source of truth; crash recovery replays it from the last checkpoint.",
+     "es": "El WAL es la fuente de verdad; la recuperación tras crash lo reproduce desde el último checkpoint."
+    },
+    {
+     "en": "fsync=off or async commit trades the durability guarantee for speed — a valid choice only if deliberate.",
+     "es": "fsync=off o commit asíncrono cambian la garantía de durabilidad por velocidad: una decisión válida solo si es deliberada."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "storage-engines-lsm-vs-btree",
+   "title": {
+    "en": "Storage engines: LSM-tree vs B-tree",
+    "es": "Motores de almacenamiento: LSM-tree vs B-tree"
+   },
+   "why": {
+    "en": "Trains picking a write-optimized LSM or a read-optimized B-tree by the workload's read/write/space amplification, not by brand.",
+    "es": "Entrena elegir un LSM optimizado para escritura o un B-tree optimizado para lectura según la amplificación de lectura/escritura/espacio del workload, no por la marca."
+   },
+   "source": "Kleppmann, DDIA, Ch.3 (SSTables & LSM-Trees vs B-Trees, amplification)",
+   "explanation": {
+    "en": "Every storage engine pays three taxes: read amplification (extra reads per query), write amplification (extra physical writes per logical write), and space amplification (extra disk per logical byte). LSM-trees and B-trees just choose which tax to pay. Pick by your workload, not by which database is trendy.\n\nA B-tree updates data in place: it finds the page and overwrites it, protected by the WAL. Reads are one tree traversal with predictable latency, which is why relational engines (Postgres, InnoDB) use them. The cost is write amplification — a small update can rewrite a whole 8KB page, plus the WAL, plus page splits. An LSM-tree (RocksDB, Cassandra, ScyllaDB) never updates in place: it buffers writes in memory and flushes sorted files (SSTables) sequentially, then merges them later via compaction. That makes writes fast and cheap (low write amplification, sequential I/O), at the cost of read amplification — a read may check several SSTables — and compaction that competes for I/O and can spike tail latency.\n\nThe judgment is blunt: heavy ingestion, time-series, logs, write-mostly counters → LSM, because sequential writes and compaction beat rewriting pages. Read-heavy OLTP that needs stable p99 latency and range scans → B-tree, because you don't want compaction randomly stealing your I/O during a read spike. And watch space: LSMs can hold multiple copies of a key until compaction reclaims them; B-trees leave fragmentation. 'It's fast' is not an answer — fast at what, and amplifying what?",
+    "es": "Todo motor de almacenamiento paga tres impuestos: amplificación de lectura (lecturas extra por consulta), amplificación de escritura (escrituras físicas extra por escritura lógica) y amplificación de espacio (disco extra por byte lógico). Los LSM-trees y los B-trees solo eligen cuál impuesto pagar. Elige por tu carga de trabajo, no por qué base está de moda.\n\nUn B-tree actualiza los datos en su lugar: encuentra la página y la sobrescribe, protegido por el WAL. Las lecturas son un recorrido del árbol con latencia predecible, por eso los motores relacionales (Postgres, InnoDB) los usan. El costo es amplificación de escritura: una actualización pequeña puede reescribir una página entera de 8KB, más el WAL, más divisiones de página. Un LSM-tree (RocksDB, Cassandra, ScyllaDB) nunca actualiza en su lugar: buffea las escrituras en memoria y baja archivos ordenados (SSTables) de forma secuencial, y luego los fusiona con compaction. Eso hace las escrituras rápidas y baratas (baja amplificación de escritura, I/O secuencial), a costa de amplificación de lectura —una lectura puede revisar varios SSTables— y de una compaction que compite por el I/O y puede disparar la latencia de cola.\n\nEl criterio es directo: ingesta pesada, series de tiempo, logs, contadores mayormente de escritura → LSM, porque las escrituras secuenciales y la compaction le ganan a reescribir páginas. OLTP con muchas lecturas que necesita un p99 estable y range scans → B-tree, porque no quieres que la compaction te robe I/O al azar durante un pico de lecturas. Y vigila el espacio: los LSM pueden guardar varias copias de una clave hasta que la compaction las libere; los B-trees dejan fragmentación. 'Es rápido' no es una respuesta: ¿rápido en qué y amplificando qué?"
+   },
+   "keyPoints": [
+    {
+     "en": "Choose by read/write/space amplification for YOUR workload, not by brand.",
+     "es": "Elige por amplificación de lectura/escritura/espacio de TU carga, no por marca."
+    },
+    {
+     "en": "LSM = write-optimized (sequential writes, compaction), higher read amp and tail-latency risk.",
+     "es": "LSM = optimizado para escritura (escrituras secuenciales, compaction), más amplificación de lectura y riesgo de latencia de cola."
+    },
+    {
+     "en": "B-tree = read-optimized, predictable latency, higher write amp from in-place page rewrites.",
+     "es": "B-tree = optimizado para lectura, latencia predecible, más amplificación de escritura por reescribir páginas en su lugar."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "replication-models",
+   "title": {
+    "en": "Replication: single-leader, multi-leader, leaderless",
+    "es": "Replicación: líder único, multi-líder, sin líder"
+   },
+   "why": {
+    "en": "Trains judging the replication topology by how much stale reads and write conflicts you can tolerate.",
+    "es": "Entrena juzgar la topología de replicación según cuántas lecturas rancias y conflictos de escritura puedes tolerar."
+   },
+   "source": "Kleppmann, DDIA, Ch.5 (Leaders & Followers, Multi-Leader, Leaderless)",
+   "explanation": {
+    "en": "Replication exists for two reasons: survive a node dying, and serve reads closer/cheaper. The topology you pick is really a bet on how much staleness and how many write conflicts you can tolerate. There are three shapes.\n\nSingle-leader (Postgres/MySQL primary + replicas, MongoDB replica sets): all writes go to one leader, which streams its log to followers. No write conflicts are possible — there's one place that decides order. The costs are that followers lag (a read from a replica can be stale) and that losing the leader needs a failover, during which writes stop. This is the right default for most systems; it's simple and correct. Multi-leader (two datacenters each accepting writes) buys you low-latency local writes and survives a whole region, but now two leaders can accept conflicting writes to the same row and you must resolve conflicts — last-write-wins silently loses data, so you need real merge logic or CRDTs. Leaderless (Dynamo, Cassandra, Riak) lets any replica take a write; correctness comes from quorums: if writes go to W nodes and reads read R nodes with W+R>N, a read overlaps the latest write. Conflicts are handled with version vectors and read repair.\n\nThe judgment: default to single-leader and only leave it when a concrete requirement forces you. Need writes in multiple regions with local latency? Multi-leader, and budget for conflict resolution as a first-class feature, not an afterthought. Need to survive nodes constantly and tune consistency per-query? Leaderless with quorums. If you can't answer 'how stale can a read be?' and 'what happens to two conflicting writes?', you haven't chosen a topology — you've inherited a bug.",
+    "es": "La replicación existe por dos razones: sobrevivir a la muerte de un nodo y servir lecturas más cerca o más baratas. La topología que elijas es en realidad una apuesta sobre cuánta desactualización y cuántos conflictos de escritura puedes tolerar. Hay tres formas.\n\nUn solo líder (primario Postgres/MySQL + réplicas, replica sets de MongoDB): todas las escrituras van a un líder, que transmite su log a los seguidores. No puede haber conflictos de escritura: hay un único lugar que decide el orden. Los costos son que los seguidores se atrasan (una lectura de réplica puede estar desactualizada) y que perder al líder requiere un failover, durante el cual las escrituras se detienen. Es el default correcto para la mayoría de los sistemas; es simple y correcto. Multi-líder (dos datacenters, cada uno aceptando escrituras) te da escrituras locales de baja latencia y sobrevive a una región entera, pero ahora dos líderes pueden aceptar escrituras en conflicto sobre la misma fila y debes resolver conflictos —last-write-wins pierde datos en silencio, así que necesitas lógica de merge real o CRDTs. Sin líder (Dynamo, Cassandra, Riak) deja que cualquier réplica reciba una escritura; la corrección viene de los quórumes: si las escrituras van a W nodos y las lecturas leen R nodos con W+R>N, una lectura se solapa con la última escritura. Los conflictos se manejan con version vectors y read repair.\n\nEl criterio: usa un solo líder por defecto y solo abandónalo cuando un requisito concreto te obligue. ¿Necesitas escrituras en varias regiones con latencia local? Multi-líder, y presupuesta la resolución de conflictos como una funcionalidad de primera clase, no como algo pensado después. ¿Necesitas sobrevivir a nodos que caen constantemente y ajustar la consistencia por consulta? Sin líder con quórumes. Si no puedes responder '¿qué tan vieja puede estar una lectura?' y '¿qué pasa con dos escrituras en conflicto?', no elegiste una topología: heredaste un bug."
+   },
+   "keyPoints": [
+    {
+     "en": "Single-leader: no write conflicts, but replica reads can be stale and failover pauses writes. The right default.",
+     "es": "Un líder: sin conflictos de escritura, pero las lecturas de réplica pueden estar viejas y el failover pausa escrituras. El default correcto."
+    },
+    {
+     "en": "Multi-leader buys multi-region local writes but forces you to resolve write conflicts explicitly.",
+     "es": "Multi-líder da escrituras locales multi-región pero te obliga a resolver conflictos de escritura explícitamente."
+    },
+    {
+     "en": "Leaderless uses quorums (W+R>N) plus version vectors/read repair; you tune consistency per query.",
+     "es": "Sin líder usa quórumes (W+R>N) más version vectors/read repair; ajustas la consistencia por consulta."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "partitioning-sharding",
+   "title": {
+    "en": "Partitioning and sharding without hot spots",
+    "es": "Particionamiento y sharding sin puntos calientes"
+   },
+   "why": {
+    "en": "Trains choosing key-range vs hash partitioning by access skew, since the wrong key creates a hot shard that no scaling fixes.",
+    "es": "Entrena elegir particionamiento por rango vs hash según el sesgo de acceso, porque una mala clave crea un shard caliente que ningún escalado arregla."
+   },
+   "source": "Kleppmann, DDIA, Ch.6 (Partitioning by Key Range/Hash, Rebalancing)",
+   "explanation": {
+    "en": "When data outgrows one node you split it across shards (partitions). The only thing that matters is the partition key, because a bad key creates a hot shard — one partition doing most of the work — and no amount of hardware fixes a hot shard. You can add ten nodes and the one holding the hot key is still melting.\n\nTwo schemes. Key-range partitioning keeps keys sorted (shard A = users a–f, B = g–m, …). It gives you efficient range scans, which is why time-series stores love it. But if your key is monotonically increasing — a timestamp, an auto-increment ID — every new write lands on the last shard, and that shard is a permanent hot spot while the rest sit idle. Hash partitioning runs the key through a hash and distributes by the hash value: writes spread evenly and the timestamp hot spot disappears. The price is you lose ordering, so range scans now hit every shard (a scatter/gather).\n\nThe judgment is about access skew, not just data size. Even hash partitioning can't save you from a single hot key — the 'celebrity problem': one user with millions of followers hashes to one shard and overwhelms it, so you special-case it (append a random suffix, cache it). Choose key-range when you need range queries and your keys aren't sequential; choose hash when writes would otherwise pile on one end. And remember rebalancing: use a fixed number of partitions or consistent hashing so adding a node moves a slice of data, not the entire dataset. The failure mode to fear isn't 'too much data' — it's 'all the traffic hitting 5% of it.'",
+    "es": "Cuando los datos superan un nodo, los repartes en shards (particiones). Lo único que importa es la clave de partición, porque una mala clave crea un shard caliente —una partición haciendo casi todo el trabajo— y ninguna cantidad de hardware arregla un shard caliente. Puedes agregar diez nodos y el que tiene la clave caliente sigue derritiéndose.\n\nDos esquemas. El particionado por rango de clave mantiene las claves ordenadas (shard A = usuarios a–f, B = g–m, …). Da range scans eficientes, por eso los almacenes de series de tiempo lo aman. Pero si tu clave es monótonamente creciente —un timestamp, un ID autoincremental— cada escritura nueva cae en el último shard, y ese shard es un punto caliente permanente mientras el resto está ocioso. El particionado por hash pasa la clave por un hash y distribuye por el valor del hash: las escrituras se reparten parejo y el punto caliente del timestamp desaparece. El precio es que pierdes el orden, así que los range scans ahora golpean todos los shards (un scatter/gather).\n\nEl criterio es sobre el sesgo de acceso, no solo el tamaño de los datos. Ni siquiera el hash te salva de una sola clave caliente —el 'problema de la celebridad': un usuario con millones de seguidores hashea a un shard y lo satura, así que lo tratas como caso especial (le agregas un sufijo aleatorio, lo cacheas). Elige rango de clave cuando necesitas consultas por rango y tus claves no son secuenciales; elige hash cuando las escrituras se amontonarían en un extremo. Y recuerda el rebalanceo: usa un número fijo de particiones o consistent hashing para que agregar un nodo mueva una porción de datos, no todo el conjunto. El modo de falla a temer no es 'demasiados datos', es 'todo el tráfico golpeando el 5% de ellos.'"
+   },
+   "keyPoints": [
+    {
+     "en": "The partition key decides everything; a hot shard can't be fixed by adding nodes.",
+     "es": "La clave de partición decide todo; un shard caliente no se arregla agregando nodos."
+    },
+    {
+     "en": "Key-range gives range scans but a monotonic key (timestamp/auto-id) creates a permanent hot spot.",
+     "es": "Rango de clave da range scans, pero una clave monótona (timestamp/auto-id) crea un punto caliente permanente."
+    },
+    {
+     "en": "Hash spreads writes evenly but loses ordering; a single hot key still needs special handling.",
+     "es": "El hash reparte escrituras parejo pero pierde el orden; una sola clave caliente aún necesita tratamiento especial."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "linearizability-vs-eventual",
+   "title": {
+    "en": "Linearizable vs eventual consistency and its price",
+    "es": "Consistencia linealizable vs eventual y su precio"
+   },
+   "why": {
+    "en": "Trains defining linearizability (the appearance of a single, up-to-date copy) and recognizing it costs latency and availability, so you demand it only where correctness truly needs it — and so you have the definition CAP's 'C' actually refers to.",
+    "es": "Entrena definir la linealizabilidad (la apariencia de una única copia actualizada) y reconocer que cuesta latencia y disponibilidad, para exigirla solo donde la correctitud realmente la necesita — y para tener la definición a la que se refiere en realidad la 'C' de CAP."
+   },
+   "source": "Kleppmann, DDIA, Ch.9 (Linearizability); Jepsen consistency map (jepsen.io/consistency/models)",
+   "explanation": {
+    "en": "Linearizability is a recency guarantee: the system behaves as if there is a single, up-to-date copy of the data, and once a write completes, every subsequent read — from any client, on any node — sees that value or a newer one. No client ever sees the clock go backwards. That's it. It is NOT about transactions or isolation; it's about the appearance of one current copy across a distributed system.\n\nThat appearance is expensive. To guarantee everyone sees the latest write, nodes must coordinate before answering — the read can't just trust its local, possibly-lagging replica. That coordination adds latency on every operation and, crucially, means a node cut off from its peers must refuse to answer rather than risk returning stale data. Eventual consistency drops the guarantee: replicas accept reads and writes locally and converge later, so a read might return a value that's seconds old, but latency stays low and nodes stay available even when isolated. Most of the internet runs eventually consistent and is fine — your follower count being stale for two seconds hurts no one.\n\nThe judgment is to demand linearizability only where correctness genuinely breaks without it, and pay everywhere else in staleness instead of latency. Uniqueness constraints (two people can't claim the same username), leader election, distributed locks, and 'has this payment already been applied?' need it — a stale read there causes double-spends or split brain. A timeline, a like count, a product recommendation does not. Slapping 'strong consistency' on everything is how you build a slow, fragile system that still fails under partition. And note the definition precisely, because it is exactly what the 'C' in CAP means — the next concept depends on it.",
+    "es": "La linealizabilidad es una garantía de frescura: el sistema se comporta como si hubiera una sola copia actualizada de los datos, y una vez que una escritura termina, toda lectura posterior —de cualquier cliente, en cualquier nodo— ve ese valor o uno más nuevo. Ningún cliente ve el reloj retroceder. Eso es todo. NO se trata de transacciones ni de aislamiento; se trata de la apariencia de una única copia actual a través de un sistema distribuido.\n\nEsa apariencia es cara. Para garantizar que todos vean la última escritura, los nodos deben coordinarse antes de responder: la lectura no puede confiar en su réplica local, posiblemente atrasada. Esa coordinación agrega latencia en cada operación y, sobre todo, implica que un nodo aislado de sus pares debe negarse a responder en lugar de arriesgarse a devolver datos viejos. La consistencia eventual abandona la garantía: las réplicas aceptan lecturas y escrituras localmente y convergen después, así que una lectura puede devolver un valor de hace segundos, pero la latencia se mantiene baja y los nodos siguen disponibles aun aislados. Gran parte de internet corre con consistencia eventual y está bien: que tu número de seguidores esté viejo dos segundos no le hace daño a nadie.\n\nEl criterio es exigir linealizabilidad solo donde la corrección se rompe de verdad sin ella, y pagar en el resto con desactualización en vez de latencia. Restricciones de unicidad (dos personas no pueden reclamar el mismo username), elección de líder, locks distribuidos y '¿este pago ya se aplicó?' la necesitan: una lectura vieja ahí causa doble gasto o split brain. Un timeline, un contador de likes, una recomendación de producto no. Ponerle 'consistencia fuerte' a todo es como se construye un sistema lento y frágil que igual falla bajo partición. Y fija la definición con precisión, porque es exactamente lo que significa la 'C' de CAP: el próximo concepto depende de ella."
+   },
+   "keyPoints": [
+    {
+     "en": "Linearizability = the illusion of one up-to-date copy; every read sees the latest completed write or newer.",
+     "es": "Linealizabilidad = la ilusión de una copia actualizada; toda lectura ve la última escritura completada o una más nueva."
+    },
+    {
+     "en": "It costs latency (coordination on every op) and availability (isolated nodes must refuse to answer).",
+     "es": "Cuesta latencia (coordinación en cada operación) y disponibilidad (los nodos aislados deben negarse a responder)."
+    },
+    {
+     "en": "Demand it only where staleness breaks correctness: uniqueness, locks, leader election, payments.",
+     "es": "Exígela solo donde la desactualización rompe la corrección: unicidad, locks, elección de líder, pagos."
+    },
+    {
+     "en": "This exact definition is the 'C' in CAP.",
+     "es": "Esta definición exacta es la 'C' de CAP."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "cap-theorem",
+   "title": {
+    "en": "CAP: consistency (=linearizability) vs availability under partition",
+    "es": "CAP: consistencia (=linealizabilidad) vs disponibilidad ante partición"
+   },
+   "why": {
+    "en": "Trains the honest choice a network partition forces — refuse writes to stay linearizable, or serve possibly-stale data — rather than the myth of 'pick two'; this requires the linearizability definition first, since CAP's 'C' is exactly linearizability.",
+    "es": "Entrena la elección honesta que impone una partición de red — rechazar escrituras para seguir siendo linealizable, o servir datos posiblemente rancios — en lugar del mito de 'elige dos'; esto exige primero la definición de linealizabilidad, porque la 'C' de CAP es exactamente linealizabilidad."
+   },
+   "source": "Kleppmann, DDIA, Ch.9 (CAP's consistency = linearizability); Gilbert & Lynch, 'Brewer's Conjecture and the Feasibility of CAP' (2002 — atomic/linearizable consistency)",
+   "explanation": {
+    "en": "CAP is the most misquoted result in our field. It is not 'pick two of three.' Consistency (which here means exactly linearizability, from the last concept) and availability are not things you casually trade in normal operation — when the network is healthy you get both. CAP only bites during a network partition: when nodes can't talk to each other, you are forced to choose. That's why the honest reading is 'when partitioned, choose C or A,' and the rest of the time the question doesn't even apply.\n\nHere's the actual dilemma. A partition splits your cluster; a node receives a write or read but can't reach the others to confirm it holds the latest data. It has two choices, and only two. Refuse to serve until it can coordinate — this keeps linearizability (CP), at the cost of that node being unavailable during the partition. Or answer from its local state — this stays available (AP), at the cost of possibly returning stale data or accepting a conflicting write. There is no third option that gives you both; Gilbert and Lynch proved it. The letter you 'give up' is only given up while the partition lasts.\n\nThe judgment: partitions are not hypothetical — a slow switch, a GC pause, a rack losing power all look like partitions — so you must decide in advance which failure your system prefers. A leader-election or lock service (etcd, ZooKeeper) chooses CP: it would rather stop than let two leaders exist. A shopping cart or DNS chooses AP: it would rather show slightly stale data than tell the user 'unavailable.' The staff-level move is to make this choice per subsystem and say it out loud, because a system that has never decided will make the choice for you — usually the wrong way, at 3 a.m.",
+    "es": "CAP es el resultado más malcitado de nuestro campo. No es 'elige dos de tres.' La consistencia (que aquí significa exactamente linealizabilidad, del concepto anterior) y la disponibilidad no son cosas que cambies a la ligera en operación normal: cuando la red está sana obtienes ambas. CAP solo muerde durante una partición de red: cuando los nodos no pueden hablarse, te ves obligado a elegir. Por eso la lectura honesta es 'cuando hay partición, elige C o A', y el resto del tiempo la pregunta ni siquiera aplica.\n\nEste es el dilema real. Una partición divide tu clúster; un nodo recibe una escritura o lectura pero no puede alcanzar a los demás para confirmar que tiene los datos más recientes. Tiene dos opciones, y solo dos. Negarse a responder hasta poder coordinar —esto mantiene la linealizabilidad (CP), a costa de que ese nodo quede indisponible durante la partición. O responder desde su estado local —esto se mantiene disponible (AP), a costa de posiblemente devolver datos viejos o aceptar una escritura en conflicto. No hay una tercera opción que te dé ambas; Gilbert y Lynch lo demostraron. La letra que 'sacrificas' solo se sacrifica mientras dura la partición.\n\nEl criterio: las particiones no son hipotéticas —un switch lento, una pausa de GC, un rack sin energía se ven todos como particiones— así que debes decidir de antemano qué falla prefiere tu sistema. Un servicio de elección de líder o de locks (etcd, ZooKeeper) elige CP: prefiere detenerse antes que permitir dos líderes. Un carrito de compras o DNS elige AP: prefiere mostrar datos algo viejos antes que decirle al usuario 'no disponible.' La jugada a nivel staff es tomar esta decisión por subsistema y decirla en voz alta, porque un sistema que nunca decidió tomará la decisión por ti —normalmente de la forma equivocada, a las 3 a.m."
+   },
+   "keyPoints": [
+    {
+     "en": "CAP only forces a choice during a partition; with a healthy network you get both C and A.",
+     "es": "CAP solo obliga a elegir durante una partición; con la red sana obtienes C y A."
+    },
+    {
+     "en": "Under partition, only two options: refuse writes to stay linearizable (CP) or serve possibly-stale data (AP).",
+     "es": "Bajo partición, solo dos opciones: rechazar escrituras para seguir linealizable (CP) o servir datos posiblemente viejos (AP)."
+    },
+    {
+     "en": "CAP's 'C' is exactly linearizability — not transactions or isolation.",
+     "es": "La 'C' de CAP es exactamente linealizabilidad, no transacciones ni aislamiento."
+    },
+    {
+     "en": "Decide CP vs AP per subsystem in advance; an undecided system chooses wrong under stress.",
+     "es": "Decide CP vs AP por subsistema de antemano; un sistema indeciso elige mal bajo estrés."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "stream-processing-derived-data-systems",
+   "title": {
+    "en": "Stream Processing and Derived Data: Stop Doing Dual Writes",
+    "es": "Procesamiento de streams y datos derivados: deja de hacer escrituras duales"
+   },
+   "why": {
+    "en": "Trains the judgment of when data is derived and rebuildable versus authoritative, so you route all state changes through one ordered log instead of writing to multiple stores in parallel.",
+    "es": "Entrena el criterio de cuándo un dato es derivado y reconstruible frente a autoritativo, para enrutar todos los cambios de estado por un único log ordenado en vez de escribir en varios almacenes en paralelo."
+   },
+   "source": "Designing Data-Intensive Applications, Martin Kleppmann (O'Reilly) — Part III: Derived Data, Chapters 10-12",
+   "explanation": {
+    "en": "The most common large-scale correctness bug isn't in your consensus layer — it's a dual write. Your service writes an order to Postgres, then separately publishes it to Kafka or indexes it in Elasticsearch. Two writes, no shared transaction. The process crashes between them, or the second write fails and gets retried out of order, and now your search index disagrees with your database. No amount of retries fixes this, because nothing decides a single truth about what happened and in what order.\n\nThe fix is to pick one system as the source of truth and derive everything else from its ordered log. Postgres's replication log (via CDC / Debezium) or an append-only event log becomes the one place that assigns order. Your search index, cache, and warehouse become derived data: consumers of that log. The shift that matters is that derived data is disposable — if the index is corrupt or its schema changes, you delete it and replay the log from offset zero. You cannot do that with a system of record, which is exactly why keeping that boundary explicit is the whole game.\n\nOnce state flows through a log, engineers ask for 'exactly-once' delivery. It doesn't exist at the delivery layer — networks and crashes force at-least-once, so consumers will see duplicates. What you actually build is effectively-once: idempotent consumers (upsert by primary key, dedup on an event id) or a transactional read-process-write inside a single system. Chase idempotence, not a magic delivery mode.\n\nBatch and stream are the same computation over bounded versus unbounded input. The trap in streaming is time: event time (when it happened) drifts from processing time (when you saw it), so a mobile client offline for an hour delivers 'late' events. If your windowed aggregates assume in-order arrival, your dashboards silently undercount. Decide up front how late is too late (watermarks) and whether you correct or drop.",
+    "es": "El bug de corrección más común a gran escala no está en tu capa de consenso: es una escritura dual. Tu servicio escribe un pedido en Postgres y luego, por separado, lo publica en Kafka o lo indexa en Elasticsearch. Dos escrituras, sin transacción compartida. El proceso se cae entre ambas, o la segunda falla y se reintenta fuera de orden, y ahora tu índice de búsqueda contradice a tu base de datos. Ningún reintento arregla esto, porque nada decide una única verdad sobre qué pasó y en qué orden.\n\nLa solución es elegir un sistema como fuente de verdad y derivar todo lo demás de su log ordenado. El log de replicación de Postgres (vía CDC / Debezium) o un log de eventos de solo anexado se vuelve el único lugar que asigna orden. Tu índice de búsqueda, tu caché y tu warehouse pasan a ser datos derivados: consumidores de ese log. El cambio de mentalidad clave es que el dato derivado es descartable: si el índice se corrompe o cambia su esquema, lo borras y reproduces el log desde el offset cero. Con un sistema de registro no puedes hacer eso, y por eso mantener esa frontera explícita lo es todo.\n\nUna vez que el estado fluye por un log, los ingenieros piden entrega 'exactly-once'. No existe en la capa de entrega: las redes y las caídas obligan a at-least-once, así que los consumidores verán duplicados. Lo que en realidad construyes es effectively-once: consumidores idempotentes (upsert por clave primaria, deduplicación por id de evento) o un read-process-write transaccional dentro de un solo sistema. Persigue la idempotencia, no un modo mágico de entrega.\n\nBatch y stream son el mismo cómputo sobre entrada acotada frente a no acotada. La trampa del streaming es el tiempo: el tiempo del evento (cuándo ocurrió) se desfasa del tiempo de procesamiento (cuándo lo viste), así que un cliente móvil sin conexión por una hora entrega eventos 'tardíos'. Si tus agregaciones por ventana asumen llegada en orden, tus tableros cuentan de menos sin avisar. Define de antemano qué tan tarde es demasiado tarde (watermarks) y si corriges o descartas."
+   },
+   "keyPoints": [
+    {
+     "en": "Never dual-write to two stores you need to keep consistent; route every change through one ordered log and derive the rest from it.",
+     "es": "Nunca hagas escritura dual en dos almacenes que necesitas mantener consistentes; enruta cada cambio por un único log ordenado y deriva el resto de él."
+    },
+    {
+     "en": "Derived data (indexes, caches, materialized views) is rebuildable by replaying the log; the system of record is not. Keep that boundary explicit.",
+     "es": "El dato derivado (índices, cachés, vistas materializadas) se reconstruye reproduciendo el log; el sistema de registro no. Mantén esa frontera explícita."
+    },
+    {
+     "en": "'Exactly-once' delivery is marketing. Build idempotent consumers or transactional read-process-write to get effectively-once.",
+     "es": "La entrega 'exactly-once' es marketing. Construye consumidores idempotentes o un read-process-write transaccional para lograr effectively-once."
+    },
+    {
+     "en": "In streams, separate event time from processing time and set an explicit late-data policy, or your aggregates are quietly wrong.",
+     "es": "En streams, separa el tiempo del evento del tiempo de procesamiento y define una política explícita para datos tardíos, o tus agregaciones estarán mal en silencio."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "security-engineering-threat-modeling-authn",
+   "title": {
+    "en": "Threat Modeling: Owning Security at Design Time",
+    "es": "Modelado de amenazas: ser dueño de la seguridad desde el diseño"
+   },
+   "why": {
+    "en": "Trains you to set a system's security posture at design time — modeling attackers, trust boundaries, and blast radius — instead of bolting controls on after launch.",
+    "es": "Te entrena para fijar la postura de seguridad de un sistema en tiempo de diseño —modelando atacantes, límites de confianza y radio de impacto— en vez de agregar controles después del lanzamiento."
+   },
+   "source": "Adam Shostack, \"Threat Modeling: Designing for Security\" (Wiley, 2014) — the canonical STRIDE reference; complemented by Google's \"Building Secure and Reliable Systems\" (O'Reilly, 2020).",
+   "explanation": {
+    "en": "The senior-to-staff jump is when you stop treating security as a review gate someone else runs and start treating it as a property of the design you own. Concretely: before a new service ships, you draw a data-flow diagram, mark the trust boundaries (where data crosses from less-trusted to more-trusted), and walk STRIDE across each boundary — Spoofing, Tampering, Repudiation, Information disclosure, Denial of service, Elevation of privilege. The output isn't a filled-in checklist; it's the two or three architectural decisions you would have gotten wrong otherwise.\n\nThe most common real bug is confusing authentication with authorization. Authn answers 'who are you'; authz answers 'what may you do.' A JWT validated at the gateway but trusted blindly by every downstream service is a confused deputy waiting to happen — service B does whatever the token claims because service A 'already checked.' Push authorization decisions down to the resource that owns the data, check them per request, and never roll your own crypto or session logic when OIDC, mTLS, and vetted libraries exist.\n\nAssume every long-lived secret will leak. A DB password in an env var or CI variable is a breach waiting for one misconfigured log; a short-lived credential leased from a secrets manager and auto-rotated bounds the blast radius. Same mindset for the supply chain: your build pipeline is production. Pin and lock dependencies, verify signatures (Sigstore/cosign), generate an SBOM — SolarWinds and xz-utils were compromises of the pipeline, not the app.\n\nStaff-level security is triage, not paranoia. Not every STRIDE cell deserves work. Tampering on a payment webhook that writes to your orders DB outranks spoofing on an internal metrics endpoint already behind mTLS. Rank threats by realistic likelihood times blast radius, spend defense-in-depth where a single failure is catastrophic, and be honest about where 'good enough' is genuinely good enough.",
+    "es": "El salto de senior a staff ocurre cuando dejas de tratar la seguridad como una compuerta de revisión que corre alguien más y empiezas a tratarla como una propiedad del diseño del que eres dueño. En concreto: antes de que un servicio nuevo salga a producción, dibujas un diagrama de flujo de datos, marcas los límites de confianza (donde los datos cruzan de una zona menos confiable a una más confiable) y recorres STRIDE en cada límite: suplantación, manipulación, repudio, divulgación de información, denegación de servicio y elevación de privilegios. El resultado no es una lista de verificación llena; son las dos o tres decisiones de arquitectura que, de otro modo, habrías tomado mal.\n\nEl error real más común es confundir autenticación con autorización. La autenticación responde 'quién eres'; la autorización responde 'qué puedes hacer'. Un JWT validado en el gateway pero aceptado a ciegas por cada servicio interno es un problema de delegado confundido (confused deputy) a punto de suceder: el servicio B hace lo que dice el token porque el servicio A 'ya lo revisó'. Baja las decisiones de autorización al recurso dueño de los datos, verifícalas en cada petición y nunca implementes tu propia criptografía ni lógica de sesión cuando existen OIDC, mTLS y bibliotecas ya auditadas.\n\nAsume que todo secreto de larga vida se va a filtrar. Una contraseña de base de datos en una variable de entorno o de CI es una brecha esperando un log mal configurado; una credencial de corta duración emitida por un gestor de secretos y rotada automáticamente acota el radio de impacto. La misma mentalidad aplica a la cadena de suministro: tu pipeline de build es producción. Fija y bloquea las dependencias, verifica firmas (Sigstore/cosign) y genera un SBOM; SolarWinds y xz-utils fueron ataques al pipeline (a la cadena de suministro), no a la aplicación.\n\nLa seguridad a nivel staff es triaje, no paranoia. No toda celda de STRIDE merece trabajo. La manipulación de un webhook de pagos que escribe en tu base de datos de órdenes pesa más que la suplantación de un endpoint interno de métricas que ya está detrás de mTLS. Ordena las amenazas por probabilidad realista multiplicada por radio de impacto, invierte en defensa en profundidad donde una sola falla es catastrófica, y sé honesto sobre dónde 'suficientemente bueno' de verdad alcanza."
+   },
+   "keyPoints": [
+    {
+     "en": "Threat-model at design time: data-flow diagram + trust boundaries + STRIDE per boundary. The deliverable is architectural decisions, not a filled-in checklist.",
+     "es": "Modela amenazas en tiempo de diseño: diagrama de flujo de datos + límites de confianza + STRIDE por límite. El entregable son decisiones de arquitectura, no una lista de verificación llena."
+    },
+    {
+     "en": "Authn (who you are) is not authz (what you may do). Enforce authorization per request at the resource that owns the data; don't let downstream services trust a gateway-checked token blindly.",
+     "es": "Autenticación (quién eres) no es autorización (qué puedes hacer). Aplica la autorización en cada petición en el recurso dueño de los datos; no dejes que los servicios internos confíen a ciegas en un token validado por el gateway."
+    },
+    {
+     "en": "Assume long-lived secrets leak: prefer short-lived leased credentials with rotation, and treat the build pipeline as production — pin dependencies, verify signatures, ship an SBOM.",
+     "es": "Asume que los secretos de larga vida se filtran: prefiere credenciales de corta duración con rotación y trata el pipeline de build como producción: fija dependencias, verifica firmas y genera un SBOM."
+    },
+    {
+     "en": "Triage by likelihood × blast radius. Spend defense-in-depth where a single failure is catastrophic, not uniformly across every threat.",
+     "es": "Prioriza por probabilidad × radio de impacto. Invierte en defensa en profundidad donde una sola falla es catastrófica, no de forma uniforme en cada amenaza."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  }
+ ]
+}

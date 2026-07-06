@@ -1,0 +1,201 @@
+{
+ "lessonId": "ai-engineering-l5",
+ "concepts": [
+  {
+   "slug": "rag-as-system",
+   "title": {
+    "en": "RAG as a Systems Discipline",
+    "es": "RAG como disciplina de sistemas"
+   },
+   "why": {
+    "en": "Trains you to instrument the retriever as its own system — hybrid search, reranking, retrieval optimization — separate from the generator, and to name faithfulness/hallucination as a first-class failure mode measured at the generation step even when retrieval is correct.",
+    "es": "Te entrena a instrumentar el recuperador como un sistema propio —búsqueda híbrida, reordenamiento (reranking), optimización de recuperación— separado del generador, y a nombrar la fidelidad/alucinación como un modo de falla de primer nivel medido en la generación aun cuando la recuperación sea correcta."
+   },
+   "source": "Chip Huyen, AI Engineering, Ch.6 'RAG and Agents' — Retrieval Optimization & RAG Beyond Texts; Ch.4 'Evaluate AI Systems' — factual consistency / faithfulness as an evaluation dimension",
+   "explanation": {
+    "en": "RAG is two systems wearing one name: a retriever and a generator. The mistake that keeps teams stuck is measuring them together — you see a bad answer and can't tell whether the right document never made it into context, or the model had the right context and ignored it. Instrument them separately. For the retriever, measure recall@k (did the relevant chunk land in the top k?) and precision. For the generator, measure faithfulness: given the retrieved context, does the answer stay inside it?\n\nRetrieval is its own engineering surface. Pure vector search misses exact-match terms like error codes or SKUs; pure keyword search (BM25) misses paraphrase. Hybrid search runs both and fuses the scores. Then a reranker — a cross-encoder that scores each query-document pair jointly — reorders the top 50 candidates down to the top 5 you actually put in the prompt. That rerank step is often the highest-leverage change in a RAG pipeline, and it lives entirely on the retrieval side.\n\nHere's the failure mode people underweight: faithfulness is measured at the generation step even when retrieval is correct. The model can have the exact right passage in context and still confabulate a number, merge two facts, or answer from its parametric memory instead of the source. So 'we fixed retrieval' does not mean 'we fixed hallucination.' You need an eval that holds retrieval constant and grades whether the answer is grounded in what was actually passed in — often an LLM-judge scoring faithfulness against the retrieved chunks.",
+    "es": "RAG son dos sistemas con un solo nombre: un recuperador y un generador. El error que mantiene atascados a los equipos es medirlos juntos: ves una mala respuesta y no sabes si el documento correcto nunca llegó al contexto, o si el modelo tenía el contexto correcto y lo ignoró. Instruméntalos por separado. Para el recuperador, mide recall@k (¿el fragmento relevante quedó en el top k?) y precisión. Para el generador, mide fidelidad: dado el contexto recuperado, ¿la respuesta se mantiene dentro de él?\n\nLa recuperación es su propia superficie de ingeniería. La búsqueda vectorial pura falla con términos de coincidencia exacta como códigos de error o SKUs; la búsqueda por palabras clave pura (BM25) falla con paráfrasis. La búsqueda híbrida corre ambas y fusiona los puntajes. Luego un reranker — un cross-encoder que puntúa cada par consulta-documento de forma conjunta — reordena los 50 mejores candidatos hasta los 5 que realmente pones en el prompt. Ese paso de reranking suele ser el cambio de mayor impacto en un pipeline RAG, y vive por completo del lado de la recuperación.\n\nAquí está el modo de falla que la gente subestima: la fidelidad se mide en el paso de generación incluso cuando la recuperación es correcta. El modelo puede tener el pasaje exacto en el contexto y aun así inventar un número, fusionar dos hechos o responder desde su memoria paramétrica en vez de la fuente. Así que 'arreglamos la recuperación' no significa 'arreglamos la alucinación'. Necesitas una evaluación que mantenga la recuperación fija y califique si la respuesta está fundamentada en lo que realmente se pasó, a menudo un LLM-juez que puntúa la fidelidad contra los fragmentos recuperados."
+   },
+   "keyPoints": [
+    {
+     "en": "Measure the retriever (recall@k, precision) and the generator (faithfulness) as separate systems — a bad answer has two very different root causes.",
+     "es": "Mide el recuperador (recall@k, precisión) y el generador (fidelidad) como sistemas separados: una mala respuesta tiene dos causas raíz muy distintas."
+    },
+    {
+     "en": "Hybrid search (BM25 + dense) plus a cross-encoder reranker is usually the highest-leverage retrieval upgrade.",
+     "es": "La búsqueda híbrida (BM25 + densa) más un reranker cross-encoder suele ser la mejora de recuperación de mayor impacto."
+    },
+    {
+     "en": "Faithfulness is a first-class failure mode measured at generation — correct retrieval does not guarantee a grounded answer.",
+     "es": "La fidelidad es un modo de falla de primera clase que se mide en la generación: una recuperación correcta no garantiza una respuesta fundamentada."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "agency-spectrum",
+   "title": {
+    "en": "The Agency Spectrum: Workflows vs Agents",
+    "es": "El espectro de agencia: flujos vs agentes"
+   },
+   "why": {
+    "en": "Trains you to choose the least-agentic design that works — chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer — and add autonomy only when it demonstrably improves outcomes.",
+    "es": "Te entrena a elegir el diseño menos autónomo que funcione —encadenamiento, enrutamiento, paralelización, orquestador-trabajadores, evaluador-optimizador— y a añadir agencia solo cuando mejora los resultados de forma demostrable."
+   },
+   "source": "Anthropic, 'Building Effective Agents' — workflows vs agents, the five patterns, 'start simple / add complexity only when it improves outcomes'",
+   "explanation": {
+    "en": "'Agent' is not a badge of sophistication. Anthropic draws a clean line: workflows are systems where LLM steps are orchestrated through predefined code paths; agents are systems where the LLM directs its own control flow and decides which tools to call and when. Workflows are predictable, cheap, and debuggable. Agents are flexible and open-ended — and they cost more tokens, add latency, and are far harder to reason about when they fail.\n\nThe rule is: use the least-agentic design that works, and add autonomy only when it demonstrably improves outcomes. Most 'agent' problems are actually workflow problems. The five patterns give you a ladder before you ever reach a true agent: prompt chaining (decompose into fixed steps), routing (classify then dispatch to a specialized path), parallelization (run subtasks concurrently and aggregate), orchestrator-workers (a lead LLM decomposes and delegates dynamically), and evaluator-optimizer (one LLM generates, another critiques in a loop).\n\nConcrete call: a support triage that reads a ticket and sends it to billing, technical, or account paths is routing — a classifier plus fixed branches. Do not hand it a tool belt and a while-loop and call it an agent; you have made it slower, more expensive, and non-deterministic for zero benefit. Reach for a real agent only when the task genuinely can't be pre-decomposed — the number and order of steps depends on inputs you can't know in advance — and you've confirmed the extra autonomy moves your metric.",
+    "es": "'Agente' no es una insignia de sofisticación. Anthropic traza una línea clara: los workflows son sistemas donde los pasos del LLM se orquestan a través de rutas de código predefinidas; los agentes son sistemas donde el LLM dirige su propio flujo de control y decide qué herramientas llamar y cuándo. Los workflows son predecibles, baratos y depurables. Los agentes son flexibles y abiertos, y cuestan más tokens, suman latencia y son mucho más difíciles de razonar cuando fallan.\n\nLa regla es: usa el diseño menos agéntico que funcione, y agrega autonomía solo cuando mejore los resultados de forma demostrable. La mayoría de los problemas de 'agentes' son en realidad problemas de workflow. Los cinco patrones te dan una escalera antes de llegar a un agente real: encadenamiento de prompts (descomponer en pasos fijos), enrutamiento (clasificar y despachar a una ruta especializada), paralelización (correr subtareas en concurrencia y agregar), orquestador-trabajadores (un LLM líder descompone y delega dinámicamente) y evaluador-optimizador (un LLM genera, otro critica en un bucle).\n\nDecisión concreta: un triage de soporte que lee un ticket y lo envía a facturación, técnico o cuenta es enrutamiento — un clasificador más ramas fijas. No le des un cinturón de herramientas y un while-loop y lo llames agente; lo hiciste más lento, más caro y no determinista sin ningún beneficio. Recurre a un agente real solo cuando la tarea genuinamente no puede predescomponerse — el número y orden de los pasos depende de entradas que no puedes conocer de antemano — y confirmaste que la autonomía extra mueve tu métrica."
+   },
+   "keyPoints": [
+    {
+     "en": "Workflows use predefined code paths; agents let the LLM direct its own control flow. Default to workflows.",
+     "es": "Los workflows usan rutas de código predefinidas; los agentes dejan que el LLM dirija su propio flujo de control. Por defecto, elige workflows."
+    },
+    {
+     "en": "Climb the ladder — chaining, routing, parallelization, orchestrator-workers, evaluator-optimizer — before reaching for full autonomy.",
+     "es": "Sube la escalera — encadenamiento, enrutamiento, paralelización, orquestador-trabajadores, evaluador-optimizador — antes de recurrir a la autonomía total."
+    },
+    {
+     "en": "Add agency only when the task can't be pre-decomposed AND you've measured that autonomy improves the outcome.",
+     "es": "Agrega agencia solo cuando la tarea no pueda predescomponerse Y hayas medido que la autonomía mejora el resultado."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "mcp-integration",
+   "title": {
+    "en": "MCP: Standardizing the Integration Surface",
+    "es": "MCP: estandarizar la superficie de integración"
+   },
+   "why": {
+    "en": "Trains the call of when a standard protocol (hosts/clients/servers; tools, resources, prompts) beats bespoke per-tool glue and collapses the M×N integration problem.",
+    "es": "Entrena la decisión de cuándo un protocolo estándar (hosts/clientes/servidores; herramientas, recursos, prompts) supera al pegamento a medida por herramienta y colapsa el problema de integración M×N."
+   },
+   "source": "Model Context Protocol — Introduction & Architecture (modelcontextprotocol.io); roadmap.sh ai-engineer (MCP client/host/server)",
+   "explanation": {
+    "en": "Every LLM app that touches tools hits the same wall: the M×N problem. You have N surfaces (chat app, IDE, CI bot, internal agent) and M tools (GitHub, Postgres, Jira, filesystem). Wire them bespoke and you're writing and maintaining M×N connectors, each with its own auth, schema, and error handling. Change one tool's API and you patch it in every surface that uses it.\n\nMCP (Model Context Protocol) collapses that into M+N. It's a client-server standard: a host application runs MCP clients, and each client connects to an MCP server that exposes a tool's capabilities through three primitives — tools (actions the model can invoke), resources (data it can read), and prompts (reusable templates). Write the GitHub server once against the protocol, and every MCP-speaking host gets GitHub for free. Now each tool is N connectors down to one, and each new surface speaks one protocol instead of integrating M tools.\n\nThe judgment call is when the standard beats the glue. For a single app calling a single internal API, a direct SDK call is simpler — don't drag in a protocol for one integration. MCP pays off when you have multiple tools you want reusable across multiple hosts, or when you want to consume the growing ecosystem of existing servers instead of building each yourself. That's when M+N economics and a shared contract stop being architecture-astronaut talk and start saving real maintenance.",
+    "es": "Toda app con LLM que toca herramientas choca con el mismo muro: el problema M×N. Tienes N superficies (app de chat, IDE, bot de CI, agente interno) y M herramientas (GitHub, Postgres, Jira, sistema de archivos). Conéctalas a la medida y estarás escribiendo y manteniendo M×N conectores, cada uno con su propia autenticación, esquema y manejo de errores. Cambia la API de una herramienta y la parcheas en cada superficie que la usa.\n\nMCP (Model Context Protocol) reduce eso a M+N. Es un estándar cliente-servidor: una aplicación host corre clientes MCP, y cada cliente se conecta a un servidor MCP que expone las capacidades de una herramienta mediante tres primitivas — tools (acciones que el modelo puede invocar), resources (datos que puede leer) y prompts (plantillas reutilizables). Escribe el servidor de GitHub una vez contra el protocolo, y todo host que hable MCP obtiene GitHub gratis. Ahora cada herramienta pasa de N conectores a uno, y cada nueva superficie habla un protocolo en vez de integrar M herramientas.\n\nLa decisión es cuándo el estándar le gana al pegamento a medida. Para una sola app que llama a una sola API interna, una llamada directa por SDK es más simple; no arrastres un protocolo por una integración. MCP rinde cuando tienes múltiples herramientas que quieres reutilizar en múltiples hosts, o cuando quieres consumir el ecosistema creciente de servidores existentes en vez de construir cada uno. Ahí la economía M+N y un contrato compartido dejan de ser arquitectura de astronauta y empiezan a ahorrar mantenimiento real."
+   },
+   "keyPoints": [
+    {
+     "en": "MCP turns the M×N integration problem into M+N via a shared host/client/server protocol.",
+     "es": "MCP convierte el problema de integración M×N en M+N mediante un protocolo compartido host/cliente/servidor."
+    },
+    {
+     "en": "Three primitives: tools (actions), resources (readable data), prompts (reusable templates).",
+     "es": "Tres primitivas: tools (acciones), resources (datos legibles), prompts (plantillas reutilizables)."
+    },
+    {
+     "en": "Use the standard when many tools cross many surfaces; a single integration is fine bespoke.",
+     "es": "Usa el estándar cuando muchas herramientas cruzan muchas superficies; una sola integración está bien a la medida."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "owasp-llm-threat-model",
+   "title": {
+    "en": "Threat-Modeling with the OWASP LLM Top 10",
+    "es": "Modelado de amenazas con el OWASP LLM Top 10"
+   },
+   "why": {
+    "en": "Trains you to threat-model the whole AI system — excessive agency, sensitive-info disclosure, system-prompt leakage, vector/embedding weaknesses — and constrain permissions before shipping.",
+    "es": "Te entrena a modelar las amenazas de todo el sistema de IA —agencia excesiva, divulgación de información sensible, fuga del prompt de sistema, debilidades de vectores/embeddings— y a restringir los permisos antes de publicar."
+   },
+   "source": "OWASP Top 10 for LLM Applications 2025 — LLM06 Excessive Agency, LLM02 Sensitive Information Disclosure, LLM07 System Prompt Leakage, LLM08 Vector and Embedding Weaknesses",
+   "explanation": {
+    "en": "Once an LLM can call tools, read documents, and hold a system prompt, it's an attack surface — and the OWASP Top 10 for LLM Applications (2025) is the checklist to threat-model against before you ship, not after an incident. Four entries matter most for the systems you're building at this level.\n\nLLM06 Excessive Agency is the one AI engineers cause themselves: the model has more permissions, tools, or autonomy than the task needs, so a prompt injection or a bad reasoning step can delete records, send emails, or spend money. The fix is least privilege — scope tool permissions tightly, require human approval for destructive actions, and never give an agent write access it doesn't strictly need. LLM02 Sensitive Information Disclosure is the model leaking PII, secrets, or another tenant's data into a completion; LLM07 System Prompt Leakage is an attacker extracting your instructions — which means the system prompt must never be your security boundary or hold real secrets.\n\nLLM08 Vector and Embedding Weaknesses is the one specific to RAG: a poisoned document injected into your knowledge base becomes trusted context the model will faithfully repeat, and in multi-tenant vector stores, weak isolation lets one tenant's query retrieve another's embeddings. The staff move is to threat-model the whole pipeline — inputs, retrieval, tools, outputs — and constrain permissions before shipping. Assume any text the model reads, including retrieved chunks, can be adversarial, and design so the worst a compromised prompt can do is bounded by the permissions you granted.",
+    "es": "Una vez que un LLM puede llamar herramientas, leer documentos y sostener un system prompt, es una superficie de ataque, y el OWASP Top 10 para Aplicaciones LLM (2025) es la lista contra la cual modelar amenazas antes de desplegar, no después de un incidente. Cuatro entradas importan más para los sistemas que construyes en este nivel.\n\nLLM06 Agencia Excesiva es la que los ingenieros de IA se causan solos: el modelo tiene más permisos, herramientas o autonomía de los que la tarea necesita, así que una inyección de prompt o un mal paso de razonamiento puede borrar registros, enviar correos o gastar dinero. El arreglo es mínimo privilegio: acota los permisos de las herramientas, exige aprobación humana para acciones destructivas y nunca le des a un agente acceso de escritura que no necesite estrictamente. LLM02 Divulgación de Información Sensible es el modelo filtrando PII, secretos o datos de otro inquilino en una respuesta; LLM07 Fuga del System Prompt es un atacante extrayendo tus instrucciones, lo que significa que el system prompt nunca debe ser tu frontera de seguridad ni contener secretos reales.\n\nLLM08 Debilidades de Vectores y Embeddings es la específica de RAG: un documento envenenado inyectado en tu base de conocimiento se vuelve contexto confiable que el modelo repetirá fielmente, y en almacenes vectoriales multi-inquilino, un aislamiento débil deja que la consulta de un inquilino recupere los embeddings de otro. La jugada de nivel Staff es modelar amenazas en todo el pipeline — entradas, recuperación, herramientas, salidas — y restringir permisos antes de desplegar. Asume que cualquier texto que el modelo lea, incluidos los fragmentos recuperados, puede ser adversario, y diseña para que lo peor que un prompt comprometido pueda hacer esté acotado por los permisos que otorgaste."
+   },
+   "keyPoints": [
+    {
+     "en": "LLM06 Excessive Agency is self-inflicted: least privilege on tools and human approval for destructive actions.",
+     "es": "LLM06 Agencia Excesiva es autoinfligida: mínimo privilegio en herramientas y aprobación humana para acciones destructivas."
+    },
+    {
+     "en": "The system prompt is not a security boundary — assume it leaks (LLM07) and keep secrets out of it.",
+     "es": "El system prompt no es una frontera de seguridad: asume que se filtra (LLM07) y mantén los secretos fuera de él."
+    },
+    {
+     "en": "In RAG, treat retrieved chunks as untrusted input (LLM08): guard against poisoning and cross-tenant leakage.",
+     "es": "En RAG, trata los fragmentos recuperados como entrada no confiable (LLM08): protégete contra envenenamiento y fuga entre inquilinos."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "finetune-vs-prompt",
+   "title": {
+    "en": "Fine-Tuning vs Prompting vs RAG",
+    "es": "Fine-tuning vs prompting vs RAG"
+   },
+   "why": {
+    "en": "Trains the judgment to exhaust prompting and RAG first, and to finetune for form/behavior while RAG supplies fresh knowledge — weighing the real memory and cost bottlenecks.",
+    "es": "Entrena el criterio de agotar primero el prompting y el RAG, y de hacer fine-tuning para la forma/comportamiento mientras el RAG aporta el conocimiento actualizado, sopesando los cuellos de botella reales de memoria y costo."
+   },
+   "source": "Chip Huyen, AI Engineering, Ch.7 'Finetuning' — When/Why Not, Finetuning and RAG, Parameter-Efficient Finetuning",
+   "explanation": {
+    "en": "The default order is prompting, then RAG, then fine-tuning — and most teams never need the third. Prompting is a code change: fast, reversible, free of a training pipeline. RAG adds knowledge without touching weights. Fine-tuning is the heavy option, and reaching for it first usually means you skipped cheaper wins.\n\nThe cleanest way to make the call is by what you're actually missing. Fine-tuning changes form and behavior — tone, output format, adherence to a schema, a domain's writing style, reliably producing structured JSON. RAG supplies knowledge — fresh, proprietary, or fast-changing facts. This is the line that resolves most arguments: if the model gets facts wrong, that's a RAG problem; if it gets the shape or style wrong even with the right facts in front of it, that's a fine-tuning problem. Don't fine-tune to inject knowledge — it's an unreliable, expensive way to memorize, and the knowledge is stale the moment the data changes.\n\nWeigh the real bottlenecks before committing. Full fine-tuning is memory-hungry and produces a model artifact you now have to host, version, and re-tune as base models improve. Parameter-efficient fine-tuning (PEFT) like LoRA trains a small set of adapter weights instead of the whole model, which is why it's the practical default when you do fine-tune — dramatically lower memory and cost, and you can swap adapters. And these aren't mutually exclusive: a common production shape is a LoRA-tuned model for consistent behavior and format, fed fresh facts by RAG at inference time.",
+    "es": "El orden por defecto es prompting, luego RAG, luego fine-tuning, y la mayoría de los equipos nunca necesita el tercero. El prompting es un cambio de código: rápido, reversible, sin pipeline de entrenamiento. RAG agrega conocimiento sin tocar los pesos. El fine-tuning es la opción pesada, y recurrir a él primero suele significar que te saltaste victorias más baratas.\n\nLa forma más limpia de decidir es por lo que realmente te falta. El fine-tuning cambia forma y comportamiento — tono, formato de salida, adherencia a un esquema, el estilo de escritura de un dominio, producir JSON estructurado de forma confiable. RAG aporta conocimiento — hechos frescos, propietarios o que cambian rápido. Esta es la línea que resuelve la mayoría de las discusiones: si el modelo se equivoca en los hechos, es un problema de RAG; si se equivoca en la forma o el estilo aun con los hechos correctos enfrente, es un problema de fine-tuning. No hagas fine-tuning para inyectar conocimiento: es una manera poco confiable y cara de memorizar, y el conocimiento queda obsoleto en cuanto cambian los datos.\n\nSopesa los cuellos de botella reales antes de comprometerte. El fine-tuning completo consume mucha memoria y produce un artefacto de modelo que ahora debes hospedar, versionar y reentrenar a medida que mejoran los modelos base. El fine-tuning eficiente en parámetros (PEFT) como LoRA entrena un pequeño conjunto de pesos adaptadores en vez del modelo completo, y por eso es el default práctico cuando sí haces fine-tuning — memoria y costo mucho menores, y puedes intercambiar adaptadores. Y no son mutuamente excluyentes: una forma común en producción es un modelo ajustado con LoRA para comportamiento y formato consistentes, alimentado con hechos frescos por RAG en tiempo de inferencia."
+   },
+   "keyPoints": [
+    {
+     "en": "Exhaust prompting and RAG before fine-tuning — most needs are met before the training pipeline.",
+     "es": "Agota prompting y RAG antes del fine-tuning: la mayoría de las necesidades se cubren antes del pipeline de entrenamiento."
+    },
+    {
+     "en": "Fine-tune for form and behavior; use RAG for fresh or proprietary knowledge. Wrong facts = RAG problem, wrong shape = fine-tune problem.",
+     "es": "Haz fine-tuning para forma y comportamiento; usa RAG para conocimiento fresco o propietario. Hechos errados = problema de RAG, forma errada = problema de fine-tuning."
+    },
+    {
+     "en": "PEFT (LoRA) is the practical default when you fine-tune — far less memory/cost, and it composes with RAG.",
+     "es": "PEFT (LoRA) es el default práctico cuando haces fine-tuning: mucha menos memoria/costo, y se combina con RAG."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  },
+  {
+   "slug": "data-curation-finetuning-evals",
+   "title": {
+    "en": "Data Curation for Finetuning and Evals",
+    "es": "Curación de datos para fine-tuning y evaluaciones"
+   },
+   "why": {
+    "en": "Trains you to treat the dataset as engineered, not scraped: data quality and coverage, acquisition/annotation, and synthetic-data generation are the substrate that decides whether a finetune or an eval set is worth anything.",
+    "es": "Te entrena a tratar el conjunto de datos como algo diseñado, no recolectado: la calidad y cobertura de los datos, la adquisición/anotación y la generación de datos sintéticos son el sustrato que decide si un fine-tuning o un conjunto de evaluación vale algo."
+   },
+   "source": "Chip Huyen, AI Engineering, Ch.8 'Dataset Engineering' — Data Curation, Data Quality/Coverage, Data Acquisition & Annotation, Data Augmentation and Synthesis",
+   "explanation": {
+    "en": "Both a fine-tune and an eval set are only as good as their data, and data is engineered, not scraped. The instinct to grab whatever's lying around and throw volume at the problem is where projects quietly rot. Chip Huyen's point is blunt: for fine-tuning, a few thousand high-quality, well-covered examples beat a noisy dump of a hundred thousand. Quality is whether each example is correct, consistent, and formatted the way you actually want the model to behave. Coverage is whether the set spans the real distribution of inputs — including the edge cases and failure modes you'll see in production, not just the happy path.\n\nAcquisition and annotation are the unglamorous core. Where does the data come from — production logs, expert labeling, existing documents — and who decides what a correct answer looks like? Ambiguous annotation guidelines produce inconsistent labels, and inconsistent labels teach the model contradictions. This is real engineering work with a spec and a review process, not a task to hand off and forget.\n\nSynthetic data (data augmentation and generation) is a powerful lever and a trap. Using a strong model to generate training or eval examples can cheaply fill coverage gaps, but generated data inherits the generator's biases and blind spots, and training a model heavily on another model's output risks narrowing the distribution — you amplify what the generator already does and lose the tails. Use it deliberately: to augment underrepresented cases, always with human spot-checks, never as the whole substrate. And hold your eval set to a higher bar than your training set — a fine-tune with a sloppy eval set is worse than useless, because it tells you you're winning while you're not.",
+    "es": "Tanto un fine-tune como un conjunto de evaluación valen lo que valen sus datos, y los datos se diseñan, no se raspan. El instinto de tomar lo que haya a mano y lanzarle volumen al problema es donde los proyectos se pudren en silencio. El punto de Chip Huyen es directo: para fine-tuning, unos pocos miles de ejemplos de alta calidad y bien cubiertos le ganan a un vertedero ruidoso de cien mil. La calidad es si cada ejemplo es correcto, consistente y con el formato en que realmente quieres que el modelo se comporte. La cobertura es si el conjunto abarca la distribución real de entradas — incluidos los casos límite y modos de falla que verás en producción, no solo el camino feliz.\n\nLa adquisición y la anotación son el núcleo poco glamoroso. ¿De dónde vienen los datos — logs de producción, etiquetado experto, documentos existentes — y quién decide cómo se ve una respuesta correcta? Guías de anotación ambiguas producen etiquetas inconsistentes, y las etiquetas inconsistentes le enseñan contradicciones al modelo. Esto es trabajo de ingeniería real con una especificación y un proceso de revisión, no una tarea para delegar y olvidar.\n\nLos datos sintéticos (aumentación y generación) son una palanca poderosa y una trampa. Usar un modelo fuerte para generar ejemplos de entrenamiento o evaluación puede llenar barato los huecos de cobertura, pero los datos generados heredan los sesgos y puntos ciegos del generador, y entrenar un modelo fuertemente con la salida de otro modelo arriesga estrechar la distribución — amplificas lo que el generador ya hace y pierdes las colas. Úsalo con intención: para aumentar casos subrepresentados, siempre con verificaciones humanas puntuales, nunca como todo el sustrato. Y exige a tu conjunto de evaluación un estándar más alto que al de entrenamiento — un fine-tune con un eval set descuidado es peor que inútil, porque te dice que estás ganando cuando no."
+   },
+   "keyPoints": [
+    {
+     "en": "Data is engineered, not scraped: a few thousand high-quality, well-covered examples beat a noisy large dump.",
+     "es": "Los datos se diseñan, no se raspan: unos pocos miles de ejemplos de alta calidad y bien cubiertos le ganan a un vertedero grande y ruidoso."
+    },
+    {
+     "en": "Coverage means spanning the real input distribution, including edge cases; ambiguous annotation guidelines poison labels.",
+     "es": "Cobertura significa abarcar la distribución real de entradas, incluidos los casos límite; guías de anotación ambiguas envenenan las etiquetas."
+    },
+    {
+     "en": "Synthetic data fills gaps cheaply but inherits the generator's biases and can narrow the distribution — spot-check it, don't lean on it.",
+     "es": "Los datos sintéticos llenan huecos barato pero heredan los sesgos del generador y pueden estrechar la distribución: verifícalos, no te apoyes en ellos."
+    },
+    {
+     "en": "Hold the eval set to a higher bar than the training set — a sloppy eval set lies to you about progress.",
+     "es": "Exige al eval set un estándar más alto que al de entrenamiento: un eval set descuidado te miente sobre el progreso."
+    }
+   ],
+   "hasVisual": false,
+   "hasCode": false
+  }
+ ]
+}
