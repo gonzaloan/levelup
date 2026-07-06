@@ -72,11 +72,11 @@ export function LearnHub({ locale }: { locale: Locale }) {
       </div>
 
       {/* Track toggle — the old "Tracks" menu, now a clear switch */}
-      <div className="gc-trackseg" role="tablist" aria-label="track">
-        <button className={track === "general" ? "active" : ""} onClick={() => { setTrack("general"); setOpenId(""); }}>
+      <div className="gc-trackseg" role="tablist" aria-label={t({ en: "Track", es: "Ruta" }, locale)}>
+        <button role="tab" aria-selected={track === "general"} className={track === "general" ? "active" : ""} onClick={() => { setTrack("general"); }}>
           {t({ en: "General Engineering", es: "Ingeniería General" }, locale)}
         </button>
-        <button className={track === "ai" ? "active" : ""} onClick={() => { setTrack("ai"); setOpenId(""); }}>
+        <button role="tab" aria-selected={track === "ai"} className={track === "ai" ? "active" : ""} onClick={() => { setTrack("ai"); }}>
           {t({ en: "Real World AI", es: "IA en el Mundo Real" }, locale)}
         </button>
       </div>
@@ -133,7 +133,7 @@ function DomainCard({ dom, index, locale, progress, open, onToggle, onRead }: {
         <span className="gc-domain-bar" style={{ background: grad }} />
         <span className="gc-domain-badge" style={{ background: grad }}>{index}</span>
         <span className="gc-domain-meta">
-          <h3>{t(axis.name, locale)}</h3>
+          <h2 style={{ fontSize: "1.0625rem", fontWeight: 700 }}>{t(axis.name, locale)}</h2>
           <span className="gc-domain-sub">{t(axis.measures, locale)}</span>
         </span>
         <span className="gc-domain-weight">

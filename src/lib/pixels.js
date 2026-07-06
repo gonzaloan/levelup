@@ -340,6 +340,92 @@ const _M = (function () {
     '................'
   ];
 
+  // ── 16-bit overworld: hero avatar, walk frame, flag, level-card, pipe ────
+  M.hero = [
+    '................',
+    '................',
+    '.....xxxx.......',
+    '....xooooxx.....',
+    '....xssssx......',
+    '....xsxxsx......',
+    '....xssssx......',
+    '.....xssx.......',
+    '...bbbbbbbb.....',
+    '..bbiibbbbyb....',
+    '..bbiibbbbyb....',
+    '..bbbbbbbbbb....',
+    '...bbb..bbb.....',
+    '...ddd..ddd.....',
+    '..dddd..dddd....',
+    '................'
+  ];
+  M.heroWalk = [
+    '................',
+    '................',
+    '.....xxxx.......',
+    '....xooooxx.....',
+    '....xssssx......',
+    '....xsxxsx......',
+    '....xssssx......',
+    '.....xssx.......',
+    '...bbbbbbbb.....',
+    '..bbiibbbbyb....',
+    '..bbiibbbbyb....',
+    '..bbbbbbbbbb....',
+    '...bbb..bbb.....',
+    '..ddd....ddd....',
+    '.dddd.....ddd...',
+    '................'
+  ];
+  M.flag = [
+    '..kyy.....',
+    '..kyyyy...',
+    '..kyyyyyy.',
+    '..kyyyy...',
+    '..kyy.....',
+    '..k.......',
+    '..k.......',
+    '..k.......',
+    '..k.......',
+    '..k.......',
+    '..k.......',
+    '.kkk......'
+  ];
+  M.levelPanel = [
+    'xxxxxxxxxxxxxxxx',
+    'xeeeeeeeeeeeeeex',
+    'xennnnnnnnnnnnex',
+    'xenddddddddddnex',
+    'xendkkkkkkkkdnex',
+    'xendk......kdnex',
+    'xendk......kdnex',
+    'xendk......kdnex',
+    'xendk......kdnex',
+    'xendk......kdnex',
+    'xendk......kdnex',
+    'xendkkkkkkkkdnex',
+    'xenddddddddddnex',
+    'xennnnnnnnnnnnex',
+    'xeeeeeeeeeeeeeex',
+    'xxxxxxxxxxxxxxxx'
+  ];
+  M.pipe = [
+    '.GGGGGGGGGGGGGG.',
+    '.GiiGGGGGGGGggG.',
+    '.GGGGGGGGGGGGGG.',
+    '..GGGGGGGGGGGG..',
+    '..GiGGGGGGGGgG..',
+    '..GiGGGGGGGGgG..',
+    '..GiGGGGGGGGgG..',
+    '..GiGGGGGGGGgG..',
+    '..GiGGGGGGGGgG..',
+    '..GiGGGGGGGGgG..',
+    '..GiGGGGGGGGgG..',
+    '..GiGGGGGGGGgG..',
+    '..gggggggggggg..',
+    '................'
+  ];
+
   /* ============ distinct per-cert LANDMARKS (32x32) =====================
    * Each certification world gets its own keep so AIF / CLF / CCA never look
    * interchangeable. Built via the grid composer (rectangular-safe). */
@@ -525,6 +611,11 @@ const _M = (function () {
     castle: function () { return M.castle; },
     signpost: function () { return M.signpost; },
     path: function () { return M.pathH; },
+    hero: function () { return M.hero; },
+    heroWalk: function () { return M.heroWalk; },
+    flag: function () { return M.flag; },
+    levelPanel: function () { return M.levelPanel; },
+    pipe: function () { return M.pipe; },
     sun: sun,
     mountainsFar: mountainsFar,
     mountainsNear: mountainsNear,

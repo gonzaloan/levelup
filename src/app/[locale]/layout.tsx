@@ -27,8 +27,9 @@ export default async function LocaleLayout({
       <HtmlLang locale={locale} />
       <Loader />
       <RouteProgress />
+      <a href="#main-content" className="skip-link">{m("a11y.skip", locale as Locale)}</a>
       <Nav locale={locale} />
-      <main>{children}</main>
+      <main id="main-content" tabIndex={-1}>{children}</main>
       <MobileTabBar locale={locale} />
       <RewardHost />
       <footer style={{ borderTop: "1px solid var(--hairline)", marginTop: "var(--s-24)" }}>

@@ -5,11 +5,11 @@
 // standing on a tiled island with its own landmark sprite; clicking a continent
 // opens its level path (L3→L7) as a winding row of pixel nodes. All sprites are
 // crisp authored SVG from the ported engine.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
-import { AXIS_BY_ID, LEVELS } from "@/lib/axes";
+import { AXIS_BY_ID, LEVELS, type Level } from "@/lib/axes";
 import { ORDERED_DOMAINS, checkpointsAfter, totalConcepts, CHECKPOINTS } from "@/lib/curriculum";
 import { load, type Progress } from "@/lib/store";
 import { PixelSprite, PixelNode } from "./PixelSprite";
@@ -40,8 +40,26 @@ export function PixelOverworld({ locale }: { locale: Locale }) {
   const stars = cleared.size;
   const totalStars = CHECKPOINTS.length;
 
+  // Game-style "level start" curtain: play the SMB3 title wipe, then navigate.
+  const [curtain, setCurtain] = useState<{ href: string; world: string; role: string } | null>(null);
+  function openLesson(href: string, world: number, level: string, role: string) {
+    const reduce = typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) { router.push(href); return; }
+    const lvNum = level.replace("L", "");
+    setCurtain({ href, world: `WORLD ${world}-${lvNum}`, role });
+    setTimeout(() => router.push(href), 640);
+  }
+
   return (
     <div className="pixel-picker">
+      {curtain && (
+        <div className="level-start" data-show="true" role="dialog" aria-label={m("pixel.levelStart", locale)}>
+          <div className="ls-card">
+            <div className="ls-world">{curtain.world}</div>
+            <div className="ls-role">{curtain.role}</div>
+          </div>
+        </div>
+      )}
       {/* scenery */}
       <div className="pp-scenery" aria-hidden="true">
         <div className="pp-sun"><PixelSprite name="sun" /></div>
@@ -60,7 +78,9 @@ export function PixelOverworld({ locale }: { locale: Locale }) {
 
         {openWorld ? (
           <WorldPath locale={locale} domainId={openWorld} progress={progress}
-            onBack={() => setOpenWorld(null)} onOpenLesson={(href) => router.push(href)} />
+            worldIndex={ORDERED_DOMAINS.findIndex((d) => d.id === openWorld) + 1}
+            onBack={() => setOpenWorld(null)}
+            onOpenLesson={(href, level, role) => openLesson(href, ORDERED_DOMAINS.findIndex((d) => d.id === openWorld) + 1, level, role)} />
         ) : (
           <>
             <h1 className="pp-title">{m("pixel.chooseWorld", locale)}</h1>
@@ -95,9 +115,29 @@ export function PixelOverworld({ locale }: { locale: Locale }) {
   );
 }
 
-// A domain's level path: L3→L7 as pixel nodes on a winding trail, plus links.
+// What each level means — shown on the node's focus/tap tooltip so the owner
+// (and every learner) finally understands L3→L7.
+const LEVEL_INFO: Record<Level, { name: { en: string; es: string }; what: { en: string; es: string } }> = {
+  L3: { name: { en: "Developing", es: "En desarrollo" }, what: { en: "Build the foundations — one machine, one service.", es: "Construye las bases — una máquina, un servicio." } },
+  L4: { name: { en: "Senior", es: "Senior" }, what: { en: "Own your area's design and ship reliably.", es: "Dueño del diseño de tu área; entrega con fiabilidad." } },
+  L5: { name: { en: "Staff Threshold", es: "Umbral Staff" }, what: { en: "Set a team's technical approach.", es: "Fija el enfoque técnico de un equipo." } },
+  L6: { name: { en: "Staff", es: "Staff" }, what: { en: "Direct multiple teams over quarters.", es: "Dirige varios equipos durante trimestres." } },
+  L7: { name: { en: "Principal", es: "Principal" }, what: { en: "Shape org- and industry-wide direction.", es: "Moldea la dirección de la organización e industria." } },
+};
+
+// Node coordinates on a winding Mario trail (percent of a 100×64 viewBox).
+// Desktop: an S-curve rising left→right; mobile: a vertical serpentine.
+const NODE_XY_D = [{ x: 10, y: 74 }, { x: 30, y: 40 }, { x: 50, y: 66 }, { x: 70, y: 30 }, { x: 88, y: 56 }];
+const CASTLE_XY_D = { x: 97, y: 40 };
+const NODE_XY_M = [{ x: 26, y: 8 }, { x: 70, y: 26 }, { x: 30, y: 44 }, { x: 68, y: 62 }, { x: 30, y: 80 }];
+const CASTLE_XY_M = { x: 70, y: 94 };
+
+// A domain's level path: L3→L7 as a real connected overworld map with a hero
+// avatar on the current node, a chunky winding trail whose segments light as
+// levels clear, and a castle boss at the summit. Keyboard: ←/→ move, Enter opens.
 function WorldPath({ locale, domainId, progress, onBack, onOpenLesson }: {
-  locale: Locale; domainId: string; progress: Progress | null; onBack: () => void; onOpenLesson: (href: string) => void;
+  locale: Locale; domainId: string; progress: Progress | null; worldIndex: number;
+  onBack: () => void; onOpenLesson: (href: string, level: string, role: string) => void;
 }) {
   const dom = ORDERED_DOMAINS.find((d) => d.id === domainId)!;
   const axis = AXIS_BY_ID[dom.axisId];
@@ -105,42 +145,87 @@ function WorldPath({ locale, domainId, progress, onBack, onOpenLesson }: {
   const cleared = new Set(progress?.checkpointsCleared ?? []);
   const levelsWith = LEVELS.filter((lv) => dom.levels.find((l) => l.level === lv)?.concepts.length);
 
-  // determine node state per level: done if checkpoint cleared; current = first
-  // not-done; else open (we don't hard-lock, but style shows the frontier).
-  const firstUncleared = levelsWith.find((lv) => {
-    const chk = checkpointsAfter(domainId, lv);
-    return !chk || !cleared.has(chk.id);
-  });
+  const [mobile, setMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const on = () => setMobile(mq.matches); on();
+    mq.addEventListener?.("change", on); return () => mq.removeEventListener?.("change", on);
+  }, []);
+  const NODE_XY = mobile ? NODE_XY_M : NODE_XY_D;
+  const CASTLE_XY = mobile ? CASTLE_XY_M : CASTLE_XY_D;
+
+  const stateOf = (i: number): "done" | "current" | "open" => {
+    const chk = checkpointsAfter(domainId, levelsWith[i]);
+    if (chk && cleared.has(chk.id)) return "done";
+    // current = first not-done
+    const firstUn = levelsWith.findIndex((lv) => { const c = checkpointsAfter(domainId, lv); return !c || !cleared.has(c.id); });
+    return i === firstUn ? "current" : "open";
+  };
+  const currentIndex = Math.max(0, levelsWith.findIndex((lv) => { const c = checkpointsAfter(domainId, lv); return !c || !cleared.has(c.id); }));
+
+  // keyboard roving focus across nodes
+  const [focusIdx, setFocusIdx] = useState(currentIndex);
+  const nodeRefs = useRef<(HTMLButtonElement | null)[]>([]);
+  function onKey(e: React.KeyboardEvent) {
+    if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); const n = Math.min(levelsWith.length - 1, focusIdx + 1); setFocusIdx(n); nodeRefs.current[n]?.focus(); }
+    else if (e.key === "ArrowLeft" || e.key === "ArrowUp") { e.preventDefault(); const n = Math.max(0, focusIdx - 1); setFocusIdx(n); nodeRefs.current[n]?.focus(); }
+  }
+
+  // Trail points in viewBox units (100×64), nodes then castle.
+  const pts = [...NODE_XY.map((p) => ({ x: p.x / 100 * 100, y: p.y / 100 * 64 })), { x: CASTLE_XY.x / 100 * 100, y: CASTLE_XY.y / 100 * 64 }];
+  const segDone = (i: number) => stateOf(i) === "done"; // segment i (node i→i+1) lit when node i done
 
   return (
-    <div className="pp-world" style={{ ["--accent" as string]: w.accent, ["--accent-deep" as string]: w.deep }}>
+    <div className="pp-world mw" data-mobile={mobile ? "true" : "false"} style={{ ["--accent" as string]: w.accent, ["--accent-deep" as string]: w.deep }}>
       <div className="pp-world-head">
-        <button className="pixel-btn pp-back" onClick={onBack}>← {m("pixel.allWorlds", locale)}</button>
+        <button className="pixel-btn pp-back" onClick={onBack} aria-label={m("pixel.allWorlds", locale)}>← {m("pixel.allWorlds", locale)}</button>
         <span className="pp-world-title">{t(axis.name, locale)}</span>
       </div>
-      <div className="pp-trail">
+
+      <div className="mw-map" role="group" aria-label={t(axis.name, locale)} onKeyDown={onKey}
+        style={{ backgroundImage: groundUrl(w.ground) }}>
+        {/* winding trail */}
+        <svg className="mw-trail" viewBox="0 0 100 64" preserveAspectRatio="none" aria-hidden="true">
+          {pts.slice(0, -1).map((p, i) => {
+            const q = pts[i + 1];
+            return <line key={i} x1={p.x} y1={p.y} x2={q.x} y2={q.y}
+              className="mw-seg" data-lit={segDone(i) ? "true" : "false"} strokeLinecap="round" />;
+          })}
+        </svg>
+        {/* scenery */}
+        <span className="mw-scene mw-sun"><PixelSprite name="sun" /></span>
+        <span className="mw-scene mw-tree1"><PixelSprite name="tree" /></span>
+
+        {/* nodes */}
         {levelsWith.map((lv, i) => {
-          const chk = checkpointsAfter(domainId, lv);
-          const done = chk && cleared.has(chk.id);
-          const state = done ? "done" : lv === firstUncleared ? "current" : "open";
+          const st = stateOf(i);
           const href = `/${locale}/lesson/${domainId}-${lv.toLowerCase()}`;
+          const info = LEVEL_INFO[lv];
           return (
-            <div key={lv} className="pp-trail-cell" style={{ ["--i" as string]: String(i) }}>
-              {i > 0 && <span className="pp-trail-link" aria-hidden="true"><PixelSprite name="path" /></span>}
-              <button className="pp-node" data-state={state} onClick={() => onOpenLesson(href)}
-                title={`${lv} · ${t(axis.name, locale)}`}>
-                <PixelNode state={state} />
-                <span className="pp-node-num">{lv}</span>
-              </button>
-            </div>
+            <button key={lv} ref={(el) => { nodeRefs.current[i] = el; }}
+              className="mw-node" data-state={st} tabIndex={i === focusIdx ? 0 : -1}
+              style={{ left: `${NODE_XY[i].x}%`, top: `${NODE_XY[i].y}%` }}
+              onClick={() => onOpenLesson(href, lv, t(axis.name, locale))} onFocus={() => setFocusIdx(i)}
+              aria-label={`${lv} · ${t(info.name, locale)} — ${t(info.what, locale)}${st === "current" ? ` (${m("pixel.current", locale)})` : st === "done" ? ` (${m("pixel.cleared", locale)})` : ""}`}>
+              <PixelNode state={st} />
+              <span className="mw-node-code" aria-hidden="true">{lv}</span>
+              {st === "current" && <span className="mw-avatar" aria-hidden="true"><PixelSprite name="hero" /></span>}
+              {st === "done" && <span className="mw-flag" aria-hidden="true"><PixelSprite name="flag" /></span>}
+              {/* tooltip: what this level means */}
+              <span className="mw-tip" aria-hidden="true">
+                <b>{lv} · {t(info.name, locale)}</b>
+                <span>{t(info.what, locale)}</span>
+              </span>
+            </button>
           );
         })}
-        {/* the world's landmark at the summit */}
-        <div className="pp-trail-cell">
-          <span className="pp-trail-link" aria-hidden="true"><PixelSprite name="path" /></span>
-          <span className="pp-summit"><PixelSprite name={w.sprite} /></span>
-        </div>
+
+        {/* castle boss at the summit */}
+        <span className="mw-castle" style={{ left: `${CASTLE_XY.x}%`, top: `${CASTLE_XY.y}%` }} aria-hidden="true">
+          <PixelSprite name={w.sprite} />
+        </span>
       </div>
+
       <p className="pp-world-hint">{m("pixel.tapNode", locale)}</p>
     </div>
   );
