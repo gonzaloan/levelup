@@ -6,10 +6,13 @@
 import { t, type Locale } from "@/i18n/config";
 import type { Schematic as SchematicSpec } from "@/lib/types";
 
-export function Schematic({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
+export function Schematic({ spec, locale, animate = true }: { spec: SchematicSpec; locale: Locale; animate?: boolean }) {
   if (!spec || spec.kind === "none") return null;
+  // `animate` adds the reveal class; the actual motion is CSS and is itself
+  // gated on prefers-reduced-motion, so content is always visible by default
+  // and motion only enhances (never hides below-fold content).
   return (
-    <figure className="schematic blueprint" style={{ margin: 0 }}>
+    <figure className={`schematic blueprint${animate ? " schematic-animate" : ""}`} style={{ margin: 0 }}>
       <div className="schematic-body">
         {spec.kind === "flow" && <Flow spec={spec} locale={locale} />}
         {spec.kind === "stack" && <Stack spec={spec} locale={locale} />}
@@ -31,7 +34,7 @@ function Flow({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
   return (
     <div className="schematic-flow">
       {nodes.map((n, i) => (
-        <div key={i} className="schematic-flow-cell">
+        <div key={i} className="schematic-flow-cell" style={{ ["--i" as string]: String(i) }}>
           <div className="schematic-box">
             <span className="schematic-box-label">{t(n.label, locale)}</span>
             {n.note && <span className="schematic-box-note">{t(n.note, locale)}</span>}
@@ -49,7 +52,7 @@ function Stack({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
   return (
     <div className="schematic-stack">
       {nodes.map((n, i) => (
-        <div key={i} className="schematic-box schematic-stack-row">
+        <div key={i} className="schematic-box schematic-stack-row" style={{ ["--i" as string]: String(i) }}>
           <span className="schematic-box-label">{t(n.label, locale)}</span>
           {n.note && <span className="schematic-box-note">{t(n.note, locale)}</span>}
         </div>
