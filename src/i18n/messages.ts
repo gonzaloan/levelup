@@ -133,6 +133,18 @@ export const MESSAGES = {
   "lesson.read":        { en: "Read", es: "Leer" },
   "lesson.markReadNext":{ en: "Got it — continue", es: "Entendido — continuar" },
   "lesson.progress":    { en: "read", es: "leído" },
+  "rail.takeaways":     { en: "Takeaways", es: "Claves" },
+  "rail.keywords":      { en: "Keywords", es: "Términos" },
+  "rail.code":          { en: "Code", es: "Código" },
+  "rail.example":       { en: "Example", es: "Ejemplo" },
+  "rail.architecture":  { en: "Architecture", es: "Arquitectura" },
+  "rail.context":       { en: "Context", es: "Contexto" },
+  "lesson.concepts":    { en: "Concepts", es: "Conceptos" },
+  "lesson.readMore":    { en: "Go deeper", es: "Profundizar" },
+  "lesson.readLess":    { en: "Show less", es: "Mostrar menos" },
+  "lesson.pitfalls":    { en: "Common pitfalls", es: "Errores comunes" },
+  "lesson.analogy":     { en: "Think of it like", es: "Piénsalo así" },
+  "lesson.walkthrough": { en: "Walkthrough", es: "Desarrollo" },
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES;

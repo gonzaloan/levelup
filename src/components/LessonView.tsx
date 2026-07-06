@@ -11,8 +11,12 @@ import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import { AXIS_BY_ID, type Level } from "@/lib/axes";
 import { Schematic } from "./Schematic";
+import { SceneryBackground } from "./SceneryBackground";
+import { ConceptNav } from "./ConceptNav";
+import { ContextRail } from "./ContextRail";
+import { getWidget } from "./viz";
 import { markConceptsRead } from "@/lib/store";
-import type { Lesson, Concept, QuizItem } from "@/lib/types";
+import type { Lesson, Concept, ConceptLesson, QuizItem } from "@/lib/types";
 
 type Stage = "learn" | "check" | "done";
 
@@ -48,8 +52,15 @@ export function LessonView({
     }
   }
 
+  function jump(i: number) {
+    setStage("learn");
+    setIdx(i);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   return (
-    <div className="wrap" data-track={track} style={{ paddingTop: "var(--s-10)", paddingBottom: "var(--s-16)", maxWidth: 780 }}>
+    <div className="wrap lesson-wrap" data-track={track} style={{ paddingTop: "var(--s-10)", paddingBottom: "var(--s-16)" }}>
+      <SceneryBackground track={track as "general" | "ai"} />
       {/* header */}
       <div style={{ display: "flex", gap: "var(--s-3)", alignItems: "center", marginBottom: "var(--s-3)", flexWrap: "wrap" }}>
         <span className="level-tag">{level}</span>
@@ -62,40 +73,44 @@ export function LessonView({
       {/* progress rail: overview + one dot per concept + check + test */}
       <LessonRail stage={stage} idx={idx} total={total} locale={locale} />
 
-      {stage === "learn" && (
-        <div className="stack" style={{ gap: "var(--s-6)", marginTop: "var(--s-6)" }}>
-          {idx === -1 ? (
-            <section className="card lesson-overview">
-              <p className="eyebrow" style={{ color: "var(--track-accent)" }}>{m("lesson.overview", locale)}</p>
-              {para(t(lesson.overview, locale)).map((p, i) => (
-                <p key={i} className="prose" style={{ fontSize: "1.0625rem", marginTop: i ? "var(--s-3)" : "var(--s-3)" }}>{p}</p>
-              ))}
-              <div style={{ marginTop: "var(--s-5)", borderTop: "1px solid var(--hairline)", paddingTop: "var(--s-4)" }}>
-                <p className="eyebrow" style={{ marginBottom: "var(--s-3)" }}>{m("lesson.whatYouLearn", locale)}</p>
-                <ol className="lesson-toc">
-                  {lesson.concepts.map((c, i) => (
-                    <li key={c.slug}>
-                      <span className="mono lesson-toc-n">{i + 1}</span>
-                      {conceptMeta.get(c.slug) ? t(conceptMeta.get(c.slug)!.title, locale) : c.slug}
-                    </li>
-                  ))}
-                </ol>
-              </div>
-              <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} style={{ marginTop: "var(--s-6)" }} onClick={advance}>
-                {m("assess.start", locale)} →
-              </button>
-            </section>
-          ) : (
-            <ConceptPane
-              locale={locale}
-              lessonConcept={lesson.concepts[idx]}
-              meta={conceptMeta.get(lesson.concepts[idx].slug)}
-              index={idx}
-              total={total}
-              track={track}
-              onNext={advance}
-            />
-          )}
+      {stage === "learn" && idx === -1 && (
+        <div className="stack" style={{ gap: "var(--s-6)", marginTop: "var(--s-6)", maxWidth: 780 }}>
+          <section className="card lesson-overview">
+            <p className="eyebrow" style={{ color: "var(--track-accent)" }}>{m("lesson.overview", locale)}</p>
+            {para(t(lesson.overview, locale)).map((p, i) => (
+              <p key={i} className="prose" style={{ fontSize: "1.0625rem", marginTop: i ? "var(--s-3)" : "var(--s-3)" }}>{p}</p>
+            ))}
+            <div style={{ marginTop: "var(--s-5)", borderTop: "1px solid var(--hairline)", paddingTop: "var(--s-4)" }}>
+              <p className="eyebrow" style={{ marginBottom: "var(--s-3)" }}>{m("lesson.whatYouLearn", locale)}</p>
+              <ol className="lesson-toc">
+                {lesson.concepts.map((c, i) => (
+                  <li key={c.slug}>
+                    <span className="mono lesson-toc-n">{i + 1}</span>
+                    {conceptMeta.get(c.slug) ? t(conceptMeta.get(c.slug)!.title, locale) : c.slug}
+                  </li>
+                ))}
+              </ol>
+            </div>
+            <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} style={{ marginTop: "var(--s-6)" }} onClick={advance}>
+              {m("assess.start", locale)} →
+            </button>
+          </section>
+        </div>
+      )}
+
+      {stage === "learn" && idx >= 0 && (
+        <div className="lesson-grid" style={{ marginTop: "var(--s-6)" }}>
+          <ConceptNav locale={locale} concepts={lesson.concepts} meta={conceptMeta} idx={idx} onJump={jump} />
+          <ConceptPane
+            locale={locale}
+            lessonConcept={lesson.concepts[idx]}
+            meta={conceptMeta.get(lesson.concepts[idx].slug)}
+            index={idx}
+            total={total}
+            track={track}
+            onNext={advance}
+          />
+          <ContextRail locale={locale} concept={lesson.concepts[idx]} track={track as "general" | "ai"} />
         </div>
       )}
 
@@ -131,10 +146,12 @@ export function LessonView({
 }
 
 function ConceptPane({ locale, lessonConcept, meta, index, total, track, onNext }: {
-  locale: Locale; lessonConcept: Lesson["concepts"][number]; meta?: Concept; index: number; total: number; track: string; onNext: () => void;
+  locale: Locale; lessonConcept: ConceptLesson; meta?: Concept; index: number; total: number; track: string; onNext: () => void;
 }) {
+  const [deep, setDeep] = useState(false);
+  const Widget = lessonConcept.visual ? getWidget(lessonConcept.visual.widgetId) : null;
   return (
-    <section className="card">
+    <section className="card lesson-content">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "var(--s-3)", marginBottom: "var(--s-3)" }}>
         <span className="eyebrow">{m("lesson.step", locale)} {index + 1} {m("lesson.of", locale)} {total}</span>
       </div>
@@ -145,26 +162,49 @@ function ConceptPane({ locale, lessonConcept, meta, index, total, track, onNext 
         <p key={i} className="prose" style={{ marginBottom: "var(--s-3)" }}>{p}</p>
       ))}
 
-      {lessonConcept.diagram && lessonConcept.diagram.kind !== "none" && (
+      {/* Analogy callout — a plain-language handle on the idea. */}
+      {lessonConcept.analogy && (
+        <p className="lesson-analogy">
+          <span className="eyebrow">{m("lesson.analogy", locale)}</span> {t(lessonConcept.analogy, locale)}
+        </p>
+      )}
+
+      {/* Interactive widget takes priority; else the inline diagram. */}
+      {Widget ? (
+        <div style={{ margin: "var(--s-5) 0" }}>
+          <Widget locale={locale} track={track as "general" | "ai"} params={lessonConcept.visual!.params} />
+        </div>
+      ) : lessonConcept.diagram && lessonConcept.diagram.kind !== "none" ? (
         <div style={{ margin: "var(--s-5) 0" }}>
           <Schematic spec={lessonConcept.diagram} locale={locale} />
         </div>
-      )}
+      ) : null}
 
-      {lessonConcept.keyPoints?.length > 0 && (
-        <div style={{ marginTop: "var(--s-5)", borderTop: "1px solid var(--hairline)", paddingTop: "var(--s-4)" }}>
-          <p className="eyebrow" style={{ marginBottom: "var(--s-3)" }}>{m("lesson.keyPoints", locale)}</p>
-          <ul className="lesson-keypoints">
-            {lessonConcept.keyPoints.map((kp, i) => (
-              <li key={i}>{t(kp, locale)}</li>
-            ))}
-          </ul>
+      {/* Optional deeper read layer. */}
+      {lessonConcept.depth && (
+        <div style={{ marginTop: "var(--s-4)" }}>
+          <button className="btn btn-sm" aria-expanded={deep} onClick={() => setDeep((d) => !d)}>
+            {deep ? m("lesson.readLess", locale) : m("lesson.readMore", locale)}
+          </button>
+          {deep && para(t(lessonConcept.depth, locale)).map((p, i) => (
+            <p key={i} className="prose" style={{ marginTop: "var(--s-3)" }}>{p}</p>
+          ))}
         </div>
       )}
 
-      {meta?.source && (
+      {/* Pitfalls callout. */}
+      {lessonConcept.pitfalls?.length ? (
+        <div className="lesson-pitfalls">
+          <p className="eyebrow">{m("lesson.pitfalls", locale)}</p>
+          <ul className="lesson-keypoints">
+            {lessonConcept.pitfalls.map((p, i) => <li key={i}>{t(p, locale)}</li>)}
+          </ul>
+        </div>
+      ) : null}
+
+      {(lessonConcept.source || meta?.source) && (
         <p className="eyebrow" style={{ marginTop: "var(--s-4)", fontSize: "0.625rem", color: "var(--text-4)", letterSpacing: "0.08em" }}>
-          {m("lesson.source", locale)}: {meta.source}
+          {m("lesson.source", locale)}: {lessonConcept.source ?? meta?.source}
         </p>
       )}
 
