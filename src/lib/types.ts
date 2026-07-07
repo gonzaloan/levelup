@@ -198,6 +198,47 @@ export interface Lesson {
   midQuiz: QuizItem[];
 }
 
+// ── Novel knowledge-check mechanics (beyond multiple-choice) ─────────────
+// Four game-like check types that work as formative practice in lessons and as
+// graded boolean items in checkpoints. All learner-facing strings are I18nText.
+export type CheckKind = "cloze" | "order" | "match" | "categorize";
+
+export interface CheckBase {
+  id: string;
+  concept: string;             // concept slug this check trains
+  kind: CheckKind;
+  prompt: I18nText;            // the instruction / question
+  explain: I18nText;           // shown on reveal — why the answer is right
+  track: Track;
+}
+// Complete-the-sentence: `segments` are the n+1 text pieces around n blanks;
+// the learner fills each blank from `bank`. `answers[i]` is the bank index for blank i.
+export interface ClozeCheck extends CheckBase {
+  kind: "cloze";
+  segments: I18nText[];
+  bank: I18nText[];
+  answers: number[];
+}
+// Sequence: `items` in the correct order; shown shuffled, learner reorders.
+export interface OrderCheck extends CheckBase {
+  kind: "order";
+  items: I18nText[];
+}
+// Connect pairs across two columns. `pairs` are [leftIndex, rightIndex].
+export interface MatchCheck extends CheckBase {
+  kind: "match";
+  left: I18nText[];
+  right: I18nText[];
+  pairs: [number, number][];
+}
+// Drag each item into its correct bucket (by bucket index).
+export interface CategorizeCheck extends CheckBase {
+  kind: "categorize";
+  buckets: I18nText[];
+  items: { label: I18nText; bucket: number }[];
+}
+export type CheckItem = ClozeCheck | OrderCheck | MatchCheck | CategorizeCheck;
+
 // A single step in the recommended cross-domain learning path.
 export interface PathStep {
   kind: "concept" | "checkpoint";
