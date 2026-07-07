@@ -22,6 +22,27 @@ test("checkpoint boss card in pixel theme", async ({ page }) => {
   await page.screenshot({ path: "test-results/boss-pixel.png", fullPage: true });
 });
 
+// Regression guard: the pixel theme bumps `p` font-size, but small captions using
+// .text-sm must stay small (the .text-sm utility must out-specify the p rule).
+// Catches the class-vs-inline specificity trap from the hygiene refactor.
+test(".text-sm stays small under the pixel theme", async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem("levelup.theme", "pixel"));
+  await page.goto("/en/lesson/technical-depth-l5/");
+  await page.waitForTimeout(700);
+  // Inject a probe element that uses the utility on a <p>, then measure it.
+  const px = await page.evaluate(() => {
+    const p = document.createElement("p");
+    p.className = "dim text-sm";
+    p.textContent = "probe";
+    document.querySelector("main")!.appendChild(p);
+    const size = parseFloat(getComputedStyle(p).fontSize);
+    p.remove();
+    return size;
+  });
+  // --t-sm is 0.875rem = 14px; the pixel `p` bump would make it ~17px.
+  expect(px).toBeLessThan(15);
+});
+
 test("engaging the boss starts the quiz and shows draining HP", async ({ page }) => {
   await page.goto("/en/checkpoint/chk-technical-depth-l3/");
   await page.getByRole("button", { name: /Engage/i }).click();
