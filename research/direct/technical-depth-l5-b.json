@@ -1,0 +1,191 @@
+{
+ "lessonId": "technical-depth-l5",
+ "concepts": [
+  {
+   "slug": "linearizability-vs-eventual",
+   "keywords": [
+    {
+     "term": {"en": "Recency guarantee", "es": "Garantía de frescura"},
+     "def": {"en": "The promise that any read returns the latest completed write or something newer, never an older value.", "es": "La promesa de que cualquier lectura devuelve la última escritura completada o algo más nuevo, nunca un valor anterior."}
+    },
+    {
+     "term": {"en": "Staleness", "es": "Desactualización"},
+     "def": {"en": "How far behind the true latest value a read is allowed to be, measured in time or in missed writes.", "es": "Qué tan atrás del valor real más reciente puede quedar una lectura, medido en tiempo o en escrituras omitidas."}
+    },
+    {
+     "term": {"en": "Coordination", "es": "Coordinación"},
+     "def": {"en": "The cross-node communication a replica must do before answering to be sure it holds the latest data.", "es": "La comunicación entre nodos que una réplica debe hacer antes de responder para asegurarse de tener los datos más recientes."}
+    },
+    {
+     "term": {"en": "Read-your-writes", "es": "Lee-tus-escrituras"},
+     "def": {"en": "A weaker guarantee where a client sees its own writes but not necessarily others', cheaper than full linearizability.", "es": "Una garantía más débil donde un cliente ve sus propias escrituras pero no necesariamente las ajenas, más barata que la linealizabilidad completa."}
+    },
+    {
+     "term": {"en": "Convergence", "es": "Convergencia"},
+     "def": {"en": "The property that replicas accepting writes independently eventually agree on the same value once messages flow.", "es": "La propiedad de que réplicas que aceptan escrituras por separado terminan coincidiendo en el mismo valor una vez que fluyen los mensajes."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A username-registration service backed by three replicas across regions, choosing between a linearizable compare-and-set and an eventually-consistent write.", "es": "Un servicio de registro de usernames respaldado por tres réplicas en distintas regiones, eligiendo entre un compare-and-set linealizable y una escritura eventualmente consistente."},
+    "walkthrough": {"en": "Two users submit '@nova' within 40ms of each other. Under linearizability the write goes through a consensus round: the replica must reach a majority (2 of 3) before acking, costing roughly one cross-region round trip (say 80ms). The second request reads the committed '@nova' and is rejected. Under eventual consistency each regional replica accepts its write locally in 3ms and acks; both users see success, and 500ms later replication discovers two owners of '@nova'. Now you either pick a winner with last-write-wins (silently deleting a real account) or force one user to rename. The 77ms you saved bought a data-integrity incident. Uniqueness is exactly where you pay in latency, not staleness.", "es": "Dos usuarios envían '@nova' con 40ms de diferencia. Bajo linealizabilidad la escritura pasa por una ronda de consenso: la réplica debe alcanzar una mayoría (2 de 3) antes de confirmar, con un costo de aproximadamente un ida y vuelta entre regiones (digamos 80ms). La segunda petición lee el '@nova' ya confirmado y se rechaza. Bajo consistencia eventual cada réplica regional acepta su escritura localmente en 3ms y confirma; ambos usuarios ven éxito, y 500ms después la replicación descubre dos dueños de '@nova'. Ahora eliges un ganador con last-write-wins (borrando en silencio una cuenta real) u obligas a un usuario a renombrarse. Los 77ms que ahorraste compraron un incidente de integridad de datos. La unicidad es justo donde pagas en latencia, no en desactualización."}
+   },
+   "pitfalls": [
+    {"en": "Calling a system 'strongly consistent' because it uses transactions. Serializable isolation orders transactions; linearizability orders single-object operations in real time. They are different axes, and a system can have one without the other.", "es": "Llamar 'fuertemente consistente' a un sistema porque usa transacciones. El aislamiento serializable ordena transacciones; la linealizabilidad ordena operaciones sobre un objeto en tiempo real. Son ejes distintos, y un sistema puede tener uno sin el otro."},
+    {"en": "Reading from a follower and assuming it is current. Async replicas lag; a linearizable write followed by a read on a lagging replica breaks the guarantee unless the read is routed to the leader or waits for the replica to catch up.", "es": "Leer de un seguidor y suponer que está al día. Las réplicas asíncronas se atrasan; una escritura linealizable seguida de una lectura en una réplica atrasada rompe la garantía a menos que la lectura vaya al líder o espere a que la réplica se ponga al día."},
+    {"en": "Demanding linearizability everywhere 'to be safe.' It adds coordination latency to every operation and makes isolated nodes refuse traffic, so you get a slower system that is also less available.", "es": "Exigir linealizabilidad en todas partes 'por seguridad.' Agrega latencia de coordinación a cada operación y hace que los nodos aislados rechacen tráfico, así que obtienes un sistema más lento y además menos disponible."}
+   ],
+   "analogy": {"en": "Linearizability is a single ticket window: everyone queues at one counter, so the number you get is always the next real one. Eventual consistency is handing out numbers at ten counters and reconciling later — fast to serve, but two people can walk away holding the same number.", "es": "La linealizabilidad es una única ventanilla: todos hacen fila en un mostrador, así que el número que recibes siempre es el siguiente real. La consistencia eventual es repartir números en diez mostradores y reconciliar después: rápido de atender, pero dos personas pueden irse con el mismo número."},
+   "depth": {"en": "Linearizability composes but is not free to detect: verifying a history is linearizable is NP-complete in general (the problem Jepsen's Knossos checker attacks with heuristics). Practically, most 'strong' cloud stores offer bounded-staleness or session guarantees rather than true linearizability, because global coordination on every read is too expensive across regions. Know which one your datastore actually provides before you rely on it.", "es": "La linealizabilidad se compone, pero detectarla no es gratis: verificar que un historial sea linealizable es NP-completo en general (el problema que ataca con heurísticas el verificador Knossos de Jepsen). En la práctica, la mayoría de los almacenes 'fuertes' en la nube ofrecen frescura acotada o garantías de sesión en vez de linealizabilidad real, porque coordinar globalmente en cada lectura es demasiado caro entre regiones. Averigua cuál te da de verdad tu almacén antes de depender de ello."},
+   "visual": {"widgetId": "consistency"},
+   "source": "Kleppmann, DDIA, Ch.9 (Linearizability); Jepsen consistency map (jepsen.io/consistency/models)"
+  },
+  {
+   "slug": "cap-theorem",
+   "keywords": [
+    {
+     "term": {"en": "Network partition", "es": "Partición de red"},
+     "def": {"en": "A state where nodes are up but cannot communicate with each other; the only condition under which CAP forces a choice.", "es": "Un estado donde los nodos están activos pero no pueden comunicarse entre sí; la única condición bajo la cual CAP obliga a elegir."}
+    },
+    {
+     "term": {"en": "CP system", "es": "Sistema CP"},
+     "def": {"en": "One that keeps linearizable consistency during a partition by refusing to serve on the side that cannot coordinate.", "es": "Uno que mantiene la consistencia linealizable durante una partición negándose a responder del lado que no puede coordinar."}
+    },
+    {
+     "term": {"en": "AP system", "es": "Sistema AP"},
+     "def": {"en": "One that stays available during a partition by answering from local state, accepting possible staleness or conflicts.", "es": "Uno que sigue disponible durante una partición respondiendo desde el estado local, aceptando posible desactualización o conflictos."}
+    },
+    {
+     "term": {"en": "Split brain", "es": "Split brain (cerebro dividido)"},
+     "def": {"en": "The failure where a partition lets two nodes both believe they are the leader and accept conflicting writes.", "es": "La falla donde una partición permite que dos nodos crean ambos ser el líder y acepten escrituras en conflicto."}
+    },
+    {
+     "term": {"en": "PACELC", "es": "PACELC"},
+     "def": {"en": "The extension of CAP: on Partition choose A or C; Else (normal operation) choose Latency or Consistency.", "es": "La extensión de CAP: ante Partición elige A o C; si no (operación normal), elige Latencia o Consistencia."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "An etcd cluster of five nodes provides a distributed lock for a leader-election. A rack loses its switch, isolating two of the five nodes.", "es": "Un clúster etcd de cinco nodos provee un lock distribuido para una elección de líder. Un rack pierde su switch, aislando a dos de los cinco nodos."},
+    "walkthrough": {"en": "The majority side (3 nodes) still has quorum, so it keeps granting the lock and stays linearizable. The minority side (2 nodes) cannot reach a majority, so on any lock request it blocks and eventually times out rather than granting — that is the CP choice, and it is correct: two granted locks would mean two leaders writing to the same state. Contrast an AP store like Cassandra in the same partition: both sides accept writes to a shopping cart at QUORUM misconfigured to ONE, so a user's 'remove item' on one side and 'checkout' on the other both succeed, and after healing you reconcile a cart that was never in one consistent state. Same partition, opposite correct answers, because a lock cannot tolerate two winners and a cart can tolerate a merge.", "es": "El lado mayoritario (3 nodos) aún tiene quórum, así que sigue otorgando el lock y se mantiene linealizable. El lado minoritario (2 nodos) no puede alcanzar mayoría, así que ante cualquier petición de lock se bloquea y termina expirando en vez de otorgarlo: esa es la elección CP, y es correcta, porque dos locks otorgados significarían dos líderes escribiendo sobre el mismo estado. Contrasta un almacén AP como Cassandra en la misma partición: ambos lados aceptan escrituras a un carrito con QUORUM mal configurado a ONE, así que el 'quitar ítem' de un usuario en un lado y el 'checkout' en el otro tienen éxito, y tras sanar reconcilias un carrito que nunca estuvo en un estado consistente. Misma partición, respuestas correctas opuestas, porque un lock no tolera dos ganadores y un carrito sí tolera un merge."}
+   },
+   "pitfalls": [
+    {"en": "Quoting CAP as 'pick two of three.' You never trade C against A when the network is healthy; the theorem only forces a choice during a partition. The 'pick two' framing leads teams to give up consistency they could have kept for free.", "es": "Citar CAP como 'elige dos de tres.' Nunca cambias C por A cuando la red está sana; el teorema solo obliga a elegir durante una partición. El encuadre de 'elige dos' lleva a los equipos a sacrificar una consistencia que podían haber conservado gratis."},
+    {"en": "Believing you have opted out of partitions. A GC pause, a slow switch, or an overloaded NIC all look like a partition to the rest of the cluster. You do not choose whether partitions happen, only how the system behaves when they do.", "es": "Creer que has optado por no tener particiones. Una pausa de GC, un switch lento o una NIC saturada se ven todos como una partición para el resto del clúster. No eliges si ocurren particiones, solo cómo se comporta el sistema cuando ocurren."},
+    {"en": "Ignoring the 'else' half. Most systems are never partitioned, so PACELC's normal-operation tradeoff (latency vs consistency) dominates your real cost far more than the rare partition behavior does.", "es": "Ignorar la mitad del 'si no.' La mayoría de los sistemas casi nunca están particionados, así que la compensación en operación normal de PACELC (latencia vs consistencia) domina tu costo real mucho más que el raro comportamiento ante partición."}
+   ],
+   "analogy": {"en": "A partition is a phone line cut between two branch managers. The CP manager refuses to approve any transfer until the line is back, so no money moves but the books never disagree. The AP manager keeps approving from local records and reconciles when the line returns, so business continues but two branches may have promised the same funds.", "es": "Una partición es una línea telefónica cortada entre dos gerentes de sucursal. El gerente CP se niega a aprobar cualquier transferencia hasta que la línea vuelva, así que no se mueve dinero pero los libros nunca se contradicen. El gerente AP sigue aprobando desde sus registros locales y reconcilia cuando la línea vuelve, así que el negocio continúa pero dos sucursales pueden haber prometido los mismos fondos."},
+   "depth": {"en": "Gilbert and Lynch's 2002 proof is narrow on purpose: it assumes the asynchronous network model and defines C as atomic/linearizable consistency, which is why CAP's C is not transactions or isolation. Their result does not say availability is impossible — it says you cannot have linearizable reads AND total availability AND partition tolerance simultaneously. Real systems live on a spectrum: tunable quorums, bounded staleness, and 'CP with fast recovery' occupy the space the letters flatten.", "es": "La prueba de Gilbert y Lynch de 2002 es estrecha a propósito: asume el modelo de red asíncrona y define C como consistencia atómica/linealizable, por eso la C de CAP no es transacciones ni aislamiento. Su resultado no dice que la disponibilidad sea imposible: dice que no puedes tener lecturas linealizables Y disponibilidad total Y tolerancia a particiones al mismo tiempo. Los sistemas reales viven en un espectro: quórumes ajustables, frescura acotada y 'CP con recuperación rápida' ocupan el espacio que las letras aplanan."},
+   "visual": {"widgetId": "consistency"},
+   "source": "Kleppmann, DDIA, Ch.9 (CAP's consistency = linearizability); Gilbert & Lynch, 'Brewer's Conjecture and the Feasibility of CAP' (2002 — atomic/linearizable consistency)"
+  },
+  {
+   "slug": "stream-processing-derived-data-systems",
+   "keywords": [
+    {
+     "term": {"en": "Dual write", "es": "Escritura dual"},
+     "def": {"en": "Writing the same change to two independent stores without a shared transaction, so a crash between them leaves them disagreeing.", "es": "Escribir el mismo cambio en dos almacenes independientes sin una transacción compartida, de modo que una caída entre ambos los deja en desacuerdo."}
+    },
+    {
+     "term": {"en": "Change data capture (CDC)", "es": "Captura de cambios (CDC)"},
+     "def": {"en": "Streaming a database's own replication log as events so downstream systems derive state from the source of truth's order.", "es": "Transmitir el propio log de replicación de una base de datos como eventos para que los sistemas derivados obtengan su estado del orden de la fuente de verdad."}
+    },
+    {
+     "term": {"en": "Idempotent consumer", "es": "Consumidor idempotente"},
+     "def": {"en": "One that produces the same result whether it processes a message once or many times, via upsert or dedup on an event id.", "es": "Uno que produce el mismo resultado procese un mensaje una o muchas veces, mediante upsert o deduplicación por id de evento."}
+    },
+    {
+     "term": {"en": "Event time vs processing time", "es": "Tiempo de evento vs tiempo de procesamiento"},
+     "def": {"en": "When something actually happened versus when your system observed it; late arrivals make the two diverge.", "es": "Cuándo ocurrió algo realmente frente a cuándo lo observó tu sistema; las llegadas tardías hacen que ambos difieran."}
+    },
+    {
+     "term": {"en": "Watermark", "es": "Watermark (marca de agua)"},
+     "def": {"en": "A moving threshold declaring 'no more events older than this are expected,' letting a window close and decide late-data policy.", "es": "Un umbral móvil que declara 'no se esperan más eventos anteriores a esto', permitiendo cerrar una ventana y decidir la política de datos tardíos."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "An orders service that must keep Postgres, an Elasticsearch search index, and a warehouse in sync. It starts with dual writes and migrates to a log-driven design.", "es": "Un servicio de órdenes que debe mantener sincronizados Postgres, un índice de búsqueda Elasticsearch y un warehouse. Empieza con escrituras duales y migra a un diseño basado en log."},
+    "walkthrough": {"en": "The buggy version: on each order the service commits to Postgres, then calls Elasticsearch. At 2,000 orders/sec, roughly 0.1% of ES calls time out and get retried out of order. After a day that is ~170,000 orders where search disagrees with the database, and no one notices until a customer's paid order is missing from search. The fix: Debezium tails Postgres's WAL and publishes an ordered topic. The ES indexer and warehouse loader become consumers that upsert by order_id, keyed by the log offset. When the ES mapping changes, you drop the index and replay from offset 0 — 40M orders reindexed in hours with zero coordination with the write path. Postgres stays the one system that assigns order; everything else is derived and disposable.", "es": "La versión con bug: en cada orden el servicio hace commit en Postgres y luego llama a Elasticsearch. A 2.000 órdenes/seg, cerca del 0,1% de las llamadas a ES expiran y se reintentan fuera de orden. Tras un día son ~170.000 órdenes donde la búsqueda contradice a la base de datos, y nadie lo nota hasta que la orden pagada de un cliente falta en la búsqueda. La solución: Debezium sigue el WAL de Postgres y publica un topic ordenado. El indexador de ES y el cargador del warehouse pasan a ser consumidores que hacen upsert por order_id, referenciados por el offset del log. Cuando cambia el mapping de ES, borras el índice y reproduces desde el offset 0: 40M de órdenes reindexadas en horas sin coordinación alguna con la ruta de escritura. Postgres sigue siendo el único sistema que asigna orden; todo lo demás es derivado y descartable."}
+   },
+   "pitfalls": [
+    {"en": "Chasing 'exactly-once' delivery. The delivery layer is at-least-once because networks retry; the only durable path to correctness is idempotent consumers or a transactional read-process-write inside one system. Build effectively-once, not a magic mode.", "es": "Perseguir la entrega 'exactly-once.' La capa de entrega es at-least-once porque las redes reintentan; el único camino duradero a la corrección son los consumidores idempotentes o un read-process-write transaccional dentro de un solo sistema. Construye effectively-once, no un modo mágico."},
+    {"en": "Windowing on processing time. A mobile client offline for an hour delivers events that land in the wrong window, so counts and dashboards undercount silently. Window on event time with an explicit watermark and late-data policy.", "es": "Ventanear por tiempo de procesamiento. Un cliente móvil sin conexión por una hora entrega eventos que caen en la ventana equivocada, así que los conteos y tableros cuentan de menos en silencio. Ventanea por tiempo de evento con un watermark explícito y política de datos tardíos."},
+    {"en": "Treating a derived store as authoritative. If someone writes to the search index directly, you can no longer rebuild it from the log, and the boundary that made derived data disposable is gone.", "es": "Tratar un almacén derivado como autoritativo. Si alguien escribe directamente en el índice de búsqueda, ya no puedes reconstruirlo desde el log, y la frontera que hacía descartable al dato derivado desaparece."},
+    {"en": "Publishing an event before the transaction commits. If you emit to the log and then the DB transaction rolls back, consumers act on a change that never happened. Use the transactional outbox pattern or CDC off the committed log.", "es": "Publicar un evento antes de que la transacción haga commit. Si emites al log y luego la transacción de la base hace rollback, los consumidores actúan sobre un cambio que nunca ocurrió. Usa el patrón outbox transaccional o CDC desde el log ya confirmado."}
+   ],
+   "analogy": {"en": "Treat the log like a bank ledger. You never edit two account balances in parallel and hope they match; you append one ordered list of transactions and derive every balance, statement, and report from it. Lose a report and you regenerate it from the ledger — but you never regenerate the ledger.", "es": "Trata el log como el libro contable de un banco. Nunca editas dos saldos en paralelo esperando que cuadren; anexas una única lista ordenada de transacciones y derivas de ella cada saldo, extracto e informe. Si pierdes un informe lo regeneras desde el libro, pero nunca regeneras el libro."},
+   "code": {
+    "lang": "sql",
+    "snippet": "-- Idempotent consumer: upsert keyed by event identity, guarded by offset.\n-- Reprocessing the same Kafka event is a no-op, so at-least-once is safe.\nINSERT INTO order_search_index (order_id, status, total, source_offset)\nVALUES ($1, $2, $3, $4)\nON CONFLICT (order_id) DO UPDATE\n  SET status        = EXCLUDED.status,\n      total         = EXCLUDED.total,\n      source_offset = EXCLUDED.source_offset\n  -- Ignore stale replays: only advance forward in the log.\n  WHERE order_search_index.source_offset < EXCLUDED.source_offset;",
+    "caption": {"en": "An idempotent upsert that makes a duplicate or out-of-order redelivery harmless.", "es": "Un upsert idempotente que vuelve inofensiva una reentrega duplicada o fuera de orden."},
+    "annotations": [
+     {"line": 3, "note": {"en": "order_id is the event identity; the same order always targets the same row.", "es": "order_id es la identidad del evento; la misma orden siempre apunta a la misma fila."}},
+     {"line": 5, "note": {"en": "ON CONFLICT turns a second delivery into an update instead of a duplicate insert.", "es": "ON CONFLICT convierte una segunda entrega en un update en vez de un insert duplicado."}},
+     {"line": 10, "note": {"en": "The offset guard drops replays that are older than what we already applied, so order is preserved.", "es": "La guarda de offset descarta reintentos más viejos que lo ya aplicado, preservando el orden."}}
+    ]
+   },
+   "source": "Designing Data-Intensive Applications, Martin Kleppmann (O'Reilly) — Part III: Derived Data, Chapters 10-12"
+  },
+  {
+   "slug": "security-engineering-threat-modeling-authn",
+   "keywords": [
+    {
+     "term": {"en": "Trust boundary", "es": "Límite de confianza"},
+     "def": {"en": "A line in a data-flow diagram where data crosses from a less-trusted zone to a more-trusted one; every crossing needs validation.", "es": "Una línea en el diagrama de flujo de datos donde los datos cruzan de una zona menos confiable a una más confiable; cada cruce necesita validación."}
+    },
+    {
+     "term": {"en": "STRIDE", "es": "STRIDE"},
+     "def": {"en": "A mnemonic for six threat classes: Spoofing, Tampering, Repudiation, Information disclosure, Denial of service, Elevation of privilege.", "es": "Un mnemónico para seis clases de amenaza: suplantación, manipulación, repudio, divulgación de información, denegación de servicio y elevación de privilegios."}
+    },
+    {
+     "term": {"en": "Authn vs authz", "es": "Autenticación vs autorización"},
+     "def": {"en": "Authentication proves who you are; authorization decides what you may do. They are separate checks and must not be conflated.", "es": "La autenticación prueba quién eres; la autorización decide qué puedes hacer. Son verificaciones separadas y no deben confundirse."}
+    },
+    {
+     "term": {"en": "Confused deputy", "es": "Delegado confundido"},
+     "def": {"en": "A privileged component tricked into misusing its authority on behalf of a caller who lacks that authority.", "es": "Un componente privilegiado engañado para abusar de su autoridad en nombre de quien no la tiene."}
+    },
+    {
+     "term": {"en": "Blast radius", "es": "Radio de impacto"},
+     "def": {"en": "The scope of damage a single compromise can cause; short-lived credentials and least privilege shrink it.", "es": "El alcance del daño que puede causar un solo compromiso; las credenciales de corta duración y el menor privilegio lo reducen."}
+    },
+    {
+     "term": {"en": "Supply-chain attack", "es": "Ataque a la cadena de suministro"},
+     "def": {"en": "A compromise of the build pipeline or a dependency rather than the running app, as in SolarWinds and xz-utils.", "es": "Un compromiso del pipeline de build o de una dependencia en vez de la aplicación en ejecución, como en SolarWinds y xz-utils."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A new payments microservice ingests a Stripe webhook, writes to the orders database, and exposes an internal admin refund endpoint. You threat-model it before launch.", "es": "Un nuevo microservicio de pagos recibe un webhook de Stripe, escribe en la base de datos de órdenes y expone un endpoint interno de reembolso para administradores. Lo modelas de amenazas antes del lanzamiento."},
+    "walkthrough": {"en": "You draw the data flow and find three trust boundaries: internet to gateway, gateway to payments service, and payments service to orders DB. Walking STRIDE, the highest-scoring cell is Tampering on the webhook: an attacker who forges a 'payment succeeded' event marks orders paid for free. Likelihood is high (the endpoint is public) and blast radius is revenue loss, so it gets defense-in-depth: verify the Stripe signature (HMAC over the raw body), reject on clock skew beyond five minutes, and make the handler idempotent on the event id. The admin refund endpoint shows the authn/authz trap: the gateway authenticates the JWT, but the service must still check that this specific user has the 'refund' role AND that the refund is under their per-request limit — authentication alone would let any logged-in employee drain the account. A low-priority cell, spoofing on an internal metrics endpoint already behind mTLS, gets no new work. Two decisions, not a filled-in grid.", "es": "Dibujas el flujo de datos y encuentras tres límites de confianza: internet al gateway, gateway al servicio de pagos y servicio de pagos a la base de órdenes. Recorriendo STRIDE, la celda de mayor puntaje es Manipulación sobre el webhook: un atacante que falsifica un evento de 'pago exitoso' marca órdenes como pagadas gratis. La probabilidad es alta (el endpoint es público) y el radio de impacto es pérdida de ingresos, así que recibe defensa en profundidad: verificar la firma de Stripe (HMAC sobre el cuerpo crudo), rechazar ante desfase de reloj mayor a cinco minutos y hacer el handler idempotente por id de evento. El endpoint de reembolso para administradores muestra la trampa autn/autz: el gateway autentica el JWT, pero el servicio igual debe verificar que este usuario específico tiene el rol 'refund' Y que el reembolso está bajo su límite por petición: solo la autenticación dejaría que cualquier empleado con sesión vaciara la cuenta. Una celda de baja prioridad, suplantación en un endpoint interno de métricas ya detrás de mTLS, no recibe trabajo nuevo. Dos decisiones, no una grilla llena."}
+   },
+   "pitfalls": [
+    {"en": "Trusting a gateway-validated token blindly downstream. Once service A checks the JWT, service B assumes it's fine and acts on whatever the token claims — a confused deputy. Re-check authorization at the resource that owns the data, every request.", "es": "Confiar a ciegas río abajo en un token validado por el gateway. Una vez que el servicio A verifica el JWT, el servicio B asume que está bien y actúa según lo que diga el token: un delegado confundido. Re-verifica la autorización en el recurso dueño de los datos, en cada petición."},
+    {"en": "Rolling your own crypto, session, or signature logic. OIDC, mTLS, and vetted libraries exist precisely because these are subtle and unforgiving; a hand-rolled HMAC comparison that isn't constant-time leaks the secret via timing.", "es": "Implementar tu propia criptografía, sesión o lógica de firmas. OIDC, mTLS y las bibliotecas auditadas existen justamente porque esto es sutil e implacable; una comparación de HMAC hecha a mano que no sea de tiempo constante filtra el secreto por temporización."},
+    {"en": "Storing long-lived secrets in env vars or CI variables. One misconfigured log or debug dump leaks them permanently. Lease short-lived credentials from a secrets manager and auto-rotate so a leak expires on its own.", "es": "Guardar secretos de larga vida en variables de entorno o de CI. Un log mal configurado o un volcado de depuración los filtra para siempre. Emite credenciales de corta duración desde un gestor de secretos y rótalas automáticamente para que una filtración caduque sola."},
+    {"en": "Treating the build pipeline as less than production. SolarWinds and xz-utils compromised the pipeline, not the app. Pin and lock dependencies, verify signatures, and generate an SBOM.", "es": "Tratar el pipeline de build como algo menor que producción. SolarWinds y xz-utils comprometieron el pipeline, no la aplicación. Fija y bloquea dependencias, verifica firmas y genera un SBOM."}
+   ],
+   "analogy": {"en": "Authentication is the guard checking your ID at the building door; authorization is each floor's lock deciding whether that ID opens it. A building that checks ID once at the lobby and then lets you into every room is exactly the confused-deputy failure — the front door proved who you are, not where you belong.", "es": "La autenticación es el guardia revisando tu credencial en la puerta del edificio; la autorización es la cerradura de cada piso decidiendo si esa credencial la abre. Un edificio que revisa la credencial una vez en el lobby y luego te deja entrar a cada sala es justo la falla del delegado confundido: la puerta principal probó quién eres, no dónde perteneces."},
+   "depth": {"en": "STRIDE maps one-to-one onto the security properties it attacks: Spoofing breaks authentication, Tampering breaks integrity, Repudiation breaks non-repudiation, Information disclosure breaks confidentiality, DoS breaks availability, Elevation breaks authorization. That mapping is why STRIDE is exhaustive per boundary — each cell is 'what if this property fails here.' Score with likelihood × impact rather than a raw severity rating, because a critical-severity bug that requires already-root access is not worth the same spend as a medium bug reachable from the public internet.", "es": "STRIDE se corresponde uno a uno con las propiedades de seguridad que ataca: suplantación rompe la autenticación, manipulación rompe la integridad, repudio rompe el no repudio, divulgación rompe la confidencialidad, DoS rompe la disponibilidad y elevación rompe la autorización. Ese mapeo es lo que hace a STRIDE exhaustivo por límite: cada celda es 'qué pasa si esta propiedad falla aquí.' Puntúa con probabilidad × impacto en vez de una severidad cruda, porque un bug de severidad crítica que exige ya tener acceso root no merece el mismo gasto que uno medio alcanzable desde internet."},
+   "architecture": {
+    "kind": "compare",
+    "caption": {"en": "The two questions must be answered by different layers; collapsing them is the classic breach.", "es": "Las dos preguntas deben responderlas capas distintas; colapsarlas es la brecha clásica."},
+    "left": {
+     "title": {"en": "Authentication (who you are)", "es": "Autenticación (quién eres)"},
+     "points": [
+      {"en": "Verified once at the edge via OIDC / mTLS / signed token.", "es": "Verificada una vez en el borde vía OIDC / mTLS / token firmado."},
+      {"en": "Answers identity, not permission.", "es": "Responde identidad, no permiso."},
+      {"en": "A valid token proves you logged in, nothing more.", "es": "Un token válido prueba que iniciaste sesión, nada más."}
+     ]
+    },
+    "right": {
+     "title": {"en": "Authorization (what you may do)", "es": "Autorización (qué puedes hacer)"},
+     "points": [
+      {"en": "Checked per request at the resource that owns the data.", "es": "Verificada en cada petición en el recurso dueño de los datos."},
+      {"en": "Depends on role, scope, and per-action limits.", "es": "Depende del rol, el alcance y los límites por acción."},
+      {"en": "Never inherited blindly from an upstream check.", "es": "Nunca se hereda a ciegas de una verificación río arriba."}
+     ]
+    }
+   },
+   "visual": {"widgetId": "threat-board"},
+   "source": "Adam Shostack, \"Threat Modeling: Designing for Security\" (Wiley, 2014) — the canonical STRIDE reference; complemented by Google's \"Building Secure and Reliable Systems\" (O'Reilly, 2020)."
+  }
+ ]
+}

@@ -1,0 +1,396 @@
+{
+  "lessonId": "ai-engineering-l4",
+  "concepts": [
+    {
+      "slug": "llm-judge",
+      "keywords": [
+        {
+          "term": { "en": "Rubric", "es": "Rúbrica" },
+          "def": {
+            "en": "An explicit scoring scale that spells out what each level looks like, so 'a 5' means the same thing on every call instead of drifting with the judge's mood.",
+            "es": "Una escala de puntuación explícita que detalla cómo se ve cada nivel, para que 'un 5' signifique lo mismo en cada llamada en vez de variar con el humor del juez."
+          }
+        },
+        {
+          "term": { "en": "Reason-then-score", "es": "Razonar antes de puntuar" },
+          "def": {
+            "en": "Forcing the judge to write its analysis before emitting a number, so the score follows the reasoning instead of the reasoning rationalizing a snap number.",
+            "es": "Obligar al juez a escribir su análisis antes de emitir un número, para que el puntaje siga al razonamiento en vez de que el razonamiento justifique un número impulsivo."
+          }
+        },
+        {
+          "term": { "en": "Human alignment", "es": "Alineación con humanos" },
+          "def": {
+            "en": "How often the judge's scores match trusted human labels on a held-out sample; the single number that says whether the judge is a measurement or noise.",
+            "es": "Con qué frecuencia los puntajes del juez coinciden con etiquetas humanas confiables en una muestra reservada; el número que dice si el juez es una medición o ruido."
+          }
+        },
+        {
+          "term": { "en": "Self-preference bias", "es": "Sesgo de autopreferencia" },
+          "def": {
+            "en": "A judge's tendency to reward outputs written in its own style; the reason you grade with a different model than the one that generated the answer.",
+            "es": "La tendencia de un juez a premiar salidas escritas en su propio estilo; la razón por la que calificas con un modelo distinto al que generó la respuesta."
+          }
+        },
+        {
+          "term": { "en": "Position bias", "es": "Sesgo de posición" },
+          "def": {
+            "en": "In pairwise comparisons, the judge favoring whichever answer it saw first or last; you control for it by swapping order and averaging.",
+            "es": "En comparaciones por pares, que el juez favorezca la respuesta que vio primero o última; se controla intercambiando el orden y promediando."
+          }
+        }
+      ],
+      "example": {
+        "scenario": {
+          "en": "You built a support-reply generator and want an LLM judge to score 'helpfulness' from 1 to 5 across 5,000 nightly cases. Before trusting it, you hand-label 200 real replies with two senior agents and require a within-1-point match rate above 85%.",
+          "es": "Construiste un generador de respuestas de soporte y quieres un juez LLM que puntúe 'utilidad' de 1 a 5 en 5.000 casos por noche. Antes de confiar en él, etiquetas a mano 200 respuestas reales con dos agentes senior y exiges una tasa de coincidencia dentro de 1 punto superior al 85%."
+        },
+        "walkthrough": {
+          "en": "First pass with 'rate 1-5' gives 61% within-1 agreement: unusable. You rewrite it as a rubric (5 = resolves the issue and cites the right policy; 3 = partially correct, vague next step; 1 = wrong or off-topic) and force reason-then-score. Agreement jumps to 88%. You also notice the judge scores its own model's flowery replies half a point higher, so you switch the judge to a different model family and re-check: 89%. Only now do you run it on the full 5,000, and you keep the 200 labels as a regression gate for every future rubric edit.",
+          "es": "El primer intento con 'califica 1-5' da 61% de coincidencia dentro de 1: inservible. Lo reescribes como rúbrica (5 = resuelve el problema y cita la política correcta; 3 = parcialmente correcto, siguiente paso vago; 1 = equivocado o fuera de tema) y fuerzas razonar-antes-de-puntuar. La coincidencia sube a 88%. También notas que el juez puntúa medio punto más alto las respuestas floridas de su propio modelo, así que cambias el juez a otra familia de modelos y revisas de nuevo: 89%. Recién ahora lo corres sobre los 5.000 completos, y conservas las 200 etiquetas como control de regresión para cada edición futura de la rúbrica."
+        }
+      },
+      "pitfalls": [
+        {
+          "en": "Shipping an unvalidated judge and reporting its scores as if they were ground truth; you end up optimizing toward whatever the judge happens to like.",
+          "es": "Lanzar un juez sin validar y reportar sus puntajes como si fueran verdad de campo; terminas optimizando hacia lo que al juez le guste."
+        },
+        {
+          "en": "Using the same model to generate and to judge, which quietly rewards its own style and blind spots and inflates your scores.",
+          "es": "Usar el mismo modelo para generar y para juzgar, lo que premia en silencio su propio estilo y puntos ciegos e infla tus puntajes."
+        },
+        {
+          "en": "Asking for a bare 1-10 with no rubric; the scale becomes vibes and two runs on the same output disagree.",
+          "es": "Pedir un 1-10 pelado sin rúbrica; la escala se vuelve intuición y dos corridas sobre la misma salida discrepan."
+        },
+        {
+          "en": "Editing the rubric or swapping the judge model and never re-validating, so alignment silently decays over months.",
+          "es": "Editar la rúbrica o cambiar el modelo del juez y nunca revalidar, de modo que la alineación se degrada en silencio durante meses."
+        }
+      ],
+      "analogy": {
+        "en": "A judge is a new grader you hired for an exam. You don't hand them 5,000 papers on day one. You give them 200 you already graded and check they land close to your marks. If they do, scale them up; if not, fix the answer key before you trust a single new score.",
+        "es": "Un juez es un evaluador nuevo que contrataste para un examen. No le das 5.000 exámenes el primer día. Le das 200 que ya calificaste y verificas que quede cerca de tus notas. Si lo logra, lo escalas; si no, arreglas la clave de respuestas antes de confiar en un solo puntaje nuevo."
+      },
+      "depth": {
+        "en": "Agreement rate hides structure; look at the confusion, not just the headline number. A judge that is 85% aligned but systematically one point harsh on short answers will silently penalize your terse-but-correct outputs. For pairwise judging, run each comparison twice with the order flipped and discard ties that flip, which exposes position bias directly. And prefer coarse scales you can actually validate: a well-aligned 3-point rubric beats a 10-point one where humans themselves only agree 40% of the time.",
+        "es": "La tasa de coincidencia esconde estructura; mira la confusión, no solo el número principal. Un juez con 85% de alineación pero sistemáticamente un punto duro con respuestas cortas penalizará en silencio tus salidas escuetas pero correctas. Para juicio por pares, corre cada comparación dos veces con el orden invertido y descarta los empates que se voltean, lo que expone el sesgo de posición directamente. Y prefiere escalas gruesas que de verdad puedas validar: una rúbrica de 3 puntos bien alineada le gana a una de 10 donde los propios humanos solo coinciden el 40% de las veces."
+      },
+      "code": {
+        "lang": "python",
+        "snippet": "def judge(question, answer, rubric):\n    prompt = f\"\"\"Score the answer against the rubric.\nRubric:\\n{rubric}\nQuestion: {question}\nAnswer: {answer}\nReason step by step first, then output JSON: {{\"reasoning\": str, \"score\": 1-5}}\"\"\"\n    out = json.loads(judge_model.complete(prompt))   # different model than generator\n    return out[\"score\"], out[\"reasoning\"]\n\n# Validate BEFORE trusting at scale\nlabels = load_human_labels(n=200)\nagree = sum(abs(judge(x.q, x.a, RUBRIC)[0] - x.human) <= 1 for x in labels)\nprint(f\"within-1 agreement: {agree/len(labels):.0%}\")   # scale only if this is high",
+        "caption": {
+          "en": "A validated rubric judge: reason-then-score, a separate model, and an agreement gate before it ever runs at scale.",
+          "es": "Un juez con rúbrica validado: razonar-antes-de-puntuar, un modelo separado y un umbral de coincidencia antes de correr a escala."
+        },
+        "annotations": [
+          {
+            "line": 6,
+            "note": {
+              "en": "Judge with a different model than the generator so it doesn't reward its own style.",
+              "es": "Juzga con un modelo distinto al generador para que no premie su propio estilo."
+            }
+          },
+          {
+            "line": 12,
+            "note": {
+              "en": "The gate: if within-1 agreement is low, fix the rubric before trusting any score.",
+              "es": "El umbral: si la coincidencia dentro de 1 es baja, arregla la rúbrica antes de confiar en un puntaje."
+            }
+          }
+        ]
+      },
+      "architecture": {
+        "kind": "flow",
+        "caption": {
+          "en": "Validate first, scale second: a judge earns the right to grade thousands only after it matches humans on hundreds.",
+          "es": "Primero validar, luego escalar: un juez gana el derecho a calificar miles solo después de coincidir con humanos en cientos."
+        },
+        "nodes": [
+          {
+            "label": { "en": "Hand-label sample (~200)", "es": "Etiquetar muestra a mano (~200)" },
+            "note": { "en": "Trusted human ground truth", "es": "Verdad de campo humana confiable" }
+          },
+          {
+            "label": { "en": "Run judge with rubric", "es": "Correr el juez con rúbrica" },
+            "note": { "en": "Reason-then-score, separate model", "es": "Razonar-luego-puntuar, modelo separado" }
+          },
+          {
+            "label": { "en": "Measure agreement", "es": "Medir la coincidencia" },
+            "note": { "en": "Within-1 rate, confusion by segment", "es": "Tasa dentro-de-1, confusión por segmento" }
+          },
+          {
+            "label": { "en": "Aligned? scale : fix rubric", "es": "¿Alineado? escalar : arreglar rúbrica" },
+            "note": { "en": "Loop back until the gate passes", "es": "Vuelve al inicio hasta pasar el umbral" }
+          },
+          {
+            "label": { "en": "Run on full set + keep labels", "es": "Correr sobre el set completo + conservar etiquetas" },
+            "note": { "en": "Re-validate on every rubric or model change", "es": "Revalidar en cada cambio de rúbrica o modelo" }
+          }
+        ]
+      },
+      "visual": { "widgetId": "eval-harness" },
+      "source": "Anthropic 'Define success criteria...' (LLM-based grading tips); Chip Huyen, AI Engineering, Ch.3 'Evaluation Methodology' — AI as a Judge"
+    },
+    {
+      "slug": "cost-latency-per-request",
+      "keywords": [
+        {
+          "term": { "en": "Cost-per-request", "es": "Costo por petición" },
+          "def": {
+            "en": "The dollar cost of one end-to-end call, driven by input tokens plus output tokens times their respective rates; the number the finance meeting cares about.",
+            "es": "El costo en dólares de una llamada de extremo a extremo, determinado por tokens de entrada más tokens de salida por sus tarifas; el número que le importa a la reunión de finanzas."
+          }
+        },
+        {
+          "term": { "en": "p95 latency", "es": "Latencia p95" },
+          "def": {
+            "en": "The response time that 95% of requests beat; the tail your angriest users actually feel, far more honest than the average.",
+            "es": "El tiempo de respuesta que el 95% de las peticiones supera; la cola que sienten de verdad tus usuarios más molestos, mucho más honesta que el promedio."
+          }
+        },
+        {
+          "term": { "en": "Input vs output tokens", "es": "Tokens de entrada vs salida" },
+          "def": {
+            "en": "Two separately-priced buckets; output usually costs several times more per token, but a fat resent input often dominates the bill.",
+            "es": "Dos categorías con precios separados; la salida suele costar varias veces más por token, pero una entrada gorda reenviada suele dominar la factura."
+          }
+        },
+        {
+          "term": { "en": "Prompt caching", "es": "Caché de prompt" },
+          "def": {
+            "en": "Reusing a stable prefix (system prompt, few-shot examples) at a large discount instead of paying full price to resend it on every call.",
+            "es": "Reutilizar un prefijo estable (system prompt, ejemplos few-shot) con un gran descuento en vez de pagar precio completo por reenviarlo en cada llamada."
+          }
+        },
+        {
+          "term": { "en": "Time to first token (TTFT)", "es": "Tiempo al primer token (TTFT)" },
+          "def": {
+            "en": "How long before output starts streaming; for chat UIs it shapes perceived speed more than total time, so streaming can rescue a slow p95.",
+            "es": "Cuánto tarda en empezar a transmitirse la salida; en interfaces de chat moldea la velocidad percibida más que el tiempo total, así que el streaming puede rescatar un p95 lento."
+          }
+        }
+      ],
+      "example": {
+        "scenario": {
+          "en": "A document Q&A feature sends a 6,000-token system prompt plus retrieved context and a short question (8,000 input tokens total) and returns a 500-token answer, at illustrative rates of $3 per million input and $15 per million output tokens.",
+          "es": "Una función de preguntas sobre documentos envía un system prompt de 6.000 tokens más contexto recuperado y una pregunta corta (8.000 tokens de entrada en total) y devuelve una respuesta de 500 tokens, a tarifas ilustrativas de $3 por millón de entrada y $15 por millón de salida."
+        },
+        "walkthrough": {
+          "en": "Naive cost is 8,000 x $3/1M + 500 x $15/1M = $0.024 + $0.0075 = $0.0315 per request. At 200k requests a day that is $6,300 a day, $189k a month, and nobody budgeted it. The 6,000-token prefix is identical on every call, so you enable prompt caching at roughly a 90% discount on that slice: cached 6,000 tokens cost about $0.0054 instead of $0.018, dropping the request to about $0.019 and the monthly bill to around $114k. You did not touch quality; you stopped paying full freight to resend the same prompt 200k times a day.",
+          "es": "El costo ingenuo es 8.000 x $3/1M + 500 x $15/1M = $0,024 + $0,0075 = $0,0315 por petición. A 200 mil peticiones diarias eso son $6.300 al día, $189 mil al mes, y nadie lo presupuestó. El prefijo de 6.000 tokens es idéntico en cada llamada, así que activas caché de prompt con cerca de 90% de descuento en esa porción: esos 6.000 tokens en caché cuestan unos $0,0054 en vez de $0,018, bajando la petición a unos $0,019 y la factura mensual a alrededor de $114 mil. No tocaste la calidad; dejaste de pagar precio completo por reenviar el mismo prompt 200 mil veces al día."
+        }
+      },
+      "pitfalls": [
+        {
+          "en": "Reporting the average latency and calling it fast; the average hides the p95 tail where real users churn.",
+          "es": "Reportar la latencia promedio y llamarla rápida; el promedio esconde la cola p95 donde los usuarios reales se van."
+        },
+        {
+          "en": "Optimizing output length while a 6,000-token system prompt or bloated RAG context resent every call is the actual cost driver.",
+          "es": "Optimizar el largo de la salida mientras un system prompt de 6.000 tokens o un contexto RAG inflado reenviado en cada llamada es el verdadero motor del costo."
+        },
+        {
+          "en": "Chaining five sequential model calls when two would do; each hop is another full round-trip stacked onto the latency budget.",
+          "es": "Encadenar cinco llamadas secuenciales al modelo cuando dos bastarían; cada salto es otro viaje completo apilado sobre el presupuesto de latencia."
+        },
+        {
+          "en": "Guessing where the tokens go instead of measuring; you cut the token you assume is expensive, not the one that actually is.",
+          "es": "Adivinar a dónde van los tokens en vez de medir; recortas el token que supones caro, no el que de verdad lo es."
+        }
+      ],
+      "analogy": {
+        "en": "Tokens are a metered utility, like electricity. A fixed 6,000-token prompt resent on every call is an appliance you left running all month. Caching the stable prefix is putting it on a cheap off-peak rate; you didn't unplug anything, you just stopped paying full price for the part that never changes.",
+        "es": "Los tokens son un servicio medido, como la electricidad. Un prompt fijo de 6.000 tokens reenviado en cada llamada es un aparato que dejaste encendido todo el mes. Cachear el prefijo estable es ponerlo en una tarifa barata fuera de hora punta; no desenchufaste nada, solo dejaste de pagar precio completo por la parte que nunca cambia."
+      },
+      "depth": {
+        "en": "Cost and latency pull in opposite directions and you must pick per use case. A smaller model cuts both cost and latency but may drop quality, so route: cheap model for the easy 80%, escalate the hard 20%. Streaming does nothing for total cost or total latency but transforms perceived latency, because a 200ms TTFT with a steady stream feels faster than a 2s silence then a full dump. Measure all three on the same eval run so a quality win that doubles cost or blows the p95 is caught before it ships, not in the finance meeting a month later.",
+        "es": "El costo y la latencia tiran en direcciones opuestas y debes elegir por caso de uso. Un modelo más chico recorta ambos pero puede bajar la calidad, así que enruta: modelo barato para el 80% fácil, escala el 20% difícil. El streaming no hace nada por el costo total ni la latencia total, pero transforma la latencia percibida, porque un TTFT de 200ms con flujo constante se siente más rápido que 2s de silencio y luego un volcado completo. Mide las tres en la misma corrida de eval para que una mejora de calidad que duplica el costo o revienta el p95 se atrape antes de lanzar, no en la reunión de finanzas un mes después."
+      },
+      "code": {
+        "lang": "python",
+        "snippet": "# Illustrative rates (USD per 1M tokens); plug in your provider's numbers\nIN_RATE, OUT_RATE = 3.00, 15.00\n\ndef cost_per_request(in_tok, out_tok, cached_in_tok=0, cache_rate=0.10):\n    fresh_in = (in_tok - cached_in_tok) * IN_RATE / 1e6\n    cached   = cached_in_tok * (IN_RATE * cache_rate) / 1e6\n    out      = out_tok * OUT_RATE / 1e6\n    return fresh_in + cached + out\n\n# 6k stable prefix + 2k query, 500 out; cache the prefix\nprint(cost_per_request(8000, 500))                    # ~$0.0315 naive\nprint(cost_per_request(8000, 500, cached_in_tok=6000))  # ~$0.019 cached",
+        "caption": {
+          "en": "Separate input and output rates and model the cache discount on the stable prefix; the resent prompt, not the answer, is the lever.",
+          "es": "Separa las tarifas de entrada y salida y modela el descuento de caché en el prefijo estable; el prompt reenviado, no la respuesta, es la palanca."
+        },
+        "annotations": [
+          {
+            "line": 4,
+            "note": {
+              "en": "Cached tokens bill at a fraction of full rate; here ~10% of input price.",
+              "es": "Los tokens en caché se facturan a una fracción; aquí ~10% del precio de entrada."
+            }
+          },
+          {
+            "line": 12,
+            "note": {
+              "en": "Same quality, ~40% cheaper: you stopped paying full price to resend the fixed prefix.",
+              "es": "Misma calidad, ~40% más barato: dejaste de pagar precio completo por reenviar el prefijo fijo."
+            }
+          }
+        ]
+      },
+      "architecture": {
+        "kind": "stack",
+        "caption": {
+          "en": "Where a request's tokens actually go: the resent prefix usually dwarfs the answer, which is why input is the hidden cost.",
+          "es": "A dónde van de verdad los tokens de una petición: el prefijo reenviado suele empequeñecer a la respuesta, por eso la entrada es el costo oculto."
+        },
+        "nodes": [
+          {
+            "label": { "en": "System prompt (fixed, cacheable)", "es": "System prompt (fijo, cacheable)" },
+            "note": { "en": "~6,000 tokens resent every call", "es": "~6.000 tokens reenviados en cada llamada" }
+          },
+          {
+            "label": { "en": "Retrieved RAG context", "es": "Contexto RAG recuperado" },
+            "note": { "en": "Trim to top-k; oversized context is pure cost", "es": "Recorta al top-k; contexto excesivo es puro costo" }
+          },
+          {
+            "label": { "en": "User query", "es": "Consulta del usuario" },
+            "note": { "en": "The only part that truly varies", "es": "La única parte que de verdad varía" }
+          },
+          {
+            "label": { "en": "Output tokens", "es": "Tokens de salida" },
+            "note": { "en": "Priced highest per token, drives latency", "es": "El más caro por token, mueve la latencia" }
+          }
+        ]
+      },
+      "visual": { "widgetId": "token-economics" },
+      "source": "Chip Huyen, AI Engineering, Ch.4 'Evaluate AI Systems' — Cost and Latency criteria; Anthropic 'Define success criteria...' (Price, Latency)"
+    },
+    {
+      "slug": "concrete-agent-orchestration-patterns-and",
+      "keywords": [
+        {
+          "term": { "en": "Workflow vs agent", "es": "Workflow vs agente" },
+          "def": {
+            "en": "A workflow routes the model through predefined code paths; an agent lets the model choose its own next step in a tool loop. Pick a workflow whenever you can enumerate the steps.",
+            "es": "Un workflow enruta al modelo por caminos de código predefinidos; un agente deja que el modelo elija su propio paso siguiente en un bucle de herramientas. Elige workflow siempre que puedas enumerar los pasos."
+          }
+        },
+        {
+          "term": { "en": "Routing", "es": "Enrutamiento" },
+          "def": {
+            "en": "Classify the input, then dispatch to a specialized handler; the right pattern for mutually exclusive categories like billing vs technical vs spam.",
+            "es": "Clasifica la entrada y despacha a un manejador especializado; el patrón correcto para categorías mutuamente excluyentes como facturación vs técnico vs spam."
+          }
+        },
+        {
+          "term": { "en": "Orchestrator-workers", "es": "Orquestador-trabajadores" },
+          "def": {
+            "en": "One model plans and spawns worker calls at runtime for subtasks you can't list up front, like changing every call site of an API across an unknown file set.",
+            "es": "Un modelo planifica y genera llamadas de trabajadores en tiempo de ejecución para subtareas que no puedes listar de antemano, como cambiar cada punto de llamada de una API en un conjunto de archivos desconocido."
+          }
+        },
+        {
+          "term": { "en": "Evaluator-optimizer", "es": "Evaluador-optimizador" },
+          "def": {
+            "en": "A generate-then-critique loop where one call scores against clear criteria and another revises; worth it only when the eval is cheap and iterating adds real value.",
+            "es": "Un bucle de generar-luego-criticar donde una llamada puntúa contra criterios claros y otra revisa; vale la pena solo cuando la evaluación es barata e iterar aporta valor real."
+          }
+        },
+        {
+          "term": { "en": "Context rot", "es": "Context rot" },
+          "def": {
+            "en": "The degradation of retrieval and reasoning as input tokens grow; past a point, adding context makes the model worse at finding the instruction that matters.",
+            "es": "La degradación de la recuperación y el razonamiento al crecer los tokens de entrada; pasado cierto punto, agregar contexto empeora al modelo para encontrar la instrucción que importa."
+          }
+        },
+        {
+          "term": { "en": "Compaction", "es": "Compactación" },
+          "def": {
+            "en": "Summarizing old turns into a short synopsis so the live window keeps only high-signal tokens instead of the full unbounded transcript.",
+            "es": "Resumir los turnos viejos en una síntesis corta para que la ventana viva conserve solo tokens de alta señal en vez de la transcripción completa e ilimitada."
+          }
+        }
+      ],
+      "example": {
+        "scenario": {
+          "en": "A team wants to 'build an agent' to migrate a codebase from a deprecated logging API to a new one across a repo where nobody knows how many call sites exist.",
+          "es": "Un equipo quiere 'construir un agente' para migrar una base de código de una API de logging obsoleta a una nueva, en un repo donde nadie sabe cuántos puntos de llamada existen."
+        },
+        "walkthrough": {
+          "en": "First cut the fantasy: is this fully autonomous? No. The shape is 'unknown number of similar subtasks', which is orchestrator-workers, not a free-roaming agent. The orchestrator greps for call sites (say it finds 340 across 120 files), then spawns one worker per file with only that file's context. Each worker edits and reports back; the orchestrator never loads all 120 files at once, which would blow past the window and rot. Progress is checkpointed to a NOTES.md after each file, so when the run is long and the window compacts, the list of done-vs-remaining files survives outside the context. A naive single-agent version that pastes the whole repo into one prompt hits context rot around file 40 and starts silently skipping edits.",
+          "es": "Primero corta la fantasía: ¿esto es totalmente autónomo? No. La forma es 'número desconocido de subtareas similares', que es orquestador-trabajadores, no un agente que deambula libre. El orquestador busca los puntos de llamada (digamos que encuentra 340 en 120 archivos), luego genera un trabajador por archivo con solo el contexto de ese archivo. Cada trabajador edita y reporta; el orquestador nunca carga los 120 archivos a la vez, lo que reventaría la ventana y la pudriría. El progreso se registra en un NOTES.md tras cada archivo, así que cuando la ejecución es larga y la ventana se compacta, la lista de hechos-vs-pendientes sobrevive fuera del contexto. Una versión ingenua de un solo agente que pega todo el repo en un prompt choca con context rot cerca del archivo 40 y empieza a saltarse ediciones en silencio."
+        }
+      },
+      "pitfalls": [
+        {
+          "en": "Reaching for an autonomous agent when the steps are actually enumerable; you pay in latency, dollars, and debuggability for flexibility you never needed.",
+          "es": "Recurrir a un agente autónomo cuando los pasos son enumerables; pagas en latencia, dinero y capacidad de depuración por una flexibilidad que nunca necesitaste."
+        },
+        {
+          "en": "Stacking patterns (a router inside an evaluator-optimizer inside an agent) because each looks clever; every layer is another failure mode you now have to debug.",
+          "es": "Apilar patrones (un enrutador dentro de un evaluador-optimizador dentro de un agente) porque cada uno parece ingenioso; cada capa es otro modo de falla que ahora debes depurar."
+        },
+        {
+          "en": "Treating the context window as free storage and front-loading the whole knowledge base; context rot means more tokens make the model worse, not better.",
+          "es": "Tratar la ventana de contexto como almacenamiento gratis y precargar toda la base de conocimiento; el context rot implica que más tokens empeoran al modelo, no lo mejoran."
+        },
+        {
+          "en": "Keeping all long-run state in-context; when the window fills and compacts, un-checkpointed progress and decisions vanish and the run loses coherence.",
+          "es": "Mantener todo el estado de una ejecución larga en el contexto; cuando la ventana se llena y compacta, el progreso y las decisiones no registradas desaparecen y la ejecución pierde coherencia."
+        }
+      ],
+      "analogy": {
+        "en": "Orchestration patterns are like choosing between a recipe and hiring a chef. If you can write the steps down, write the recipe (a workflow); it's cheaper and repeatable. You only hire a chef with full discretion (an agent) when the task is 'cook something good with whatever is in this fridge' and no recipe can be written in advance.",
+        "es": "Los patrones de orquestación son como elegir entre una receta y contratar a un chef. Si puedes anotar los pasos, escribe la receta (un workflow); es más barata y repetible. Solo contratas a un chef con plena discreción (un agente) cuando la tarea es 'cocina algo bueno con lo que haya en esta nevera' y ninguna receta puede escribirse de antemano."
+      },
+      "depth": {
+        "en": "The subtle win is context isolation as a design tool, not just a cost trick. When a worker sub-agent handles one file and returns only its result, the orchestrator's window stays clean, so its reasoning about the overall plan never has to compete with 120 files of noise. This is why the same task done as orchestrator-workers can outperform a single powerful agent: it isn't more model, it's less rot. Combine it with just-in-time retrieval (pull the doc when the step needs it, don't preload) and durable external memory (the plan on disk), and you get runs that stay coherent far past a single context window.",
+        "es": "La ganancia sutil es el aislamiento de contexto como herramienta de diseño, no solo un truco de costo. Cuando un subagente trabajador maneja un archivo y devuelve solo su resultado, la ventana del orquestador se mantiene limpia, así que su razonamiento sobre el plan general nunca compite con 120 archivos de ruido. Por eso la misma tarea hecha como orquestador-trabajadores puede superar a un solo agente potente: no es más modelo, es menos rot. Combínalo con recuperación justo a tiempo (trae el documento cuando el paso lo necesite, no lo precargues) y memoria externa durable (el plan en disco), y obtienes ejecuciones que siguen coherentes mucho más allá de una sola ventana de contexto."
+      },
+      "code": {
+        "lang": "python",
+        "snippet": "# Orchestrator-workers: planner decides the subtasks at runtime\ndef orchestrate(task):\n    subtasks = planner.plan(task)            # e.g. one entry per call site found\n    results = []\n    for sub in subtasks:\n        r = worker.run(sub.prompt)           # worker sees ONLY its slice of context\n        results.append(r)\n        append(\"NOTES.md\", f\"{sub.id}: {r.status}\")   # durable memory outside window\n    return synthesizer.combine(results)      # merge outputs, don't concat raw",
+        "caption": {
+          "en": "Orchestrator-workers with context isolation and external checkpointing: workers never share a window, progress survives compaction.",
+          "es": "Orquestador-trabajadores con aislamiento de contexto y checkpointing externo: los trabajadores no comparten ventana y el progreso sobrevive a la compactación."
+        },
+        "annotations": [
+          {
+            "line": 6,
+            "note": {
+              "en": "Each worker gets an isolated context, so the orchestrator's window never fills with subtask noise.",
+              "es": "Cada trabajador recibe un contexto aislado, así la ventana del orquestador nunca se llena de ruido de subtareas."
+            }
+          },
+          {
+            "line": 8,
+            "note": {
+              "en": "Progress written to disk survives when the long run compacts its context.",
+              "es": "El progreso escrito en disco sobrevive cuando la ejecución larga compacta su contexto."
+            }
+          }
+        ]
+      },
+      "architecture": {
+        "kind": "compare",
+        "caption": {
+          "en": "The decision that comes before pattern choice: can you enumerate the steps? If yes, a workflow beats an agent on every axis that matters.",
+          "es": "La decisión que precede a la elección de patrón: ¿puedes enumerar los pasos? Si sí, un workflow le gana a un agente en todos los ejes que importan."
+        },
+        "left": {
+          "title": { "en": "Workflow (steps knowable)", "es": "Workflow (pasos conocibles)" },
+          "points": [
+            { "en": "Code routes the model through predefined paths", "es": "El código enruta al modelo por caminos predefinidos" },
+            { "en": "Predictable latency and cost, easy to debug", "es": "Latencia y costo predecibles, fácil de depurar" },
+            { "en": "Patterns: chaining, routing, parallelization, evaluator-optimizer", "es": "Patrones: encadenamiento, enrutamiento, paralelización, evaluador-optimizador" },
+            { "en": "Default choice for extraction, translation, triage", "es": "Opción por defecto para extracción, traducción, clasificación" }
+          ]
+        },
+        "right": {
+          "title": { "en": "Agent (open-ended)", "es": "Agente (abierto)" },
+          "points": [
+            { "en": "Model chooses its own next step in a tool loop", "es": "El modelo elige su propio paso siguiente en un bucle de herramientas" },
+            { "en": "Flexible, but costs latency, dollars, debuggability", "es": "Flexible, pero cuesta latencia, dinero y capacidad de depuración" },
+            { "en": "Needs external memory and context isolation to stay coherent", "es": "Necesita memoria externa y aislamiento de contexto para seguir coherente" },
+            { "en": "Justified only when steps truly cannot be enumerated", "es": "Justificado solo cuando los pasos de verdad no se pueden enumerar" }
+          ]
+        }
+      },
+      "source": "Anthropic — \"Building Effective Agents\" (December 2024); complemented by Chroma's \"Context Rot: How Increasing Input Tokens Impacts LLM Performance\" (2025)"
+    }
+  ]
+}

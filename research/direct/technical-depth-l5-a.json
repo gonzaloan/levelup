@@ -1,0 +1,241 @@
+{
+ "lessonId": "technical-depth-l5",
+ "concepts": [
+  {
+   "slug": "durability-and-crash-recovery",
+   "keywords": [
+    {
+     "term": {"en": "Write-ahead log (WAL)", "es": "Write-ahead log (WAL)"},
+     "def": {"en": "A sequential, append-only log the engine fsyncs before mutating data pages, so the change survives even if the pages are never written.", "es": "Un log secuencial de solo anexado al que el motor hace fsync antes de mutar las páginas de datos, de modo que el cambio sobrevive aunque las páginas nunca se escriban."}
+    },
+    {
+     "term": {"en": "fsync", "es": "fsync"},
+     "def": {"en": "The syscall that forces buffered pages out of the OS page cache down to the physical device. Until it returns, an acknowledged write can still vanish on power loss.", "es": "La llamada al sistema que fuerza las páginas bufferadas fuera del page cache del SO hasta el dispositivo físico. Hasta que retorna, una escritura ya confirmada puede desaparecer ante un corte de energía."}
+    },
+    {
+     "term": {"en": "Checkpoint", "es": "Checkpoint"},
+     "def": {"en": "A point where dirty pages are flushed and recorded, so recovery only replays the log after it instead of from the beginning.", "es": "Un punto donde las páginas sucias se bajan a disco y se registran, para que la recuperación solo reproduzca el log posterior a él en vez de desde el inicio."}
+    },
+    {
+     "term": {"en": "Group commit", "es": "Group commit"},
+     "def": {"en": "Batching several transactions' log records into one fsync to amortize its cost. Batch too loosely and you widen the window where acked writes are not yet durable.", "es": "Agrupar los registros de log de varias transacciones en un solo fsync para amortizar su costo. Si agrupas demasiado laxo, ensanchas la ventana en que escrituras confirmadas aún no son durables."}
+    },
+    {
+     "term": {"en": "Volatile write cache", "es": "Caché de escritura volátil"},
+     "def": {"en": "A RAM buffer on the disk controller that acks writes before they hit persistent media. Without power-loss protection it can lose data an fsync believed was safe.", "es": "Un búfer en RAM del controlador de disco que confirma escrituras antes de que lleguen al medio persistente. Sin protección ante corte de energía, puede perder datos que un fsync creyó a salvo."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A payments service on Postgres acks 12,000 transfers/sec. To hit that number an engineer sets synchronous_commit=off, thinking it only relaxes replication.", "es": "Un servicio de pagos sobre Postgres confirma 12.000 transferencias/seg. Para alcanzar esa cifra, un ingeniero pone synchronous_commit=off creyendo que solo relaja la replicación."},
+    "walkthrough": {"en": "synchronous_commit=off does not disable the WAL, but it lets Postgres return COMMIT before the WAL record is fsynced, flushing on a timer (wal_writer_delay, default 200ms). At 12k tx/s that leaves up to ~2,400 acked transfers sitting only in the OS page cache. A kernel panic or power loss drops them silently while every client saw success. The fix is synchronous_commit=on (the default) so each COMMIT waits for its WAL fsync, or a middle ground: keep it on but group-commit via commit_delay to amortize fsync across concurrent transfers. The number to know: one fsync on an enterprise SSD is roughly 0.1-1ms, so group commit turns thousands of fsyncs/sec into hundreds without giving up the guarantee.", "es": "synchronous_commit=off no desactiva el WAL, pero deja que Postgres retorne COMMIT antes de hacer fsync del registro del WAL, bajándolo por temporizador (wal_writer_delay, 200ms por defecto). A 12k tx/s eso deja hasta ~2.400 transferencias confirmadas solo en el page cache del SO. Un kernel panic o un corte de energía las descarta en silencio mientras cada cliente vio éxito. El arreglo es synchronous_commit=on (el default) para que cada COMMIT espere su fsync del WAL, o un punto medio: dejarlo en on pero hacer group commit vía commit_delay para amortizar el fsync entre transferencias concurrentes. El número a saber: un fsync en un SSD empresarial ronda los 0,1-1ms, así que el group commit convierte miles de fsyncs/seg en cientos sin resignar la garantía."}
+   },
+   "pitfalls": [
+    {"en": "Believing write() returning success means the data is safe. It only reached the OS page cache; durability starts at fsync.", "es": "Creer que write() retornando éxito significa que el dato está a salvo. Solo llegó al page cache del SO; la durabilidad empieza en el fsync."},
+    {"en": "Trusting fsync on consumer disks with a volatile write cache and no power-loss protection. The controller can ack before the bytes are on stable media.", "es": "Confiar en fsync sobre discos de consumo con caché de escritura volátil y sin protección ante corte de energía. El controlador puede confirmar antes de que los bytes estén en medio estable."},
+    {"en": "Turning off fsync/synchronous commit for a benchmark and forgetting to turn it back on. The system is fast and quietly non-durable.", "es": "Apagar fsync/commit síncrono para un benchmark y olvidar volver a activarlo. El sistema queda rápido y silenciosamente no durable."},
+    {"en": "Assuming replication replaces durability. An async replica can lag behind the leader's WAL, so a leader crash still loses acked writes.", "es": "Suponer que la replicación reemplaza a la durabilidad. Una réplica asíncrona puede atrasarse respecto al WAL del líder, así que un crash del líder igual pierde escrituras confirmadas."}
+   ],
+   "analogy": {"en": "Writing without fsync is like telling a courier 'delivered' the moment you drop the package in the outbound bin. It has left your desk, but until the truck actually leaves the depot it can still come back.", "es": "Escribir sin fsync es como marcar 'entregado' apenas dejas el paquete en la bandeja de salida. Salió de tu escritorio, pero hasta que el camión de verdad deja el depósito, todavía puede volver."},
+   "depth": {"en": "Recovery has two phases after replaying the WAL: redo re-applies committed changes not yet in the pages, and undo rolls back transactions that were in flight at crash time (the ARIES protocol formalizes this). This is why the WAL stores both the new value and enough info to reverse it, and why a checkpoint bounds recovery time rather than just saving space.", "es": "La recuperación tiene dos fases tras reproducir el WAL: redo reaplica cambios confirmados que aún no estaban en las páginas, y undo revierte transacciones que estaban en vuelo al momento del crash (el protocolo ARIES lo formaliza). Por eso el WAL guarda tanto el valor nuevo como información suficiente para revertirlo, y por eso un checkpoint acota el tiempo de recuperación, no solo ahorra espacio."},
+   "architecture": {
+    "kind": "flow",
+    "caption": {"en": "The durable write path: nothing is acked until the WAL fsync returns.", "es": "El camino de una escritura durable: nada se confirma hasta que retorna el fsync del WAL."},
+    "nodes": [
+     {"label": {"en": "1. Append change to WAL buffer", "es": "1. Anexar cambio al búfer del WAL"}},
+     {"label": {"en": "2. fsync WAL to stable storage", "es": "2. fsync del WAL a almacenamiento estable"}, "note": {"en": "The durability boundary lives here", "es": "La frontera de durabilidad vive aquí"}},
+     {"label": {"en": "3. Ack COMMIT to client", "es": "3. Confirmar COMMIT al cliente"}},
+     {"label": {"en": "4. Lazily update B-tree pages", "es": "4. Actualizar las páginas del B-tree de forma diferida"}},
+     {"label": {"en": "5. Checkpoint: flush pages, truncate log", "es": "5. Checkpoint: bajar páginas, truncar log"}}
+    ]
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "import os\n\ndef durable_append(log_fd, record: bytes):\n    os.write(log_fd, record)   # bytes now in OS page cache only\n    os.fsync(log_fd)           # force to stable storage; blocks until on device\n    # only now is it safe to ack the client\n    return \"committed\"\n\n# WRONG: acking before fsync trades the D in ACID for speed\ndef fast_but_lying(log_fd, record: bytes):\n    os.write(log_fd, record)\n    return \"committed\"  # power loss here loses an acked write",
+    "caption": {"en": "The one line that separates durable from fast-and-lying is os.fsync before the ack.", "es": "La única línea que separa lo durable de lo rápido-y-mentiroso es os.fsync antes de la confirmación."},
+    "annotations": [
+     {"line": 5, "note": {"en": "os.write only copies into the OS page cache; a crash here still loses the record.", "es": "os.write solo copia al page cache del SO; un crash aquí igual pierde el registro."}},
+     {"line": 6, "note": {"en": "fsync blocks until the device confirms. This is where durability is actually purchased.", "es": "fsync bloquea hasta que el dispositivo confirma. Aquí es donde de verdad se compra la durabilidad."}},
+     {"line": 13, "note": {"en": "Returning here is the async-commit choice: valid only if the lost-write window is deliberate.", "es": "Retornar aquí es la elección de commit asíncrono: válida solo si la ventana de pérdida es deliberada."}}
+    ]
+   },
+   "source": "Kleppmann, DDIA, Ch.3 (Storage & Retrieval — Making B-Trees Reliable: write-ahead/redo log, crash recovery)"
+  },
+  {
+   "slug": "storage-engines-lsm-vs-btree",
+   "keywords": [
+    {
+     "term": {"en": "Write amplification", "es": "Amplificación de escritura"},
+     "def": {"en": "Physical bytes written per logical byte of data. A 100-byte update that rewrites an 8KB page and a WAL record has high write amplification.", "es": "Bytes físicos escritos por byte lógico de dato. Una actualización de 100 bytes que reescribe una página de 8KB más un registro del WAL tiene alta amplificación de escritura."}
+    },
+    {
+     "term": {"en": "Read amplification", "es": "Amplificación de lectura"},
+     "def": {"en": "Extra reads to answer one query. In an LSM a point lookup may probe the memtable plus several SSTables before finding the key.", "es": "Lecturas extra para responder una consulta. En un LSM una búsqueda puntual puede sondear la memtable más varios SSTables antes de encontrar la clave."}
+    },
+    {
+     "term": {"en": "SSTable", "es": "SSTable"},
+     "def": {"en": "Sorted String Table: an immutable file of key-value pairs sorted by key, flushed sequentially from an in-memory memtable.", "es": "Sorted String Table: un archivo inmutable de pares clave-valor ordenados por clave, bajado de forma secuencial desde una memtable en memoria."}
+    },
+    {
+     "term": {"en": "Compaction", "es": "Compaction"},
+     "def": {"en": "Background merge of overlapping SSTables that discards overwritten/deleted keys. It reclaims space and bounds read amplification but competes for I/O.", "es": "Fusión en segundo plano de SSTables solapados que descarta claves sobrescritas o borradas. Recupera espacio y acota la amplificación de lectura, pero compite por el I/O."}
+    },
+    {
+     "term": {"en": "Bloom filter", "es": "Filtro de Bloom"},
+     "def": {"en": "A compact probabilistic set an LSM checks before reading an SSTable, cheaply skipping files that definitely do not hold the key.", "es": "Un conjunto probabilístico compacto que un LSM consulta antes de leer un SSTable, saltándose a bajo costo los archivos que con certeza no tienen la clave."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A team stores IoT telemetry: 500,000 sensor writes/sec, mostly appends, plus dashboards that scan a device's last hour. They must choose RocksDB (LSM) or a B-tree engine.", "es": "Un equipo guarda telemetría IoT: 500.000 escrituras de sensores/seg, casi todas anexos, más tableros que escanean la última hora de un dispositivo. Deben elegir RocksDB (LSM) o un motor B-tree."},
+    "walkthrough": {"en": "The write rate settles it. On a B-tree, each 200-byte reading can dirty an 8KB page plus a WAL entry, so ~200 bytes of data drives on the order of 8KB+ of physical I/O, and random page updates thrash the disk. RocksDB buffers writes in a memtable and flushes sorted SSTables sequentially, so 500k small writes become a handful of large sequential flushes: write amplification stays low and throughput scales. The cost surfaces in reads and space. A point lookup may check the memtable and several SSTable levels, but a per-SSTable Bloom filter (say 10 bits/key, ~1% false positive) skips almost every file that lacks the key, so most lookups touch one file. Compaction, however, periodically rewrites data and can double disk I/O for minutes, spiking p99. Because this workload is write-heavy with bounded range scans and tolerant p99, LSM wins. Flip the workload to read-mostly OLTP needing a rock-steady p99, and the B-tree's single predictable traversal beats compaction stealing I/O mid-spike.", "es": "La tasa de escritura lo define. En un B-tree, cada lectura de 200 bytes puede ensuciar una página de 8KB más una entrada del WAL, así que ~200 bytes de dato generan del orden de 8KB+ de I/O físico, y las actualizaciones de páginas al azar castigan el disco. RocksDB buffea las escrituras en una memtable y baja SSTables ordenados de forma secuencial, así que 500k escrituras pequeñas se vuelven un puñado de flushes grandes y secuenciales: la amplificación de escritura queda baja y el throughput escala. El costo aparece en lecturas y espacio. Una búsqueda puntual puede revisar la memtable y varios niveles de SSTable, pero un filtro de Bloom por SSTable (digamos 10 bits/clave, ~1% de falsos positivos) se salta casi todos los archivos que no tienen la clave, así que la mayoría de las búsquedas tocan un solo archivo. La compaction, sin embargo, reescribe datos periódicamente y puede duplicar el I/O de disco por minutos, disparando el p99. Como esta carga es intensiva en escritura, con range scans acotados y p99 tolerante, gana el LSM. Da vuelta la carga a OLTP mayormente de lectura que exige un p99 firme, y el recorrido único y predecible del B-tree le gana a una compaction que roba I/O en medio de un pico."}
+   },
+   "pitfalls": [
+    {"en": "Answering 'which is faster?' without saying fast at what. LSM wins writes, B-tree wins predictable reads; the workload decides.", "es": "Responder '¿cuál es más rápido?' sin decir rápido en qué. El LSM gana en escrituras, el B-tree en lecturas predecibles; la carga decide."},
+    {"en": "Ignoring compaction as an operational cost. It competes for I/O and CPU and is the usual cause of an LSM's tail-latency spikes.", "es": "Ignorar la compaction como costo operativo. Compite por I/O y CPU y es la causa habitual de los picos de latencia de cola de un LSM."},
+    {"en": "Forgetting LSM space amplification: overwritten and deleted keys linger across SSTables until compaction reclaims them, so disk usage can exceed the live dataset.", "es": "Olvidar la amplificación de espacio del LSM: las claves sobrescritas y borradas persisten en los SSTables hasta que la compaction las libera, así que el uso de disco puede superar al conjunto vivo."},
+    {"en": "Assuming a B-tree has no maintenance cost. In-place updates cause page splits and fragmentation, and it still needs a WAL fsync per commit.", "es": "Suponer que un B-tree no tiene costo de mantenimiento. Las actualizaciones en su lugar causan divisiones de página y fragmentación, y aún necesita un fsync del WAL por commit."}
+   ],
+   "analogy": {"en": "A B-tree is editing a printed encyclopedia in place: precise to look up, but any edit means reprinting a whole page. An LSM is keeping a running stack of dated addendum sheets: writing is instant, but a lookup may scan several sheets until a librarian (compaction) periodically merges them back into clean volumes.", "es": "Un B-tree es editar una enciclopedia impresa en su lugar: precisa para consultar, pero cualquier edición implica reimprimir una página entera. Un LSM es llevar una pila creciente de hojas de addenda fechadas: escribir es instantáneo, pero una consulta puede revisar varias hojas hasta que un bibliotecario (la compaction) periódicamente las fusiona de vuelta en tomos limpios."},
+   "architecture": {
+    "kind": "compare",
+    "caption": {"en": "Same three amplification taxes, opposite bets.", "es": "Los mismos tres impuestos de amplificación, apuestas opuestas."},
+    "left": {
+     "title": {"en": "B-tree (Postgres, InnoDB)", "es": "B-tree (Postgres, InnoDB)"},
+     "points": [
+      {"en": "Updates pages in place, protected by the WAL", "es": "Actualiza páginas en su lugar, protegido por el WAL"},
+      {"en": "Reads: one predictable tree traversal, stable p99", "es": "Lecturas: un recorrido de árbol predecible, p99 estable"},
+      {"en": "High write amplification from page rewrites and splits", "es": "Alta amplificación de escritura por reescritura y división de páginas"},
+      {"en": "Best for read-heavy OLTP and range scans", "es": "Mejor para OLTP con muchas lecturas y range scans"}
+     ]
+    },
+    "right": {
+     "title": {"en": "LSM-tree (RocksDB, Cassandra)", "es": "LSM-tree (RocksDB, Cassandra)"},
+     "points": [
+      {"en": "Never updates in place: buffer in memtable, flush sorted SSTables", "es": "Nunca actualiza en su lugar: buffea en memtable, baja SSTables ordenados"},
+      {"en": "Low write amplification, sequential I/O, high write throughput", "es": "Baja amplificación de escritura, I/O secuencial, alto throughput de escritura"},
+      {"en": "Higher read amplification; Bloom filters cut it down", "es": "Mayor amplificación de lectura; los filtros de Bloom la reducen"},
+      {"en": "Compaction spikes tail latency; can hold extra copies (space amp)", "es": "La compaction dispara la latencia de cola; puede guardar copias extra (amp. de espacio)"}
+     ]
+    }
+   },
+   "source": "Kleppmann, DDIA, Ch.3 (SSTables & LSM-Trees vs B-Trees, amplification)"
+  },
+  {
+   "slug": "replication-models",
+   "keywords": [
+    {
+     "term": {"en": "Replication lag", "es": "Retraso de replicación (lag)"},
+     "def": {"en": "The delay between a write committing on the leader and appearing on a follower. During it, a follower read returns stale data.", "es": "El retraso entre que una escritura se confirma en el líder y aparece en un seguidor. Durante él, una lectura del seguidor devuelve datos viejos."}
+    },
+    {
+     "term": {"en": "Failover", "es": "Failover"},
+     "def": {"en": "Promoting a follower to leader when the leader dies. Writes pause during it, and an under-replicated follower may be promoted with data loss.", "es": "Promover un seguidor a líder cuando el líder muere. Las escrituras se pausan durante él, y un seguidor con replicación incompleta puede ser promovido con pérdida de datos."}
+    },
+    {
+     "term": {"en": "Quorum (W + R > N)", "es": "Quórum (W + R > N)"},
+     "def": {"en": "In leaderless systems, requiring writes to reach W of N replicas and reads to query R so the sets overlap, guaranteeing a read sees the latest write.", "es": "En sistemas sin líder, exigir que las escrituras alcancen W de N réplicas y que las lecturas consulten R para que los conjuntos se solapen, garantizando que una lectura vea la última escritura."}
+    },
+    {
+     "term": {"en": "Version vector", "es": "Version vector"},
+     "def": {"en": "Per-replica version counters attached to a value so the system can detect concurrent writes and flag conflicts instead of silently overwriting.", "es": "Contadores de versión por réplica adjuntos a un valor para que el sistema detecte escrituras concurrentes y marque conflictos en vez de sobrescribir en silencio."}
+    },
+    {
+     "term": {"en": "Last-write-wins (LWW)", "es": "Last-write-wins (LWW)"},
+     "def": {"en": "A conflict resolution that keeps the write with the highest timestamp. Simple, but it silently discards the other concurrent write and depends on clock accuracy.", "es": "Una resolución de conflictos que conserva la escritura con el timestamp mayor. Simple, pero descarta en silencio la otra escritura concurrente y depende de la precisión del reloj."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A user updates their profile, then immediately reloads the page. The read is routed to a follower that is 400ms behind, and the profile shows the old value. Support calls it 'the save button is broken.'", "es": "Un usuario actualiza su perfil y recarga la página de inmediato. La lectura se enruta a un seguidor que está 400ms atrasado, y el perfil muestra el valor viejo. Soporte lo llama 'el botón de guardar está roto.'"},
+    "walkthrough": {"en": "This is single-leader replication lag hitting a real user. The write committed on the leader; the follower serving the read had not applied it yet. There are no write conflicts here (one leader ordered everything), only staleness. The standard fix is read-your-writes consistency: for a short window after a user's write, route that user's reads to the leader (or to a follower confirmed to be caught up to the write's log position). Now contrast the topologies. If instead this were multi-leader across US and EU datacenters and the user edited their profile in both within the lag window, both leaders accept the write and you get a genuine conflict; LWW would keep one and silently drop the other, so you would need field-level merge or a CRDT. If it were leaderless with N=3, W=2, R=2, then W+R=4 > 3 guarantees the reload's read quorum overlaps the write quorum and sees the new value, at the cost of contacting two replicas per read. The lesson: single-leader trades staleness, multi-leader trades conflict resolution, leaderless trades per-request coordination.", "es": "Esto es el retraso de replicación de un solo líder golpeando a un usuario real. La escritura se confirmó en el líder; el seguidor que sirvió la lectura aún no la había aplicado. Aquí no hay conflictos de escritura (un solo líder ordenó todo), solo desactualización. El arreglo estándar es consistencia read-your-writes: durante una ventana corta tras la escritura de un usuario, enruta las lecturas de ese usuario al líder (o a un seguidor confirmado al día con la posición del log de esa escritura). Ahora contrasta las topologías. Si en cambio fuera multi-líder entre datacenters de EE.UU. y la UE y el usuario editara su perfil en ambos dentro de la ventana de lag, ambos líderes aceptan la escritura y obtienes un conflicto real; LWW conservaría una y descartaría la otra en silencio, así que necesitarías merge por campo o un CRDT. Si fuera sin líder con N=3, W=2, R=2, entonces W+R=4 > 3 garantiza que el quórum de lectura de la recarga se solape con el de escritura y vea el valor nuevo, a costa de contactar dos réplicas por lectura. La lección: un líder cambia desactualización, multi-líder cambia resolución de conflictos, sin líder cambia coordinación por petición."}
+   },
+   "pitfalls": [
+    {"en": "Routing all reads to followers for scale, then getting 'my own update disappeared' bugs. You need read-your-writes consistency.", "es": "Enrutar todas las lecturas a seguidores para escalar, y luego sufrir bugs de 'mi propia actualización desapareció'. Necesitas consistencia read-your-writes."},
+    {"en": "Adopting multi-leader for multi-region without a real conflict-resolution strategy. Last-write-wins on wall clocks silently loses data.", "es": "Adoptar multi-líder para multi-región sin una estrategia real de resolución de conflictos. Last-write-wins sobre relojes de pared pierde datos en silencio."},
+    {"en": "Assuming a quorum alone guarantees strong consistency. Sloppy quorums, clock skew in LWW, and concurrent writes can still surface stale or conflicting values.", "es": "Suponer que un quórum por sí solo garantiza consistencia fuerte. Los sloppy quorums, el desfase de reloj en LWW y las escrituras concurrentes aún pueden exponer valores viejos o en conflicto."},
+    {"en": "Treating failover as free. Writes pause, and promoting a lagging follower under async replication can lose already-acked writes.", "es": "Tratar el failover como gratis. Las escrituras se pausan, y promover un seguidor atrasado bajo replicación asíncrona puede perder escrituras ya confirmadas."}
+   ],
+   "analogy": {"en": "Single-leader is one cashier: no double-charges because one person rings everything up, but the line stops if they step away. Multi-leader is two cashiers at different doors who must reconcile their drawers later. Leaderless is a self-checkout floor where you only trust the count once enough terminals agree.", "es": "Un solo líder es una única caja: no hay cobros dobles porque una sola persona registra todo, pero la fila se detiene si se ausenta. Multi-líder son dos cajas en puertas distintas que deben conciliar sus cajones después. Sin líder es un piso de autopago donde solo confías en la cuenta cuando suficientes terminales coinciden."},
+   "depth": {"en": "Single-leader replication itself has a durability knob: synchronous replication waits for a follower to ack before the leader commits (no data loss on failover, but a slow/down follower stalls writes), while asynchronous does not (fast, but a leader crash can lose the tail of the log). Most systems run semi-synchronous: one synchronous follower for safety, the rest async for throughput.", "es": "La replicación de un solo líder tiene su propia perilla de durabilidad: la replicación síncrona espera el ack de un seguidor antes de que el líder confirme (sin pérdida de datos en el failover, pero un seguidor lento o caído frena las escrituras), mientras que la asíncrona no (rápida, pero un crash del líder puede perder la cola del log). La mayoría corre semi-síncrona: un seguidor síncrono por seguridad, el resto asíncronos por throughput."},
+   "architecture": {
+    "kind": "compare",
+    "caption": {"en": "Three topologies, three things you trade.", "es": "Tres topologías, tres cosas que compensas."},
+    "left": {
+     "title": {"en": "Single-leader (the default)", "es": "Un solo líder (el default)"},
+     "points": [
+      {"en": "All writes to one leader; no write conflicts possible", "es": "Todas las escrituras a un líder; ningún conflicto de escritura es posible"},
+      {"en": "Follower reads can be stale; failover pauses writes", "es": "Las lecturas de seguidores pueden estar viejas; el failover pausa escrituras"},
+      {"en": "Simple and correct; leave it only when forced", "es": "Simple y correcto; abandónalo solo cuando te obliguen"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Multi-leader / Leaderless", "es": "Multi-líder / Sin líder"},
+     "points": [
+      {"en": "Multi-leader: local low-latency writes per region, survives a region", "es": "Multi-líder: escrituras locales de baja latencia por región, sobrevive una región"},
+      {"en": "Multi-leader forces explicit conflict resolution (merge/CRDT)", "es": "Multi-líder obliga a resolver conflictos explícitamente (merge/CRDT)"},
+      {"en": "Leaderless: quorums W+R>N, tune consistency per query", "es": "Sin líder: quórumes W+R>N, ajusta la consistencia por consulta"}
+     ]
+    }
+   },
+   "visual": {"widgetId": "consensus"},
+   "source": "Kleppmann, DDIA, Ch.5 (Leaders & Followers, Multi-Leader, Leaderless)"
+  },
+  {
+   "slug": "partitioning-sharding",
+   "keywords": [
+    {
+     "term": {"en": "Partition key", "es": "Clave de partición"},
+     "def": {"en": "The field that decides which shard a row lives on. It determines load distribution, so a bad choice cannot be undone by adding hardware.", "es": "El campo que decide en qué shard vive una fila. Determina la distribución de carga, así que una mala elección no se deshace agregando hardware."}
+    },
+    {
+     "term": {"en": "Hot shard", "es": "Shard caliente"},
+     "def": {"en": "One partition receiving a disproportionate share of traffic while others idle. The dominant failure mode of sharding at scale.", "es": "Una partición que recibe una porción desproporcionada del tráfico mientras las demás están ociosas. El modo de falla dominante del sharding a gran escala."}
+    },
+    {
+     "term": {"en": "Consistent hashing", "es": "Consistent hashing"},
+     "def": {"en": "Mapping keys and nodes onto a ring so adding or removing a node reassigns only a slice of keys, not the whole dataset.", "es": "Mapear claves y nodos sobre un anillo para que agregar o quitar un nodo reasigne solo una porción de claves, no todo el conjunto de datos."}
+    },
+    {
+     "term": {"en": "Scatter/gather", "es": "Scatter/gather"},
+     "def": {"en": "A query that must fan out to every shard and merge the results, the price hash partitioning pays for losing key ordering on range scans.", "es": "Una consulta que debe repartirse a todos los shards y fusionar los resultados, el precio que paga el particionado por hash al perder el orden de claves en los range scans."}
+    },
+    {
+     "term": {"en": "Access skew", "es": "Sesgo de acceso"},
+     "def": {"en": "Uneven traffic across keys regardless of even data size. A single celebrity key can overload one shard even under perfect hash distribution.", "es": "Tráfico desigual entre claves independientemente de un tamaño de datos parejo. Una sola clave celebridad puede sobrecargar un shard aun con distribución hash perfecta."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A social app shards its 'posts' table by an auto-increment post_id using key-range partitioning across 8 shards. Writes are 100k/sec at peak. One shard runs hot; adding shards does not help.", "es": "Una app social particiona su tabla 'posts' por un post_id autoincremental usando particionado por rango de clave en 8 shards. Las escrituras son 100k/seg en el pico. Un shard corre caliente; agregar shards no ayuda."},
+    "walkthrough": {"en": "Because post_id is monotonically increasing and partitioning is by range, every new post sorts into the highest range, so 100% of writes hit the last shard while the other 7 sit near idle. Adding shards makes it worse: the newest shard just becomes the next hot spot. Two real fixes. (1) Switch the partition key to a hash of post_id: writes now spread evenly across all 8 shards (~12.5k/sec each), killing the write hot spot. The cost is that 'get posts in id range' becomes a scatter/gather across all shards. (2) If you truly need range scans, make the key non-monotonic by prefixing a bucket, e.g. shard on hash(author_id) then order by timestamp within the shard, so writes spread by author while each shard stays range-scannable. Even after this, a celebrity author with millions of followers can hot-spot a single shard on reads. Special-case them: add a random suffix to spread their key across a few shards, or serve them from a cache. The failure to fear was never data volume, it was traffic concentrating on 5% of the keys.", "es": "Como post_id es monótonamente creciente y el particionado es por rango, cada post nuevo cae en el rango más alto, así que el 100% de las escrituras golpea el último shard mientras los otros 7 quedan casi ociosos. Agregar shards lo empeora: el shard más nuevo simplemente se vuelve el próximo punto caliente. Dos arreglos reales. (1) Cambiar la clave de partición a un hash de post_id: las escrituras ahora se reparten parejo entre los 8 shards (~12,5k/seg cada uno), eliminando el punto caliente de escritura. El costo es que 'traer posts en un rango de id' se vuelve un scatter/gather sobre todos los shards. (2) Si de verdad necesitas range scans, haz la clave no monótona anteponiendo un bucket, p. ej. particiona por hash(author_id) y ordena por timestamp dentro del shard, así las escrituras se reparten por autor mientras cada shard sigue siendo escaneable por rango. Aun así, un autor celebridad con millones de seguidores puede recalentar un solo shard en lecturas. Trátalo como caso especial: agrega un sufijo aleatorio para repartir su clave entre varios shards, o sírvelo desde una caché. La falla a temer nunca fue el volumen de datos, fue el tráfico concentrándose en el 5% de las claves."}
+   },
+   "pitfalls": [
+    {"en": "Range-partitioning on a monotonic key (timestamp, auto-increment id). Every write lands on the last shard, a permanent hot spot.", "es": "Particionar por rango sobre una clave monótona (timestamp, id autoincremental). Cada escritura cae en el último shard, un punto caliente permanente."},
+    {"en": "Believing hash partitioning solves everything. It spreads keys evenly but cannot save you from a single hot key (the celebrity problem).", "es": "Creer que el particionado por hash lo resuelve todo. Reparte las claves parejo pero no te salva de una sola clave caliente (el problema de la celebridad)."},
+    {"en": "Using hash mod N for placement, so adding one node remaps almost every key. Use consistent hashing or a fixed partition count instead.", "es": "Usar hash mod N para la ubicación, de modo que agregar un nodo remapea casi todas las claves. Usa consistent hashing o un número fijo de particiones en su lugar."},
+    {"en": "Forgetting that hash partitioning kills efficient range scans, turning them into scatter/gather across every shard.", "es": "Olvidar que el particionado por hash mata los range scans eficientes, convirtiéndolos en scatter/gather sobre todos los shards."}
+   ],
+   "analogy": {"en": "Sharding is seating a huge banquet across tables. Range partitioning is seating alphabetically, which is neat until everyone named with a late letter arrives at once and one table is mobbed. Hashing scatters guests randomly so tables fill evenly, but you can no longer find 'everyone whose name starts with S' at one table.", "es": "El sharding es sentar un banquete enorme en varias mesas. El particionado por rango es sentar por orden alfabético, ordenado hasta que todos los de una letra tardía llegan a la vez y una mesa se abarrota. El hash dispersa a los invitados al azar para que las mesas se llenen parejo, pero ya no puedes encontrar en una sola mesa a 'todos los que empiezan con S'."},
+   "depth": {"en": "Two common designs decouple partitions from nodes. A fixed large number of partitions (e.g. 1,024) created up front and spread across nodes lets rebalancing move whole partitions without recomputing keys; this is what Elasticsearch and Riak do. Dynamic partitioning (HBase, MongoDB) splits a partition when it grows past a threshold, adapting to data volume but not to access skew, which is why hot keys still need explicit handling.", "es": "Dos diseños comunes desacoplan las particiones de los nodos. Un número grande y fijo de particiones (p. ej. 1.024) creadas de antemano y repartidas entre nodos permite que el rebalanceo mueva particiones enteras sin recalcular claves; así lo hacen Elasticsearch y Riak. El particionado dinámico (HBase, MongoDB) divide una partición cuando crece más allá de un umbral, adaptándose al volumen de datos pero no al sesgo de acceso, por lo que las claves calientes aún requieren tratamiento explícito."},
+   "architecture": {
+    "kind": "compare",
+    "caption": {"en": "Key-range vs hash: you trade range scans against even write distribution.", "es": "Rango de clave vs hash: compensas los range scans contra una distribución de escritura pareja."},
+    "left": {
+     "title": {"en": "Key-range partitioning", "es": "Particionado por rango de clave"},
+     "points": [
+      {"en": "Keys stay sorted per shard; efficient range scans", "es": "Las claves quedan ordenadas por shard; range scans eficientes"},
+      {"en": "Loved by time-series stores", "es": "Preferido por los almacenes de series de tiempo"},
+      {"en": "A monotonic key creates a permanent hot shard", "es": "Una clave monótona crea un shard caliente permanente"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Hash partitioning", "es": "Particionado por hash"},
+     "points": [
+      {"en": "Hash of the key spreads writes evenly", "es": "El hash de la clave reparte las escrituras parejo"},
+      {"en": "Kills the monotonic-key hot spot", "es": "Elimina el punto caliente de la clave monótona"},
+      {"en": "Loses ordering: range scans become scatter/gather", "es": "Pierde el orden: los range scans se vuelven scatter/gather"},
+      {"en": "Still needs special handling for a single hot key", "es": "Aún requiere tratamiento especial para una sola clave caliente"}
+     ]
+    }
+   },
+   "source": "Kleppmann, DDIA, Ch.6 (Partitioning by Key Range/Hash, Rebalancing)"
+  }
+ ]
+}

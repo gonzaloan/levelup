@@ -1,0 +1,386 @@
+{
+  "lessonId": "ai-engineering-l4",
+  "concepts": [
+    {
+      "slug": "eval-driven-dev",
+      "keywords": [
+        {
+          "term": { "en": "Eval set", "es": "Set de evals" },
+          "def": {
+            "en": "A versioned collection of input/expected pairs that encodes what 'correct' means for your system, run on every change.",
+            "es": "Una colección versionada de pares entrada/esperado que codifica qué significa 'correcto' para tu sistema, ejecutada en cada cambio."
+          }
+        },
+        {
+          "term": { "en": "Grader", "es": "Evaluador" },
+          "def": {
+            "en": "The mechanism that decides pass/fail for one case: a code assertion, a human reviewer, or an LLM judge.",
+            "es": "El mecanismo que decide aprobado/fallo para un caso: una aserción de código, un revisor humano o un juez LLM."
+          }
+        },
+        {
+          "term": { "en": "Regression", "es": "Regresión" },
+          "def": {
+            "en": "A case that used to pass and now fails after a prompt or model change; the failure mode evals exist to catch.",
+            "es": "Un caso que antes aprobaba y ahora falla tras un cambio de prompt o modelo; el modo de falla que los evals existen para atrapar."
+          }
+        },
+        {
+          "term": { "en": "Grading hierarchy", "es": "Jerarquía de evaluación" },
+          "def": {
+            "en": "The preference order code > human > LLM: pick the cheapest grader that still tells the truth about the output.",
+            "es": "El orden de preferencia código > humano > LLM: elige el evaluador más barato que aún diga la verdad sobre la salida."
+          }
+        }
+      ],
+      "example": {
+        "scenario": {
+          "en": "A support bot must return a structured refund decision. You have 40 curated cases and keep tweaking the prompt in the chat window.",
+          "es": "Un bot de soporte debe devolver una decisión de reembolso estructurada. Tienes 40 casos curados y sigues ajustando el prompt en la ventana de chat."
+        },
+        "walkthrough": {
+          "en": "You freeze 220 real tickets with known correct outcomes and write a code grader: parse the JSON, assert `decision` is one of approve/deny/escalate and `amount` is within the policy range. Baseline passes 176/220 (80%). You edit the prompt to fix a deny case; the eval run drops to 171/220 because the edit made the model over-escalate. In the chat window you'd have shipped that. Instead you revert, add the deny case as failing test #221, and only merge the prompt that clears 221/221 of the touched cases without dropping the other 220. The code grader runs in 90 seconds for pennies; hand-grading those 220 would have taken a day.",
+          "es": "Congelas 220 tickets reales con resultados correctos conocidos y escribes un evaluador de código: parsea el JSON, verifica que `decision` sea approve/deny/escalate y que `amount` esté dentro del rango de política. La línea base aprueba 176/220 (80%). Editas el prompt para arreglar un caso de denegación; la corrida baja a 171/220 porque la edición hizo que el modelo escalara de más. En la ventana de chat habrías lanzado eso. En cambio reviertes, agregas el caso de denegación como test #221 que falla, y solo integras el prompt que pasa 221/221 de los casos tocados sin bajar los otros 220. El evaluador de código corre en 90 segundos por centavos; calificar a mano esos 220 habría tomado un día."
+        }
+      },
+      "pitfalls": [
+        {
+          "en": "Fifty artisanal hand-graded examples feel rigorous but miss the long tail; 200 rougher cases with a code grader catch more regressions.",
+          "es": "Cincuenta ejemplos artesanales calificados a mano se sienten rigurosos pero se pierden la cola larga; 200 casos más toscos con un evaluador de código atrapan más regresiones."
+        },
+        {
+          "en": "Reaching for an LLM judge when a five-line assertion would do: it costs more, adds noise, and needs its own validation.",
+          "es": "Recurrir a un juez LLM cuando bastaría una aserción de cinco líneas: cuesta más, agrega ruido y necesita su propia validación."
+        },
+        {
+          "en": "Tuning the prompt against the same cases you eyeball daily; you overfit to them and the score stops predicting production.",
+          "es": "Ajustar el prompt contra los mismos casos que revisas a diario; te sobreajustas a ellos y el puntaje deja de predecir producción."
+        }
+      ],
+      "analogy": {
+        "en": "It's TDD for a coworker who answers the same question differently on Monday and Tuesday: you can't trust a spot check, so you pin the behavior with tests and let the suite, not your memory, guard against backsliding.",
+        "es": "Es TDD para un compañero que responde la misma pregunta distinto el lunes y el martes: no puedes fiarte de una revisión al azar, así que fijas el comportamiento con tests y dejas que la suite, no tu memoria, evite los retrocesos."
+      },
+      "depth": {
+        "en": "Track pass rate per category, not one global number: a system at 85% overall can be 99% on billing and 40% on edge-case fraud, and the average hides exactly the segment that will burn you. Slice the eval by input type and watch the worst slice.",
+        "es": "Sigue la tasa de aprobación por categoría, no un único número global: un sistema al 85% general puede estar al 99% en facturación y al 40% en fraude de casos borde, y el promedio esconde justo el segmento que te va a quemar. Segmenta el eval por tipo de entrada y vigila el peor segmento."
+      },
+      "code": {
+        "lang": "python",
+        "snippet": "def grade(case, model_output):\n    out = parse_json(model_output)      # None if not valid JSON\n    if out is None:\n        return Fail(\"invalid JSON\")\n    if out[\"decision\"] not in {\"approve\", \"deny\", \"escalate\"}:\n        return Fail(f\"bad decision: {out['decision']}\")\n    if not (0 <= out[\"amount\"] <= case[\"max_refund\"]):\n        return Fail(\"amount out of policy range\")\n    return Pass()\n\ndef run_eval(cases, run_model):\n    results = [grade(c, run_model(c[\"input\"])) for c in cases]\n    passed = sum(r.ok for r in results)\n    return passed / len(cases), results   # score + per-case detail",
+        "caption": {
+          "en": "A code grader: cheap, deterministic, and it tells you exactly which case broke.",
+          "es": "Un evaluador de código: barato, determinista, y te dice exactamente qué caso se rompió."
+        },
+        "annotations": [
+          {
+            "line": 2,
+            "note": {
+              "en": "Structural check first: an unparseable answer fails before any semantic grading runs.",
+              "es": "Verificación estructural primero: una respuesta imparseable falla antes de cualquier evaluación semántica."
+            }
+          },
+          {
+            "line": 8,
+            "note": {
+              "en": "Range check against per-case policy, not a hardcoded constant, so one grader covers many inputs.",
+              "es": "Verificación de rango contra la política por caso, no una constante fija, para que un evaluador cubra muchas entradas."
+            }
+          },
+          {
+            "line": 14,
+            "note": {
+              "en": "Return the per-case detail alongside the score so a drop points you at the exact regression.",
+              "es": "Devuelve el detalle por caso junto al puntaje para que una caída te señale la regresión exacta."
+            }
+          }
+        ]
+      },
+      "architecture": {
+        "kind": "compare",
+        "caption": {
+          "en": "Spot-checking in the chat window versus a real eval loop.",
+          "es": "Revisar al azar en la ventana de chat frente a un bucle real de evals."
+        },
+        "left": {
+          "title": { "en": "Chat-window tweaking", "es": "Ajuste en la ventana de chat" },
+          "points": [
+            { "en": "Fix one visible case by hand", "es": "Arreglar un caso visible a mano" },
+            { "en": "No record of what used to work", "es": "Sin registro de lo que antes funcionaba" },
+            { "en": "Silent regressions ship unnoticed", "es": "Regresiones silenciosas se lanzan sin notarse" }
+          ]
+        },
+        "right": {
+          "title": { "en": "Eval-driven loop", "es": "Bucle guiado por evals" },
+          "points": [
+            { "en": "Every change scored on the full set", "es": "Cada cambio puntuado sobre el set completo" },
+            { "en": "Each user bug becomes a failing case", "es": "Cada bug de usuario se vuelve un caso que falla" },
+            { "en": "Merge only when the number goes up", "es": "Integrar solo cuando el número sube" }
+          ]
+        }
+      },
+      "visual": { "widgetId": "eval-harness" },
+      "source": "Anthropic 'Define success criteria and build evaluations' (grading hierarchy: code > human > LLM); Chip Huyen, AI Engineering, Ch.3 'Evaluation Methodology' & Ch.4 'Evaluate AI Systems' — iterative, test-first evaluation loop (the eval-as-BDD framing)"
+    },
+    {
+      "slug": "rag-retrieval-quality",
+      "keywords": [
+        {
+          "term": { "en": "Recall@k", "es": "Recall@k" },
+          "def": {
+            "en": "Of the queries whose answer exists in the corpus, the fraction where a relevant chunk landed in the top-k results; the ceiling on system quality.",
+            "es": "De las consultas cuya respuesta existe en el corpus, la fracción en que un fragmento relevante llegó al top-k; el techo de la calidad del sistema."
+          }
+        },
+        {
+          "term": { "en": "Chunking", "es": "Troceado (chunking)" },
+          "def": {
+            "en": "Splitting source documents into indexable pieces; chunk size and boundaries decide whether the answer is retrievable at all.",
+            "es": "Dividir documentos fuente en piezas indexables; el tamaño y los límites del fragmento deciden si la respuesta es recuperable siquiera."
+          }
+        },
+        {
+          "term": { "en": "Hybrid search", "es": "Búsqueda híbrida" },
+          "def": {
+            "en": "Combining lexical keyword matching (BM25) with vector similarity so exact terms like SKUs and rare names aren't lost to embeddings.",
+            "es": "Combinar coincidencia léxica por palabra clave (BM25) con similitud vectorial para que términos exactos como SKUs y nombres raros no se pierdan en los embeddings."
+          }
+        },
+        {
+          "term": { "en": "Reranker", "es": "Reordenador (reranker)" },
+          "def": {
+            "en": "A second-stage model that reorders a broad candidate set by true relevance, cheaply lifting the right chunk into the top-k.",
+            "es": "Un modelo de segunda etapa que reordena un conjunto amplio de candidatos por relevancia real, subiendo de forma barata el fragmento correcto al top-k."
+          }
+        }
+      ],
+      "example": {
+        "scenario": {
+          "en": "A docs assistant gives confident but wrong answers about a config flag. The team wants to rewrite the generation prompt.",
+          "es": "Un asistente de documentación da respuestas seguras pero equivocadas sobre un flag de configuración. El equipo quiere reescribir el prompt de generación."
+        },
+        "walkthrough": {
+          "en": "Instead you build a retrieval eval: 150 real questions, each labeled with the doc section that answers it. You measure recall@10 = 62%. The generation prompt cannot beat 62%, so rewriting it is wasted effort. Inspection shows the docs were chunked at a fixed 2000 tokens, so the flag's definition and its example got split into different chunks and neither alone matched the query. You re-chunk on heading boundaries at ~500 tokens with 15% overlap: recall@10 jumps to 84%. Then you add BM25 hybrid search because the flag name is a rare literal string embeddings blur: recall@10 reaches 91%. Only now does prompt work pay off, and end-to-end accuracy rises from 55% to 88%.",
+          "es": "En cambio armas un eval de recuperación: 150 preguntas reales, cada una etiquetada con la sección de documentación que la responde. Mides recall@10 = 62%. El prompt de generación no puede superar 62%, así que reescribirlo es esfuerzo perdido. La inspección muestra que la documentación se troceó a 2000 tokens fijos, así que la definición del flag y su ejemplo quedaron en fragmentos distintos y ninguno por sí solo coincidía con la consulta. Retroceas por límites de encabezado a ~500 tokens con 15% de solape: recall@10 salta a 84%. Luego agregas búsqueda híbrida BM25 porque el nombre del flag es una cadena literal rara que los embeddings difuminan: recall@10 llega a 91%. Recién ahora el trabajo de prompt rinde, y la precisión de extremo a extremo sube de 55% a 88%."
+        }
+      },
+      "pitfalls": [
+        {
+          "en": "Blaming the model and rewriting the prompt when the right chunk never reached the model in the first place.",
+          "es": "Culpar al modelo y reescribir el prompt cuando el fragmento correcto nunca llegó al modelo en primer lugar."
+        },
+        {
+          "en": "Fixed-size chunking that splits a definition from its example, so no single chunk matches the query.",
+          "es": "Troceado de tamaño fijo que separa una definición de su ejemplo, de modo que ningún fragmento coincide con la consulta."
+        },
+        {
+          "en": "Pure vector search that blurs exact identifiers (SKUs, error codes, flag names) a keyword index would nail.",
+          "es": "Búsqueda puramente vectorial que difumina identificadores exactos (SKUs, códigos de error, nombres de flags) que un índice por palabra clave acertaría."
+        },
+        {
+          "en": "No abstention path: a fluent answer built on wrong chunks reads as authoritative and is worse than 'I don't know'.",
+          "es": "Sin ruta de abstención: una respuesta fluida basada en fragmentos equivocados suena autoritativa y es peor que un 'no sé'."
+        }
+      ],
+      "analogy": {
+        "en": "The model is a brilliant open-book exam taker. If retrieval hands it the wrong page, no amount of eloquence saves the answer. Fix which page it opens before you coach how it writes.",
+        "es": "El modelo es un brillante examinado con libro abierto. Si la recuperación le entrega la página equivocada, ninguna elocuencia salva la respuesta. Arregla qué página abre antes de entrenar cómo escribe."
+      },
+      "depth": {
+        "en": "Retrieve wide, then rerank narrow: pull top-50 candidates with cheap vector+BM25, then let a cross-encoder reranker reorder them and keep the top-5 you actually send. This raises the odds the answer sits in the small window the model sees, without paying to stuff 50 chunks into the context.",
+        "es": "Recupera amplio, luego reordena estrecho: trae los 50 mejores candidatos con vector+BM25 barato, deja que un reranker cross-encoder los reordene y conserva los 5 que de verdad envías. Esto sube las probabilidades de que la respuesta quede en la ventana pequeña que el modelo ve, sin pagar por meter 50 fragmentos en el contexto."
+      },
+      "code": {
+        "lang": "python",
+        "snippet": "def retrieve(query, k=5, pool=50):\n    vec = vector_search(query, n=pool)      # dense recall\n    lex = bm25_search(query, n=pool)        # exact-term recall\n    candidates = dedupe(vec + lex)          # union, then rerank\n    scored = reranker.score(query, candidates)\n    return top_k(scored, k)                 # small, high-signal set\n\ndef recall_at_k(eval_set, k=10):\n    hits = 0\n    for q in eval_set:                      # each q has gold_chunk_ids\n        got = {c.id for c in retrieve(q.text, k=k)}\n        hits += bool(got & set(q.gold_chunk_ids))\n    return hits / len(eval_set)             # the ceiling on the system",
+        "caption": {
+          "en": "Retrieve-then-rerank, plus the recall@k metric that bounds the whole system.",
+          "es": "Recuperar-luego-reordenar, más la métrica recall@k que acota todo el sistema."
+        },
+        "annotations": [
+          {
+            "line": 2,
+            "note": {
+              "en": "Vector and keyword recall are complementary; the union covers both semantic and exact-match misses.",
+              "es": "El recall vectorial y el de palabra clave son complementarios; la unión cubre fallas semánticas y de coincidencia exacta."
+            }
+          },
+          {
+            "line": 5,
+            "note": {
+              "en": "Rerank a wide pool but pass only the top-k, keeping the context tight and high-signal.",
+              "es": "Reordena un conjunto amplio pero pasa solo el top-k, manteniendo el contexto ajustado y de alta señal."
+            }
+          },
+          {
+            "line": 13,
+            "note": {
+              "en": "A hit means at least one gold chunk reached the top-k; averaged, this is your ceiling.",
+              "es": "Un acierto significa que al menos un fragmento dorado llegó al top-k; promediado, es tu techo."
+            }
+          }
+        ]
+      },
+      "architecture": {
+        "kind": "flow",
+        "caption": {
+          "en": "Where a RAG answer is won or lost, left to right; debug in this order.",
+          "es": "Dónde se gana o pierde una respuesta RAG, de izquierda a derecha; depura en este orden."
+        },
+        "nodes": [
+          {
+            "label": { "en": "Chunk & index", "es": "Trocear e indexar" },
+            "note": { "en": "Bad boundaries here cap everything downstream", "es": "Malos límites aquí limitan todo lo que sigue" }
+          },
+          {
+            "label": { "en": "Retrieve (vector + BM25)", "es": "Recuperar (vector + BM25)" },
+            "note": { "en": "Measure recall@k; this is the ceiling", "es": "Mide recall@k; este es el techo" }
+          },
+          {
+            "label": { "en": "Rerank top-k", "es": "Reordenar top-k" },
+            "note": { "en": "Lift the right chunk into the small window", "es": "Sube el fragmento correcto a la ventana pequeña" }
+          },
+          {
+            "label": { "en": "Generate", "es": "Generar" },
+            "note": { "en": "Only worth tuning once context is right", "es": "Solo vale ajustarlo cuando el contexto es correcto" }
+          }
+        ]
+      },
+      "visual": { "widgetId": "rag-pipeline" },
+      "source": "Chip Huyen, AI Engineering, Ch.6 'RAG and Agents' — RAG Architecture & Retrieval Algorithms; roadmap.sh ai-engineer (embeddings, chunking, indexing)"
+    },
+    {
+      "slug": "tools-function-calling",
+      "keywords": [
+        {
+          "term": { "en": "Tool definition", "es": "Definición de herramienta" },
+          "def": {
+            "en": "The name, description, and parameter schema the model reads to decide whether and how to call your function; an API contract for a reader who can't ask questions.",
+            "es": "El nombre, la descripción y el esquema de parámetros que el modelo lee para decidir si llamar tu función y cómo; un contrato de API para un lector que no puede preguntar."
+          }
+        },
+        {
+          "term": { "en": "Agent-Computer Interface (ACI)", "es": "Interfaz Agente-Computadora (ACI)" },
+          "def": {
+            "en": "The surface the model uses to act on the world; it deserves the same design care as a human-facing UI.",
+            "es": "La superficie que el modelo usa para actuar sobre el mundo; merece el mismo cuidado de diseño que una UI para humanos."
+          }
+        },
+        {
+          "term": { "en": "JSON Schema", "es": "Esquema JSON" },
+          "def": {
+            "en": "The typed structure declaring each parameter's type, allowed values, and requiredness so the model emits well-formed arguments.",
+            "es": "La estructura tipada que declara el tipo de cada parámetro, sus valores permitidos y si es obligatorio, para que el modelo emita argumentos bien formados."
+          }
+        },
+        {
+          "term": { "en": "Enum constraint", "es": "Restricción enum" },
+          "def": {
+            "en": "A fixed set of allowed string values for a parameter; it stops the model from inventing free-text garbage.",
+            "es": "Un conjunto fijo de valores de cadena permitidos para un parámetro; impide que el modelo invente texto libre basura."
+          }
+        },
+        {
+          "term": { "en": "Instructive error", "es": "Error instructivo" },
+          "def": {
+            "en": "A tool error message that names the problem and the fix, letting the model self-correct on the next turn instead of looping.",
+            "es": "Un mensaje de error de herramienta que nombra el problema y la solución, dejando que el modelo se autocorrija en el siguiente turno en vez de entrar en bucle."
+          }
+        }
+      ],
+      "example": {
+        "scenario": {
+          "en": "Agents keep calling get_data(id) with the wrong id format and picking it over a similarly vague lookup(q) tool.",
+          "es": "Los agentes siguen llamando get_data(id) con el formato de id equivocado y la eligen sobre una herramienta lookup(q) igual de vaga."
+        },
+        "walkthrough": {
+          "en": "Baseline: on 100 eval turns the model calls the right tool with valid args only 61 times. You rename get_data to get_order_status, add a one-line description ('returns shipping state for a customer order; use only for orders from the last 90 days'), constrain the id to a documented format with one worked example ('ORD-8842'), and delete the overlapping lookup tool. You also change the error from '400 bad request' to 'order_id must match ORD-<digits>; got 8842, try ORD-8842'. Correct-call rate rises to 94/100, and the remaining 6 now recover on the retry because the error told the model exactly what to fix. No model change, only interface design.",
+          "es": "Línea base: en 100 turnos de eval el modelo llama la herramienta correcta con argumentos válidos solo 61 veces. Renombras get_data a get_order_status, agregas una descripción de una línea ('devuelve el estado de envío de un pedido; úsala solo para pedidos de los últimos 90 días'), restringes el id a un formato documentado con un ejemplo resuelto ('ORD-8842'), y eliminas la herramienta lookup que se solapaba. También cambias el error de '400 bad request' a 'order_id debe coincidir con ORD-<dígitos>; recibí 8842, intenta ORD-8842'. La tasa de llamada correcta sube a 94/100, y los 6 restantes ahora se recuperan en el reintento porque el error le dijo al modelo exactamente qué arreglar. Sin cambiar el modelo, solo diseño de interfaz."
+        }
+      },
+      "pitfalls": [
+        {
+          "en": "Vague names and descriptions (get_data, do_it): the model can't infer intent it was never told.",
+          "es": "Nombres y descripciones vagas (get_data, do_it): el modelo no puede inferir una intención que nunca se le dijo."
+        },
+        {
+          "en": "Overlapping tools (search vs lookup vs find): ambiguity makes the model pick wrong and it's hard to debug why.",
+          "es": "Herramientas que se solapan (search vs lookup vs find): la ambigüedad hace que el modelo elija mal y es difícil depurar por qué."
+        },
+        {
+          "en": "Free-text parameters where an enum belongs: the model passes garbage strings you then have to defend against.",
+          "es": "Parámetros de texto libre donde correspondía un enum: el modelo pasa cadenas basura contra las que luego tienes que defenderte."
+        },
+        {
+          "en": "Cryptic error returns ('500', 'invalid'): the model can't self-correct and loops on the same failing call.",
+          "es": "Errores crípticos devueltos ('500', 'invalid'): el modelo no puede autocorregirse y entra en bucle con la misma llamada fallida."
+        }
+      ],
+      "analogy": {
+        "en": "Write the tool like the docstring of a public library function used by a developer who will never read your source and can't message you. Every gap in the doc becomes a wrong guess in production.",
+        "es": "Escribe la herramienta como el docstring de una función de librería pública que usa un desarrollador que nunca leerá tu código y no puede escribirte. Cada hueco en la documentación se vuelve una adivinanza equivocada en producción."
+      },
+      "depth": {
+        "en": "Design for the token distance between arguments and mistakes. Prefer absolute over relative inputs (a full ISO date beats 'last Tuesday', which the model must compute and often gets wrong), and make illegal states unrepresentable in the schema so a bad call fails at validation, not deep inside your handler.",
+        "es": "Diseña pensando en la distancia entre argumentos y errores. Prefiere entradas absolutas sobre relativas (una fecha ISO completa le gana a 'el martes pasado', que el modelo debe calcular y suele equivocar), y haz que los estados ilegales no sean representables en el esquema para que una mala llamada falle en la validación, no dentro de tu handler."
+      },
+      "code": {
+        "lang": "json",
+        "snippet": "{\n  \"name\": \"get_order_status\",\n  \"description\": \"Return the shipping state of a customer order. Use ONLY for orders placed in the last 90 days. Do not use for refunds; call issue_refund instead.\",\n  \"input_schema\": {\n    \"type\": \"object\",\n    \"properties\": {\n      \"order_id\": {\n        \"type\": \"string\",\n        \"description\": \"Order id in the form ORD-<digits>, e.g. 'ORD-8842'.\",\n        \"pattern\": \"^ORD-[0-9]+$\"\n      },\n      \"include_history\": {\n        \"type\": \"boolean\",\n        \"description\": \"If true, include the full status timeline. Default false.\"\n      }\n    },\n    \"required\": [\"order_id\"]\n  }\n}",
+        "caption": {
+          "en": "A tool schema written to docstring quality: scoped purpose, a worked example, a format the schema enforces.",
+          "es": "Un esquema de herramienta escrito a calidad de docstring: propósito acotado, un ejemplo resuelto, un formato que el esquema hace cumplir."
+        },
+        "annotations": [
+          {
+            "line": 3,
+            "note": {
+              "en": "Description states purpose, the 90-day boundary, and when NOT to use it, redirecting to the right tool.",
+              "es": "La descripción indica el propósito, el límite de 90 días y cuándo NO usarla, redirigiendo a la herramienta correcta."
+            }
+          },
+          {
+            "line": 9,
+            "note": {
+              "en": "One worked example inline removes the format guessing that causes most bad calls.",
+              "es": "Un ejemplo resuelto en línea elimina la adivinanza de formato que causa la mayoría de las malas llamadas."
+            }
+          },
+          {
+            "line": 10,
+            "note": {
+              "en": "A regex pattern makes an illegal id fail at validation, not deep inside your handler.",
+              "es": "Un patrón regex hace que un id ilegal falle en la validación, no dentro de tu handler."
+            }
+          }
+        ]
+      },
+      "architecture": {
+        "kind": "compare",
+        "caption": {
+          "en": "A tool definition the model can't use versus one it can.",
+          "es": "Una definición de herramienta que el modelo no puede usar frente a una que sí."
+        },
+        "left": {
+          "title": { "en": "get_data(id)", "es": "get_data(id)" },
+          "points": [
+            { "en": "Name says nothing about scope", "es": "El nombre no dice nada del alcance" },
+            { "en": "No format, no example for id", "es": "Sin formato ni ejemplo para id" },
+            { "en": "Overlaps with lookup and find", "es": "Se solapa con lookup y find" },
+            { "en": "Errors return bare '400'", "es": "Los errores devuelven un '400' pelado" }
+          ]
+        },
+        "right": {
+          "title": { "en": "get_order_status(order_id)", "es": "get_order_status(order_id)" },
+          "points": [
+            { "en": "Name and doc scope the use", "es": "El nombre y la doc acotan el uso" },
+            { "en": "Pattern plus 'ORD-8842' example", "es": "Patrón más ejemplo 'ORD-8842'" },
+            { "en": "One tool per job, no overlap", "es": "Una herramienta por tarea, sin solape" },
+            { "en": "Errors name the fix to retry", "es": "Los errores nombran el arreglo para reintentar" }
+          ]
+        }
+      },
+      "source": "Anthropic, 'Building Effective Agents' — the augmented LLM & Agent-Computer Interface (ACI) design; roadmap.sh ai-engineer (function-calling)"
+    }
+  ]
+}

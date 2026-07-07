@@ -1,0 +1,180 @@
+{
+ "lessonId": "execution-delivery-l5",
+ "concepts": [
+  {
+   "slug": "observability-high-cardinality",
+   "keywords": [
+    {
+     "term": {"en": "Cardinality", "es": "Cardinalidad"},
+     "def": {"en": "The count of distinct values a field can hold. Region is low cardinality (a few dozen); user ID or request ID is high cardinality (millions to unbounded).", "es": "La cantidad de valores distintos que puede tomar un campo. La región es de baja cardinalidad (unas decenas); el ID de usuario o de solicitud es de alta cardinalidad (millones o ilimitado)."}
+    },
+    {
+     "term": {"en": "Wide event", "es": "Evento ancho"},
+     "def": {"en": "One structured record emitted per unit of work carrying dozens to hundreds of context fields, instead of many pre-aggregated counters.", "es": "Un registro estructurado emitido por unidad de trabajo que lleva decenas o cientos de campos de contexto, en vez de muchos contadores preagregados."}
+    },
+    {
+     "term": {"en": "Dimension", "es": "Dimensión"},
+     "def": {"en": "A field you can group or filter by after the fact (build SHA, flag state, region). Wide events let any field be a dimension.", "es": "Un campo por el que puedes agrupar o filtrar después (SHA del build, estado del flag, región). Los eventos anchos permiten que cualquier campo sea una dimensión."}
+    },
+    {
+     "term": {"en": "Cardinality explosion", "es": "Explosión de cardinalidad"},
+     "def": {"en": "Metric systems create one time series per label-value combination, so adding a high-cardinality label multiplies series count and cost until the backend falls over.", "es": "Los sistemas de métricas crean una serie de tiempo por cada combinación de etiqueta y valor, así que agregar una etiqueta de alta cardinalidad multiplica el número de series y el costo hasta tumbar el backend."}
+    },
+    {
+     "term": {"en": "Unknown-unknowns", "es": "Incógnitas desconocidas"},
+     "def": {"en": "Failure modes you didn't anticipate and therefore never built a dashboard or alert for. Wide events let you investigate them without shipping new instrumentation.", "es": "Modos de falla que no anticipaste y para los que nunca armaste un tablero ni una alerta. Los eventos anchos permiten investigarlos sin desplegar instrumentación nueva."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "p99 checkout latency jumps from 240ms to 1.9s, but the service-wide error rate and CPU look normal. The golden-signal dashboard shows nothing actionable.", "es": "La latencia p99 del checkout salta de 240ms a 1.9s, pero la tasa de errores global y la CPU se ven normales. El tablero de señales de oro no muestra nada accionable."},
+    "walkthrough": {"en": "You query the last hour of wide events, group by build SHA, and see the slow tail is 100% on build 4471. You add a second grouping by region: it's only sa-east-1. A third by payment_provider: only the new provider, and only when flag checkout_v2 is on. Four filters, about ninety seconds, no redeploy. The combination — build 4471 + Brazil + new provider + flag on — is 0.3% of traffic, which is why the aggregate never moved. You disable the flag for that region and the tail drops back to 250ms. A metrics-only stack would have forced you to guess, add a labeled counter, deploy, and wait for the next occurrence.", "es": "Consultas la última hora de eventos anchos, agrupas por SHA del build y ves que la cola lenta está 100% en el build 4471. Agregas una segunda agrupación por región: solo es sa-east-1. Una tercera por payment_provider: solo el proveedor nuevo, y solo cuando el flag checkout_v2 está activo. Cuatro filtros, unos noventa segundos, sin redesplegar. La combinación — build 4471 + Brasil + proveedor nuevo + flag activo — es el 0.3% del tráfico, por eso el agregado nunca se movió. Desactivas el flag para esa región y la cola vuelve a 250ms. Un stack solo de métricas te habría obligado a adivinar, agregar un contador etiquetado, desplegar y esperar la siguiente ocurrencia."}
+   },
+   "pitfalls": [
+    {"en": "Stuffing user ID and request ID into metric labels. That's a cardinality explosion — one series per value — and it kills the metrics backend or your bill. High-cardinality fields belong in events, not labels.", "es": "Meter el ID de usuario y el ID de solicitud en etiquetas de métricas. Eso es una explosión de cardinalidad — una serie por valor — y revienta el backend de métricas o tu factura. Los campos de alta cardinalidad van en eventos, no en etiquetas."},
+    {"en": "Head sampling at a flat 1% before you know which requests matter, so the rare failing slice gets sampled away. Prefer tail-based or dynamic sampling that keeps errors and slow outliers.", "es": "Muestrear a la cabeza con un 1% plano antes de saber qué solicitudes importan, de modo que el corte raro que falla se pierde en el muestreo. Prefiere muestreo por cola o dinámico que conserve errores y outliers lentos."},
+    {"en": "Emitting events without a stable schema or shared field names, so region is 'region' in one service and 'geo' in another and you can't group across them.", "es": "Emitir eventos sin un esquema estable ni nombres de campo compartidos, de modo que la región es 'region' en un servicio y 'geo' en otro y no puedes agrupar entre ambos."},
+    {"en": "Deleting the golden-signal alerts once you have wide events. Aggregates are still what page you; events are what you reach for after the page. Keep both.", "es": "Borrar las alertas de señales de oro una vez que tienes eventos anchos. Los agregados siguen siendo lo que te despierta; los eventos son lo que usas después de la alerta. Conserva ambos."}
+   ],
+   "analogy": {"en": "Metrics are the smoke detector: one loud signal that says something is burning. Wide events are the building's full sensor log — every door, room, and vent — that lets you find which unit, which floor, and which appliance, after the alarm rings.", "es": "Las métricas son el detector de humo: una señal fuerte que dice que algo se quema. Los eventos anchos son la bitácora completa de sensores del edificio — cada puerta, cuarto y ducto — que te deja hallar qué unidad, qué piso y qué aparato, después de que suena la alarma."},
+   "code": {
+    "lang": "json",
+    "snippet": "{\n  \"event\": \"http.request\",\n  \"timestamp\": \"2026-07-06T14:02:11.418Z\",\n  \"trace_id\": \"a1f3...9c\",\n  \"route\": \"/checkout\",\n  \"http.status\": 200,\n  \"duration_ms\": 1873,\n  \"user_id\": \"u_88431920\",\n  \"region\": \"sa-east-1\",\n  \"build_sha\": \"4471\",\n  \"flags\": { \"checkout_v2\": true },\n  \"payment_provider\": \"nova\",\n  \"db_pool_wait_ms\": 12,\n  \"downstream_ms\": { \"payments\": 1610 }\n}",
+    "caption": {"en": "One wide event per request. Every field is a dimension you can group and filter by later; duration_ms and downstream_ms localize the latency, the rest isolates who and where.", "es": "Un evento ancho por solicitud. Cada campo es una dimensión por la que puedes agrupar y filtrar después; duration_ms y downstream_ms localizan la latencia, el resto aísla el quién y el dónde."},
+    "annotations": [
+     {"line": 8, "note": {"en": "High-cardinality: fine in an event, fatal as a metric label.", "es": "Alta cardinalidad: aceptable en un evento, fatal como etiqueta de métrica."}},
+     {"line": 11, "note": {"en": "Flag state captured inline, so you can slice on-vs-off without a redeploy.", "es": "El estado del flag queda capturado en línea, así puedes cortar activo-vs-inactivo sin redesplegar."}},
+     {"line": 14, "note": {"en": "Per-dependency timing pins where the 1.87s actually went.", "es": "El tiempo por dependencia fija a dónde se fueron de verdad los 1.87s."}}
+    ]
+   },
+   "architecture": {
+    "kind": "compare",
+    "caption": {"en": "Pre-aggregated metrics vs wide events: what each one is good at.", "es": "Métricas preagregadas vs eventos anchos: para qué sirve cada uno."},
+    "left": {
+     "title": {"en": "Pre-aggregated metrics", "es": "Métricas preagregadas"},
+     "points": [
+      {"en": "Cheap, fast, great for detection and alerting on known signals", "es": "Baratas, rápidas, ideales para detección y alertas sobre señales conocidas"},
+      {"en": "Fixed dimensions chosen at instrumentation time", "es": "Dimensiones fijas elegidas al instrumentar"},
+      {"en": "Break on high cardinality (one series per value)", "es": "Se rompen con alta cardinalidad (una serie por valor)"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Wide high-cardinality events", "es": "Eventos anchos de alta cardinalidad"},
+     "points": [
+      {"en": "Any field becomes a dimension after the fact", "es": "Cualquier campo se vuelve dimensión después del hecho"},
+      {"en": "Answers unknown-unknowns without a redeploy", "es": "Responde incógnitas desconocidas sin redesplegar"},
+      {"en": "Storage and query cost is real, so you sample", "es": "El costo de almacenamiento y consulta es real, así que muestreas"}
+     ]
+    }
+   },
+   "visual": {"widgetId": "latency-budget"},
+   "source": "Majors, Fong-Jones & Miranda, 'Observability Engineering' (O'Reilly, 2022) + Google SRE Book, 'Monitoring Distributed Systems' Ch.6"
+  },
+  {
+   "slug": "execution-leadership-driving-large-ambiguous",
+   "keywords": [
+    {
+     "term": {"en": "Critical path", "es": "Ruta crítica"},
+     "def": {"en": "The longest chain of dependent work in a project; its length equals the earliest possible finish date. Shortening anything off it moves the date zero days.", "es": "La cadena más larga de trabajo dependiente de un proyecto; su longitud es igual a la fecha de entrega más temprana posible. Acortar algo fuera de ella adelanta la fecha cero días."}
+    },
+    {
+     "term": {"en": "Long pole", "es": "Cuello de botella"},
+     "def": {"en": "The single item on the critical path most likely to slip and drag the whole date. Your attention belongs here first.", "es": "El único elemento de la ruta crítica con más probabilidad de retrasarse y arrastrar toda la fecha. Tu atención pertenece aquí primero."}
+    },
+    {
+     "term": {"en": "Thin vertical slice", "es": "Rebanada vertical delgada"},
+     "def": {"en": "A small end-to-end increment that delivers real, standalone value, so shifting priorities still leave you with banked progress instead of a half-rewrite.", "es": "Un incremento pequeño de extremo a extremo que entrega valor real y autónomo, de modo que un cambio de prioridades te deja con avance en el banco en vez de media reescritura."}
+    },
+    {
+     "term": {"en": "Spike", "es": "Prueba de concepto"},
+     "def": {"en": "A short, time-boxed investigation whose only goal is to answer a risky unknown (can the vendor API do X?) before you commit the plan to it.", "es": "Una investigación corta y acotada en tiempo cuyo único fin es responder una incógnita riesgosa (¿la API del proveedor puede hacer X?) antes de comprometer el plan a ella."}
+    },
+    {
+     "term": {"en": "Deliberate escalation", "es": "Escalamiento deliberado"},
+     "def": {"en": "Using the chain of authority as a tool to force a stalled decision, while keeping ownership — not handing off the problem and waiting.", "es": "Usar la cadena de autoridad como herramienta para forzar una decisión atascada, conservando la responsabilidad — no ceder el problema y esperar."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "You own \"migrate everyone off the legacy auth service by Q3.\" The replacement API is three weeks of work you understand well. Four downstream teams must each cut over after your API stabilizes, and one of them is frozen for a SOC 2 audit until late Q3.", "es": "Eres dueño de \"migrar a todos fuera del servicio de autenticación heredado para el tercer trimestre\". La API de reemplazo son tres semanas de trabajo que dominas bien. Cuatro equipos consumidores deben migrar cada uno después de que tu API se estabilice, y uno de ellos está congelado por una auditoría SOC 2 hasta finales del trimestre."},
+    "walkthrough": {"en": "You draw the dependency chain instead of opening your editor. The schema change (3 weeks) runs in parallel and isn't the constraint. The four consumers are serialized behind your stable API: at ~2 weeks each that's an 8-week tail, and the audit-frozen team can't even start until the freeze lifts. So the true timeline is 'API-stable date + audit-lift + that team's 2 weeks,' and the audit is the long pole — not your code. The high-leverage move in week 1 is not writing the API; it's a one-page doc to the audit sponsor pre-negotiating an exception or an early cutover window, plus asking the other three teams to build against a mocked contract so they aren't idle. You de-risk the scariest unknown first: a one-week spike proving the token-refresh flow works against the new provider, because if it doesn't the whole plan changes. Ship each team's cutover as its own slice so a Q3 slip on the frozen team still leaves three teams migrated and value banked.", "es": "Dibujas la cadena de dependencias en vez de abrir el editor. El cambio de esquema (3 semanas) corre en paralelo y no es la restricción. Los cuatro consumidores están serializados detrás de tu API estable: a ~2 semanas cada uno son 8 semanas de cola, y el equipo congelado por la auditoría ni siquiera puede empezar hasta que se levante el congelamiento. Así que el cronograma real es 'fecha de API estable + levantamiento de auditoría + las 2 semanas de ese equipo', y la auditoría es el cuello de botella — no tu código. El movimiento de mayor palanca en la semana 1 no es escribir la API; es un documento de una página al patrocinador de la auditoría negociando por adelantado una excepción o una ventana de migración temprana, más pedir a los otros tres equipos que construyan contra un contrato simulado para que no queden ociosos. Reduces primero la incógnita más temible: una prueba de concepto de una semana que demuestre que el flujo de refresco de token funciona contra el proveedor nuevo, porque si no funciona todo el plan cambia. Entrega la migración de cada equipo como su propia rebanada, para que un retraso en el equipo congelado aún deje tres equipos migrados y valor en el banco."}
+   },
+   "pitfalls": [
+    {"en": "Starting with the code because it's the part you enjoy and understand, then discovering in month four that a sign-off nobody owned was the real deadline.", "es": "Empezar por el código porque es la parte que disfrutas y dominas, y descubrir en el mes cuatro que una aprobación que nadie tenía a su cargo era la fecha límite real."},
+    {"en": "Treating escalation as handing the problem up and waiting. Escalation forces a specific decision by a specific date; you still own the thread afterward.", "es": "Tratar el escalamiento como ceder el problema hacia arriba y esperar. El escalamiento fuerza una decisión concreta en una fecha concreta; tú sigues siendo dueño del hilo después."},
+    {"en": "Adding people to a late project on the critical path. A serialized dependency doesn't parallelize because you threw bodies at it, and onboarding them slows the people who were making progress.", "es": "Sumar gente a un proyecto retrasado en la ruta crítica. Una dependencia serializada no se paraleliza porque le eches personas encima, y ponerlas al día frena a quienes sí avanzaban."},
+    {"en": "Polishing off-critical-path work to a shine. It can be perfect and still move the finish date exactly zero days.", "es": "Pulir hasta el brillo el trabajo fuera de la ruta crítica. Puede quedar perfecto y aun así adelantar la fecha de entrega exactamente cero días."}
+   ],
+   "analogy": {"en": "Running the initiative is air traffic control, not flying the plane. Your job isn't to be the best pilot on any one aircraft; it's to see every plane in the sky, know which landing is the constraint, and clear it — a delay there strands everyone.", "es": "Dirigir la iniciativa es control de tráfico aéreo, no pilotar el avión. Tu trabajo no es ser el mejor piloto de una aeronave; es ver todos los aviones en el cielo, saber cuál aterrizaje es la restricción y despejarlo — un retraso ahí deja a todos varados."},
+   "depth": {"en": "The critical path is not static: as you unblock the long pole, a different chain often becomes the new constraint, so re-derive it at each milestone rather than trusting the plan you drew on day one. This is also why buffer belongs on the critical path specifically, not spread evenly across every task — protecting slack on off-path work is wasted insurance.", "es": "La ruta crítica no es estática: a medida que desbloqueas el cuello de botella, otra cadena suele volverse la nueva restricción, así que vuelve a derivarla en cada hito en vez de confiar en el plan que dibujaste el primer día. Por eso el colchón pertenece a la ruta crítica en específico, no repartido por igual entre todas las tareas — proteger holgura en trabajo fuera de la ruta es un seguro desperdiciado."},
+   "architecture": {
+    "kind": "flow",
+    "caption": {"en": "The auth migration critical path: the long pole is the audit freeze, not the code.", "es": "La ruta crítica de la migración de auth: el cuello de botella es el congelamiento por auditoría, no el código."},
+    "nodes": [
+     {"label": {"en": "Replacement API stable (3 wk)", "es": "API de reemplazo estable (3 sem)"}, "note": {"en": "Parallel with schema; not the constraint", "es": "Paralelo al esquema; no es la restricción"}},
+     {"label": {"en": "Token-refresh spike (1 wk)", "es": "Prueba de token-refresh (1 sem)"}, "note": {"en": "De-risk the scariest unknown first", "es": "Reduce primero la incógnita más temible"}},
+     {"label": {"en": "3 teams cut over on mock contract", "es": "3 equipos migran con contrato simulado"}, "note": {"en": "Kept off the idle list", "es": "No se quedan ociosos"}},
+     {"label": {"en": "Audit freeze lifts", "es": "Se levanta el congelamiento"}, "note": {"en": "The long pole — pre-negotiate now", "es": "El cuello de botella — negócialo por adelantado"}},
+     {"label": {"en": "4th team cuts over (2 wk)", "es": "El 4º equipo migra (2 sem)"}, "note": {"en": "Sets the true finish date", "es": "Fija la fecha de entrega real"}}
+    ]
+   },
+   "source": "Tanya Reilly, \"The Staff Engineer's Path\" (O'Reilly, 2022), Part II \"Execution,\" Chapter 5 \"Leading Big Projects.\" Complemented by Will Larson's writing on driving execution and the Tech Lead archetype in \"Staff Engineer: Leadership Beyond the Management Track\" and on StaffEng.com."
+  },
+  {
+   "slug": "chaos-resilience-engineering-fault-injection",
+   "keywords": [
+    {
+     "term": {"en": "Steady state", "es": "Estado estable"},
+     "def": {"en": "A measurable baseline of normal system behavior (e.g. error rate < 0.1%, p99 < 300ms) that a chaos experiment expects to hold, or the hypothesis is falsified.", "es": "Una línea base medible del comportamiento normal del sistema (p. ej. tasa de errores < 0.1%, p99 < 300ms) que un experimento de caos espera que se mantenga, o la hipótesis queda refutada."}
+    },
+    {
+     "term": {"en": "Blast radius", "es": "Radio de impacto"},
+     "def": {"en": "The scope of what an experiment can affect — one host, one AZ, 1% of traffic. You start small and expand only after the small test holds.", "es": "El alcance de lo que un experimento puede afectar — un host, una zona, 1% del tráfico. Empiezas pequeño y expandes solo después de que la prueba pequeña se sostiene."}
+    },
+    {
+     "term": {"en": "Abort switch", "es": "Botón de corte"},
+     "def": {"en": "A pre-wired, fast way to halt the experiment and restore normal behavior the instant steady state breaks. No abort switch, no experiment.", "es": "Un mecanismo preconfigurado y rápido para detener el experimento y restaurar el comportamiento normal en cuanto se rompe el estado estable. Sin botón de corte, no hay experimento."}
+    },
+    {
+     "term": {"en": "Game day", "es": "Game day"},
+     "def": {"en": "A scheduled, staffed session where the team injects a realistic failure and watches the system and runbooks respond, on a calm weekday.", "es": "Una sesión agendada y con gente asignada donde el equipo inyecta una falla realista y observa cómo responden el sistema y los runbooks, en un día tranquilo entre semana."}
+    },
+    {
+     "term": {"en": "RTO", "es": "RTO"},
+     "def": {"en": "Recovery Time Objective: the target time to restore service after a failure. Chaos measures the real RTO against the promised one.", "es": "Recovery Time Objective: el tiempo objetivo para restaurar el servicio tras una falla. El caos mide el RTO real contra el prometido."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "The DR plan promises a 15-minute RTO on regional failover for a payments API with a 99.95% SLO. It has never been tested end to end; the runbook was last touched eight months ago.", "es": "El plan de DR promete un RTO de 15 minutos en el failover regional de una API de pagos con un SLO de 99.95%. Nunca se probó de extremo a extremo; el runbook se tocó por última vez hace ocho meses."},
+    "walkthrough": {"en": "Tuesday 10am, team assembled, abort switch armed. Hypothesis written first: 'if we black-hole all traffic to us-east-1, the load balancer reroutes to us-west-2 within 15 minutes and error rate stays under 0.05%.' Steady state before injection: 0.02% errors, p99 260ms. You start the fault. The reroute begins, but the standby database needs a manual promotion step the runbook never mentioned; the on-call spends 40 minutes finding the buried command. Actual RTO: 71 minutes, not 15. Worse, us-west-2 was provisioned for 1x steady load and saturates at 1.8x, so p99 hits 4s until you scale it. You hit abort, restore, and walk out with three concrete deliverables: automate the DB promotion, right-size the standby region to 2x, and rewrite the runbook against what actually happened. None of these would have surfaced in a document review.", "es": "Martes 10am, equipo reunido, botón de corte listo. Hipótesis escrita primero: 'si bloqueamos todo el tráfico a us-east-1, el balanceador redirige a us-west-2 en menos de 15 minutos y la tasa de errores se mantiene bajo 0.05%'. Estado estable antes de inyectar: 0.02% de errores, p99 260ms. Inicias la falla. La redirección arranca, pero la base de datos en espera necesita un paso manual de promoción que el runbook nunca mencionó; el on-call pasa 40 minutos buscando el comando sepultado. RTO real: 71 minutos, no 15. Peor aún, us-west-2 se aprovisionó para 1x de carga estable y se satura a 1.8x, así que el p99 llega a 4s hasta que la escalas. Cortas, restauras y sales con tres entregables concretos: automatizar la promoción de la base de datos, redimensionar la región en espera a 2x y reescribir el runbook contra lo que realmente pasó. Nada de esto habría salido en una revisión de documento."}
+   },
+   "pitfalls": [
+    {"en": "Running an experiment without a written steady-state metric. Without a baseline you can't tell success from luck — you're just breaking things and hoping.", "es": "Correr un experimento sin una métrica de estado estable escrita. Sin línea base no distingues el éxito de la suerte — solo estás rompiendo cosas y cruzando los dedos."},
+    {"en": "Injecting chaos in production before you have monitoring and SLOs. On a system you can't measure, you don't learn anything; you just cause an outage.", "es": "Inyectar caos en producción antes de tener monitoreo y SLO. En un sistema que no puedes medir no aprendes nada; solo causas una caída."},
+    {"en": "Skipping the abort switch or the small blast radius, so a surprising result becomes a real, wide incident instead of a contained finding.", "es": "Saltarse el botón de corte o el radio de impacto pequeño, de modo que un resultado sorprendente se vuelve un incidente real y amplio en vez de un hallazgo contenido."},
+    {"en": "Treating chaos as a one-time stunt. The value is the recurring muscle — findings decay as the system changes, so game days go on a schedule, not a to-do list.", "es": "Tratar el caos como una hazaña de una sola vez. El valor es el músculo recurrente — los hallazgos caducan a medida que el sistema cambia, así que los game days van en un calendario, no en una lista de pendientes."}
+   ],
+   "analogy": {"en": "It's a fire drill for your architecture. You don't wait for a real fire to learn the back stairwell is chained shut; you walk the route on a calm afternoon so the one gap you find is a memo, not a casualty.", "es": "Es un simulacro de incendio para tu arquitectura. No esperas un incendio real para descubrir que la escalera trasera está encadenada; recorres la ruta una tarde tranquila para que la única falla que encuentres sea un memo, no una víctima."},
+   "code": {
+    "lang": "yaml",
+    "snippet": "# Chaos experiment: kill one replica, expect fast reroute\nsteady_state:\n  metric: error_rate\n  tolerance: \"< 0.05%\"      # falsified if breached\nhypothesis: \"reroute completes < 5s, SLO holds\"\nmethod:\n  action: pod-kill\n  selector: { app: checkout, region: sa-east-1 }\n  count: 1                  # blast radius: one replica\nabort:\n  when: \"error_rate > 0.05% for 30s\"\n  do: halt-and-restore      # fast rollback\nschedule: \"every Tue 10:00\"  # recurring game day",
+    "caption": {"en": "A fault-injection spec that is an experiment, not vandalism: steady state and hypothesis first, a one-replica blast radius, an automatic abort, and a schedule.", "es": "Una especificación de inyección de fallas que es un experimento, no vandalismo: estado estable e hipótesis primero, un radio de impacto de una réplica, un corte automático y un calendario."},
+    "annotations": [
+     {"line": 4, "note": {"en": "The metric that, if breached, falsifies the hypothesis and triggers abort.", "es": "La métrica que, de romperse, refuta la hipótesis y dispara el corte."}},
+     {"line": 10, "note": {"en": "Blast radius held to a single replica before scaling the experiment up.", "es": "Radio de impacto limitado a una sola réplica antes de escalar el experimento."}},
+     {"line": 12, "note": {"en": "Automatic abort wired to steady state; this is the non-negotiable safety line.", "es": "Corte automático conectado al estado estable; esta es la línea de seguridad innegociable."}}
+    ]
+   },
+   "architecture": {
+    "kind": "flow",
+    "caption": {"en": "Prerequisite order and the experiment loop. Chaos comes last, never first.", "es": "El orden de prerrequisitos y el lazo del experimento. El caos va al final, nunca al inicio."},
+    "nodes": [
+     {"label": {"en": "Monitoring", "es": "Monitoreo"}, "note": {"en": "You must be able to measure before you break", "es": "Debes poder medir antes de romper"}},
+     {"label": {"en": "SLOs", "es": "SLO"}, "note": {"en": "Define what 'still healthy' means", "es": "Definen qué significa 'sigue sano'"}},
+     {"label": {"en": "Hypothesis + steady state", "es": "Hipótesis + estado estable"}, "note": {"en": "Written before injecting", "es": "Escritos antes de inyectar"}},
+     {"label": {"en": "Inject, small blast radius", "es": "Inyecta, radio pequeño"}, "note": {"en": "Abort switch armed", "es": "Botón de corte listo"}},
+     {"label": {"en": "Measure the gap", "es": "Mide la brecha"}, "note": {"en": "Real RTO vs promised; that gap is the deliverable", "es": "RTO real vs prometido; esa brecha es el entregable"}}
+    ]
+   },
+   "source": "Kripa Krishnan, \"Weathering the Unexpected\" (Google DiRT program), ACM Queue, vol. 10, no. 9, 2012; complemented by \"Principles of Chaos Engineering\" (principlesofchaos.org)."
+  }
+ ]
+}
