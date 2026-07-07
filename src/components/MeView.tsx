@@ -9,6 +9,7 @@ import { m } from "@/i18n/messages";
 import { MODULES_BY_ID } from "@/content/registry";
 import { AXIS_BY_ID, BAND_RANGE } from "@/lib/axes";
 import { CountUp } from "./Motion";
+import { BadgeShelf } from "./BadgeShelf";
 
 export function MeView({ locale }: { locale: Locale }) {
   const [p, setP] = useState<Progress | null>(null);
@@ -70,6 +71,9 @@ export function MeView({ locale }: { locale: Locale }) {
           <Link href={`/${locale}/assess`} className="btn btn-primary">{m("landing.cta", locale)}</Link>
         </div>
       )}
+
+      {/* Trophy shelf — earned badges bright, locked ones dimmed with their path. */}
+      <BadgeShelf locale={locale} progress={p} />
 
       {p.mastered.length > 0 && (
         <div className="stack">

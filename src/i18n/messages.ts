@@ -158,6 +158,17 @@ export const MESSAGES = {
   "check.practice":     { en: "Practice", es: "Práctica" },
   "check.practiceIntro":{ en: "A quick hands-on check — no score, try as many times as you like.", es: "Una comprobación práctica rápida — sin puntaje, inténtalo las veces que quieras." },
   "check.skip":         { en: "Skip", es: "Saltar" },
+  "badge.shelf":        { en: "Trophy shelf", es: "Vitrina de trofeos" },
+  "badge.earned":       { en: "Earned", es: "Conseguido" },
+  "badge.locked":       { en: "Locked", es: "Bloqueado" },
+  "share.linkedin":     { en: "Share on LinkedIn", es: "Compartir en LinkedIn" },
+  "share.title":        { en: "Share what you've earned", es: "Comparte lo que lograste" },
+  "share.copy":         { en: "Copy details", es: "Copiar detalles" },
+  "share.copied":       { en: "Copied", es: "Copiado" },
+  "share.addProfile":   { en: "Add to LinkedIn profile", es: "Añadir al perfil de LinkedIn" },
+  "ach.earnedThis":     { en: "This credential recognizes:", es: "Esta credencial reconoce:" },
+  "ach.howEarned":      { en: "How it's earned", es: "Cómo se consigue" },
+  "ach.backToProgress": { en: "Back to your progress", es: "Volver a tu progreso" },
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES;
