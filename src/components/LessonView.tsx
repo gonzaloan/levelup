@@ -1,24 +1,25 @@
 "use client";
 // A Lesson — one clean, ordered learning flow for a domain×level cluster.
-// Stage 1 "learn": overview, then each concept one focused pane at a time
-// (explanation → schematic → key takeaways), a progress rail across concepts.
-// Stage 2 "check": the mid-lesson formative quiz. Stage 3 "done": the final
-// test (checkpoint) + the next lesson. This replaces the dense card grid with
-// a single obvious path: read → check → prove → continue.
+// Stage "learn": overview, then each concept one focused pane at a time
+// (ConceptPane). Stage "check": the mid-lesson formative quiz (MidQuiz). Stage
+// "practice": the novel hands-on checks (Practice). Stage "done": the final
+// test (checkpoint) + the next lesson. A single obvious path: read → check →
+// practice → prove → continue. Subcomponents live in ./lesson/.
 import { useState } from "react";
 import Link from "next/link";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import { AXIS_BY_ID, type Level } from "@/lib/axes";
-import { Schematic } from "./Schematic";
 import { SceneryBackground } from "./SceneryBackground";
 import { ConceptNav } from "./ConceptNav";
 import { ContextRail } from "./ContextRail";
-import { getWidget } from "./viz";
 import { markConceptsRead } from "@/lib/store";
 import { checksForLesson } from "@/lib/checks";
-import { CheckHost } from "./checks/CheckHost";
-import type { Lesson, Concept, ConceptLesson, QuizItem, CheckItem } from "@/lib/types";
+import { ConceptPane } from "./lesson/ConceptPane";
+import { MidQuiz } from "./lesson/MidQuiz";
+import { Practice } from "./lesson/Practice";
+import { para, lessonLevel, lessonAxisId } from "./lesson/util";
+import type { Lesson, Concept } from "@/lib/types";
 
 type Stage = "learn" | "check" | "practice" | "done";
 
@@ -120,7 +121,7 @@ export function LessonView({
       )}
 
       {stage === "check" && (
-        <Check locale={locale} items={lesson.midQuiz} track={track} onDone={afterCheck} />
+        <MidQuiz locale={locale} items={lesson.midQuiz} track={track} onDone={afterCheck} />
       )}
 
       {stage === "practice" && (
@@ -155,152 +156,9 @@ export function LessonView({
   );
 }
 
-function ConceptPane({ locale, lessonConcept, meta, index, total, track, onNext }: {
-  locale: Locale; lessonConcept: ConceptLesson; meta?: Concept; index: number; total: number; track: string; onNext: () => void;
-}) {
-  const [deep, setDeep] = useState(false);
-  const Widget = lessonConcept.visual ? getWidget(lessonConcept.visual.widgetId) : null;
-  return (
-    <section className="card lesson-content">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "var(--s-3)", marginBottom: "var(--s-3)" }}>
-        <span className="eyebrow">{m("lesson.step", locale)} {index + 1} {m("lesson.of", locale)} {total}</span>
-      </div>
-      <h2 style={{ fontSize: "var(--t-h3)", marginBottom: "var(--s-4)" }}>
-        {meta ? t(meta.title, locale) : lessonConcept.slug}
-      </h2>
-      {para(t(lessonConcept.explanation, locale)).map((p, i) => (
-        <p key={i} className="prose" style={{ marginBottom: "var(--s-3)" }}>{p}</p>
-      ))}
-
-      {/* Analogy callout — a plain-language handle on the idea. */}
-      {lessonConcept.analogy && (
-        <p className="lesson-analogy">
-          <span className="eyebrow">{m("lesson.analogy", locale)}</span> {t(lessonConcept.analogy, locale)}
-        </p>
-      )}
-
-      {/* Interactive widget takes priority; else the inline diagram. */}
-      {Widget ? (
-        <div style={{ margin: "var(--s-5) 0" }}>
-          <Widget locale={locale} track={track as "general" | "ai"} params={lessonConcept.visual!.params} />
-        </div>
-      ) : lessonConcept.diagram && lessonConcept.diagram.kind !== "none" ? (
-        <div style={{ margin: "var(--s-5) 0" }}>
-          <Schematic spec={lessonConcept.diagram} locale={locale} />
-        </div>
-      ) : null}
-
-      {/* Optional deeper read layer. */}
-      {lessonConcept.depth && (
-        <div style={{ marginTop: "var(--s-4)" }}>
-          <button className="btn btn-sm" aria-expanded={deep} onClick={() => setDeep((d) => !d)}>
-            {deep ? m("lesson.readLess", locale) : m("lesson.readMore", locale)}
-          </button>
-          {deep && para(t(lessonConcept.depth, locale)).map((p, i) => (
-            <p key={i} className="prose" style={{ marginTop: "var(--s-3)" }}>{p}</p>
-          ))}
-        </div>
-      )}
-
-      {/* Pitfalls callout. */}
-      {lessonConcept.pitfalls?.length ? (
-        <div className="lesson-pitfalls">
-          <p className="eyebrow">{m("lesson.pitfalls", locale)}</p>
-          <ul className="lesson-keypoints">
-            {lessonConcept.pitfalls.map((p, i) => <li key={i}>{t(p, locale)}</li>)}
-          </ul>
-        </div>
-      ) : null}
-
-      {(lessonConcept.source || meta?.source) && (
-        <p className="eyebrow" style={{ marginTop: "var(--s-4)", fontSize: "0.625rem", color: "var(--text-4)", letterSpacing: "0.08em" }}>
-          {m("lesson.source", locale)}: {lessonConcept.source ?? meta?.source}
-        </p>
-      )}
-
-      <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} style={{ marginTop: "var(--s-6)" }} onClick={onNext}>
-        {index + 1 < total ? m("lesson.markReadNext", locale) : m("lesson.startCheck", locale)} →
-      </button>
-    </section>
-  );
-}
-
-function Check({ locale, items, track, onDone }: { locale: Locale; items: QuizItem[]; track: string; onDone: () => void }) {
-  const [i, setI] = useState(0);
-  const [picked, setPicked] = useState<number | null>(null);
-  const item = items[i];
-  if (!item) { onDone(); return null; }
-  const revealed = picked !== null;
-  function next() {
-    if (i + 1 < items.length) { setI(i + 1); setPicked(null); }
-    else onDone();
-  }
-  return (
-    <div className="stack" style={{ gap: "var(--s-4)", marginTop: "var(--s-6)" }}>
-      <div>
-        <p className="eyebrow" style={{ color: "var(--track-accent)" }}>{m("lesson.check", locale)} · {i + 1}/{items.length}</p>
-        <p className="dim" style={{ fontSize: "var(--t-sm)", marginTop: 4 }}>{m("lesson.checkIntro", locale)}</p>
-      </div>
-      <div className="card">
-        <p style={{ color: "var(--text)", marginBottom: "var(--s-5)", fontSize: "1.0625rem" }}>{t(item.stem, locale)}</p>
-        <div className="stack">
-          {item.options.map((o, oi) => {
-            const isPicked = picked === oi;
-            const border = revealed ? (o.correct ? "var(--ok)" : isPicked ? "var(--bad)" : "var(--hairline)") : "var(--hairline)";
-            return (
-              <button key={oi} className="btn" disabled={revealed} onClick={() => !revealed && setPicked(oi)}
-                style={{ textAlign: "left", justifyContent: "flex-start", borderColor: border, background: "var(--surface-2)", alignItems: "flex-start", lineHeight: 1.45 }}>
-                {t(o.text, locale)}
-              </button>
-            );
-          })}
-        </div>
-        {revealed && (
-          <div style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: item.options[picked!].correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
-            <p className="eyebrow" style={{ color: item.options[picked!].correct ? "var(--ok)" : "var(--bad)", marginBottom: 6 }}>
-              {item.options[picked!].correct ? `✓ ${m("lesson.correct", locale)}` : `✗ ${m("lesson.notQuite", locale)}`}
-            </p>
-            <p style={{ fontSize: "var(--t-sm)", color: "var(--text)" }}>{t(item.options[picked!].rationale, locale)}</p>
-          </div>
-        )}
-        {revealed && (
-          <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} style={{ marginTop: "var(--s-4)" }} onClick={next}>
-            {i + 1 < items.length ? m("assess.next", locale) : m("cta.continue", locale)}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Formative practice: play through the lesson's checks one at a time, no score,
-// free retry (CheckHost owns retry). "Continue" advances; "Skip" is always there.
-function Practice({ locale, checks, track, onDone }: { locale: Locale; checks: CheckItem[]; track: string; onDone: () => void }) {
-  const [i, setI] = useState(0);
-  const item = checks[i];
-  if (!item) { onDone(); return null; }
-  function next() { if (i + 1 < checks.length) setI(i + 1); else onDone(); }
-  return (
-    <div className="stack" style={{ gap: "var(--s-4)", marginTop: "var(--s-6)", maxWidth: 720 }}>
-      <div>
-        <p className="eyebrow" style={{ color: "var(--track-accent)" }}>{m("check.practice", locale)} · {i + 1}/{checks.length}</p>
-        <p className="dim" style={{ fontSize: "var(--t-sm)", marginTop: 4 }}>{m("check.practiceIntro", locale)}</p>
-      </div>
-      <div className="card">
-        <CheckHost key={item.id} item={item} locale={locale} mode="formative" />
-        <div style={{ display: "flex", gap: "var(--s-3)", marginTop: "var(--s-5)" }}>
-          <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} onClick={next}>
-            {i + 1 < checks.length ? m("assess.next", locale) : m("cta.continue", locale)}
-          </button>
-          <button className="btn" onClick={next}>{m("check.skip", locale)}</button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
+// The compact progress rail across the lesson stages. Small + tightly coupled to
+// the stage machine, so it stays with the view.
 function LessonRail({ stage, idx, total, locale }: { stage: Stage; idx: number; total: number; locale: Locale }) {
-  // Represent: overview • concept dots • check • test
   const readCount = stage === "learn" ? Math.max(0, idx + 1) : total;
   const pct = stage === "done" ? 100 : stage === "practice" ? 95 : stage === "check" ? 90 : Math.round(((idx + 1) / (total + 1)) * 80);
   return (
@@ -314,16 +172,4 @@ function LessonRail({ stage, idx, total, locale }: { stage: Stage; idx: number; 
       </div>
     </div>
   );
-}
-
-// helpers
-function para(s: string): string[] { return s.split("\n").map((x) => x.trim()).filter(Boolean); }
-function lessonLevel(id: string): Level { return id.split("-").pop()!.toUpperCase() as Level; }
-function lessonAxisId(id: string): 1 | 2 | 3 | 4 | 5 | 6 {
-  const map: Record<string, 1 | 2 | 3 | 4 | 5 | 6> = {
-    "technical-depth": 1, "systems-architecture": 2, "execution-delivery": 3,
-    "direction-influence": 4, "leveling-scope": 5, "ai-engineering": 6,
-  };
-  const domain = id.replace(/-l[3-7]$/, "");
-  return map[domain] ?? 1;
 }
