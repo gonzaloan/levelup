@@ -150,6 +150,14 @@ export const MESSAGES = {
   "boss.hp":            { en: "HP", es: "PV" },
   "boss.defeated":      { en: "Boss defeated", es: "Jefe derrotado" },
   "boss.survived":      { en: "The boss stands — regroup and try again", es: "El jefe resiste — reagrúpate e inténtalo de nuevo" },
+  "check.commit":       { en: "Check", es: "Comprobar" },
+  "check.retry":        { en: "Try again", es: "Reintentar" },
+  "check.correct":      { en: "Correct", es: "Correcto" },
+  "check.notYet":       { en: "Not quite", es: "Casi" },
+  "check.orderHint":    { en: "Use the arrows or Up/Down keys to reorder.", es: "Usa las flechas o Arriba/Abajo para reordenar." },
+  "check.practice":     { en: "Practice", es: "Práctica" },
+  "check.practiceIntro":{ en: "A quick hands-on check — no score, try as many times as you like.", es: "Una comprobación práctica rápida — sin puntaje, inténtalo las veces que quieras." },
+  "check.skip":         { en: "Skip", es: "Saltar" },
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES;
