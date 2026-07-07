@@ -53,6 +53,8 @@ test("mobile nav hamburger works", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto("/en/");
   await page.getByRole("button", { name: /Open menu/i }).click();
-  await expect(page.getByRole("link", { name: /Star Chart/i })).toBeVisible();
+  // Any primary nav destination becomes visible once the sheet opens. (The nav
+  // items evolved since this test was written; assert on a current one.)
+  await expect(page.getByRole("link", { name: /Practice/i }).first()).toBeVisible();
   await page.screenshot({ path: "test-results/i2-mobile-nav.png" });
 });
