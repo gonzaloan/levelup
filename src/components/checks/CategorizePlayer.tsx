@@ -24,7 +24,7 @@ export function CategorizePlayer({
     <div className="categorize">
       {/* item tray */}
       <div className="cat-tray" role="group" aria-label="items to sort">
-        {unplaced.length === 0 ? <span className="dim" style={{ fontSize: "var(--t-sm)" }}>—</span> :
+        {unplaced.length === 0 ? <span className="dim text-sm">—</span> :
           unplaced.map((i) => (
             <button key={i} type="button" className="cat-chip" data-selected={sel === i}
               onClick={() => setSel(sel === i ? null : i)}>

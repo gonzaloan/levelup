@@ -36,7 +36,7 @@ export function TokenEconomics({ locale, params }: WidgetProps) {
         <span className="viz-bignum-val mono">{fmt(monthly)}</span>
         <span className="viz-bignum-label dim">{es ? "por mes (aprox.)" : "per month (approx.)"}</span>
       </div>
-      <p className="dim" style={{ fontSize: "var(--t-sm)" }}>
+      <p className="dim text-sm">
         {es ? `${fmt(perCall * 1000)} por cada 1.000 llamadas · salida fija ${out} tokens` : `${fmt(perCall * 1000)} per 1,000 calls · output fixed at ${out} tokens`}
       </p>
     </VizFrame>

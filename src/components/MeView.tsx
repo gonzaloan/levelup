@@ -53,7 +53,7 @@ export function MeView({ locale }: { locale: Locale }) {
               const range = BAND_RANGE[ar.band];
               return (
                 <div key={ar.axis} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--s-3)" }}>
-                  <span style={{ fontSize: "var(--t-sm)" }}>{t(AXIS_BY_ID[ar.axis].name, locale)}</span>
+                  <span className="text-sm">{t(AXIS_BY_ID[ar.axis].name, locale)}</span>
                   <span className="mono" style={{ fontSize: "var(--t-xs)", color: "var(--gen-accent)" }}>
                     {t(range.label, locale)} · {range.levels[0]}–{range.levels[1]}
                   </span>
@@ -64,7 +64,7 @@ export function MeView({ locale }: { locale: Locale }) {
         </div>
       ) : (
         <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--s-4)", flexWrap: "wrap" }}>
-          <span className="dim" style={{ fontSize: "var(--t-sm)" }}>
+          <span className="dim text-sm">
             {t({ en: "You haven't been placed yet. Twenty minutes, no login, honest result.", es: "Todavía no tienes diagnóstico. Veinte minutos, sin cuenta, resultado honesto." }, locale)}
           </span>
           <Link href={`/${locale}/assess`} className="btn btn-primary">{m("landing.cta", locale)}</Link>
@@ -88,7 +88,7 @@ export function MeView({ locale }: { locale: Locale }) {
       {/* A quiet next-step nudge — no fake "streak", no backend reminders we
           can't deliver from a static export. Just points at the work. */}
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--s-4)", flexWrap: "wrap" }}>
-        <span className="dim" style={{ fontSize: "var(--t-sm)" }}>
+        <span className="dim text-sm">
           {t({ en: "The curriculum is the ordered plan: six domains, five levels, one climb. Follow it, or let the diagnostic place you at your frontier.", es: "El temario es el plan ordenado: seis dominios, cinco niveles, una subida. Síguelo, o deja que el diagnóstico te ubique en tu frontera." }, locale)}
         </span>
         <Link href={`/${locale}/learn`} className="btn">{m("nav.learn", locale)} →</Link>

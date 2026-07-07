@@ -113,7 +113,7 @@ export function AssessRunner({ locale, items }: { locale: Locale; items: Item[];
         <h2 className="display" style={{ fontSize: "var(--t-h2)" }}>
           {t({ en: "How true is each of these, right now?", es: "¿Qué tan cierto es cada uno, ahora mismo?" }, locale)}
         </h2>
-        <p className="dim" style={{ fontSize: "var(--t-sm)" }}>
+        <p className="dim text-sm">
           {t({ en: "Absolute, not relative to peers. We compare this to your answers later — the gap is the insight.", es: "Absoluto, no relativo a colegas. Comparamos esto con tus respuestas después — la brecha es el hallazgo." }, locale)}
         </p>
         {AXES.map((a) => (
@@ -153,7 +153,7 @@ export function AssessRunner({ locale, items }: { locale: Locale; items: Item[];
       <div className="stack">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span className="eyebrow">{t(axis.name, locale)}</span>
-          <span className="mono tnum dim" style={{ fontSize: "var(--t-sm)" }}>{answered} {m("assess.of", locale)} ~{totalTarget}</span>
+          <span className="mono tnum dim text-sm">{answered} {m("assess.of", locale)} ~{totalTarget}</span>
         </div>
         <div className="meter" style={{ ["--meter-val" as string]: String(pct) }} />
 

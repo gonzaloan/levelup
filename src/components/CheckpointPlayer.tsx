@@ -185,7 +185,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
             <div className="display" style={{ fontSize: "var(--t-h1)", margin: "var(--s-2) 0" }}>
               <span className="stat">{Math.round(finalScore * 100)}%</span>
             </div>
-            <p className="dim" style={{ fontSize: "var(--t-sm)" }}>
+            <p className="dim text-sm">
               {m("chk.score", locale)}: {correctCount}/{items.length} · {t(gateLabel, locale)}
             </p>
           </div>

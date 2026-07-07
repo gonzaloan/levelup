@@ -88,7 +88,7 @@ export function RoomPlayer({ locale, room, onDone }: { locale: Locale; room: Sjt
                 <span className="eyebrow" style={{ color: r.verdict === "best" ? "var(--ok)" : r.verdict === "harmful" ? "var(--bad)" : "var(--text-3)" }}>{r.verdict}</span>
                 {r.id === picked && <span className="eyebrow">{t({ en: "your call", es: "tu elección" }, locale)}</span>}
               </div>
-              <p style={{ fontSize: "var(--t-sm)" }}>{t(r.rationale, locale)}</p>
+              <p className="text-sm">{t(r.rationale, locale)}</p>
             </div>
           ))}
           <div><button className="btn btn-primary" onClick={onDone}>{m("cta.continue", locale)}</button></div>

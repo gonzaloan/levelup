@@ -66,7 +66,7 @@ export function FieldWorkView({ locale, fieldWork }: { locale: Locale; fieldWork
             <label key={c.id} style={{ display: "flex", gap: "var(--s-3)", alignItems: "flex-start", cursor: "pointer" }}>
               <input type="checkbox" checked={checked.has(c.id)} onChange={() => toggle(c.id)}
                 style={{ marginTop: 4, accentColor: "var(--gen)" }} />
-              <span style={{ fontSize: "var(--t-sm)" }}>
+              <span className="text-sm">
                 {t(c.criterion, locale)}
                 <span className="mono" style={{ marginLeft: 8, color: "var(--gen-accent)", fontSize: "var(--t-xs)" }}
                   title={locale === "es" ? "puntos" : "points"}>+{c.weight}</span>
@@ -81,7 +81,7 @@ export function FieldWorkView({ locale, fieldWork }: { locale: Locale; fieldWork
         ) : (
           <div style={{ marginTop: "var(--s-4)", display: "flex", alignItems: "center", gap: "var(--s-3)" }}>
             <span className="mono" style={{ fontSize: "var(--t-mono-lg)", color: "var(--gen-accent)" }}>{Math.round(ratio * 100)}%</span>
-            <span className="dim" style={{ fontSize: "var(--t-sm)" }}>
+            <span className="dim text-sm">
               {ratio >= 0.8
                 ? t({ en: "That's the 30% most people ship past. Well found.", es: "Ese es el 30% que la mayoría deja pasar. Bien encontrado." }, locale)
                 : t({ en: "Go back and look again — the misses are where the level is.", es: "Vuelve y mira de nuevo — los que faltan son donde está el nivel." }, locale)}

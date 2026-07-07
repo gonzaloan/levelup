@@ -34,7 +34,7 @@ export default async function LocaleLayout({
       <RewardHost />
       <footer style={{ borderTop: "1px solid var(--hairline)", marginTop: "var(--s-24)" }}>
         <div className="wrap" style={{ display: "flex", justifyContent: "space-between", padding: "var(--s-8) var(--s-6)", flexWrap: "wrap", gap: "var(--s-4)" }}>
-          <span className="dim" style={{ fontSize: "var(--t-sm)" }}>{m("footer.built", locale as Locale)}</span>
+          <span className="dim text-sm">{m("footer.built", locale as Locale)}</span>
           <a href={`/${locale}/method`} className="eyebrow">{m("footer.method", locale as Locale)}</a>
         </div>
       </footer>
