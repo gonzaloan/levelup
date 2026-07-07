@@ -6,16 +6,22 @@ inline components) is preferred; third-party art is reserved for **boss battles 
 
 Every asset must have a row here before it is committed: file · what · source URL · license · notes.
 
-## Boss sprites (per domain)
+## Boss art (per domain)
 
-| file | domain | source | license | notes |
-|------|--------|--------|---------|-------|
-| _(authored placeholder)_ | technical-depth | level-up authored SVG | CC0 (authored) | replaced by fleet research phase w/ curated CC0 sprite |
-| _(authored placeholder)_ | systems-architecture | level-up authored SVG | CC0 (authored) | " |
-| _(authored placeholder)_ | execution-delivery | level-up authored SVG | CC0 (authored) | " |
-| _(authored placeholder)_ | direction-influence | level-up authored SVG | CC0 (authored) | " |
-| _(authored placeholder)_ | leveling-scope | level-up authored SVG | CC0 (authored) | " |
-| _(authored placeholder)_ | ai-engineering | level-up authored SVG | CC0 (authored) | " |
+Boss key-art was **generated locally** with Stable Diffusion (Forge / dreamshaperXL Lightning) on
+the project owner's machine, then downscaled to 512×512 and compressed to WebP. It is treated as
+**project-owned local art** (not distributed as CC0 — diffusion-model output has unsettled copyright
+status, so we neither claim CC0 nor redistribute it as such). Files live in `public/bosses/<domain>.webp`.
+The authored inline-SVG `BossGlyph` in `BossIntro.tsx` remains as the fallback when a file is absent.
 
-> The Workflow research phase (Task 9, Phase A) verifies real CC0 sprites, drops files into
-> `src/assets/bosses/`, and replaces the placeholder rows above with real source URLs + license text.
+| file (`public/bosses/…`) | domain | source | license |
+|------|--------|--------|---------|
+| technical-depth.webp | technical-depth | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| systems-architecture.webp | systems-architecture | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| execution-delivery.webp | execution-delivery | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| direction-influence.webp | direction-influence | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| leveling-scope.webp | leveling-scope | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| ai-engineering.webp | ai-engineering | SD dreamshaperXL Lightning (local) | project-owned local generation |
+
+> Source prompts + full-res PNGs are kept under `research/sd-experiment/` (git-ignored working area).
+> Any THIRD-PARTY raster added later must still be CC0 / public domain with its row recorded here.

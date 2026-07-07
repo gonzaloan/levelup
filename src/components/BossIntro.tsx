@@ -60,7 +60,13 @@ export function BossIntro({
   return (
     <div className="boss-card" data-track={track} style={{ ["--boss-accent" as string]: boss.accent }}>
       <div className="boss-head">
-        <span className="boss-sprite"><BossGlyph accent={boss.accent} /></span>
+        <span className="boss-sprite">
+          {boss.file
+            // Static export (no next/image server): a small local WebP via plain <img> is correct.
+            // eslint-disable-next-line @next/next/no-img-element
+            ? <img className="boss-art" src={boss.file} alt="" width={512} height={512} loading="lazy" decoding="async" />
+            : <BossGlyph accent={boss.accent} />}
+        </span>
         <div>
           <p className="eyebrow boss-eyebrow">{m("boss.label", locale)}</p>
           <h2 className="boss-name">{t(boss.name, locale)}</h2>

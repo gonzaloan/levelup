@@ -14,14 +14,24 @@ describe("boss asset manifest", () => {
     for (const d of DOMAINS) expect(BOSS_BY_DOMAIN[d]).toBeDefined();
   });
 
-  it("every boss is CC0 / public domain with a source", () => {
+  it("every boss has a cleared license (CC0/public-domain or project-owned) + source", () => {
     for (const d of DOMAINS) {
       const b = bossFor(d);
       const lic = b.license.toLowerCase();
-      expect(lic.includes("cc0") || lic.includes("public domain")).toBe(true);
+      // Allowed provenance: CC0 / public domain, OR locally generated art we own.
+      expect(
+        lic.includes("cc0") || lic.includes("public domain") || lic.includes("project-owned"),
+      ).toBe(true);
       expect(b.source.length).toBeGreaterThan(0);
       expect(b.name.en.length).toBeGreaterThan(0);
       expect(b.name.es.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("every boss image path points at the public bosses folder", () => {
+    for (const d of DOMAINS) {
+      const b = bossFor(d);
+      expect(b.file).toMatch(/^\/bosses\/.+\.webp$/);
     }
   });
 
