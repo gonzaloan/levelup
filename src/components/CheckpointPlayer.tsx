@@ -14,6 +14,8 @@ import { AXIS_BY_ID } from "@/lib/axes";
 import { recordCheckpoint } from "@/lib/store";
 import { fireReward } from "./Reward";
 import { BossIntro, BossHealth } from "./BossIntro";
+import { checksForConcept } from "@/lib/checks";
+import { CheckHost } from "./checks/CheckHost";
 import type { Checkpoint, CheckpointItem } from "@/lib/types";
 
 // Mastery gate: you may miss at most one item. Expressed as a score threshold
@@ -35,8 +37,16 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   const [finalScore, setFinalScore] = useState(0);
 
   const items = checkpoint.items;
-  const item: CheckpointItem | undefined = items[idx];
-  const clear = clearThreshold(items.length);
+  // Graded novel-mechanic checks for this checkpoint's concepts (up to 2),
+  // appended after the MCQ items. They count toward the same gate as booleans.
+  const gradedChecks = checkpoint.coversConcepts
+    .flatMap((slug) => checksForConcept(slug))
+    .slice(0, 2);
+  const totalSteps = items.length + gradedChecks.length;
+  const inMcq = idx < items.length;
+  const item: CheckpointItem | undefined = inMcq ? items[idx] : undefined;
+  const gradedCheck = !inMcq ? gradedChecks[idx - items.length] : undefined;
+  const clear = clearThreshold(totalSteps);
   // Human-facing gate: "miss at most one" reads truer than a percent at n≤5.
   const gateLabel = { en: "one miss allowed", es: "se permite un error" };
 
@@ -46,28 +56,40 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
     if (item!.options[oi].correct) setCorrectCount((c) => c + 1);
   }
 
+  // A graded check reports a single boolean, exactly like an MCQ item.
+  function onCheckResult(correct: boolean) {
+    if (correct) setCorrectCount((c) => c + 1);
+    // advance after a beat so the learner sees the reveal
+    setTimeout(() => {
+      if (idx + 1 < totalSteps) setIdx(idx + 1);
+      else finish(correctCount + (correct ? 1 : 0));
+    }, 900);
+  }
+
+  function finish(finalCorrect: number) {
+    const score = finalCorrect / totalSteps;
+    setFinalScore(score);
+    const outcome = recordCheckpoint(checkpoint.id, score, clear);
+    if (outcome.newlyCleared) {
+      fireReward({
+        kind: "mastery", track, signal: 30,
+        title: `${t(axis.short, locale).toUpperCase()} · ${checkpoint.afterLevel} · ${t({ en: "CHECKPOINT CLEARED", es: "PUNTO DE CONTROL SUPERADO" }, locale)}`,
+        body: t({
+          en: `You cleared the ${t(axis.name, "en")} checkpoint at ${checkpoint.afterLevel}. The band above opens — keep climbing.`,
+          es: `Superaste el punto de control de ${t(axis.name, "es")} en ${checkpoint.afterLevel}. La banda superior se abre — sigue subiendo.`,
+        }, locale),
+      });
+    }
+    setDone(true);
+  }
+
   function next() {
     if (picked === null) return;
-    if (idx + 1 < items.length) {
+    if (idx + 1 < totalSteps) {
       setIdx(idx + 1);
       setPicked(null);
     } else {
-      const score = correctCount / items.length;
-      setFinalScore(score);
-      const outcome = recordCheckpoint(checkpoint.id, score, clear);
-      if (outcome.newlyCleared) {
-        fireReward({
-          kind: "mastery",
-          track,
-          signal: 30,
-          title: `${t(axis.short, locale).toUpperCase()} · ${checkpoint.afterLevel} · ${t({ en: "CHECKPOINT CLEARED", es: "PUNTO DE CONTROL SUPERADO" }, locale)}`,
-          body: t({
-            en: `You cleared the ${t(axis.name, "en")} checkpoint at ${checkpoint.afterLevel}. The band above opens — keep climbing.`,
-            es: `Superaste el punto de control de ${t(axis.name, "es")} en ${checkpoint.afterLevel}. La banda superior se abre — sigue subiendo.`,
-          }, locale),
-        });
-      }
-      setDone(true);
+      finish(correctCount);
     }
   }
 
@@ -89,7 +111,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
       {!started && !done && (
         <div className="stack" style={{ gap: "var(--s-5)" }}>
           <p className="prose" style={{ fontSize: "1.0625rem" }}>{m("chk.intro", locale)}</p>
-          <BossIntro locale={locale} domainId={checkpoint.domainId} total={items.length} track={track} onEngage={() => setStarted(true)}>
+          <BossIntro locale={locale} domainId={checkpoint.domainId} total={totalSteps} track={track} onEngage={() => setStarted(true)}>
             <div className="card" style={{ background: "var(--film-1)" }}>
               <div className="eyebrow" style={{ marginBottom: "var(--s-3)" }}>{m("chk.covers", locale)}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s-2)" }}>
@@ -99,49 +121,58 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
                   </span>
                 ))}
               </div>
-              <span className="eyebrow" style={{ display: "block", marginTop: "var(--s-3)" }}>{items.length} · {t(gateLabel, locale)}</span>
+              <span className="eyebrow" style={{ display: "block", marginTop: "var(--s-3)" }}>{totalSteps} · {t(gateLabel, locale)}</span>
             </div>
           </BossIntro>
           <Link href={`/${locale}/path`} className="eyebrow">← {m("chk.backToPath", locale)}</Link>
         </div>
       )}
 
-      {started && !done && item && (
+      {started && !done && (
         <div className="stack" style={{ gap: "var(--s-4)" }}>
-          <span className="eyebrow">{m("chk.eyebrow", locale)} · {idx + 1}/{items.length}</span>
-          {/* boss HP drains as you clear questions correctly */}
-          <BossHealth remaining={items.length - correctCount} total={items.length} locale={locale} />
-          <div className="meter" style={{ ["--meter-val" as string]: String(Math.round((idx / items.length) * 100)), ["--meter-accent" as string]: "var(--track)" }} />
-          <div className="card">
-            <p style={{ color: "var(--text)", marginBottom: "var(--s-5)", fontSize: "1.0625rem" }}>{t(item.stem, locale)}</p>
-            <div className="stack">
-              {item.options.map((o, oi) => {
-                const isPicked = picked === oi;
-                const revealed = picked !== null;
-                const border = revealed
-                  ? (o.correct ? "var(--ok)" : isPicked ? "var(--bad)" : "var(--hairline)")
-                  : "var(--hairline)";
-                return (
-                  <button key={oi} className="btn" disabled={revealed} onClick={() => choose(oi)}
-                    style={{ textAlign: "left", justifyContent: "flex-start", borderColor: border, background: "var(--surface-2)", alignItems: "flex-start", lineHeight: 1.45 }}>
-                    {t(o.text, locale)}
+          <span className="eyebrow">{m("chk.eyebrow", locale)} · {idx + 1}/{totalSteps}</span>
+          {/* boss HP drains as you clear steps correctly */}
+          <BossHealth remaining={totalSteps - correctCount} total={totalSteps} locale={locale} />
+          <div className="meter" style={{ ["--meter-val" as string]: String(Math.round((idx / totalSteps) * 100)), ["--meter-accent" as string]: "var(--track)" }} />
+
+          {item && (
+            <div className="card">
+              <p style={{ color: "var(--text)", marginBottom: "var(--s-5)", fontSize: "1.0625rem" }}>{t(item.stem, locale)}</p>
+              <div className="stack">
+                {item.options.map((o, oi) => {
+                  const isPicked = picked === oi;
+                  const revealed = picked !== null;
+                  const border = revealed
+                    ? (o.correct ? "var(--ok)" : isPicked ? "var(--bad)" : "var(--hairline)")
+                    : "var(--hairline)";
+                  return (
+                    <button key={oi} className="btn" disabled={revealed} onClick={() => choose(oi)}
+                      style={{ textAlign: "left", justifyContent: "flex-start", borderColor: border, background: "var(--surface-2)", alignItems: "flex-start", lineHeight: 1.45 }}>
+                      {t(o.text, locale)}
+                    </button>
+                  );
+                })}
+              </div>
+              {picked !== null && (
+                <div style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: item.options[picked].correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
+                  <p style={{ fontSize: "var(--t-sm)", color: "var(--text)" }}>{t(item.options[picked].rationale, locale)}</p>
+                </div>
+              )}
+              {picked !== null && (
+                <div style={{ marginTop: "var(--s-4)" }}>
+                  <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} onClick={next}>
+                    {idx + 1 < totalSteps ? m("assess.next", locale) : m("cta.continue", locale)}
                   </button>
-                );
-              })}
+                </div>
+              )}
             </div>
-            {picked !== null && (
-              <div style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: item.options[picked].correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
-                <p style={{ fontSize: "var(--t-sm)", color: "var(--text)" }}>{t(item.options[picked].rationale, locale)}</p>
-              </div>
-            )}
-            {picked !== null && (
-              <div style={{ marginTop: "var(--s-4)" }}>
-                <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} onClick={next}>
-                  {idx + 1 < items.length ? m("assess.next", locale) : m("cta.continue", locale)}
-                </button>
-              </div>
-            )}
-          </div>
+          )}
+
+          {gradedCheck && (
+            <div className="card">
+              <CheckHost key={gradedCheck.id} item={gradedCheck} locale={locale} mode="graded" onResult={onCheckResult} />
+            </div>
+          )}
         </div>
       )}
 

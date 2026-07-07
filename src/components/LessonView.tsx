@@ -16,9 +16,11 @@ import { ConceptNav } from "./ConceptNav";
 import { ContextRail } from "./ContextRail";
 import { getWidget } from "./viz";
 import { markConceptsRead } from "@/lib/store";
-import type { Lesson, Concept, ConceptLesson, QuizItem } from "@/lib/types";
+import { checksForLesson } from "@/lib/checks";
+import { CheckHost } from "./checks/CheckHost";
+import type { Lesson, Concept, ConceptLesson, QuizItem, CheckItem } from "@/lib/types";
 
-type Stage = "learn" | "check" | "done";
+type Stage = "learn" | "check" | "practice" | "done";
 
 export function LessonView({
   locale, lesson, concepts, checkpointId, nextLesson,
@@ -39,6 +41,9 @@ export function LessonView({
   const [idx, setIdx] = useState(-1);
 
   const total = lesson.concepts.length;
+  // Up to 2 formative checks for this lesson (instant feedback, no score).
+  const practiceChecks = checksForLesson(lesson.lessonId).slice(0, 2);
+  const afterCheck = () => { setStage(practiceChecks.length ? "practice" : "done"); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
   function advance() {
     if (idx + 1 < total) {
@@ -115,7 +120,12 @@ export function LessonView({
       )}
 
       {stage === "check" && (
-        <Check locale={locale} items={lesson.midQuiz} track={track} onDone={() => { setStage("done"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
+        <Check locale={locale} items={lesson.midQuiz} track={track} onDone={afterCheck} />
+      )}
+
+      {stage === "practice" && (
+        <Practice locale={locale} checks={practiceChecks} track={track}
+          onDone={() => { setStage("done"); window.scrollTo({ top: 0, behavior: "smooth" }); }} />
       )}
 
       {stage === "done" && (
@@ -263,10 +273,36 @@ function Check({ locale, items, track, onDone }: { locale: Locale; items: QuizIt
   );
 }
 
+// Formative practice: play through the lesson's checks one at a time, no score,
+// free retry (CheckHost owns retry). "Continue" advances; "Skip" is always there.
+function Practice({ locale, checks, track, onDone }: { locale: Locale; checks: CheckItem[]; track: string; onDone: () => void }) {
+  const [i, setI] = useState(0);
+  const item = checks[i];
+  if (!item) { onDone(); return null; }
+  function next() { if (i + 1 < checks.length) setI(i + 1); else onDone(); }
+  return (
+    <div className="stack" style={{ gap: "var(--s-4)", marginTop: "var(--s-6)", maxWidth: 720 }}>
+      <div>
+        <p className="eyebrow" style={{ color: "var(--track-accent)" }}>{m("check.practice", locale)} · {i + 1}/{checks.length}</p>
+        <p className="dim" style={{ fontSize: "var(--t-sm)", marginTop: 4 }}>{m("check.practiceIntro", locale)}</p>
+      </div>
+      <div className="card">
+        <CheckHost key={item.id} item={item} locale={locale} mode="formative" />
+        <div style={{ display: "flex", gap: "var(--s-3)", marginTop: "var(--s-5)" }}>
+          <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} onClick={next}>
+            {i + 1 < checks.length ? m("assess.next", locale) : m("cta.continue", locale)}
+          </button>
+          <button className="btn" onClick={next}>{m("check.skip", locale)}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LessonRail({ stage, idx, total, locale }: { stage: Stage; idx: number; total: number; locale: Locale }) {
   // Represent: overview • concept dots • check • test
   const readCount = stage === "learn" ? Math.max(0, idx + 1) : total;
-  const pct = stage === "done" ? 100 : stage === "check" ? 90 : Math.round(((idx + 1) / (total + 1)) * 80);
+  const pct = stage === "done" ? 100 : stage === "practice" ? 95 : stage === "check" ? 90 : Math.round(((idx + 1) / (total + 1)) * 80);
   return (
     <div>
       <div className="meter" style={{ ["--meter-val" as string]: String(pct), ["--meter-accent" as string]: "var(--track)" }} />
