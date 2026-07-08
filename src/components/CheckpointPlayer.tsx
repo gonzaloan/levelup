@@ -16,6 +16,8 @@ import { fireReward } from "./Reward";
 import { BossIntro, BossHealth } from "./BossIntro";
 import { checksForConcept } from "@/lib/checks";
 import { CheckHost } from "./checks/CheckHost";
+import { load } from "@/lib/store";
+import { earnedBadges } from "@/lib/badges";
 import type { Checkpoint, CheckpointItem } from "@/lib/types";
 
 // Mastery gate: you may miss at most one item. Expressed as a score threshold
@@ -69,6 +71,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   function finish(finalCorrect: number) {
     const score = finalCorrect / totalSteps;
     setFinalScore(score);
+    const before = new Set(earnedBadges(load()).map((b) => b.id));
     const outcome = recordCheckpoint(checkpoint.id, score, clear);
     if (outcome.newlyCleared) {
       fireReward({
@@ -79,6 +82,17 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
           es: `Superaste el punto de control de ${t(axis.name, "es")} en ${checkpoint.afterLevel}. La banda superior se abre — sigue subiendo.`,
         }, locale),
       });
+      // Badge threshold-crossing: fire an informational reward for any badge this
+      // clear just unlocked (SDT: competence signal, not a celebration).
+      const after = earnedBadges(load());
+      for (const b of after) {
+        if (before.has(b.id)) continue;
+        fireReward({
+          kind: "mastery", track,
+          title: `★ ${t({ en: "BADGE UNLOCKED", es: "INSIGNIA DESBLOQUEADA" }, locale)} · ${t(b.name, locale)}`,
+          body: t(b.description, locale),
+        });
+      }
     }
     setDone(true);
   }
