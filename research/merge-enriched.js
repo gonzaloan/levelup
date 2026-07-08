@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 
 const REGISTRY = ["big-o","sort-race","consistency","rag-pipeline","consensus","latency-budget","token-economics","threat-board","scaling-curves","eval-harness"];
-const ENRICH_FIELDS = ["depth","keywords","code","example","architecture","visual","pitfalls","analogy","source"];
+const ENRICH_FIELDS = ["depth","keywords","code","example","architecture","diagram","visual","pitfalls","analogy","source"];
 
 const inPath = process.argv[2] || "research/enriched-output.json";
 const raw = JSON.parse(fs.readFileSync(inPath, "utf8"));
