@@ -20,7 +20,10 @@ for (const rep of repairs) {
   if (rep.overview && rep.overview.en && rep.overview.es) { lesson.overview = rep.overview; fields++; }
   const bySlug = new Map(lesson.concepts.map((c) => [c.slug, c]));
   for (const patch of rep.patches || []) {
-    if (patch.slug === "overview") { if (patch.overviewFix) { lesson.overview = patch.overviewFix; fields++; } continue; }
+    // NOTE: patch.overviewFix is a human-readable changelog note, NOT overview
+    // text — never write it into lesson.overview (that destroyed content once).
+    // The real corrected overview only ever comes from rep.overview (handled above).
+    if (patch.slug === "overview") { continue; }
     const c = bySlug.get(patch.slug);
     if (!c) { missing++; console.warn("  no concept", rep.lessonId, patch.slug); continue; }
     let touched = false;
