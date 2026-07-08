@@ -41,27 +41,38 @@ export function RewardHost() {
   const [active, setActive] = useState<Active | null>(null);
   const motion = usePrefersMotion();
   const timers = useRef<number[]>([]);
+  // Queue of pending rewards. When several fire at once (e.g. a checkpoint clear
+  // that also unlocks a badge), we show them one after another instead of the
+  // last one clobbering the rest.
+  const queue = useRef<RewardDetail[]>([]);
+  const showing = useRef(false);
 
   useEffect(() => {
-    function onReward(e: Event) {
-      const d = (e as CustomEvent<RewardDetail>).detail;
-      timers.current.forEach(clearTimeout);
-      timers.current = [];
+    function showNext() {
+      const next = queue.current.shift();
+      if (!next) { showing.current = false; return; }
+      showing.current = true;
       const id = performance.now();
-      setActive({ ...d, id, leaving: false });
-      // auto-dismiss: hold, then animate out
+      setActive({ ...next, id, leaving: false });
       const hold = window.setTimeout(() => {
         setActive((a) => (a && a.id === id ? { ...a, leaving: true } : a));
       }, 4200);
       const gone = window.setTimeout(() => {
         setActive((a) => (a && a.id === id ? null : a));
+        showNext();   // advance the queue
       }, 4600);
       timers.current.push(hold, gone);
     }
+    function onReward(e: Event) {
+      const d = (e as CustomEvent<RewardDetail>).detail;
+      queue.current.push(d);
+      if (!showing.current) showNext();
+    }
     window.addEventListener("levelup:reward", onReward as EventListener);
+    const pending = timers.current;
     return () => {
       window.removeEventListener("levelup:reward", onReward as EventListener);
-      timers.current.forEach(clearTimeout);
+      pending.forEach(clearTimeout);
     };
   }, []);
 

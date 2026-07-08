@@ -54,8 +54,8 @@ export const ACHIEVEMENTS: Achievement[] = [
   // Milestones
   {
     id: "first-checkpoint", category: "milestone", tier: "bronze", accent: "#dad45e",
-    name: { en: "First Blood", es: "Primera Sangre" },
-    description: { en: "Cleared your first checkpoint.", es: "Superaste tu primer punto de control." },
+    name: { en: "First Checkpoint", es: "Primer Punto de Control" },
+    description: { en: "Cleared your first checkpoint at the mastery gate.", es: "Superaste tu primer punto de control en el umbral de dominio." },
     criteria: { en: "Clear any one checkpoint at the mastery gate.", es: "Supera cualquier punto de control en el umbral de dominio." },
     earned: (p) => p.checkpointsCleared.length >= 1,
   },
@@ -68,9 +68,9 @@ export const ACHIEVEMENTS: Achievement[] = [
   },
   {
     id: "ten-concepts", category: "milestone", tier: "bronze", accent: "#6dc2ca",
-    name: { en: "Getting Deep", es: "Tomando Profundidad" },
-    description: { en: "Studied ten concepts.", es: "Estudiaste diez conceptos." },
-    criteria: { en: "Open and read ten curriculum concepts.", es: "Abre y lee diez conceptos del temario." },
+    name: { en: "Ten Concepts Studied", es: "Diez Conceptos Estudiados" },
+    description: { en: "Worked through ten curriculum concepts — a study habit taking hold.", es: "Recorriste diez conceptos del temario — un hábito de estudio que se afianza." },
+    criteria: { en: "Read ten curriculum concepts. (Study progress, not a mastery gate.)", es: "Lee diez conceptos del temario. (Progreso de estudio, no un umbral de dominio.)" },
     earned: (p) => p.conceptsRead.length >= 10,
   },
   {
