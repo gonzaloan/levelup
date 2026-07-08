@@ -1,0 +1,321 @@
+{
+ "lessonId": "technical-depth-l6",
+ "concepts": [
+  {
+   "slug": "pacelc-tradeoffs",
+   "title": {
+    "en": "PACELC: latency vs consistency even without partitions",
+    "es": "PACELC: latencia vs consistencia incluso sin particiones"
+   },
+   "why": {
+    "en": "Trains the judgment CAP misses — that even when the network is healthy you still trade latency for consistency on every request.",
+    "es": "Entrena el criterio que CAP omite — que aun con la red sana sigues canjeando latencia por consistencia en cada solicitud."
+   },
+   "source": "Abadi, 'Consistency Tradeoffs in Modern Distributed Database System Design' (PACELC), IEEE Computer, 2012",
+   "explanation": {
+    "en": "CAP is a trap because it only describes what happens during a network partition — a rare event. It leaves you thinking the rest of the time you get consistency and availability for free. You don't. PACELC completes the picture: if there is a Partition (P) you trade Availability vs Consistency (A/C), Else (E) — the normal, healthy case — you still trade Latency vs Consistency (L/C). Every single request pays this tax.\n\nThe reason is physical. To make a write consistent across replicas you must wait for other nodes to acknowledge it (synchronous replication, a quorum, a consensus round). That waiting is latency. If you skip the wait and reply from one replica, you are fast but a concurrent read elsewhere may see stale data. There is no request during which the network is 'perfect enough' to escape this.\n\nConcretely: DynamoDB and Cassandra are PA/EL — they stay available during partitions and stay low-latency otherwise, at the cost of eventual (or tunable) consistency. Google Spanner is PC/EC — it refuses to serve inconsistent data even if that means higher latency (TrueTime commit-wait) and rejecting writes during a partition. Neither is 'better'. When you put a quorum read (R+W>N) in front of a checkout flow, you chose EC and you bought latency. Say that out loud in the design doc so nobody is surprised by the p99.",
+    "es": "CAP es una trampa porque solo describe lo que pasa durante una partición de red — un evento raro. Te deja pensando que el resto del tiempo obtienes consistencia y disponibilidad gratis. No es así. PACELC completa el cuadro: si hay Partición (P) cambias Disponibilidad vs Consistencia (A/C); si no (Else, E) — el caso normal y sano — igual cambias Latencia vs Consistencia (L/C). Cada request paga este impuesto.\n\nLa razón es física. Para que una escritura sea consistente entre réplicas debes esperar a que otros nodos la confirmen (replicación síncrona, un quórum, una ronda de consenso). Esa espera es latencia. Si te saltas la espera y respondes desde una sola réplica, eres rápido pero una lectura concurrente en otro lado puede ver datos viejos. No existe un request en el que la red sea 'suficientemente perfecta' para escapar de esto.\n\nConcreto: DynamoDB y Cassandra son PA/EL — se mantienen disponibles durante particiones y con baja latencia el resto del tiempo, a costa de consistencia eventual (o ajustable). Google Spanner es PC/EC — se niega a servir datos inconsistentes aunque eso implique más latencia (el commit-wait de TrueTime) y rechazar escrituras durante una partición. Ninguno es 'mejor'. Cuando pones una lectura por quórum (R+W>N) frente a un flujo de checkout, elegiste EC y compraste latencia. Dilo en voz alta en el documento de diseño para que nadie se sorprenda con el p99."
+   },
+   "keyPoints": [
+    {
+     "en": "CAP only applies during a partition; PACELC adds the 'Else' — latency vs consistency on every normal request.",
+     "es": "CAP solo aplica durante una partición; PACELC agrega el 'Else' — latencia vs consistencia en cada request normal."
+    },
+    {
+     "en": "Consistency costs latency because it requires waiting for other replicas to acknowledge (quorum, sync replication, consensus).",
+     "es": "La consistencia cuesta latencia porque exige esperar la confirmación de otras réplicas (quórum, replicación síncrona, consenso)."
+    },
+    {
+     "en": "Classify your datastore explicitly: DynamoDB/Cassandra = PA/EL, Spanner = PC/EC. State the choice in the design doc.",
+     "es": "Clasifica tu almacén explícitamente: DynamoDB/Cassandra = PA/EL, Spanner = PC/EC. Deja la decisión escrita en el diseño."
+    }
+   ],
+   "keywords": [
+    {
+     "en": {"term": "PACELC", "def": "Extension of CAP: during a Partition trade Availability vs Consistency; Else (no partition) trade Latency vs Consistency."},
+     "es": {"term": "PACELC", "def": "Extensión de CAP: durante una Partición canjeas Disponibilidad vs Consistencia; si no (Else) canjeas Latencia vs Consistencia."}
+    },
+    {
+     "en": {"term": "Commit-wait", "def": "Spanner deliberately delays a commit until TrueTime guarantees its timestamp is in the past, buying consistency with latency."},
+     "es": {"term": "Commit-wait", "def": "Spanner retrasa a propósito un commit hasta que TrueTime garantiza que su timestamp ya pasó, comprando consistencia con latencia."}
+    },
+    {
+     "en": {"term": "Tunable consistency", "def": "Per-request choice of how many replicas must respond (e.g. Cassandra ONE vs QUORUM), moving the L/C dial at call time."},
+     "es": {"term": "Consistencia ajustable", "def": "Elección por request de cuántas réplicas deben responder (p. ej. Cassandra ONE vs QUORUM), moviendo el dial L/C en cada llamada."}
+    },
+    {
+     "en": {"term": "PA/EL vs PC/EC", "def": "The two dominant profiles: stay fast-and-available (Dynamo/Cassandra) or stay correct-at-a-latency-cost (Spanner)."},
+     "es": {"term": "PA/EL vs PC/EC", "def": "Los dos perfiles dominantes: rápido-y-disponible (Dynamo/Cassandra) o correcto-a-costa-de-latencia (Spanner)."}
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "A 3-replica Cassandra cluster, N=3. You must decide the read/write consistency for a payments ledger vs a 'seen by' read receipt.",
+     "walkthrough": "For the ledger you set W=QUORUM and R=QUORUM, so W+R = 2+2 = 4 > 3: any read is guaranteed to overlap the last committed write, giving read-your-writes. But each such call blocks on 2 of 3 nodes, so p99 tracks the slower replica — you paid EL→EC. For the read receipt you set W=ONE, R=ONE: the coordinator returns after a single local ack (~1ms), and a reader elsewhere may briefly not see it. That's fine — nobody double-spends a checkmark. Same cluster, two dials, chosen per request. The mistake juniors make is setting QUORUM globally 'to be safe' and then wondering why every trivial read costs a cross-AZ round-trip."
+    },
+    "es": {
+     "scenario": "Un clúster Cassandra de 3 réplicas, N=3. Debes decidir la consistencia de lectura/escritura para un libro mayor de pagos vs un acuse de 'visto por'.",
+     "walkthrough": "Para el libro mayor pones W=QUORUM y R=QUORUM, así W+R = 2+2 = 4 > 3: cualquier lectura toca al menos una réplica con la última escritura confirmada, dándote read-your-writes. Pero cada llamada bloquea en 2 de 3 nodos, así que el p99 sigue a la réplica más lenta — pagaste EL→EC. Para el acuse pones W=ONE, R=ONE: el coordinador responde tras un solo ack local (~1ms) y un lector en otro lado puede no verlo por un instante. Está bien — nadie gasta dos veces una palomita. Mismo clúster, dos diales, elegidos por request. El error del junior es poner QUORUM global 'por seguridad' y luego preguntarse por qué cada lectura trivial cuesta un viaje entre zonas de disponibilidad."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Reading CAP as 'pick 2 of 3' and stopping there — it ignores the latency cost you pay on the 99.9% of requests with no partition.",
+     "es": "Leer CAP como 'elige 2 de 3' y quedarte ahí — ignora el costo de latencia que pagas en el 99.9% de requests sin partición."
+    },
+    {
+     "en": "Assuming R+W>N alone gives linearizability. It gives read-your-writes on a single key, not a real-time total order across keys.",
+     "es": "Suponer que R+W>N por sí solo da linealizabilidad. Da read-your-writes en una sola clave, no un orden total en tiempo real entre claves."
+    },
+    {
+     "en": "Defaulting the whole datastore to strong consistency 'to be safe', turning every cache-warm read into a quorum round-trip.",
+     "es": "Poner todo el almacén en consistencia fuerte 'por seguridad', convirtiendo cada lectura trivial en un viaje de quórum."
+    }
+   ],
+   "analogy": {
+    "en": "A group project on a shared doc. To be sure everyone has the latest version you phone all teammates before you act (consistent, slow). Or you just edit your local copy and sync later (fast, but a teammate might be working off yesterday's draft). There's no version of the call that's free — even on a good phone line, waiting for confirmation takes time.",
+    "es": "Un trabajo en grupo sobre un documento compartido. Para estar seguro de que todos tienen la última versión llamas a todos antes de actuar (consistente, lento). O editas tu copia local y sincronizas luego (rápido, pero un compañero podría estar sobre el borrador de ayer). Ninguna versión de la llamada es gratis — aun con buena señal, esperar la confirmación toma tiempo."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "from cassandra import ConsistencyLevel\nfrom cassandra.query import SimpleStatement\n\n# Ledger: correctness matters -> EC (W=QUORUM, R=QUORUM, W+R>N)\nwrite = SimpleStatement(\n    \"INSERT INTO ledger (acct, txn_id, delta) VALUES (%s,%s,%s)\",\n    consistency_level=ConsistencyLevel.QUORUM)\nread = SimpleStatement(\n    \"SELECT balance FROM ledger WHERE acct=%s\",\n    consistency_level=ConsistencyLevel.QUORUM)\n\n# Read receipt: speed matters, staleness tolerable -> EL\nseen = SimpleStatement(\n    \"INSERT INTO receipts (msg_id, user) VALUES (%s,%s)\",\n    consistency_level=ConsistencyLevel.ONE)",
+    "caption": "Same cluster, two consistency dials chosen per operation — the PACELC L/C tradeoff made explicit in code.",
+    "annotations": [
+     {"line": 6, "note": "QUORUM write blocks until 2 of 3 replicas ack — this is the latency you buy."},
+     {"line": 9, "note": "QUORUM read; with W+R=4>N=3 it overlaps the last committed write (read-your-writes)."},
+     {"line": 15, "note": "ONE returns after a single local ack (~1ms); a concurrent reader may briefly miss it — chosen EL."}
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": "The two dominant PACELC profiles and what each optimizes.",
+    "left": {
+     "title": "PA/EL — Dynamo, Cassandra",
+     "points": [
+      "Partition: stay Available, serve possibly-stale data",
+      "Else: optimize Latency, reply from nearest/fewest replicas",
+      "Cost: eventual (or tunable) consistency",
+      "Use: carts, feeds, counters, receipts"
+     ]
+    },
+    "right": {
+     "title": "PC/EC — Spanner",
+     "points": [
+      "Partition: refuse writes rather than diverge",
+      "Else: optimize Consistency, pay TrueTime commit-wait",
+      "Cost: higher tail latency",
+      "Use: ledgers, inventory, anything money-shaped"
+     ]
+    }
+   },
+   "visual": {"widgetId": "consistency"}
+  },
+  {
+   "slug": "consistency-model-spectrum",
+   "title": {
+    "en": "The consistency spectrum: causal, snapshot, serializable",
+    "es": "El espectro de consistencia: causal, snapshot, serializable"
+   },
+   "why": {
+    "en": "Trains placing a requirement on the exact Jepsen model that satisfies it (e.g. causal for chat, serializable for money) instead of 'strong vs weak' — and, because it gates on both linearizability-vs-eventual and isolation-levels, making explicit that serializability (an isolation/transaction-ordering property) and linearizability (a recency property about single-object reads) are orthogonal axes, so the two 'serializable' encounters are reconciled as two dimensions meeting, not one scale repeated.",
+    "es": "Entrena ubicar un requisito en el modelo exacto de Jepsen que lo satisface (p. ej. causal para chat, serializable para dinero) en vez de 'fuerte vs débil' — y, al depender tanto de linearizability-vs-eventual como de isolation-levels, hacer explícito que la serializabilidad (una propiedad de aislamiento/ordenamiento de transacciones) y la linealizabilidad (una propiedad de recencia sobre lecturas de un solo objeto) son ejes ortogonales, de modo que los dos encuentros con 'serializable' se reconcilian como dos dimensiones que se cruzan, no una escala repetida."
+   },
+   "source": "Jepsen consistency models hierarchy (jepsen.io/consistency/models — strict serializable → serializable → SI/RR; linearizable → sequential → causal → PRAM); Kleppmann, DDIA Ch.9 (linearizability and serializability are orthogonal)",
+   "explanation": {
+    "en": "'Strong vs weak consistency' is not a scale — it's two different axes that people collapse into one word and then argue past each other. One axis is recency: does a read see the latest write? That's linearizability, and it's about a single object appearing to have one real-time order. The other axis is isolation: do concurrent transactions behave as if run one at a time? That's serializability, and it's about the ordering of multi-object transactions. They are orthogonal. You can have either without the other.\n\nThat orthogonality is why 'serializable' shows up in two places and confuses everyone. A database can be serializable but not linearizable — Postgres serializable-snapshot isolation gives you a correct transaction order, yet a read can be served from a consistent snapshot that's slightly in the past, so it isn't 'most recent'. Conversely a single register can be linearizable (always the latest value) with no transactions at all. Combine both — a real-time-consistent total order of transactions — and you get strict serializable, the strongest and most expensive model (Spanner aims here).\n\nThe judgment is to name the exact model a requirement needs, using a hierarchy like Jepsen's, not the word 'strong'. A group chat needs causal consistency: your reply must never appear before the message it answers, but two unrelated messages can arrive in either order — cheap and available. A 'follower count' is fine with eventual consistency. Moving money between accounts needs serializability so you can't double-spend, and often strict serializability so a balance read right after a transfer reflects it. Picking causal where you needed serializable is how you build a system that's fast and wrong.",
+    "es": "'Consistencia fuerte vs débil' no es una escala — son dos ejes distintos que la gente colapsa en una sola palabra y luego discute sin entenderse. Un eje es recencia: ¿una lectura ve la última escritura? Eso es linealizabilidad, y trata de que un solo objeto parezca tener un único orden en tiempo real. El otro eje es aislamiento: ¿las transacciones concurrentes se comportan como si corrieran una a la vez? Eso es serializabilidad, y trata del orden de transacciones sobre múltiples objetos. Son ortogonales. Puedes tener una sin la otra.\n\nEsa ortogonalidad es por qué 'serializable' aparece en dos lugares y confunde a todos. Una base de datos puede ser serializable pero no linealizable — el aislamiento serializable por snapshot de Postgres te da un orden de transacciones correcto, pero una lectura puede servirse desde un snapshot consistente ligeramente en el pasado, así que no es 'la más reciente'. Al revés, un solo registro puede ser linealizable (siempre el último valor) sin transacciones en absoluto. Combina ambos — un orden total de transacciones consistente en tiempo real — y obtienes strict serializable, el modelo más fuerte y más caro (a esto apunta Spanner).\n\nEl juicio es nombrar el modelo exacto que el requisito necesita, usando una jerarquía como la de Jepsen, no la palabra 'fuerte'. Un chat grupal necesita consistencia causal: tu respuesta nunca debe aparecer antes del mensaje que responde, pero dos mensajes sin relación pueden llegar en cualquier orden — barato y disponible. Un 'contador de seguidores' está bien con consistencia eventual. Mover dinero entre cuentas necesita serializabilidad para no gastar dos veces, y muchas veces strict serializable para que una lectura de saldo justo después de una transferencia la refleje. Elegir causal donde necesitabas serializable es cómo construyes un sistema rápido y equivocado."
+   },
+   "keyPoints": [
+    {
+     "en": "Linearizability (recency of single-object reads) and serializability (ordering of multi-object transactions) are orthogonal axes, not one scale.",
+     "es": "Linealizabilidad (recencia de lecturas de un objeto) y serializabilidad (orden de transacciones multi-objeto) son ejes ortogonales, no una sola escala."
+    },
+    {
+     "en": "Strict serializable = both axes at once (real-time total transaction order); it's the strongest and most expensive.",
+     "es": "Strict serializable = ambos ejes a la vez (orden total de transacciones en tiempo real); es el más fuerte y caro."
+    },
+    {
+     "en": "Map the requirement to a named model: causal for chat, eventual for counters, serializable/strict-serializable for money.",
+     "es": "Mapea el requisito a un modelo con nombre: causal para chat, eventual para contadores, serializable/strict-serializable para dinero."
+    }
+   ],
+   "keywords": [
+    {
+     "en": {"term": "Linearizability", "def": "Recency guarantee: once a write completes, every later read sees it; the object behaves as one register with a single real-time order."},
+     "es": {"term": "Linealizabilidad", "def": "Garantía de recencia: una vez que una escritura termina, toda lectura posterior la ve; el objeto se comporta como un registro con un único orden en tiempo real."}
+    },
+    {
+     "en": {"term": "Serializability", "def": "Isolation guarantee: the outcome of concurrent transactions equals SOME serial order — says nothing about which order or how recent."},
+     "es": {"term": "Serializabilidad", "def": "Garantía de aislamiento: el resultado de transacciones concurrentes equivale a ALGÚN orden serial — no dice cuál orden ni qué tan reciente."}
+    },
+    {
+     "en": {"term": "Causal consistency", "def": "Preserves cause→effect order (a reply after its message) but leaves concurrent, unrelated writes unordered — available under partition."},
+     "es": {"term": "Consistencia causal", "def": "Preserva el orden causa→efecto (una respuesta después de su mensaje) pero deja sin ordenar escrituras concurrentes no relacionadas — disponible bajo partición."}
+    },
+    {
+     "en": {"term": "Snapshot isolation (SI)", "def": "Each transaction reads a consistent snapshot as of its start; fast and serializable-looking, but vulnerable to write skew."},
+     "es": {"term": "Aislamiento por snapshot (SI)", "def": "Cada transacción lee un snapshot consistente de su inicio; rápido y parece serializable, pero vulnerable al write skew."}
+    },
+    {
+     "en": {"term": "Strict serializable", "def": "Serializability + linearizability together: a total transaction order that also respects real time. Strongest, costliest (Spanner)."},
+     "es": {"term": "Strict serializable", "def": "Serializabilidad + linealizabilidad juntas: un orden total de transacciones que además respeta el tiempo real. El más fuerte y caro (Spanner)."}
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "Two doctors are on call; a hospital rule requires at least one on-call doctor at all times. Both simultaneously request to go off-call. The system runs snapshot isolation.",
+     "walkthrough": "Under SI each transaction reads a snapshot taken at its start: both see 'two doctors on call', both check 'removing me still leaves one', both pass, both commit. Now zero doctors are on call — the invariant is violated even though the DB is snapshot-consistent. This is write skew, and it's why SI is NOT serializable. A truly serializable engine (Postgres SERIALIZABLE / SSI) detects the read-write conflict and aborts one transaction, forcing a retry — the serial outcome would only ever let one doctor leave. Note this is an isolation failure, not a recency one: even a perfectly up-to-date read wouldn't help, because the problem is two transactions ordering, not one stale value. That's the orthogonality made concrete."
+    },
+    "es": {
+     "scenario": "Dos médicos están de guardia; una regla del hospital exige al menos un médico de guardia en todo momento. Ambos piden simultáneamente salir de guardia. El sistema corre aislamiento por snapshot.",
+     "walkthrough": "Bajo SI cada transacción lee un snapshot tomado en su inicio: ambos ven 'dos médicos de guardia', ambos verifican 'si me quito queda uno', ambos pasan, ambos hacen commit. Ahora hay cero médicos de guardia — el invariante se viola aunque la base sea consistente por snapshot. Esto es write skew, y por eso SI NO es serializable. Un motor de verdad serializable (Postgres SERIALIZABLE / SSI) detecta el conflicto lectura-escritura y aborta una transacción, forzando un reintento — el orden serial solo permitiría que un médico saliera. Nota que esto es una falla de aislamiento, no de recencia: ni una lectura perfectamente al día ayudaría, porque el problema es el orden de dos transacciones, no un valor viejo. Esa es la ortogonalidad hecha concreta."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Assuming Snapshot Isolation is serializable. It prevents dirty/non-repeatable reads but allows write skew — a real correctness gap for invariants.",
+     "es": "Suponer que el aislamiento por snapshot es serializable. Evita lecturas sucias/no repetibles pero permite write skew — una brecha real de correctitud para invariantes."
+    },
+    {
+     "en": "Treating 'strong consistency' as one setting. Ask which axis: recency (linearizable) or transaction ordering (serializable)? They cost differently.",
+     "es": "Tratar 'consistencia fuerte' como un solo ajuste. Pregunta qué eje: recencia (linealizable) u orden de transacciones (serializable). Cuestan distinto."
+    },
+    {
+     "en": "Paying for strict serializability everywhere. Chat, feeds and counters don't need it; overpaying there is latency and money burned.",
+     "es": "Pagar strict serializable en todas partes. Chat, feeds y contadores no lo necesitan; sobrepagar ahí es latencia y dinero quemados."
+    },
+    {
+     "en": "Confusing causal with eventual. Causal orders cause-and-effect; eventual makes no ordering promise — a reply can precede its message.",
+     "es": "Confundir causal con eventual. Causal ordena causa y efecto; eventual no promete orden — una respuesta puede preceder a su mensaje."
+    }
+   ],
+   "analogy": {
+    "en": "Recency is 'is the whiteboard showing the newest number?' — one value, up to date. Isolation is 'did two accountants editing the ledger produce a result as if they took turns?' — a valid order of multi-step edits. A whiteboard can be perfectly current yet the accountants can still clobber each other; the accountants can take strict turns yet read a slightly old page. Different questions, different guarantees.",
+    "es": "La recencia es '¿el pizarrón muestra el número más nuevo?' — un valor, al día. El aislamiento es '¿dos contadores editando el libro produjeron un resultado como si se turnaran?' — un orden válido de ediciones de varios pasos. El pizarrón puede estar perfectamente actual y aun así los contadores pisarse; los contadores pueden turnarse estrictamente y aun así leer una página algo vieja. Preguntas distintas, garantías distintas."
+   },
+   "depth": {
+    "en": "Write skew (the doctors case) is the canonical anomaly that separates SI from true serializability, because SI's snapshots hide the read-write dependency between the two transactions. Postgres solves it with SSI (Serializable Snapshot Isolation, Cahill 2008): it runs on top of SI but tracks rw-antidependencies and aborts a transaction when a dangerous cycle of them forms, so you keep SI's non-blocking reads while getting serializable outcomes — at the cost of possible serialization-failure retries your app must handle.",
+    "es": "El write skew (el caso de los médicos) es la anomalía canónica que separa SI de la serializabilidad real, porque los snapshots de SI ocultan la dependencia lectura-escritura entre ambas transacciones. Postgres lo resuelve con SSI (Serializable Snapshot Isolation, Cahill 2008): corre sobre SI pero rastrea rw-antidependencias y aborta una transacción cuando se forma un ciclo peligroso, así conservas las lecturas no bloqueantes de SI y obtienes resultados serializables — a costa de posibles reintentos por fallo de serialización que tu app debe manejar."
+   },
+   "code": {
+    "lang": "sql",
+    "snippet": "-- Both doctors run this concurrently under SI\nBEGIN ISOLATION LEVEL REPEATABLE READ;  -- Postgres SI\nSELECT count(*) FROM doctors\n  WHERE on_call = true;                  -- both read 2\n-- app logic: 2 > 1, safe to leave\nUPDATE doctors SET on_call = false\n  WHERE name = 'alice';                  -- (other txn: 'bob')\nCOMMIT;                                  -- both commit -> 0 on call!\n\n-- Fix: SERIALIZABLE detects the rw-conflict and aborts one txn\nBEGIN ISOLATION LEVEL SERIALIZABLE;      -- SSI\n-- ... same statements ...\nCOMMIT;  -- one raises 40001 serialization_failure -> retry",
+    "caption": "Write skew under snapshot isolation, and the SERIALIZABLE (SSI) fix that aborts one transaction.",
+    "annotations": [
+     {"line": 2, "note": "Postgres REPEATABLE READ is actually snapshot isolation — not serializable."},
+     {"line": 4, "note": "Both transactions read the same snapshot (2 on call); neither sees the other's pending update."},
+     {"line": 8, "note": "Both commit; the invariant 'at least one on call' is now broken — classic write skew."},
+     {"line": 14, "note": "Under SERIALIZABLE, SSI detects the dangerous rw-antidependency and one commit fails with 40001."}
+    ]
+   },
+   "diagram": {
+    "kind": "axes",
+    "caption": "The two orthogonal axes; 'serializable' and 'linearizable' meet only at the top-right corner (strict serializable).",
+    "xAxis": "Isolation: none → read committed → snapshot → serializable",
+    "yAxis": "Recency: eventual → causal → sequential → linearizable"
+   },
+   "visual": {"widgetId": "consistency"}
+  },
+  {
+   "slug": "delivery-semantics-idempotency",
+   "title": {
+    "en": "Delivery semantics and idempotency (at-least-once vs exactly-once)",
+    "es": "Semántica de entrega e idempotencia (al-menos-una-vez vs exactamente-una-vez)"
+   },
+   "why": {
+    "en": "Trains treating 'exactly-once' as at-least-once delivery plus idempotent dedup keys, so retries, timeouts and redeliveries stop silently duplicating money or messages — the retry/duplicate-suppression reasoning that consensus, backpressure and failure handling all lean on.",
+    "es": "Entrena tratar 'exactamente una vez' como entrega al-menos-una-vez más claves de deduplicación idempotentes, para que reintentos, timeouts y reentregas dejen de duplicar en silencio dinero o mensajes — el razonamiento de reintentos/supresión de duplicados en el que se apoyan el consenso, el backpressure y el manejo de fallas."
+   },
+   "source": "Kleppmann, DDIA, Ch.11 (Stream Processing — Fault Tolerance: at-least-once vs exactly-once, idempotence, atomic commit) and Ch.12 (idempotence, dedup)",
+   "explanation": {
+    "en": "'Exactly-once delivery' does not exist on a real network, and any vendor who says otherwise is selling you exactly-once *processing* built on top of at-least-once delivery. The reason is fundamental: a sender transmits a message, the network can lose either the message or the acknowledgment, and the sender cannot tell which. So it retries. Retrying is how you get reliability — and retrying is also how you get duplicates. You cannot have at-least-once without accepting possible duplicates, and you cannot get 'exactly-once' by wishing the duplicates away.\n\nThe honest recipe is: at-least-once delivery + idempotent processing keyed by a dedup key. The producer attaches a stable identifier to the operation (an idempotency key, a transaction ID, an offset). The consumer records which keys it has already applied and makes applying the same key twice a no-op. Now retries, timeouts and redeliveries are safe: the second copy hits the dedup check and does nothing.\n\nThis is the reasoning that everything else leans on. Stripe requires an Idempotency-Key header on charge requests precisely so your retry after a timeout doesn't bill the customer twice. Kafka's 'exactly-once' is a producer sequence number plus transactional offset commits — at-least-once with dedup underneath. The trap is a POST /charge with no key: the client times out, retries, and you've moved money twice. Design the dedup key first, before you design the retry — the retry is the easy part.",
+    "es": "El 'exactly-once delivery' no existe en una red real, y quien te diga lo contrario te está vendiendo *procesamiento* exactly-once construido sobre entrega at-least-once. La razón es fundamental: un emisor transmite un mensaje, la red puede perder el mensaje o el acuse, y el emisor no puede saber cuál. Así que reintenta. Reintentar es cómo obtienes confiabilidad — y reintentar es también cómo obtienes duplicados. No puedes tener at-least-once sin aceptar posibles duplicados, y no consigues 'exactly-once' deseando que los duplicados desaparezcan.\n\nLa receta honesta es: entrega at-least-once + procesamiento idempotente indexado por una clave de deduplicación. El productor adjunta un identificador estable a la operación (una idempotency key, un ID de transacción, un offset). El consumidor registra qué claves ya aplicó y hace que aplicar la misma clave dos veces sea un no-op. Ahora los reintentos, timeouts y reentregas son seguros: la segunda copia choca con el chequeo de dedup y no hace nada.\n\nEste es el razonamiento sobre el que se apoya todo lo demás. Stripe exige un header Idempotency-Key en los cargos precisamente para que tu reintento tras un timeout no cobre dos veces al cliente. El 'exactly-once' de Kafka es un número de secuencia del productor más commits de offset transaccionales — at-least-once con dedup por debajo. La trampa es un POST /charge sin clave: el cliente hace timeout, reintenta, y moviste el dinero dos veces. Diseña la clave de dedup primero, antes de diseñar el reintento — el reintento es la parte fácil."
+   },
+   "keyPoints": [
+    {
+     "en": "Exactly-once delivery is impossible; exactly-once effect = at-least-once delivery + idempotent dedup keys.",
+     "es": "El exactly-once delivery es imposible; el efecto exactly-once = entrega at-least-once + claves de dedup idempotentes."
+    },
+    {
+     "en": "Retries buy reliability but create duplicates — the sender can't distinguish a lost message from a lost ack.",
+     "es": "Los reintentos compran confiabilidad pero crean duplicados — el emisor no distingue un mensaje perdido de un acuse perdido."
+    },
+    {
+     "en": "Design the dedup key (idempotency key / txn ID / offset) before the retry logic, especially for money and messages.",
+     "es": "Diseña la clave de dedup (idempotency key / ID de txn / offset) antes que la lógica de reintento, sobre todo para dinero y mensajes."
+    }
+   ],
+   "keywords": [
+    {
+     "en": {"term": "At-least-once", "def": "Delivery guarantee that a message is delivered one OR MORE times; the only cheap, achievable guarantee on a lossy network."},
+     "es": {"term": "At-least-once (al menos una vez)", "def": "Garantía de entrega de que un mensaje se entrega una O MÁS veces; la única garantía barata y alcanzable en una red con pérdidas."}
+    },
+    {
+     "en": {"term": "Idempotency key", "def": "A stable, client-chosen identifier for an operation so the server can recognize and collapse retries of the same request."},
+     "es": {"term": "Idempotency key", "def": "Un identificador estable, elegido por el cliente, para una operación, para que el servidor reconozca y colapse los reintentos del mismo request."}
+    },
+    {
+     "en": {"term": "Idempotent operation", "def": "One whose effect is the same whether applied once or many times — applying the recorded key again is a no-op."},
+     "es": {"term": "Operación idempotente", "def": "Aquella cuyo efecto es el mismo se aplique una o muchas veces — aplicar de nuevo la clave registrada es un no-op."}
+    },
+    {
+     "en": {"term": "Effectively-once", "def": "The honest name for 'exactly-once': at-least-once delivery whose duplicates are suppressed by dedup on the consumer/effect side."},
+     "es": {"term": "Effectively-once (efectivamente una vez)", "def": "El nombre honesto de 'exactly-once': entrega at-least-once cuyos duplicados se suprimen con dedup del lado del consumidor/efecto."}
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "A checkout service calls POST /charge on a payment provider. The provider succeeds, but the response is lost to a network blip; the client's 5s timeout fires and it retries.",
+     "walkthrough": "Without a key: the provider sees a brand-new request, charges the card again — the customer is billed twice and you have a support ticket and a refund. With an idempotency key: the client generates a UUID once (BEFORE the first attempt, and reuses it on every retry). The provider does an atomic INSERT of that key; the first request wins the insert and performs the charge, storing the response against the key. The retry's INSERT hits a unique-constraint conflict, so the provider skips the charge and REPLAYS the stored response. The customer is charged once, and the client gets a success either way. The subtlety that trips people: generate the key on the client before the first send, not per-attempt — a key generated inside the retry loop defeats the whole mechanism."
+    },
+    "es": {
+     "scenario": "Un servicio de checkout llama POST /charge en un proveedor de pagos. El proveedor tiene éxito, pero la respuesta se pierde por un parpadeo de red; el timeout de 5s del cliente dispara y reintenta.",
+     "walkthrough": "Sin clave: el proveedor ve un request nuevecito, cobra la tarjeta otra vez — al cliente le cobran dos veces y tú tienes un ticket de soporte y un reembolso. Con idempotency key: el cliente genera un UUID una vez (ANTES del primer intento, y lo reutiliza en cada reintento). El proveedor hace un INSERT atómico de esa clave; el primer request gana el insert y ejecuta el cobro, guardando la respuesta contra la clave. El INSERT del reintento choca con la restricción de unicidad, así que el proveedor omite el cobro y REPRODUCE la respuesta guardada. Al cliente se le cobra una vez, y el cliente recibe éxito de todas formas. La sutileza que hace tropezar: genera la clave en el cliente antes del primer envío, no por intento — una clave generada dentro del bucle de reintento anula todo el mecanismo."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Believing a broker's 'exactly-once' badge means you can skip dedup. It only holds inside that system's boundary; your side effects still need idempotency.",
+     "es": "Creer que la insignia 'exactly-once' de un broker te deja saltarte el dedup. Solo aplica dentro de ese sistema; tus efectos secundarios aún necesitan idempotencia."
+    },
+    {
+     "en": "Generating the idempotency key per attempt instead of once per logical operation — every retry looks new and duplicates anyway.",
+     "es": "Generar la idempotency key por intento en vez de una vez por operación lógica — cada reintento parece nuevo y duplica igual."
+    },
+    {
+     "en": "Checking the dedup store and then writing in two steps. Under concurrency two retries both pass the check; make it one atomic insert/upsert.",
+     "es": "Consultar el store de dedup y luego escribir en dos pasos. Con concurrencia dos reintentos pasan el chequeo; hazlo un insert/upsert atómico."
+    },
+    {
+     "en": "Never expiring dedup keys, so the store grows unbounded — give keys a TTL longer than your maximum retry window.",
+     "es": "No expirar nunca las claves de dedup, así el store crece sin límite — dales un TTL más largo que tu ventana máxima de reintento."
+    }
+   ],
+   "analogy": {
+    "en": "Mailing a signed check with a unique check number. If you're unsure it arrived you can mail a copy — but the bank cashes each check number only once, so a duplicate in the mail is harmless. The check number is the dedup key; without it, two copies in the mailbox would be paid twice.",
+    "es": "Enviar por correo un cheque firmado con un número de cheque único. Si no estás seguro de que llegó, puedes mandar una copia — pero el banco cobra cada número de cheque una sola vez, así que un duplicado en el correo es inofensivo. El número de cheque es la clave de dedup; sin él, dos copias en el buzón se pagarían dos veces."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "def charge(idempotency_key, amount, card):\n    try:\n        # Atomic: only the FIRST request wins this insert\n        db.execute(\n            \"INSERT INTO idem (key, status) VALUES (%s,'pending')\",\n            (idempotency_key,))\n    except UniqueViolation:\n        # A prior attempt already ran -> replay its result, no re-charge\n        return db.fetchone(\n            \"SELECT response FROM idem WHERE key=%s\", (idempotency_key,))\n    resp = payment_gateway.charge(amount, card)   # the real side effect\n    db.execute(\"UPDATE idem SET status='done', response=%s WHERE key=%s\",\n               (resp, idempotency_key))\n    return resp",
+    "caption": "At-least-once + idempotent dedup: the atomic insert makes a retry replay the stored response instead of charging twice.",
+    "annotations": [
+     {"line": 4, "note": "The unique key column turns the check-then-act race into one atomic operation."},
+     {"line": 7, "note": "A conflict means this key already ran — the signal to replay, never to re-charge."},
+     {"line": 11, "note": "The side effect happens exactly once because only the insert-winner reaches this line."}
+    ]
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": "How a lost-ack retry stays safe: the dedup key turns the second delivery into a no-op replay.",
+    "nodes": [
+     {"label": "Client sends charge (key=K)", "note": "K generated once, before first attempt"},
+     {"label": "Provider charges, stores result under K", "note": "the one real side effect"},
+     {"label": "Ack lost on the network", "note": "client can't tell success from failure"},
+     {"label": "Client times out, retries with same K", "note": "at-least-once in action"},
+     {"label": "Provider sees K exists -> replay stored result", "note": "no second charge = effectively-once"}
+    ]
+   }
+  }
+ ]
+}

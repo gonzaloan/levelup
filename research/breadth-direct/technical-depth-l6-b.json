@@ -1,0 +1,455 @@
+{
+ "lessonId": "technical-depth-l6",
+ "concepts": [
+  {
+   "slug": "consensus-and-atomic-commit",
+   "title": {
+    "en": "Consensus and atomic commit (Raft, quorums, 2PC)",
+    "es": "Consenso y commit atómico (Raft, quorums, 2PC)"
+   },
+   "why": {
+    "en": "Trains judging when you need real consensus for leader election/commit versus when a cheaper quorum or single-leader design suffices.",
+    "es": "Entrena juzgar cuándo necesitas consenso real para elección de líder/commit versus cuándo basta un quorum más barato o un diseño de líder único."
+   },
+   "source": "Kleppmann, DDIA, Ch.9 (Consensus, 2PC); Ongaro & Ousterhout, 'In Search of an Understandable Consensus Algorithm' (Raft), 2014",
+   "explanation": {
+    "en": "Consensus is expensive — a majority of nodes must agree on every decision through multiple network round-trips — so the judgment is knowing when you truly need it versus when something cheaper is correct. You need real consensus (Raft, Paxos, Multi-Paxos) when nodes must agree on a single total order of operations that survives failures: electing exactly one leader, or appending to a replicated log that all replicas apply in the same order. That total order is what prevents split-brain and gives you linearizable writes.\n\nYou do NOT need full consensus for a lot of things people reach for it. A single-leader database with async followers gives you a total order for free (the leader) without a consensus round per write — you just have to handle failover carefully. A Dynamo-style quorum (R+W>N) gives you durability and availability without electing a leader or agreeing on order — good enough for a shopping cart or a key-value store where last-writer-wins or CRDT merge is acceptable, but it does NOT give you a total order, so don't use it where ordering matters.\n\nAtomic commit is a different problem: making a transaction commit on all participants or none. Two-phase commit (2PC) does this — a coordinator asks everyone to prepare, then tells everyone to commit — but it's a blocking protocol: if the coordinator dies after 'prepare', participants hold locks and wait, potentially forever. That's why modern systems back 2PC with a consensus-replicated coordinator (Spanner runs Paxos under the 2PC coordinator) or avoid cross-shard transactions entirely. Rule of thumb: consensus for who-is-leader and what-order; quorum for durable-and-available; 2PC only when you must span shards, and only with a fault-tolerant coordinator.",
+    "es": "El consenso es caro — una mayoría de nodos debe acordar cada decisión a través de varias idas y vueltas de red — así que el juicio está en saber cuándo de verdad lo necesitas frente a cuándo algo más barato es correcto. Necesitas consenso real (Raft, Paxos, Multi-Paxos) cuando los nodos deben acordar un único orden total de operaciones que sobreviva a fallas: elegir exactamente un líder, o agregar a un log replicado que todas las réplicas apliquen en el mismo orden. Ese orden total es lo que evita el split-brain y te da escrituras linealizables.\n\nNO necesitas consenso completo para muchas cosas en las que la gente lo usa. Una base de datos de líder único con seguidores asíncronos te da un orden total gratis (el líder) sin una ronda de consenso por escritura — solo debes manejar el failover con cuidado. Un quórum estilo Dynamo (R+W>N) te da durabilidad y disponibilidad sin elegir líder ni acordar orden — suficiente para un carrito de compras o un key-value donde last-writer-wins o merge por CRDT es aceptable, pero NO te da orden total, así que no lo uses donde el orden importa.\n\nEl commit atómico es otro problema: lograr que una transacción haga commit en todos los participantes o en ninguno. El commit en dos fases (2PC) hace esto — un coordinador pide a todos preparar, luego les dice a todos hacer commit — pero es un protocolo bloqueante: si el coordinador muere tras el 'prepare', los participantes retienen locks y esperan, potencialmente para siempre. Por eso los sistemas modernos respaldan 2PC con un coordinador replicado por consenso (Spanner corre Paxos bajo el coordinador de 2PC) o evitan del todo las transacciones entre shards. Regla práctica: consenso para quién-es-líder y qué-orden; quórum para durable-y-disponible; 2PC solo cuando debes cruzar shards, y solo con un coordinador tolerante a fallas."
+   },
+   "keyPoints": [
+    {
+     "en": "Use consensus (Raft/Paxos) only when you need one agreed total order that survives failure: leader election, replicated log.",
+     "es": "Usa consenso (Raft/Paxos) solo cuando necesitas un orden total acordado que sobreviva fallas: elección de líder, log replicado."
+    },
+    {
+     "en": "A quorum (R+W>N) gives durability and availability but NOT total order — fine for key-value, wrong where ordering matters.",
+     "es": "Un quórum (R+W>N) da durabilidad y disponibilidad pero NO orden total — sirve para key-value, no donde el orden importa."
+    },
+    {
+     "en": "2PC gives atomic commit but blocks on coordinator failure; only span shards with a consensus-backed, fault-tolerant coordinator.",
+     "es": "2PC da commit atómico pero se bloquea si muere el coordinador; solo cruza shards con un coordinador tolerante a fallas respaldado por consenso."
+    }
+   ],
+   "keywords": [
+    {
+     "term": { "en": "Quorum (R + W > N)", "es": "Quórum (R + W > N)" },
+     "def": {
+      "en": "A read and write overlap rule: if reads touch R replicas, writes touch W, and R+W exceeds the total N, every read intersects the latest write. Buys durability and availability, not a total order.",
+      "es": "Regla de solapamiento de lecturas y escrituras: si las lecturas tocan R réplicas, las escrituras W, y R+W supera el total N, toda lectura intersecta la última escritura. Compra durabilidad y disponibilidad, no un orden total."
+     }
+    },
+    {
+     "term": { "en": "Replicated log", "es": "Log replicado" },
+     "def": {
+      "en": "An append-only sequence of operations that every replica applies in the same order. Consensus exists to agree on this one order so all nodes end up in the same state.",
+      "es": "Una secuencia solo-de-anexado de operaciones que toda réplica aplica en el mismo orden. El consenso existe para acordar ese único orden y que todos los nodos terminen en el mismo estado."
+     }
+    },
+    {
+     "term": { "en": "Split-brain", "es": "Split-brain" },
+     "def": {
+      "en": "Two nodes each believing they are the leader and both accepting writes, producing divergent, unmergeable state. The failure consensus and quorums exist to prevent.",
+      "es": "Dos nodos que creen ser el líder y ambos aceptan escrituras, produciendo estado divergente e inmezclable. La falla que el consenso y los quórums existen para prevenir."
+     }
+    },
+    {
+     "term": { "en": "Prepare / commit (2PC)", "es": "Prepare / commit (2PC)" },
+     "def": {
+      "en": "Two-phase commit's two rounds: the coordinator asks each participant to prepare (promise it can commit and hold locks), then tells all to commit or abort. Between the rounds, a coordinator crash leaves participants blocked.",
+      "es": "Las dos rondas del commit en dos fases: el coordinador pide a cada participante preparar (prometer que puede confirmar y retener locks), luego ordena a todos confirmar o abortar. Entre rondas, una caída del coordinador deja a los participantes bloqueados."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "Your team runs a 3-node metadata service. An engineer proposes adding leader election so writes have a single owner. Do you need Raft, or does the existing quorum store suffice?",
+     "es": "Tu equipo corre un servicio de metadatos de 3 nodos. Un ingeniero propone agregar elección de líder para que las escrituras tengan un solo dueño. ¿Necesitas Raft, o basta el almacén por quórum existente?"
+    },
+    "walkthrough": {
+     "en": "Ask what breaks without ordering. If two clients rename the same file concurrently, the quorum store with last-writer-wins picks one by timestamp — acceptable, no total order needed, keep the quorum. But if the service hands out sequential lease IDs that must never repeat, two nodes could each mint ID 42 during a partition: that requires one agreed order, so you need Raft. The tell is 'must never repeat / must be ordered', not 'must be durable'. Reach for consensus only for the ordered fact; keep everything else on the cheaper quorum path.",
+     "es": "Pregunta qué se rompe sin orden. Si dos clientes renombran el mismo archivo a la vez, el almacén por quórum con last-writer-wins elige uno por timestamp — aceptable, no hace falta orden total, quédate con el quórum. Pero si el servicio reparte IDs de lease secuenciales que nunca deben repetirse, dos nodos podrían acuñar cada uno el ID 42 durante una partición: eso exige un orden acordado, así que necesitas Raft. La señal es 'nunca debe repetirse / debe estar ordenado', no 'debe ser durable'. Recurre al consenso solo para el hecho ordenado; deja todo lo demás en el camino más barato del quórum."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Treating a quorum as if it gave a total order — it doesn't; concurrent writes can be reordered per replica, so ordering-sensitive logic silently corrupts.",
+     "es": "Tratar un quórum como si diera orden total — no lo hace; escrituras concurrentes pueden reordenarse por réplica, así que la lógica sensible al orden se corrompe en silencio."
+    },
+    {
+     "en": "Running 2PC with a single, non-replicated coordinator: its crash after 'prepare' leaves participants holding locks indefinitely.",
+     "es": "Correr 2PC con un coordinador único y no replicado: su caída tras el 'prepare' deja a los participantes reteniendo locks indefinidamente."
+    },
+    {
+     "en": "Using an even number of voters (e.g. 2 or 4). A majority of 4 is 3, so you tolerate only one failure yet pay more coordination — always size consensus groups to odd numbers.",
+     "es": "Usar un número par de votantes (p. ej. 2 o 4). La mayoría de 4 es 3, así que toleras solo una falla pero pagas más coordinación — dimensiona los grupos de consenso siempre en números impares."
+    },
+    {
+     "en": "Reaching for consensus on the whole workload when only one fact needs ordering — you pay a round-trip per write for data that a leader or quorum would serve fine.",
+     "es": "Recurrir al consenso para toda la carga cuando solo un hecho necesita orden — pagas una ida y vuelta por escritura para datos que un líder o un quórum servirían bien."
+    }
+   ],
+   "analogy": {
+    "en": "Consensus is a board of directors: nothing is official until a majority ratifies it into one set of minutes, in one order — that's why it's slow. A quorum is everyone keeping their own notebook and comparing enough of them to be sure a fact was recorded; durable, but no single authoritative ordering of what happened when.",
+    "es": "El consenso es una junta directiva: nada es oficial hasta que una mayoría lo ratifica en una sola acta, en un solo orden — por eso es lento. Un quórum es cada quien con su propio cuaderno, comparando suficientes de ellos para estar seguros de que un hecho quedó registrado; durable, pero sin un único orden autoritativo de qué pasó y cuándo."
+   },
+   "depth": {
+    "en": "The FLP result (Fischer-Lynch-Paterson, 1985) proves consensus is impossible to guarantee in a fully asynchronous network with even one crash-faulty process, because you can never distinguish a slow node from a dead one. Real algorithms sidestep this by adding timeouts / failure detectors: they trade guaranteed liveness (they may pause during instability) to keep safety (they never disagree). Raft's randomized election timeouts are exactly this bargain.",
+    "es": "El resultado FLP (Fischer-Lynch-Paterson, 1985) prueba que es imposible garantizar consenso en una red totalmente asíncrona con aunque sea un proceso que puede caer, porque nunca distingues un nodo lento de uno muerto. Los algoritmos reales lo esquivan agregando timeouts / detectores de fallas: sacrifican liveness garantizado (pueden pausar durante la inestabilidad) para preservar safety (nunca se contradicen). Los timeouts de elección aleatorizados de Raft son exactamente ese trato."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "def leader_commit_index(match_index, current_term, log, n_nodes):\n    majority = n_nodes // 2 + 1\n    for idx in range(len(log) - 1, -1, -1):\n        replicas = 1 + sum(1 for m in match_index if m >= idx)\n        if replicas >= majority and log[idx].term == current_term:\n            return idx\n    return -1",
+    "caption": {
+     "en": "How a Raft leader decides an entry is committed: replicated on a majority AND from the current term.",
+     "es": "Cómo un líder Raft decide que una entrada está confirmada: replicada en una mayoría Y del término actual."
+    },
+    "annotations": [
+     {
+      "line": 2,
+      "note": {
+       "en": "Majority of N (self included), e.g. 2 of 3 — this is why odd sizes are efficient.",
+       "es": "Mayoría de N (contándose a sí mismo), p. ej. 2 de 3 — por esto los tamaños impares son eficientes."
+      }
+     },
+     {
+      "line": 4,
+      "note": {
+       "en": "The 1 + counts the leader's own copy alongside followers whose matchIndex reached idx.",
+       "es": "El 1 + cuenta la copia del propio líder junto a los seguidores cuyo matchIndex llegó a idx."
+      }
+     },
+     {
+      "line": 5,
+      "note": {
+       "en": "The current-term check is the Raft safety rule: never commit a stale-term entry by counting alone, or a lost log could reappear.",
+       "es": "El chequeo de término actual es la regla de safety de Raft: nunca confirmes una entrada de término viejo solo por conteo, o un log perdido podría reaparecer."
+      }
+     }
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {
+     "en": "Same 3 nodes, two coordination strategies — pick by whether you need an agreed order.",
+     "es": "Los mismos 3 nodos, dos estrategias de coordinación — elige según si necesitas un orden acordado."
+    },
+    "left": {
+     "title": { "en": "Quorum (R+W>N)", "es": "Quórum (R+W>N)" },
+     "points": [
+      { "en": "No leader, no per-write round of agreement", "es": "Sin líder, sin ronda de acuerdo por escritura" },
+      { "en": "Durable + available during partitions", "es": "Durable + disponible durante particiones" },
+      { "en": "No total order; concurrent writes resolved by LWW/CRDT", "es": "Sin orden total; escrituras concurrentes resueltas por LWW/CRDT" },
+      { "en": "Use for carts, KV stores, caches", "es": "Úsalo para carritos, KV stores, cachés" }
+     ]
+    },
+    "right": {
+     "title": { "en": "Consensus (Raft/Paxos)", "es": "Consenso (Raft/Paxos)" },
+     "points": [
+      { "en": "One leader; majority agrees per decision", "es": "Un líder; la mayoría acuerda cada decisión" },
+      { "en": "Single total order → linearizable, no split-brain", "es": "Un orden total → linealizable, sin split-brain" },
+      { "en": "Round-trips per write, pauses under instability", "es": "Idas y vueltas por escritura, pausas ante inestabilidad" },
+      { "en": "Use for leader election, sequential IDs, log", "es": "Úsalo para elección de líder, IDs secuenciales, log" }
+     ]
+    }
+   },
+   "visual": { "widgetId": "consensus" }
+  },
+  {
+   "slug": "distributed-failure-modes",
+   "title": {
+    "en": "Partial failure: clocks, split-brain, network faults",
+    "es": "Falla parcial: relojes, split-brain, fallas de red"
+   },
+   "why": {
+    "en": "Trains distrusting wall clocks and 'the node is dead' assumptions, since split-brain and clock skew corrupt systems that ignore them.",
+    "es": "Entrena desconfiar de los relojes de pared y del supuesto 'el nodo está muerto', porque el split-brain y el desfase de reloj corrompen sistemas que los ignoran."
+   },
+   "source": "Kleppmann, DDIA, Ch.8 (The Trouble with Distributed Systems — Unreliable Clocks, Process Pauses)",
+   "explanation": {
+    "en": "Two assumptions quietly corrupt distributed systems: that wall-clock time is trustworthy, and that you can tell when a node is dead. Both are false, and the failures they cause are the silent, data-corrupting kind that pass every test in the office and detonate in production.\n\nWall clocks (time-of-day clocks) drift, get corrected by NTP (jumping forward or backward), and can even go backwards during a leap second. So 'last write wins by timestamp' can silently drop the newer write when one node's clock is 200ms ahead. Never order events or expire leases by comparing wall clocks across machines; use logical clocks (Lamport, version vectors) for causality, and monotonic clocks for measuring elapsed time on a single machine. Spanner only gets away with timestamp ordering by using TrueTime, which exposes clock *uncertainty* and waits it out.\n\n'The node is dead' is unknowable from the outside. A process in a long GC pause, a VM that got descheduled, or a node behind a partition looks identical to a dead one — and then it wakes up. If your failover promoted a new leader while the old one was merely paused, both now think they're leader: split-brain, and they both accept writes. The defenses are concrete: fencing tokens (a monotonically increasing number the storage layer checks, so a resurrected old leader's writes are rejected), leases with expiry, and quorums so a minority side can't act alone. Assume every 'dead' node might come back mid-write, and make the system reject its stale actions rather than trust a heartbeat.",
+    "es": "Dos supuestos corrompen en silencio los sistemas distribuidos: que el reloj de pared es confiable, y que puedes saber cuándo un nodo está muerto. Ambos son falsos, y las fallas que provocan son del tipo silencioso que corrompe datos, pasan todas las pruebas en la oficina y explotan en producción.\n\nLos relojes de pared (time-of-day) se desfasan, los corrige NTP (saltando hacia adelante o hacia atrás), e incluso pueden retroceder durante un segundo intercalar. Así que 'gana la última escritura por timestamp' puede descartar en silencio la escritura más nueva cuando el reloj de un nodo va 200ms adelantado. Nunca ordenes eventos ni expires leases comparando relojes de pared entre máquinas; usa relojes lógicos (Lamport, vectores de versión) para causalidad, y relojes monotónicos para medir tiempo transcurrido en una sola máquina. Spanner se sale con la suya ordenando por timestamp solo porque usa TrueTime, que expone la *incertidumbre* del reloj y la espera.\n\n'El nodo está muerto' es indeterminable desde afuera. Un proceso en una pausa larga de GC, una VM que fue desprogramada, o un nodo tras una partición se ve idéntico a uno muerto — y luego despierta. Si tu failover promovió un nuevo líder mientras el viejo solo estaba pausado, ahora ambos creen ser líder: split-brain, y ambos aceptan escrituras. Las defensas son concretas: fencing tokens (un número monotónicamente creciente que la capa de almacenamiento verifica, para rechazar las escrituras de un viejo líder resucitado), leases con expiración, y quórums para que un lado minoritario no pueda actuar solo. Asume que todo nodo 'muerto' puede volver a mitad de una escritura, y haz que el sistema rechace sus acciones viejas en vez de confiar en un heartbeat."
+   },
+   "keyPoints": [
+    {
+     "en": "Don't order events or expire leases by comparing wall clocks across machines; use logical clocks for causality, monotonic for elapsed time.",
+     "es": "No ordenes eventos ni expires leases comparando relojes de pared entre máquinas; usa relojes lógicos para causalidad y monotónicos para tiempo transcurrido."
+    },
+    {
+     "en": "A GC pause, descheduled VM, or partition is indistinguishable from a dead node — and it can wake up mid-write.",
+     "es": "Una pausa de GC, una VM desprogramada o una partición son indistinguibles de un nodo muerto — y puede despertar a mitad de una escritura."
+    },
+    {
+     "en": "Prevent split-brain with fencing tokens, leases with expiry, and quorum majorities — never trust a heartbeat alone.",
+     "es": "Previene el split-brain con fencing tokens, leases con expiración y mayorías por quórum — nunca confíes solo en un heartbeat."
+    }
+   ],
+   "keywords": [
+    {
+     "term": { "en": "Wall clock vs monotonic clock", "es": "Reloj de pared vs reloj monotónico" },
+     "def": {
+      "en": "A wall clock reports time-of-day and can jump or go backward when NTP corrects it; a monotonic clock only ever increases and measures elapsed time on one machine. Use monotonic for durations, never wall-clock deltas.",
+      "es": "Un reloj de pared reporta la hora del día y puede saltar o retroceder cuando NTP lo corrige; un reloj monotónico solo aumenta y mide tiempo transcurrido en una máquina. Usa el monotónico para duraciones, nunca deltas de reloj de pared."
+     }
+    },
+    {
+     "term": { "en": "Fencing token", "es": "Fencing token" },
+     "def": {
+      "en": "A monotonically increasing number handed out with each lease/leadership. The storage layer remembers the highest it has seen and rejects any write carrying a lower one, so a revived old leader can't overwrite.",
+      "es": "Un número monotónicamente creciente entregado con cada lease/liderazgo. La capa de almacenamiento recuerda el más alto que ha visto y rechaza toda escritura con uno menor, para que un líder viejo revivido no pueda sobrescribir."
+     }
+    },
+    {
+     "term": { "en": "Clock skew", "es": "Desfase de reloj" },
+     "def": {
+      "en": "The difference between two machines' clocks at an instant. Even with NTP it's routinely tens of milliseconds — enough to reorder events if you trust timestamps for ordering.",
+      "es": "La diferencia entre los relojes de dos máquinas en un instante. Aun con NTP suele ser de decenas de milisegundos — suficiente para reordenar eventos si confías en timestamps para ordenar."
+     }
+    },
+    {
+     "term": { "en": "Process pause", "es": "Pausa de proceso" },
+     "def": {
+      "en": "An unbounded stall — GC, VM live-migration, swapping — during which a healthy process does nothing and looks dead. On resume it may act on now-stale assumptions (e.g. 'I'm still the leader').",
+      "es": "Una parada no acotada — GC, migración en vivo de VM, swapping — durante la cual un proceso sano no hace nada y parece muerto. Al reanudar puede actuar sobre supuestos ya viejos (p. ej. 'sigo siendo el líder')."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "A distributed lock service grants Client A a 30-second lease on a file. Client A stalls in a 40-second GC pause. The lease expires, the service grants the lock to Client B, then A wakes up believing it still holds the lock and writes.",
+     "es": "Un servicio de locks distribuido otorga a Cliente A un lease de 30 segundos sobre un archivo. Cliente A se congela en una pausa de GC de 40 segundos. El lease expira, el servicio otorga el lock a Cliente B, luego A despierta creyendo que aún tiene el lock y escribe."
+    },
+    "walkthrough": {
+     "en": "Without fencing, both writes reach storage and A's stale write corrupts B's data — the classic lease bug. The fix: the lock service issues a fencing token (33, then 34) with each grant. Storage records the highest token it has applied. When A's paused write arrives carrying token 33 but storage has already seen 34 from B, it is rejected. A's clock, A's belief that 'only 5 seconds passed', A's heartbeat — all irrelevant. The monotonic token, checked at the point of the write, is the only thing that makes the resurrection safe.",
+     "es": "Sin fencing, ambas escrituras llegan al almacenamiento y la escritura vieja de A corrompe los datos de B — el bug clásico de leases. La solución: el servicio de locks emite un fencing token (33, luego 34) con cada otorgamiento. El almacenamiento registra el token más alto que aplicó. Cuando la escritura pausada de A llega con el token 33 pero el almacenamiento ya vio el 34 de B, se rechaza. El reloj de A, la creencia de A de que 'solo pasaron 5 segundos', el heartbeat de A — todo irrelevante. El token monotónico, verificado en el punto de la escritura, es lo único que hace segura la resurrección."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Last-writer-wins by wall-clock timestamp across nodes: a fast clock silently discards a genuinely newer write, and you never see an error.",
+     "es": "Last-writer-wins por timestamp de reloj de pared entre nodos: un reloj adelantado descarta en silencio una escritura genuinamente más nueva, y nunca ves un error."
+    },
+    {
+     "en": "Trusting a lease's expiry on the holder's side alone — the holder may be paused and think time hasn't passed. Enforcement must happen at the resource (fencing).",
+     "es": "Confiar en la expiración de un lease solo del lado del titular — puede estar pausado y creer que no ha pasado tiempo. La aplicación debe ocurrir en el recurso (fencing)."
+    },
+    {
+     "en": "Assuming a longer heartbeat timeout 'fixes' false death detection. Pauses are unbounded; a bigger timeout only trades faster failover for fewer false positives — it never removes the ambiguity.",
+     "es": "Suponer que un timeout de heartbeat más largo 'arregla' la detección falsa de muerte. Las pausas no están acotadas; un timeout mayor solo canjea failover rápido por menos falsos positivos — nunca elimina la ambigüedad."
+    }
+   ],
+   "analogy": {
+    "en": "A fencing token is the sequence number on a bank check. If you write check #33, then cancel it and issue #34, the bank remembers 34 was cashed. When your old #33 finally shows up, it bounces — no matter how sincerely you believe it's still valid.",
+    "es": "Un fencing token es el número de serie de un cheque. Si giras el cheque #33, lo cancelas y emites el #34, el banco recuerda que se cobró el 34. Cuando tu viejo #33 aparece por fin, rebota — sin importar cuán sinceramente creas que aún vale."
+   },
+   "depth": {
+    "en": "Google Spanner is the exception that proves the rule: it DOES order globally by timestamp, but only because TrueTime returns an interval [earliest, latest] bounding the real time, not a point. To commit, a transaction waits out that uncertainty (commit-wait, typically single-digit ms) so its timestamp is guaranteed to be in the past everywhere. It buys correct clock ordering by paying latency for uncertainty — the honest version of what naive timestamp-LWW pretends is free.",
+    "es": "Google Spanner es la excepción que confirma la regla: SÍ ordena globalmente por timestamp, pero solo porque TrueTime devuelve un intervalo [más-temprano, más-tarde] que acota el tiempo real, no un punto. Para confirmar, una transacción espera esa incertidumbre (commit-wait, típicamente milisegundos de un dígito) para que su timestamp esté garantizado en el pasado en todas partes. Compra el orden correcto por reloj pagando latencia por la incertidumbre — la versión honesta de lo que el ingenuo LWW-por-timestamp finge que es gratis."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "highest_token_seen = 0\n\ndef apply_write(payload, fencing_token):\n    global highest_token_seen\n    if fencing_token < highest_token_seen:\n        raise StaleLeaderError(\n            f\"token {fencing_token} < {highest_token_seen}: rejected\")\n    highest_token_seen = fencing_token\n    persist(payload)",
+    "caption": {
+     "en": "Storage-side fencing: a revived old leader's lower token is rejected before it can corrupt data.",
+     "es": "Fencing del lado del almacenamiento: el token menor de un líder viejo revivido se rechaza antes de que pueda corromper datos."
+    },
+    "annotations": [
+     {
+      "line": 1,
+      "note": {
+       "en": "State lives at the resource, not the client — the client's beliefs can't be trusted.",
+       "es": "El estado vive en el recurso, no en el cliente — no se puede confiar en las creencias del cliente."
+      }
+     },
+     {
+      "line": 5,
+      "note": {
+       "en": "The whole defense: a token below the highest applied means a stale actor; reject unconditionally.",
+       "es": "Toda la defensa: un token por debajo del más alto aplicado significa un actor viejo; rechaza sin condiciones."
+      }
+     },
+     {
+      "line": 7,
+      "note": {
+       "en": "Advance the watermark only after passing the check, so ordering across grants is monotonic.",
+       "es": "Avanza la marca solo tras pasar el chequeo, para que el orden entre otorgamientos sea monotónico."
+      }
+     }
+    ]
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": {
+     "en": "How a process pause becomes split-brain — and where the fencing token stops it.",
+     "es": "Cómo una pausa de proceso se vuelve split-brain — y dónde lo detiene el fencing token."
+    },
+    "nodes": [
+     { "label": { "en": "Leader A holds lease, token 33", "es": "Líder A tiene el lease, token 33" } },
+     { "label": { "en": "A enters 40s GC pause (looks dead)", "es": "A entra en pausa de GC de 40s (parece muerto)" }, "note": { "en": "Indistinguishable from a crash", "es": "Indistinguible de un crash" } },
+     { "label": { "en": "Lease expires → B promoted, token 34", "es": "Lease expira → B promovido, token 34" } },
+     { "label": { "en": "A wakes, still thinks it's leader, writes with 33", "es": "A despierta, aún se cree líder, escribe con 33" }, "note": { "en": "Split-brain: two writers", "es": "Split-brain: dos escritores" } },
+     { "label": { "en": "Storage saw 34; rejects token 33", "es": "El almacenamiento vio 34; rechaza el token 33" }, "note": { "en": "Fencing makes the resurrection safe", "es": "El fencing hace segura la resurrección" } }
+    ]
+   }
+  },
+  {
+   "slug": "backpressure-flow-control",
+   "title": {
+    "en": "Backpressure, load shedding and bounded resources",
+    "es": "Backpressure, descarte de carga y recursos acotados"
+   },
+   "why": {
+    "en": "Trains designing systems that degrade gracefully under overload instead of collapsing via unbounded queues and retry storms.",
+    "es": "Entrena diseñar sistemas que se degradan con gracia ante sobrecarga en lugar de colapsar por colas ilimitadas y tormentas de reintentos."
+   },
+   "source": "Google SRE Book, 'Handling Overload' & 'Addressing Cascading Failures' (sre.google/sre-book)",
+   "explanation": {
+    "en": "A system under overload does not have to collapse — it collapses when it lets work pile up without limit. The core failure pattern is the unbounded queue: requests arrive faster than you can serve them, the queue grows, latency climbs, clients time out and retry, which adds MORE load, which grows the queue faster — a retry storm that turns a small overload into total unavailability. The fix is designing for bounded resources everywhere and choosing what to drop.\n\nBackpressure means the system signals 'slow down' up the chain instead of silently buffering: bounded queues that reject when full, TCP-style flow control, reactive-stream demand signals. Load shedding means when you're over capacity you deliberately reject or degrade some requests fast (return 429/503 immediately, serve a cached or degraded response) so the requests you do accept still meet their deadline. Rejecting cheaply at the front door is far better than accepting everything and timing out on all of it — a half-served request is wasted work that helped no one.\n\nThe supporting tactics are concrete and you should know them cold: bound every queue and thread pool; put deadlines on requests and propagate them so downstream work for a client who already gave up is cancelled; use exponential backoff WITH jitter so retries don't synchronize into thundering herds; cap retries and add a retry budget (e.g. retries may not exceed 10% of requests); and use circuit breakers so a failing dependency stops receiving traffic instead of dragging you down with it. The Google SRE guidance is blunt: graceful degradation beats total failure, and you must decide in advance what to shed.",
+    "es": "Un sistema bajo sobrecarga no tiene por qué colapsar — colapsa cuando deja que el trabajo se acumule sin límite. El patrón de falla central es la cola no acotada: los requests llegan más rápido de lo que puedes servir, la cola crece, la latencia sube, los clientes hacen timeout y reintentan, lo que agrega MÁS carga, lo que hace crecer la cola aún más rápido — una tormenta de reintentos que convierte una sobrecarga pequeña en indisponibilidad total. La solución es diseñar para recursos acotados en todas partes y elegir qué descartar.\n\nBackpressure significa que el sistema señala 've más lento' hacia arriba en la cadena en vez de bufferear en silencio: colas acotadas que rechazan cuando están llenas, control de flujo estilo TCP, señales de demanda de reactive streams. Load shedding significa que cuando estás sobre capacidad rechazas o degradas deliberadamente algunos requests rápido (devuelve 429/503 de inmediato, sirve una respuesta cacheada o degradada) para que los requests que sí aceptas cumplan su deadline. Rechazar barato en la puerta es mucho mejor que aceptar todo y hacer timeout en todo — un request servido a medias es trabajo desperdiciado que no ayudó a nadie.\n\nLas tácticas de apoyo son concretas y debes conocerlas de memoria: acota cada cola y pool de hilos; pon deadlines a los requests y propágalos para cancelar el trabajo aguas abajo de un cliente que ya se rindió; usa backoff exponencial CON jitter para que los reintentos no se sincronicen en estampidas; limita los reintentos y agrega un presupuesto de reintentos (p. ej. los reintentos no pueden superar el 10% de los requests); y usa circuit breakers para que una dependencia que falla deje de recibir tráfico en vez de arrastrarte con ella. La guía de SRE de Google es tajante: la degradación con gracia le gana a la falla total, y debes decidir de antemano qué descartar."
+   },
+   "keyPoints": [
+    {
+     "en": "Unbounded queues + retries cause cascading failure: overload → latency → timeouts → retries → more overload.",
+     "es": "Colas no acotadas + reintentos causan falla en cascada: sobrecarga → latencia → timeouts → reintentos → más sobrecarga."
+    },
+    {
+     "en": "Shed load early (429/503) so accepted requests meet their deadline; a half-served request is wasted work.",
+     "es": "Descarta carga temprano (429/503) para que los requests aceptados cumplan su deadline; un request a medias es trabajo desperdiciado."
+    },
+    {
+     "en": "Bound every queue, propagate deadlines, use jittered backoff, retry budgets, and circuit breakers.",
+     "es": "Acota cada cola, propaga deadlines, usa backoff con jitter, presupuestos de reintento y circuit breakers."
+    }
+   ],
+   "keywords": [
+    {
+     "term": { "en": "Backpressure", "es": "Backpressure" },
+     "def": {
+      "en": "A signal that propagates 'I'm full, slow down' upstream instead of silently buffering. Bounded queues, TCP windows, and reactive-stream demand are all forms of it.",
+      "es": "Una señal que propaga 'estoy lleno, ve más lento' hacia arriba en vez de bufferear en silencio. Colas acotadas, ventanas de TCP y la demanda de reactive streams son formas de esto."
+     }
+    },
+    {
+     "term": { "en": "Load shedding", "es": "Descarte de carga (load shedding)" },
+     "def": {
+      "en": "Deliberately rejecting or degrading a fraction of requests fast when over capacity, so accepted requests still meet their deadline. Better a clean 503 now than a timeout later.",
+      "es": "Rechazar o degradar deliberadamente una fracción de requests rápido cuando estás sobre capacidad, para que los aceptados cumplan su deadline. Mejor un 503 limpio ahora que un timeout después."
+     }
+    },
+    {
+     "term": { "en": "Retry budget", "es": "Presupuesto de reintentos" },
+     "def": {
+      "en": "A cap on retries as a share of total requests (e.g. 10%). Once exceeded, retries are suppressed so a struggling backend isn't buried under retry traffic.",
+      "es": "Un tope de reintentos como porcentaje del total de requests (p. ej. 10%). Al superarlo, se suprimen los reintentos para que un backend en apuros no quede sepultado bajo tráfico de reintentos."
+     }
+    },
+    {
+     "term": { "en": "Jitter", "es": "Jitter" },
+     "def": {
+      "en": "Randomness added to backoff delays so many clients don't retry at the same instant. Without it, exponential backoff still synchronizes into thundering herds.",
+      "es": "Aleatoriedad agregada a los tiempos de backoff para que muchos clientes no reintenten en el mismo instante. Sin él, el backoff exponencial igual se sincroniza en estampidas."
+     }
+    },
+    {
+     "term": { "en": "Circuit breaker", "es": "Circuit breaker" },
+     "def": {
+      "en": "A client-side switch that stops sending traffic to a dependency after a failure threshold, then probes occasionally before fully reopening. Stops one sick service from dragging callers down.",
+      "es": "Un interruptor del lado del cliente que deja de enviar tráfico a una dependencia tras un umbral de fallas, y luego sondea ocasionalmente antes de reabrir del todo. Evita que un servicio enfermo arrastre a quienes lo llaman."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "A payments API normally serves 5k req/s at p99 of 80ms. A dependency slows down, effective capacity drops to 3k, and traffic is still 5k. Clients have a 1s timeout and retry twice on timeout.",
+     "es": "Una API de pagos normalmente sirve 5k req/s con p99 de 80ms. Una dependencia se pone lenta, la capacidad efectiva cae a 3k, y el tráfico sigue en 5k. Los clientes tienen timeout de 1s y reintentan dos veces ante timeout."
+    },
+    "walkthrough": {
+     "en": "With an unbounded queue: the 2k/s surplus piles up, queue wait crosses 1s, clients time out and each fires 2 retries — offered load jumps toward 15k against a 3k server, and it flatlines. Nobody gets served. Now add bounds: the admission queue caps at, say, 300 items (~100ms of work); past that the server returns 503 immediately. It keeps serving 3k/s at a healthy latency and cleanly sheds 2k/s. Add a 10% retry budget and jittered backoff and the 503'd clients don't re-pile instantly. Goodput stays at 3k instead of collapsing to 0 — degraded, but alive and predictable. The lesson: capacity you can't serve must be refused at the door, not absorbed.",
+     "es": "Con una cola no acotada: el excedente de 2k/s se acumula, la espera en cola cruza 1s, los clientes hacen timeout y cada uno dispara 2 reintentos — la carga ofrecida salta hacia 15k contra un servidor de 3k, y se desploma. Nadie recibe servicio. Ahora agrega límites: la cola de admisión se topa en, digamos, 300 ítems (~100ms de trabajo); pasado eso el servidor devuelve 503 de inmediato. Sigue sirviendo 3k/s a una latencia sana y descarta limpiamente 2k/s. Agrega un presupuesto de reintentos del 10% y backoff con jitter y los clientes con 503 no se re-apilan al instante. El goodput se queda en 3k en vez de colapsar a 0 — degradado, pero vivo y predecible. La lección: la capacidad que no puedes servir debe rechazarse en la puerta, no absorberse."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "An unbounded (default) queue or thread pool: it hides overload as latency until everything times out at once. Every queue needs an explicit bound.",
+     "es": "Una cola o pool de hilos no acotado (por defecto): esconde la sobrecarga como latencia hasta que todo hace timeout a la vez. Toda cola necesita un límite explícito."
+    },
+    {
+     "en": "Exponential backoff without jitter: clients still align their retries and hit the recovering server in synchronized waves.",
+     "es": "Backoff exponencial sin jitter: los clientes igual alinean sus reintentos y golpean al servidor en recuperación en olas sincronizadas."
+    },
+    {
+     "en": "Retrying without a budget or circuit breaker: retries multiply load exactly when the system is weakest, converting a blip into an outage.",
+     "es": "Reintentar sin presupuesto ni circuit breaker: los reintentos multiplican la carga justo cuando el sistema está más débil, convirtiendo un tropiezo en una caída."
+    },
+    {
+     "en": "Not propagating deadlines: a service keeps working on a request whose caller already gave up, spending capacity on results nobody will read.",
+     "es": "No propagar deadlines: un servicio sigue trabajando en un request cuyo llamador ya se rindió, gastando capacidad en resultados que nadie leerá."
+    }
+   ],
+   "analogy": {
+    "en": "A busy restaurant that stops seating people when the kitchen is backed up serves its full tables well; one that seats everyone into a packed lobby serves nobody on time and the food goes cold. Turning guests away at the door is load shedding — and it's the kinder choice.",
+    "es": "Un restaurante lleno que deja de sentar gente cuando la cocina está saturada atiende bien sus mesas; uno que sienta a todos en un vestíbulo repleto no atiende a nadie a tiempo y la comida se enfría. Rechazar comensales en la puerta es load shedding — y es la opción más amable."
+   },
+   "depth": {
+    "en": "Little's Law makes the bound quantitative: L = λ × W (items in system = arrival rate × time in system). Rearranged, W = L / λ — if you cap the queue length L, you cap the worst-case wait W at a given throughput. That's the real reason a bounded queue protects latency: you're not just refusing work, you're mathematically capping how long accepted work can wait.",
+    "es": "La Ley de Little vuelve cuantitativo el límite: L = λ × W (ítems en el sistema = tasa de llegada × tiempo en el sistema). Reordenando, W = L / λ — si topas el largo de cola L, topas la espera de peor caso W a un throughput dado. Esa es la verdadera razón por la que una cola acotada protege la latencia: no solo rechazas trabajo, acotas matemáticamente cuánto puede esperar el trabajo aceptado."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "import random\n\ndef backoff_delay(attempt, base=0.1, cap=30.0):\n    ceiling = min(cap, base * (2 ** attempt))\n    return random.uniform(0, ceiling)  # full jitter\n\ndef should_retry(recent_retries, recent_requests, budget=0.10):\n    return recent_retries < budget * recent_requests",
+    "caption": {
+     "en": "Full-jitter backoff plus a retry budget — the two lines that stop retry storms.",
+     "es": "Backoff con jitter completo más un presupuesto de reintentos — las dos piezas que frenan las tormentas de reintentos."
+    },
+    "annotations": [
+     {
+      "line": 4,
+      "note": {
+       "en": "Cap the exponential so delays don't grow unbounded on high attempt counts.",
+       "es": "Topa el exponencial para que los tiempos no crezcan sin límite con muchos intentos."
+      }
+     },
+     {
+      "line": 5,
+      "note": {
+       "en": "Full jitter draws uniformly in [0, ceiling] — this desynchronizes clients; plain exponential backoff does not.",
+       "es": "El jitter completo sortea uniforme en [0, techo] — esto desincroniza a los clientes; el backoff exponencial puro no."
+      }
+     },
+     {
+      "line": 8,
+      "note": {
+       "en": "Suppress retries once they exceed 10% of traffic, so a weak backend isn't buried.",
+       "es": "Suprime reintentos cuando superan el 10% del tráfico, para no sepultar a un backend débil."
+      }
+     }
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {
+     "en": "Same overload, two designs — one collapses to zero goodput, one degrades and survives.",
+     "es": "La misma sobrecarga, dos diseños — uno colapsa a goodput cero, otro se degrada y sobrevive."
+    },
+    "left": {
+     "title": { "en": "Unbounded queue", "es": "Cola no acotada" },
+     "points": [
+      { "en": "Surplus load buffers, queue wait grows", "es": "El excedente se buferea, la espera en cola crece" },
+      { "en": "Clients time out, then retry — load multiplies", "es": "Clientes hacen timeout, luego reintentan — la carga se multiplica" },
+      { "en": "Retry storm → cascading failure", "es": "Tormenta de reintentos → falla en cascada" },
+      { "en": "Goodput collapses toward 0", "es": "El goodput colapsa hacia 0" }
+     ]
+    },
+    "right": {
+     "title": { "en": "Bounded queue + shedding", "es": "Cola acotada + shedding" },
+     "points": [
+      { "en": "Queue capped; overflow gets fast 503", "es": "Cola topada; el desborde recibe 503 rápido" },
+      { "en": "Accepted requests meet their deadline", "es": "Los requests aceptados cumplen su deadline" },
+      { "en": "Retry budget + jitter prevent re-piling", "es": "Presupuesto de reintentos + jitter evitan re-apilarse" },
+      { "en": "Goodput holds at capacity, degraded but alive", "es": "El goodput se sostiene en la capacidad, degradado pero vivo" }
+     ]
+    }
+   },
+   "visual": { "widgetId": "latency-budget" }
+  }
+ ]
+}

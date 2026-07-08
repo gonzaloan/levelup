@@ -1,0 +1,330 @@
+{
+ "lessonId": "systems-architecture-l4",
+ "concepts": [
+  {
+   "slug": "cap-and-consistency-patterns",
+   "title": {
+    "en": "CAP as a tradeoff, and choosing weak / eventual / strong consistency",
+    "es": "CAP como tradeoff, y elegir consistencia débil / eventual / fuerte"
+   },
+   "why": {
+    "en": "Trains the judgment that under partition you are choosing which guarantee to drop — and that 'eventual' is a deliberate product decision, not a bug.",
+    "es": "Entrena el criterio de que bajo partición estás eligiendo qué garantía soltar, y que 'eventual' es una decisión de producto deliberada, no un defecto."
+   },
+   "source": "The System Design Primer — 'Availability vs consistency (CAP)', 'Consistency patterns'; ByteByteGo — 'CAP Theorem: One of the Most Misunderstood Terms'",
+   "explanation": {
+    "en": "CAP is not a menu where you pick two of three. Partitions happen whether you like it or not — a switch reboots, a link saturates, a rack loses power. So the real choice is: when the network splits, do you keep answering with possibly-stale data (AP), or do you refuse to answer until you can guarantee correctness (CP)? You only get to pick between C and A during a partition; the rest of the time you can have both.\n\nMap this to the product, not to a whiteboard. A bank ledger picks CP: better to error out than to let two ATMs both approve a withdrawal on the same empty account. A social feed picks AP: showing a like count that's three seconds behind is invisible to users, and being down is not. The mistake is treating 'eventual consistency' as sloppiness. It's a deliberate contract: 'I will converge, just not instantly, and here's the staleness window you must design around.'\n\nUnderneath sit the consistency patterns. Strong: every read sees the latest write — you pay with latency and reduced availability. Eventual: reads may lag, then catch up — cheap, available, fine for counters and feeds. Weak/read-your-writes and monotonic reads are the useful middle: a user must see their own comment immediately even if everyone else sees it a beat later. Pick the weakest guarantee the feature can survive, and no weaker.",
+    "es": "CAP no es un menú donde eliges dos de tres. Las particiones ocurren te guste o no: un switch se reinicia, un enlace se satura, un rack pierde energía. Así que la decisión real es: cuando la red se parte, ¿sigues respondiendo con datos posiblemente viejos (AP), o te niegas a responder hasta poder garantizar corrección (CP)? Solo eliges entre C y A durante una partición; el resto del tiempo puedes tener ambas.\n\nAsócialo al producto, no a un pizarrón. Un libro contable de un banco elige CP: mejor dar error que dejar que dos cajeros aprueben un retiro sobre la misma cuenta vacía. Un feed social elige AP: mostrar un contador de likes tres segundos atrasado es invisible para el usuario, estar caído no lo es. El error es tratar la 'consistencia eventual' como descuido. Es un contrato deliberado: 'voy a converger, solo que no al instante, y esta es la ventana de datos viejos que debes contemplar en tu diseño'.\n\nDebajo están los patrones de consistencia. Fuerte: toda lectura ve la última escritura, y lo pagas con latencia y menor disponibilidad. Eventual: las lecturas pueden atrasarse y luego alcanzar, barata y disponible, bien para contadores y feeds. El punto medio útil es leer-tus-propias-escrituras y lecturas monótonas: un usuario debe ver su propio comentario de inmediato aunque los demás lo vean un instante después. Elige la garantía más débil que la función pueda sobrevivir, y ni una más débil."
+   },
+   "keyPoints": [
+    {
+     "en": "Partitions aren't optional; CAP only forces a C-vs-A choice while one is happening.",
+     "es": "Las particiones no son opcionales; CAP solo obliga a elegir C-vs-A mientras una ocurre."
+    },
+    {
+     "en": "Eventual consistency is a deliberate contract with a staleness window, not a bug.",
+     "es": "La consistencia eventual es un contrato deliberado con una ventana de datos viejos, no un error."
+    },
+    {
+     "en": "Ledgers and inventory lean CP; feeds and counters lean AP — decide from user impact.",
+     "es": "Libros contables e inventario tienden a CP; feeds y contadores a AP: decide por el impacto en el usuario."
+    },
+    {
+     "en": "Pick the weakest guarantee the feature survives (often read-your-writes), not the strongest available.",
+     "es": "Elige la garantía más débil que la función sobreviva (a menudo leer-tus-escrituras), no la más fuerte disponible."
+    }
+   ],
+   "keywords": [
+    {
+     "en": {"term": "Partition (P)", "def": "A network split where nodes can't reach each other; in CAP it's the condition, not a choice — it will happen."},
+     "es": {"term": "Partición (P)", "def": "Un corte de red donde los nodos no se alcanzan; en CAP es la condición, no una opción: va a ocurrir."}
+    },
+    {
+     "en": {"term": "CP system", "def": "Under partition it sacrifices availability to stay correct — refuses or errors rather than serve stale data."},
+     "es": {"term": "Sistema CP", "def": "Bajo partición sacrifica disponibilidad para seguir correcto: rechaza o da error antes que servir datos viejos."}
+    },
+    {
+     "en": {"term": "AP system", "def": "Under partition it stays available and answers with possibly-stale data, reconciling later."},
+     "es": {"term": "Sistema AP", "def": "Bajo partición sigue disponible y responde con datos posiblemente viejos, reconciliando después."}
+    },
+    {
+     "en": {"term": "Read-your-writes", "def": "A guarantee that a client always sees its own prior writes, even if others see them later."},
+     "es": {"term": "Leer-tus-escrituras", "def": "Garantía de que un cliente siempre ve sus propias escrituras previas, aunque otros las vean después."}
+    },
+    {
+     "en": {"term": "Staleness window", "def": "The bounded time during which reads may return old data before converging to the latest write."},
+     "es": {"term": "Ventana de atraso", "def": "El tiempo acotado en que las lecturas pueden devolver datos viejos antes de converger a la última escritura."}
+    },
+    {
+     "en": {"term": "Monotonic reads", "def": "A guarantee that once a client sees a value, it never later sees an older one — no going backward."},
+     "es": {"term": "Lecturas monótonas", "def": "Garantía de que si un cliente ya vio un valor, nunca verá luego uno más viejo: sin retroceder."}
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "An e-commerce checkout decrements stock on the last unit of a hot SKU during a Black Friday spike, with the DB replicated across two data centers when the link between them drops.",
+     "walkthrough": "Inventory = 1. A partition isolates DC-East from DC-West. If you run AP, both DCs keep serving: a shopper in East and one in West each see stock=1, both 'succeed', and you've oversold by 1 unit — a real refund and an angry customer. If you run CP, the minority side refuses writes: only the DC that holds quorum can decrement, the other returns a 503 for ~2 seconds until the link heals. You lose a sliver of availability (one region briefly can't buy that item) to guarantee you never oversell. For money-backed inventory that's the right trade; for a 'view count' you'd pick AP without hesitation."
+    },
+    "es": {
+     "scenario": "Un checkout de e-commerce descuenta stock de la última unidad de un SKU caliente durante un pico de Black Friday, con la BD replicada entre dos data centers cuando el enlace entre ellos se cae.",
+     "walkthrough": "Inventario = 1. Una partición aísla DC-Este de DC-Oeste. Si corres AP, ambos DC siguen sirviendo: un comprador en Este y otro en Oeste ven stock=1, ambos 'tienen éxito', y sobrevendiste 1 unidad: un reembolso real y un cliente molesto. Si corres CP, el lado en minoría rechaza escrituras: solo el DC con quórum puede descontar, el otro devuelve 503 por ~2 segundos hasta que sana el enlace. Pierdes una rebanada de disponibilidad (una región no puede comprar ese ítem un momento) para garantizar que nunca sobrevendes. Para inventario que respalda dinero es el trade correcto; para un 'contador de vistas' elegirías AP sin dudar."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Believing you 'chose CA' — with no partitions there's no tradeoff, and partitions are not optional, so CA is not a real operating mode.",
+     "es": "Creer que 'elegiste CA': sin particiones no hay tradeoff, y las particiones no son opcionales, así que CA no es un modo de operación real."
+    },
+    {
+     "en": "Treating 'strongly consistent' and 'always available' as free defaults; every strong read costs latency and every AP choice costs a reconciliation story.",
+     "es": "Tratar 'fuertemente consistente' y 'siempre disponible' como defaults gratis; toda lectura fuerte cuesta latencia y toda elección AP cuesta una historia de reconciliación."
+    },
+    {
+     "en": "Choosing one consistency level for the whole system instead of per-operation — the same app can serve a feed AP and a payment CP.",
+     "es": "Elegir un solo nivel de consistencia para todo el sistema en vez de por operación: la misma app puede servir un feed AP y un pago CP."
+    }
+   ],
+   "analogy": {
+    "en": "Two cashiers sharing one paper ledger. When the phone line between them dies (partition), either they both keep selling and reconcile the double-sold item later (AP), or one refuses to sell until the line is back so the count is never wrong (CP).",
+    "es": "Dos cajeros que comparten un solo libro en papel. Cuando la línea entre ellos muere (partición), o ambos siguen vendiendo y reconcilian después el ítem vendido dos veces (AP), o uno se niega a vender hasta que vuelva la línea para que la cuenta nunca esté mal (CP)."
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": "The choice CAP actually forces you to make — only while a partition is happening.",
+    "left": {
+     "title": "CP — sacrifice availability",
+     "points": [
+      "Refuses/errors on the minority side under partition",
+      "Reads never return stale data",
+      "Fits ledgers, inventory, payments",
+      "Cost: some requests fail until the split heals"
+     ]
+    },
+    "right": {
+     "title": "AP — sacrifice consistency",
+     "points": [
+      "Every node keeps answering under partition",
+      "Reads may be stale; converge later",
+      "Fits feeds, counters, presence",
+      "Cost: you own conflict resolution and staleness"
+     ]
+    }
+   },
+   "visual": {"widgetId": "consistency"}
+  },
+  {
+   "slug": "datastore-selection",
+   "title": {
+    "en": "RDBMS vs NoSQL and normalization vs denormalization on purpose",
+    "es": "RDBMS vs NoSQL y normalizar vs desnormalizar con intención"
+   },
+   "why": {
+    "en": "Trains you to pick a store from access patterns and consistency needs rather than familiarity or hype.",
+    "es": "Entrena a elegir el almacén desde los patrones de acceso y las necesidades de consistencia, no desde la familiaridad ni la moda."
+   },
+   "source": "The System Design Primer — 'Database' (RDBMS, NoSQL, denormalization); ByteByteGo — 'Understanding Database Types', 'What does ACID mean?'",
+   "explanation": {
+    "en": "Start from how the data is read and written, not from what you already run in prod. Relational databases earn their keep when you have entities with real relationships, ad-hoc queries you can't predict, and transactions that must be atomic across rows — orders, payments, anything where ACID isn't negotiable. The schema and joins are features: they enforce invariants the application would otherwise have to police by hand.\n\nNoSQL isn't 'faster SQL.' It's a family of stores that trade the relational model for a specific access shape. A key-value store is a hash map at scale — great for sessions and caches, useless for 'find all orders over $100 last week.' A document store fits aggregates you load and save whole (a user profile, a cart). A wide-column store is built for massive write throughput on known query keys. The moment you find yourself doing joins in application code across three NoSQL collections, you probably wanted a relational database.\n\nNormalize by default: one fact in one place, no update anomalies. Denormalize on purpose when a read is hot, spans many tables, and the source data changes rarely — you copy the fields you need into one row or document so the read is a single lookup. But now you own the copies: every write must fan out, and staleness is your problem. Denormalization is a read optimization you pay for on every write, so only do it where reads dominate and you've measured the join hurting.",
+    "es": "Parte de cómo se leen y escriben los datos, no de lo que ya tienes en producción. Las bases relacionales valen la pena cuando hay entidades con relaciones reales, consultas ad-hoc que no puedes predecir, y transacciones que deben ser atómicas entre filas: órdenes, pagos, todo donde ACID no es negociable. El esquema y los joins son ventajas: imponen invariantes que la aplicación tendría que vigilar a mano.\n\nNoSQL no es 'SQL más rápido'. Es una familia de almacenes que cambian el modelo relacional por una forma de acceso específica. Un key-value es un hash map a escala: excelente para sesiones y cachés, inútil para 'encuentra todas las órdenes sobre $100 de la semana pasada'. Un almacén de documentos encaja con agregados que cargas y guardas enteros (un perfil, un carrito). Un wide-column está hecho para throughput masivo de escritura sobre llaves de consulta conocidas. En el momento en que te descubres haciendo joins en el código de la aplicación entre tres colecciones NoSQL, probablemente querías una base relacional.\n\nNormaliza por defecto: un hecho en un solo lugar, sin anomalías de actualización. Desnormaliza a propósito cuando una lectura es caliente, cruza muchas tablas y los datos de origen cambian poco: copias los campos que necesitas en una fila o documento para que la lectura sea una sola búsqueda. Pero ahora eres dueño de las copias: cada escritura debe propagarse, y el atraso es tu problema. La desnormalización es una optimización de lectura que pagas en cada escritura, así que hazla solo donde las lecturas dominan y ya mediste que el join duele."
+   },
+   "keyPoints": [
+    {
+     "en": "Choose from access patterns and consistency needs, not from familiarity or hype.",
+     "es": "Elige por patrones de acceso y necesidades de consistencia, no por familiaridad ni moda."
+    },
+    {
+     "en": "Unpredictable queries + cross-row transactions = relational; the joins are a feature.",
+     "es": "Consultas impredecibles + transacciones entre filas = relacional; los joins son una ventaja."
+    },
+    {
+     "en": "Each NoSQL type fits one access shape; app-side joins mean you picked wrong.",
+     "es": "Cada tipo NoSQL encaja con una forma de acceso; hacer joins en la app significa que elegiste mal."
+    },
+    {
+     "en": "Normalize by default; denormalize only where reads dominate — you pay on every write.",
+     "es": "Normaliza por defecto; desnormaliza solo donde las lecturas dominan: lo pagas en cada escritura."
+    }
+   ],
+   "keywords": [
+    {
+     "en": {"term": "ACID", "def": "Atomicity, Consistency, Isolation, Durability — the transactional guarantees relational DBs give across multi-row writes."},
+     "es": {"term": "ACID", "def": "Atomicidad, Consistencia, Aislamiento, Durabilidad: las garantías transaccionales que dan las BD relacionales en escrituras multi-fila."}
+    },
+    {
+     "en": {"term": "Access pattern", "def": "The concrete set of reads and writes the app does — the shape you design storage around, not the entities."},
+     "es": {"term": "Patrón de acceso", "def": "El conjunto concreto de lecturas y escrituras que hace la app: la forma en torno a la que diseñas el almacén, no las entidades."}
+    },
+    {
+     "en": {"term": "Document store", "def": "A NoSQL store keyed to whole aggregates (JSON docs) you load and save intact, like a cart or profile."},
+     "es": {"term": "Almacén de documentos", "def": "Un almacén NoSQL indexado por agregados completos (docs JSON) que cargas y guardas enteros, como un carrito o perfil."}
+    },
+    {
+     "en": {"term": "Wide-column store", "def": "A NoSQL store optimized for huge write throughput on pre-known query keys (e.g. Cassandra)."},
+     "es": {"term": "Almacén wide-column", "def": "Un almacén NoSQL optimizado para throughput masivo de escritura sobre llaves de consulta conocidas de antemano (p. ej. Cassandra)."}
+    },
+    {
+     "en": {"term": "Update anomaly", "def": "When a fact stored in many places gets updated in some but not all, leaving the data contradicting itself."},
+     "es": {"term": "Anomalía de actualización", "def": "Cuando un hecho guardado en muchos lugares se actualiza en unos pero no en todos, dejando los datos contradiciéndose."}
+    },
+    {
+     "en": {"term": "Denormalization", "def": "Deliberately duplicating fields to make a hot read a single lookup, paid for by fanning out every write."},
+     "es": {"term": "Desnormalización", "def": "Duplicar campos a propósito para volver una lectura caliente una sola búsqueda, pagado propagando cada escritura."}
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "A social app renders a post card showing the author's name and avatar next to each of the 500 most-recent posts on a feed hit 50,000 times per second.",
+     "walkthrough": "Normalized: posts table + users table, and every feed render joins post→user to fetch name/avatar. At 50k rps that join runs 50k×500 = 25M lookups/sec — the users table becomes the bottleneck even though names change maybe once a year. Denormalize: copy author_name and avatar_url onto each post row at write time. Now the feed read is a single-table scan, no join, and read cost drops sharply. The bill comes due when a user renames: instead of one UPDATE users, you must fan out to every post they've ever authored (a background job over, say, 3,000 rows). That's the correct trade here — renames are rare, feed reads are constant — but you've traded one cheap write for many, so you'd never do it for data that changes hourly."
+    },
+    "es": {
+     "scenario": "Una app social dibuja una tarjeta de post que muestra el nombre y avatar del autor junto a cada uno de los 500 posts más recientes de un feed que recibe 50.000 hits por segundo.",
+     "walkthrough": "Normalizado: tabla posts + tabla users, y cada render del feed hace join post→user para traer nombre/avatar. A 50k rps ese join corre 50k×500 = 25M búsquedas/seg: la tabla users se vuelve el cuello de botella aunque los nombres cambien quizá una vez al año. Desnormaliza: copia author_name y avatar_url en cada fila de post al escribir. Ahora la lectura del feed es un scan de una sola tabla, sin join, y el costo de lectura cae fuerte. La cuenta llega cuando un usuario se renombra: en vez de un UPDATE users, debes propagar a cada post que haya escrito (un job en segundo plano sobre, digamos, 3.000 filas). Es el trade correcto aquí — los renombres son raros, las lecturas del feed son constantes — pero cambiaste una escritura barata por muchas, así que nunca lo harías para datos que cambian cada hora."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Reaching for NoSQL for 'scale' when your real need is ad-hoc queries and cross-row transactions — then reinventing joins and consistency in app code.",
+     "es": "Ir a NoSQL por 'escala' cuando tu necesidad real son consultas ad-hoc y transacciones entre filas, y luego reinventar joins y consistencia en el código."
+    },
+    {
+     "en": "Denormalizing before measuring — copies add write amplification and staleness, so it can be a net loss if reads weren't actually the bottleneck.",
+     "es": "Desnormalizar antes de medir: las copias agregan amplificación de escritura y atraso, así que puede ser pérdida neta si las lecturas no eran el cuello de botella."
+    },
+    {
+     "en": "Modeling a document store around entities instead of the query — if you routinely need data from three collections at once, you modeled it relational-style in the wrong engine.",
+     "es": "Modelar un almacén de documentos en torno a entidades y no a la consulta: si rutinariamente necesitas datos de tres colecciones a la vez, lo modelaste al estilo relacional en el motor equivocado."
+    }
+   ],
+   "analogy": {
+    "en": "Normalization is a library with one master catalog card per book; denormalization is printing the author's bio on the flap of every copy — instant to read, but a nightmare to correct when the bio changes.",
+    "es": "Normalizar es una biblioteca con una sola ficha maestra por libro; desnormalizar es imprimir la biografía del autor en la solapa de cada ejemplar: instantáneo de leer, pero una pesadilla de corregir cuando la biografía cambia."
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": "A decision path from access pattern to store — relational is the default you deviate from with a reason.",
+    "nodes": [
+     {"label": "How is the data accessed?"},
+     {"label": "Ad-hoc queries + cross-row ACID?", "note": "Yes → relational (RDBMS)"},
+     {"label": "Load/save whole aggregates?", "note": "Yes → document store"},
+     {"label": "Simple key → value by id?", "note": "Yes → key-value (cache/session)"},
+     {"label": "Huge writes on known keys?", "note": "Yes → wide-column"},
+     {"label": "Doing joins in app code?", "note": "You picked wrong — go relational"}
+    ]
+   }
+  },
+  {
+   "slug": "replication-and-sharding-tradeoffs",
+   "title": {
+    "en": "Read replicas and sharding: what they solve and what they break",
+    "es": "Réplicas de lectura y sharding: qué resuelven y qué rompen"
+   },
+   "why": {
+    "en": "Trains the judgment that replication buys reads at the cost of replication lag, and sharding buys scale at the cost of cross-shard joins and hot keys.",
+    "es": "Entrena el criterio de que la replicación compra lecturas a costa del retraso de replicación, y el sharding compra escala a costa de joins entre shards y llaves calientes."
+   },
+   "source": "ByteByteGo — 'Read Replica Pattern', 'A Crash Course on Database Sharding', 'Top 4 Data Sharding Algorithms'",
+   "explanation": {
+    "en": "Read replicas solve one problem: too many reads for one primary. You copy writes from the primary to N replicas and send reads there. What you buy is read throughput and a warm standby. What you break is 'read-your-writes' — replication lag means a user can save a comment against the primary and then read from a replica that hasn't caught up, and see it vanish. The fixes are all deliberate: route reads that need freshness to the primary, or pin a session to the primary for a few seconds after a write. Replication does nothing for write volume — every replica still applies every write.\n\nSharding is what you reach for when writes or dataset size outgrow one box. You split rows across shards by a key: hash the key for even spread, or range-partition for locality. Now you have horizontal write scale. What you break is expensive: any query that needs data from multiple shards can no longer be a single join — you fan out and merge in application code, and cross-shard transactions basically go away. Worse is the hot key: shard by user_id and one celebrity or one giant tenant lands all their traffic on one shard, and that shard melts while the others idle.\n\nThe judgment is ordering and restraint. Exhaust the cheap moves first — indexes, caching, a bigger box, read replicas — because each is reversible and low-ceremony. Reach for sharding last, because the shard key is close to permanent: re-sharding a live system is one of the genuinely hard operational jobs, and a bad key (low cardinality, skewed, or something you'll want to query across) is a mistake you live with for years. Choose the key from your actual access pattern, and check it against your worst hot spot before you commit.",
+    "es": "Las réplicas de lectura resuelven un problema: demasiadas lecturas para un solo primario. Copias las escrituras del primario a N réplicas y mandas las lecturas ahí. Lo que ganas es throughput de lectura y un standby caliente. Lo que rompes es 'leer-tus-escrituras': el atraso de replicación significa que un usuario guarda un comentario en el primario y luego lee de una réplica que no alcanzó, y lo ve desaparecer. Los arreglos son deliberados: enruta al primario las lecturas que necesitan frescura, o fija la sesión al primario unos segundos tras una escritura. La replicación no hace nada por el volumen de escritura: cada réplica aplica igual todas las escrituras.\n\nEl sharding es lo que usas cuando las escrituras o el tamaño del dataset superan una sola máquina. Divides las filas entre shards por una llave: hash para reparto parejo, o rango para localidad. Ahora tienes escala horizontal de escritura. Lo que rompes es caro: cualquier consulta que necesita datos de varios shards deja de ser un join único — haces fan-out y mezclas en el código, y las transacciones entre shards prácticamente desaparecen. Peor es la llave caliente: si haces shard por user_id y un famoso o un tenant gigante cae con todo su tráfico en un shard, ese shard se derrite mientras los demás holgazanean.\n\nEl juicio es orden y contención. Agota primero las jugadas baratas — índices, caché, una máquina más grande, réplicas de lectura — porque cada una es reversible y de bajo ceremonial. Llega al sharding al final, porque la llave de shard es casi permanente: re-shardear un sistema vivo es de los trabajos operativos genuinamente difíciles, y una mala llave (baja cardinalidad, sesgada, o algo que querrás consultar cruzado) es un error que arrastras por años. Elige la llave desde tu patrón de acceso real, y contrástala con tu peor punto caliente antes de comprometerte."
+   },
+   "keyPoints": [
+    {
+     "en": "Replicas buy read throughput but introduce lag that breaks read-your-writes.",
+     "es": "Las réplicas dan throughput de lectura pero introducen atraso que rompe leer-tus-escrituras."
+    },
+    {
+     "en": "Replication does nothing for write volume; sharding is the tool for write scale.",
+     "es": "La replicación no ayuda al volumen de escritura; el sharding es la herramienta para escalar escritura."
+    },
+    {
+     "en": "Sharding kills cross-shard joins/transactions and exposes hot keys.",
+     "es": "El sharding mata joins/transacciones entre shards y expone las llaves calientes."
+    },
+    {
+     "en": "Try indexes, cache, replicas first; shard last — the shard key is nearly permanent.",
+     "es": "Prueba índices, caché y réplicas primero; shardea al final: la llave de shard es casi permanente."
+    }
+   ],
+   "keywords": [
+    {
+     "en": {"term": "Replication lag", "def": "The delay between a write landing on the primary and appearing on a replica — the window where replica reads are stale."},
+     "es": {"term": "Atraso de replicación", "def": "El retardo entre que una escritura llega al primario y aparece en una réplica: la ventana en que las lecturas de réplica están viejas."}
+    },
+    {
+     "en": {"term": "Shard key", "def": "The column whose value decides which shard a row lives on — a near-permanent choice that dictates spread and query cost."},
+     "es": {"term": "Llave de shard", "def": "La columna cuyo valor decide en qué shard vive una fila: una elección casi permanente que dicta el reparto y el costo de consulta."}
+    },
+    {
+     "en": {"term": "Hot key / hot shard", "def": "One key value (a celebrity, a giant tenant) that draws disproportionate traffic, overloading its shard while others idle."},
+     "es": {"term": "Llave / shard caliente", "def": "Un valor de llave (un famoso, un tenant gigante) que atrae tráfico desproporcionado y sobrecarga su shard mientras otros holgazanean."}
+    },
+    {
+     "en": {"term": "Hash vs range sharding", "def": "Hash spreads keys evenly but kills range scans; range keeps neighbors together but risks skewed, uneven shards."},
+     "es": {"term": "Sharding por hash vs rango", "def": "El hash reparte parejo pero mata los scans por rango; el rango mantiene vecinos juntos pero arriesga shards sesgados y desparejos."}
+    },
+    {
+     "en": {"term": "Fan-out query", "def": "A query sent to many shards in parallel and merged in app code because the data no longer lives in one place."},
+     "es": {"term": "Consulta fan-out", "def": "Una consulta enviada a muchos shards en paralelo y mezclada en el código porque los datos ya no viven en un solo lugar."}
+    },
+    {
+     "en": {"term": "Cardinality", "def": "How many distinct values a key has — low cardinality makes a poor shard key because it can't spread rows across many shards."},
+     "es": {"term": "Cardinalidad", "def": "Cuántos valores distintos tiene una llave: baja cardinalidad hace una mala llave de shard porque no puede repartir filas entre muchos shards."}
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "A messaging backend at 8,000 writes/sec has outgrown a single primary (max ~5,000 w/s) and the team debates sharding the messages table by sender_id vs by channel_id.",
+     "walkthrough": "Replicas won't help: adding 5 read replicas still leaves one primary absorbing all 8,000 writes, so you must shard. Shard by sender_id with a hash into 4 shards → each shard takes ~2,000 w/s, comfortably under budget, and writes spread evenly. But the app's most common read is 'load the last 50 messages in this channel', and a channel's messages are now scattered across all 4 shards — every channel open becomes a 4-way fan-out plus a merge-sort by timestamp. Shard by channel_id instead and that read is a single-shard lookup, but now a 10,000-member 'town hall' channel is a hot shard: it alone might pull 3,000 w/s onto one node while another shard sits at 200. The senior move is to pick channel_id (it matches the dominant read) and separately handle the few mega-channels — e.g. sub-shard them by a channel_id + bucket composite — rather than let the worst hot spot dictate the whole scheme."
+    },
+    "es": {
+     "scenario": "Un backend de mensajería a 8.000 escrituras/seg superó a un solo primario (máx ~5.000 e/s) y el equipo debate shardear la tabla messages por sender_id vs por channel_id.",
+     "walkthrough": "Las réplicas no ayudan: agregar 5 réplicas de lectura deja igual a un primario absorbiendo las 8.000 escrituras, así que hay que shardear. Shard por sender_id con hash en 4 shards → cada shard toma ~2.000 e/s, cómodo bajo presupuesto, y las escrituras se reparten parejo. Pero la lectura más común de la app es 'carga los últimos 50 mensajes de este canal', y los mensajes de un canal ahora están dispersos en los 4 shards: cada apertura de canal se vuelve un fan-out de 4 vías más un merge-sort por timestamp. Shardea por channel_id y esa lectura es una búsqueda de un solo shard, pero ahora un canal 'town hall' de 10.000 miembros es un shard caliente: él solo podría jalar 3.000 e/s a un nodo mientras otro shard está en 200. La jugada senior es elegir channel_id (calza con la lectura dominante) y manejar aparte los pocos mega-canales — por ejemplo sub-shardearlos con un compuesto channel_id + bucket — en vez de dejar que el peor punto caliente dicte todo el esquema."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Routing all reads to replicas and then filing bug reports for 'disappearing' just-written data — that's replication lag, fixed by routing fresh reads to the primary.",
+     "es": "Enrutar todas las lecturas a réplicas y luego reportar bugs de datos recién escritos que 'desaparecen': eso es atraso de replicación, se arregla enrutando las lecturas frescas al primario."
+    },
+    {
+     "en": "Adding read replicas to fix a write bottleneck — every replica applies every write, so it buys zero write capacity.",
+     "es": "Agregar réplicas de lectura para arreglar un cuello de botella de escritura: cada réplica aplica cada escritura, así que compra cero capacidad de escritura."
+    },
+    {
+     "en": "Picking the shard key by even spread alone, ignoring the dominant read — you win balanced writes and lose every query to fan-out.",
+     "es": "Elegir la llave de shard solo por reparto parejo, ignorando la lectura dominante: ganas escrituras balanceadas y pierdes cada consulta en fan-out."
+    },
+    {
+     "en": "Sharding before exhausting indexes, caching, and vertical scaling — you took on a near-irreversible cost to solve a problem a cheaper, reversible move could have.",
+     "es": "Shardear antes de agotar índices, caché y escalado vertical: asumiste un costo casi irreversible para resolver algo que una jugada más barata y reversible podía."
+    }
+   ],
+   "analogy": {
+    "en": "Read replicas are photocopies of a master ledger for many readers — fast to read, but a copy printed a minute ago won't show the latest entry. Sharding is splitting one giant ledger into volumes A–M and N–Z: each is lighter to write in, but 'find everyone named Smith who bought a Zephyr' now means opening both volumes and merging.",
+    "es": "Las réplicas de lectura son fotocopias de un libro maestro para muchos lectores: rápidas de leer, pero una copia impresa hace un minuto no muestra el último asiento. El sharding es partir un libro gigante en tomos A–M y N–Z: cada uno es más liviano para escribir, pero 'encuentra a todos los García que compraron un Zephyr' ahora exige abrir ambos tomos y mezclar."
+   },
+   "diagram": {
+    "kind": "stack",
+    "caption": "Order of moves for scaling a database — climb this ladder; each rung up is costlier and harder to reverse.",
+    "nodes": [
+     {"label": "1. Indexes + query tuning", "note": "Cheapest, reversible, often enough"},
+     {"label": "2. Caching hot reads", "note": "Offloads the DB without touching it"},
+     {"label": "3. Vertical scale (bigger box)", "note": "Reversible, buys headroom fast"},
+     {"label": "4. Read replicas", "note": "Scales reads; adds replication lag"},
+     {"label": "5. Sharding", "note": "Scales writes; shard key ~permanent, breaks joins"}
+    ]
+   },
+   "architecture": {
+    "kind": "flow",
+    "caption": "Where replication and sharding sit relative to the app — replicas fan reads off the primary; shards split writes by key.",
+    "nodes": [
+     {"label": "App / query router"},
+     {"label": "Route by intent", "note": "fresh read → primary; write → primary; stale-OK read → replica"},
+     {"label": "Shard router (by shard key)", "note": "hash or range picks the shard"},
+     {"label": "Shard 1 primary → replicas", "note": "own key range/hash bucket"},
+     {"label": "Shard 2 primary → replicas", "note": "cross-shard query = fan-out + merge"}
+    ]
+   }
+  }
+ ]
+}

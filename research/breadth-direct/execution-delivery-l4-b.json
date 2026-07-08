@@ -1,0 +1,240 @@
+{
+ "lessonId": "execution-delivery-l4",
+ "concepts": [
+  {
+   "slug": "user-journey-slis",
+   "keywords": [
+    {
+     "en": { "term": "SLI", "def": "A ratio of good events to total events that measures how well a service does its job, phrased in the user's terms." },
+     "es": { "term": "SLI", "def": "Un cociente de eventos buenos sobre eventos totales que mide qué tan bien el servicio hace su trabajo, expresado en términos del usuario." }
+    },
+    {
+     "en": { "term": "SLO", "def": "The target you commit to for an SLI (e.g. 99.9% of checkouts good over 28 days)." },
+     "es": { "term": "SLO", "def": "El objetivo al que te comprometes para un SLI (ej. 99.9% de checkouts buenos en 28 días)." }
+    },
+    {
+     "en": { "term": "Error budget", "def": "The gap below 100% (100% minus the SLO) — how much unreliability you're allowed to spend before you must stop shipping and stabilize." },
+     "es": { "term": "Error budget", "def": "La brecha bajo el 100% (100% menos el SLO) — cuánta falta de fiabilidad puedes gastar antes de tener que dejar de shippear y estabilizar." }
+    },
+    {
+     "en": { "term": "Vanity metric", "def": "A number that looks reassuring but maps to no user experience, like 'the box is up' or a global uptime that hides broken journeys." },
+     "es": { "term": "Métrica de vanidad", "def": "Un número que tranquiliza pero no mapea a ninguna experiencia del usuario, como 'la máquina está arriba' o un uptime global que oculta journeys rotos." }
+    },
+    {
+     "en": { "term": "Vantage point", "def": "Where you measure the SLI — load balancer, service edge, or client — which decides what the number honestly includes." },
+     "es": { "term": "Punto de observación", "def": "Dónde mides el SLI —balanceador, borde del servicio o cliente— lo que decide qué incluye honestamente el número." }
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "A retail team runs a 99.9%/28-day checkout SLO and burns through most of the budget in the first week.",
+     "walkthrough": "The SLI is 'proportion of checkout requests that return 200 in under 2s, measured at the load balancer.' Over a 28-day window there are 20,000,000 checkout requests, so a 99.9% SLO permits 20,000 bad events — that's the whole error budget. In week 1 a slow third-party address validator pushes 15,000 checkouts over 2s. 15,000 / 20,000 = 75% of the budget gone with three weeks left. The burn-rate alert fires because at this pace the budget is exhausted in ~9 days, not 28. The team invokes their policy: freeze risky launches, spend the sprint on the validator timeout, and protect the remaining 5,000 events for genuine incidents. Note what the SLO did NOT do: it never paged on CPU or on the validator's health — only on user-felt slow checkouts."
+    },
+    "es": {
+     "scenario": "Un equipo de retail corre un SLO de checkout de 99.9%/28 días y quema casi todo el budget en la primera semana.",
+     "walkthrough": "El SLI es 'proporción de peticiones de checkout que devuelven 200 en menos de 2s, medida en el balanceador'. En una ventana de 28 días hay 20.000.000 de peticiones de checkout, así que un SLO de 99.9% permite 20.000 eventos malos —ese es todo el error budget. En la semana 1 un validador de direcciones de terceros lento empuja 15.000 checkouts por encima de 2s. 15.000 / 20.000 = 75% del budget consumido con tres semanas por delante. La alerta de burn-rate se dispara porque a este ritmo el budget se agota en ~9 días, no en 28. El equipo aplica su política: congelar lanzamientos riesgosos, dedicar el sprint al timeout del validador y proteger los 5.000 eventos restantes para incidentes reales. Fíjate en lo que el SLO NO hizo: nunca alertó por CPU ni por la salud del validador, solo por checkouts lentos que el usuario sintió."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Averaging latency instead of using percentiles: a p50 of 300ms can hide a p99 of 8s that ruins one in a hundred checkouts.",
+     "es": "Promediar la latencia en vez de usar percentiles: un p50 de 300ms puede esconder un p99 de 8s que arruina uno de cada cien checkouts."
+    },
+    {
+     "en": "Counting a fast HTTP 500 as 'good' because it was under 2s — the SLI must require success AND speed together.",
+     "es": "Contar un HTTP 500 rápido como 'bueno' porque tardó menos de 2s — el SLI debe exigir éxito Y velocidad juntos."
+    },
+    {
+     "en": "Setting the SLO at 100%: it leaves zero error budget, so any deploy risk becomes a violation and the team stops shipping.",
+     "es": "Poner el SLO en 100%: deja cero error budget, así cualquier riesgo de deploy se vuelve una violación y el equipo deja de shippear."
+    },
+    {
+     "en": "Defining twenty SLIs per journey — nobody watches them, and none of them clearly means 'the user is hurting.'",
+     "es": "Definir veinte SLIs por journey — nadie los vigila, y ninguno significa con claridad 'el usuario está sufriendo'."
+    }
+   ],
+   "analogy": {
+    "en": "A restaurant that measures 'the oven is at temperature' is tracking server comfort. The SLI that matters is 'the share of orders served hot within 15 minutes' — the thing the diner actually feels.",
+    "es": "Un restaurante que mide 'el horno está a temperatura' rastrea la comodidad del servidor. El SLI que importa es 'la proporción de pedidos servidos calientes en menos de 15 minutos' —lo que el comensal realmente siente."
+   },
+   "code": {
+    "lang": "sql",
+    "snippet": "-- Checkout SLI over a 28-day window: good = 200 AND under 2s\nSELECT\n  COUNTIF(status = 200 AND latency_ms < 2000) AS good_events,\n  COUNT(*)                                     AS total_events,\n  SAFE_DIVIDE(\n    COUNTIF(status = 200 AND latency_ms < 2000),\n    COUNT(*)\n  ) AS sli            -- compare against SLO = 0.999\nFROM checkout_requests\nWHERE ts >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 28 DAY);",
+    "caption": "The SLI as an explicit good/total ratio, so 'good' can never mean a fast error.",
+    "annotations": [
+     { "line": 3, "note": "The good-event predicate binds success and latency together — a fast 500 is excluded." },
+     { "line": 6, "note": "SAFE_DIVIDE avoids a divide-by-zero when a window has no traffic." },
+     { "line": 10, "note": "The 28-day window matches the SLO period so the budget math lines up." }
+    ]
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": "Reliability defined from the outside in: journey → SLI → SLO → error budget → decision.",
+    "nodes": [
+     { "label": "User journey", "note": "search → cart → checkout" },
+     { "label": "SLI", "note": "good/total: 200 in <2s" },
+     { "label": "SLO", "note": "target: 99.9% / 28d" },
+     { "label": "Error budget", "note": "0.1% = room to take risks" },
+     { "label": "Decision", "note": "budget healthy → ship; burning fast → freeze & fix" }
+    ]
+   },
+   "source": "Google SRE Book, 'Service Level Objectives' §Indicators in Practice (sre.google/sre-book/service-level-objectives/)"
+  },
+  {
+   "slug": "code-review-as-design-feedback",
+   "keywords": [
+    {
+     "en": { "term": "Code health", "def": "The long-term maintainability of the whole system — the thing a review should improve, as opposed to the perfection of one change." },
+     "es": { "term": "Salud del código", "def": "La mantenibilidad a largo plazo de todo el sistema — lo que una revisión debe mejorar, en oposición a la perfección de un solo cambio." }
+    },
+    {
+     "en": { "term": "Nit", "def": "A minor, non-blocking suggestion (taste or polish) explicitly labeled so the author knows it isn't a condition of approval." },
+     "es": { "term": "Nit", "def": "Una sugerencia menor y no-bloqueante (gusto o pulido) etiquetada de forma explícita para que el autor sepa que no es condición de aprobación." }
+    },
+    {
+     "en": { "term": "Fact vs. preference", "def": "A fact is a real defect ('NPEs on null'); a preference is your taste ('I'd use a map'). You hold the line only on facts." },
+     "es": { "term": "Hecho vs. preferencia", "def": "Un hecho es un defecto real ('hace NPE con null'); una preferencia es tu gusto ('yo usaría un map'). Te sostienes solo en los hechos." }
+    },
+    {
+     "en": { "term": "Seam", "def": "The boundary where a responsibility is placed — the highest-value thing to question in review, because moving it later is expensive." },
+     "es": { "term": "Corte (seam)", "def": "La frontera donde se ubica una responsabilidad — lo de mayor valor a cuestionar en review, porque moverla después es caro." }
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "A pull request adds an export-to-CSV feature; the reviewer must decide what actually blocks merge.",
+     "walkthrough": "The diff touches 6 files. The reviewer finds four things. (1) The CSV writer builds each row with string concatenation and doesn't escape commas inside values — a real correctness bug that corrupts any address field with a comma. FACT, blocks. (2) The formatting logic lives in the HTTP controller instead of a service, so the next caller (a scheduled job) can't reuse it. SEAM problem, blocks with a concrete suggestion. (3) Indentation is inconsistent — but a linter already flags it, so the reviewer says nothing and lets the tool do it. (4) A helper is named buildStr; the reviewer would prefer formatRow, so writes 'nit: formatRow reads clearer' and does NOT block. The author fixes 1 and 2, ignores 4, and the change merges the same day. Net effect: the codebase is healthier than before (a reusable, correct exporter), which is the bar — not a flawless PR."
+    },
+    "es": {
+     "scenario": "Un pull request agrega exportar-a-CSV; quien revisa debe decidir qué realmente bloquea el merge.",
+     "walkthrough": "El diff toca 6 archivos. El revisor encuentra cuatro cosas. (1) El escritor de CSV arma cada fila con concatenación de strings y no escapa las comas dentro de los valores — un bug de correctitud real que corrompe cualquier campo de dirección con una coma. HECHO, bloquea. (2) La lógica de formato vive en el controlador HTTP en vez de en un servicio, así que el próximo llamador (un job programado) no puede reutilizarla. Problema de CORTE, bloquea con una sugerencia concreta. (3) La indentación es inconsistente — pero un linter ya lo marca, así que el revisor no dice nada y deja que la herramienta lo haga. (4) Un helper se llama buildStr; el revisor preferiría formatRow, así que escribe 'nit: formatRow se lee más claro' y NO bloquea. El autor arregla 1 y 2, ignora 4, y el cambio se mergea el mismo día. Efecto neto: el código quedó más sano que antes (un exportador correcto y reutilizable), que es la vara —no un PR impecable."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Blocking a solid improvement over pure taste ('I'd have named it differently'), which trades team velocity for the reviewer's preference.",
+     "es": "Bloquear una mejora sólida por puro gusto ('yo lo habría nombrado distinto'), cambiando velocidad del equipo por la preferencia del revisor."
+    },
+    {
+     "en": "Reviewing formatting a linter could enforce — human attention wasted on what a tool sees for free.",
+     "es": "Revisar formato que un linter podría imponer — atención humana desperdiciada en lo que una herramienta ve gratis."
+    },
+    {
+     "en": "Leaving verdicts ('this is wrong') instead of questions ('what happens if this list is empty?'), which shuts down learning.",
+     "es": "Dejar veredictos ('esto está mal') en vez de preguntas ('¿qué pasa si esta lista está vacía?'), lo que corta el aprendizaje."
+    },
+    {
+     "en": "Not labeling severity, so the author can't tell a blocking bug from an optional nit and either over- or under-reacts.",
+     "es": "No etiquetar la severidad, así el autor no distingue un bug bloqueante de un nit opcional y sobre- o sub-reacciona."
+    }
+   ],
+   "analogy": {
+    "en": "A good editor of an essay fixes the argument that doesn't hold and the sentence that misleads, but doesn't rewrite every phrase into their own voice — the piece has to get better and still be the author's.",
+    "es": "Un buen editor de un ensayo arregla el argumento que no se sostiene y la frase que confunde, pero no reescribe cada oración con su propia voz — el texto tiene que mejorar y seguir siendo del autor."
+   },
+   "code": {
+    "lang": "diff",
+    "snippet": "  def export_row(fields):\n-     return \",\".join(fields)          # nit vs fact?\n+     return \",\".join(quote(f) for f in fields)\n\n  # reviewer comments, calibrated by severity:\n  #   BLOCK (fact): unquoted values corrupt any field containing a comma\n  #   nit  (pref): `export_row` reads clearer than `build_str` — non-blocking\n  #   (skipped): indentation — the linter already enforces this",
+    "caption": "One binding fact, one optional nit, one thing deliberately left to the tool.",
+    "annotations": [
+     { "line": 2, "note": "The original: a real defect, not a style opinion — commas inside a field break the CSV." },
+     { "line": 3, "note": "The fix quotes each value; this is the comment the reviewer holds the line on." },
+     { "line": 7, "note": "Prefixing 'nit' tells the author it's optional and won't block approval." }
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": "Two ways to spend reviewing attention.",
+    "left": {
+     "title": "Low-value review",
+     "points": [
+      "Chases formatting a linter handles",
+      "Blocks on personal taste",
+      "Issues verdicts, no rationale",
+      "Approves nothing until perfect"
+     ]
+    },
+    "right": {
+     "title": "High-value review",
+     "points": [
+      "Questions the seam and the coupling",
+      "Holds the line only on real defects",
+      "Asks questions, teaches the why",
+      "Approves once code health clearly improves"
+     ]
+    }
+   },
+   "source": "Google Engineering Practices, 'The Standard of Code Review' — 'improve the overall code health' + 'continuous improvement' principle (google.github.io/eng-practices/review/reviewer/standard.html)"
+  },
+  {
+   "slug": "oncall-and-runbooks",
+   "keywords": [
+    {
+     "en": { "term": "Incident commander (IC)", "def": "The single person who coordinates and decides during an incident; they don't type fixes, they run the response." },
+     "es": { "term": "Comandante de incidente (IC)", "def": "La única persona que coordina y decide durante un incidente; no teclea arreglos, dirige la respuesta." }
+    },
+    {
+     "en": { "term": "Runbook", "def": "A short, current doc per alert: what it means, how to confirm it, first diagnostics, and known mitigations — written for someone with no context at 3am." },
+     "es": { "term": "Runbook", "def": "Un doc corto y actualizado por alerta: qué significa, cómo confirmarla, primeros diagnósticos y mitigaciones conocidas — escrito para alguien sin contexto a las 3am." }
+    },
+    {
+     "en": { "term": "Mitigate before diagnose", "def": "Stop the user-facing bleeding first (roll back, flip a flag, shed load), then investigate root cause." },
+     "es": { "term": "Mitigar antes de diagnosticar", "def": "Detener primero el sangrado visible al usuario (rollback, apagar un flag, descartar carga), y luego investigar la causa raíz." }
+    },
+    {
+     "en": { "term": "Blameless postmortem", "def": "A write-up that examines how the system and process failed without hunting individuals, so people tell the truth about what happened." },
+     "es": { "term": "Postmortem sin culpas", "def": "Un análisis de cómo fallaron el sistema y el proceso sin cazar individuos, para que la gente diga la verdad de lo que pasó." }
+    },
+    {
+     "en": { "term": "Toil", "def": "Repetitive manual on-call work that scales with traffic and produces no lasting value — the thing every recurring page should be automated away into." },
+     "es": { "term": "Toil", "def": "Trabajo manual repetitivo de guardia que escala con el tráfico y no deja valor duradero — aquello en lo que cada page recurrente debería automatizarse para desaparecer." }
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "At 02:14 the on-call engineer is paged: checkout error rate jumped from 0.2% to 7%.",
+     "walkthrough": "The page is a symptom (users can't check out), so it's real. The engineer opens the runbook for 'checkout-error-rate-high': step 1 confirms the symptom on the dashboard (7% and climbing), step 2 lists recent changes and shows a payment-service deploy went out at 02:05. That's 9 minutes before the spike — strong enough to act. Following 'mitigate before diagnose,' they run the one-command rollback the runbook documents; error rate falls back under 0.3% within 4 minutes. Because the fix needed the payments team's confirmation and the outage was customer-visible, they DECLARE an incident rather than keep debugging alone: they take the IC role, page a payments engineer for hands-on ops, and hand comms to a third person so status updates don't interrupt the fix. Total customer impact: ~13 minutes. The next day's blameless postmortem finds the deploy skipped canary because of a misconfigured pipeline flag; the action item is to make canary non-skippable, which prevents the whole class of failure — not to blame whoever clicked deploy."
+    },
+    "es": {
+     "scenario": "A las 02:14 le llega un page al ingeniero de guardia: la tasa de errores de checkout saltó de 0.2% a 7%.",
+     "walkthrough": "El page es un síntoma (los usuarios no pueden pagar), así que es real. El ingeniero abre el runbook de 'checkout-error-rate-high': el paso 1 confirma el síntoma en el dashboard (7% y subiendo), el paso 2 lista los cambios recientes y muestra que un deploy del servicio de pagos salió a las 02:05. Eso es 9 minutos antes del pico —suficiente para actuar. Siguiendo 'mitigar antes de diagnosticar', ejecuta el rollback de un comando que el runbook documenta; la tasa de errores vuelve a bajar de 0.3% en 4 minutos. Como el arreglo necesitaba confirmación del equipo de pagos y la caída era visible al cliente, DECLARA un incidente en vez de seguir depurando solo: toma el rol de IC, paginea a un ingeniero de pagos para el trabajo operativo, y delega la comunicación a una tercera persona para que los updates de estado no interrumpan el arreglo. Impacto total al cliente: ~13 minutos. El postmortem sin culpas del día siguiente encuentra que el deploy se saltó el canary por un flag mal configurado del pipeline; el action item es hacer el canary imposible de saltar, lo que previene toda la clase de fallo —no culpar a quien apretó deploy."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Playing hero: debugging silently for hours instead of declaring, which delays help and leaves the org blind to a live outage.",
+     "es": "Hacerse el héroe: depurar en silencio por horas en vez de declarar, lo que retrasa la ayuda y deja a la organización a ciegas ante una caída activa."
+    },
+    {
+     "en": "A runbook that assumes you already know the architecture — it fails exactly at 3am when the reader has no context.",
+     "es": "Un runbook que asume que ya conoces la arquitectura — falla justo a las 3am cuando quien lo lee no tiene contexto."
+    },
+    {
+     "en": "Chasing root cause while users bleed, instead of mitigating first (rollback/flag) and understanding afterward.",
+     "es": "Perseguir la causa raíz mientras los usuarios sangran, en vez de mitigar primero (rollback/flag) y entender después."
+    },
+    {
+     "en": "One person being commander, ops, and comms at once — the response has no coordination and updates get dropped.",
+     "es": "Que una sola persona sea comandante, ops y comunicación a la vez — la respuesta pierde coordinación y se caen los updates."
+    }
+   ],
+   "analogy": {
+    "en": "An emergency room doesn't debate the diagnosis while the patient is bleeding: they stabilize first, and one attending runs the room while others do procedures and update the family. Incident response borrows that split of roles on purpose.",
+    "es": "Una sala de urgencias no debate el diagnóstico mientras el paciente sangra: primero estabilizan, y un médico dirige la sala mientras otros hacen procedimientos e informan a la familia. La respuesta a incidentes toma prestada esa división de roles a propósito."
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": "From page to prevention: the on-call decision path.",
+    "nodes": [
+     { "label": "Page fires", "note": "symptom-based: a user is hurting" },
+     { "label": "Open runbook", "note": "confirm → first steps → known mitigations" },
+     { "label": "Declare?", "note": "customer-visible, needs 2nd team, or >~1h alone" },
+     { "label": "Split roles", "note": "commander / ops / comms" },
+     { "label": "Mitigate", "note": "rollback, flip flag, shed load — stop the bleeding" },
+     { "label": "Blameless postmortem", "note": "find why, ship the fix that kills the class" }
+    ]
+   },
+   "source": "Google SRE Book, 'Managing Incidents' Ch.14 (sre.google/sre-book/managing-incidents/) + 'Being On-Call' Ch.11"
+  }
+ ]
+}

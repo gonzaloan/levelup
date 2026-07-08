@@ -1,0 +1,219 @@
+{
+ "lessonId": "technical-depth-l4",
+ "concepts": [
+  {
+   "slug": "concurrency-and-races",
+   "keywords": [
+    {
+     "term": {"en": "Race condition", "es": "Condición de carrera"},
+     "def": {"en": "A bug where correctness depends on the timing of interleaved operations you don't control — most often a read-modify-write on shared state.", "es": "Un error en el que la correctitud depende del orden entrelazado de operaciones que no controlas, casi siempre un leer-modificar-escribir sobre estado compartido."}
+    },
+    {
+     "term": {"en": "Critical section", "es": "Sección crítica"},
+     "def": {"en": "The span of code that touches shared state and must be executed by only one worker at a time to stay correct.", "es": "El tramo de código que toca estado compartido y debe ejecutarlo un solo worker a la vez para seguir siendo correcto."}
+    },
+    {
+     "term": {"en": "Mutex / lock", "es": "Mutex / lock"},
+     "def": {"en": "A primitive that grants exclusive access so a critical section runs atomically; serializes contenders and can deadlock if misused.", "es": "Una primitiva que otorga acceso exclusivo para que la sección crítica corra atómicamente; serializa a los que compiten y puede provocar deadlock si se usa mal."}
+    },
+    {
+     "term": {"en": "Deadlock", "es": "Deadlock (interbloqueo)"},
+     "def": {"en": "A cycle where each worker holds a lock the next one needs, so none can proceed — broken by a consistent lock ordering.", "es": "Un ciclo donde cada worker tiene un lock que el siguiente necesita, así ninguno avanza; se rompe con un orden de locks consistente."}
+    },
+    {
+     "term": {"en": "Compare-and-swap (CAS)", "es": "Compare-and-swap (CAS)"},
+     "def": {"en": "An atomic 'write X only if it still equals Y' instruction; the basis of lock-free updates and optimistic concurrency.", "es": "Una instrucción atómica de 'escribe X solo si aún vale Y'; base de las actualizaciones sin lock y de la concurrencia optimista."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A flash sale decrements stock for a limited item. 200 requests arrive within the same 50 ms window while stock = 100. Each does: read stock, if > 0 subtract 1, write back.", "es": "Una venta flash descuenta el stock de un artículo limitado. Llegan 200 peticiones en la misma ventana de 50 ms con stock = 100. Cada una hace: leer stock, si > 0 restar 1, escribir."},
+    "walkthrough": {"en": "Under a plain read-modify-write, dozens of requests read stock=100 before any writes back, all pass the >0 check, all write 99 — you oversell far past 100 units. Wrapping the three steps in a row lock fixes correctness but serializes every buyer on one row; at 200 concurrent requests each holding the lock ~2 ms, the last buyer waits ~400 ms. The clean fix pushes it into the engine: UPDATE items SET stock = stock - 1 WHERE id = 42 AND stock > 0. It's atomic, returns rows-affected = 0 when sold out, and holds no application-level lock. Sold exactly 100, no oversell, no 400 ms tail.", "es": "Con un leer-modificar-escribir simple, decenas de peticiones leen stock=100 antes de que alguna escriba, todas pasan el chequeo >0 y todas escriben 99: sobrevendes muy por encima de 100 unidades. Envolver los tres pasos en un lock de fila arregla la correctitud pero serializa a cada comprador en una sola fila; con 200 peticiones concurrentes reteniendo el lock ~2 ms cada una, el último comprador espera ~400 ms. El arreglo limpio lo empuja al motor: UPDATE items SET stock = stock - 1 WHERE id = 42 AND stock > 0. Es atómico, devuelve filas-afectadas = 0 cuando se agotó y no retiene ningún lock a nivel de aplicación. Vendiste exactamente 100, sin sobreventa y sin cola de 400 ms."}
+   },
+   "pitfalls": [
+    {"en": "Assuming a passing test proves thread-safety; races only surface under real interleaving and load, not in single-threaded tests.", "es": "Suponer que un test que pasa prueba la seguridad ante hilos; las carreras solo aparecen bajo entrelazado real y carga, no en tests de un solo hilo."},
+    {"en": "Holding a lock across an I/O or network call, turning a millisecond critical section into a service-wide bottleneck.", "es": "Retener un lock durante una llamada de I/O o de red, convirtiendo una sección crítica de milisegundos en un cuello de botella de todo el servicio."},
+    {"en": "Acquiring locks in different orders in different code paths — the direct recipe for deadlock.", "es": "Adquirir locks en distinto orden en distintas rutas de código: la receta directa del deadlock."},
+    {"en": "Reaching for a mutex when an atomic DB operation or per-worker copy would remove the shared state entirely.", "es": "Recurrir a un mutex cuando una operación atómica en la base de datos o una copia por worker eliminaría del todo el estado compartido."}
+   ],
+   "analogy": {
+    "en": "A single-stall restroom with a lock: only one person inside at a time (correctness), but a line forms if everyone arrives at once (contention). Two people each holding one key to the other's door is deadlock.",
+    "es": "Un baño de un solo cubículo con pestillo: una persona adentro a la vez (correctitud), pero se forma fila si todos llegan juntos (contención). Dos personas, cada una con la llave de la puerta del otro, es deadlock."
+   },
+   "depth": {
+    "en": "The subtle case is the check-then-act on a lock-free field. CAS solves it optimistically: read the value, compute the new one, and swap only if nobody changed it meanwhile; on failure, retry. This scales better than a mutex under low contention but livelocks under high contention as everyone keeps retrying — at which point a lock, or removing the shared field, wins again.",
+    "es": "El caso sutil es el chequear-luego-actuar sobre un campo sin lock. CAS lo resuelve de forma optimista: lee el valor, calcula el nuevo e intercambia solo si nadie lo cambió mientras tanto; si falla, reintenta. Escala mejor que un mutex con poca contención, pero cae en livelock con mucha contención cuando todos reintentan sin parar; ahí un lock, o quitar el campo compartido, vuelve a ganar."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "counter = 0\nlock = threading.Lock()\n\n# RACE: read-modify-write is not atomic\ndef bad():\n    global counter\n    counter = counter + 1   # read, +1, write can interleave\n\n# FIX 1: serialize the critical section\ndef locked():\n    global counter\n    with lock:\n        counter = counter + 1\n\n# FIX 2 (better): no shared state to serialize\n#   db.execute(\"UPDATE c SET n = n + 1 WHERE id = 1\")",
+    "caption": {"en": "The same increment: racy, lock-protected, and pushed into the DB.", "es": "El mismo incremento: con carrera, protegido por lock y empujado a la base de datos."},
+    "annotations": [
+     {"line": 6, "note": {"en": "Three machine steps; another thread can slip between read and write, losing an update.", "es": "Tres pasos de máquina; otro hilo puede colarse entre leer y escribir y perder una actualización."}},
+     {"line": 11, "note": {"en": "The 'with' block is the critical section — keep it this small, never wrap I/O.", "es": "El bloque 'with' es la sección crítica: manténla así de pequeña, nunca envuelvas I/O."}},
+     {"line": 15, "note": {"en": "The engine serializes the row for you; no app lock, no oversell.", "es": "El motor serializa la fila por ti; sin lock de aplicación, sin sobreventa."}}
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {"en": "Lock (serialize the section) vs remove the shared state (nothing to serialize).", "es": "Lock (serializar la sección) vs quitar el estado compartido (nada que serializar)."},
+    "left": {
+     "title": {"en": "Add a lock", "es": "Agregar un lock"},
+     "points": [
+      {"en": "Correct: one worker in the critical section at a time", "es": "Correcto: un worker por vez en la sección crítica"},
+      {"en": "Contention: throughput collapses as everyone queues", "es": "Contención: el throughput se desploma al hacer todos cola"},
+      {"en": "Risk: wrong lock order → deadlock", "es": "Riesgo: orden de lock incorrecto → deadlock"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Remove the sharing", "es": "Quitar la compartición"},
+     "points": [
+      {"en": "Per-worker copy, or atomic DB UPDATE", "es": "Copia por worker, o UPDATE atómico en la base de datos"},
+      {"en": "No critical section, no deadlock", "es": "Sin sección crítica, sin deadlock"},
+      {"en": "Scales with cores instead of queueing on one lock", "es": "Escala con los núcleos en vez de encolarse en un lock"}
+     ]
+    }
+   },
+   "visual": {"widgetId": "sort-race"},
+   "source": "roadmap.sh/computer-science — Concurrency, Processes & Threads, Locks/Deadlock"
+  },
+  {
+   "slug": "indexing-tradeoffs",
+   "keywords": [
+    {
+     "term": {"en": "B-tree index", "es": "Índice B-tree"},
+     "def": {"en": "A balanced sorted tree with O(log n) lookups that keeps keys ordered, so it serves equality, range, and ORDER BY queries; the default.", "es": "Un árbol ordenado balanceado con búsquedas O(log n) que mantiene las claves ordenadas, por lo que sirve igualdad, rangos y ORDER BY; el default."}
+    },
+    {
+     "term": {"en": "Hash index", "es": "Índice hash"},
+     "def": {"en": "A key→location map via a hash function; O(1) exact-equality lookups but no ordering, so useless for ranges or sorts.", "es": "Un mapa clave→ubicación mediante una función hash; búsquedas de igualdad exacta O(1) pero sin orden, así que inútil para rangos u ordenamientos."}
+    },
+    {
+     "term": {"en": "Composite index", "es": "Índice compuesto"},
+     "def": {"en": "An index on multiple columns in a fixed order; usable left-to-right, so (a, b) helps filters on a and a+b but not b alone.", "es": "Un índice sobre varias columnas en orden fijo; usable de izquierda a derecha, así (a, b) ayuda a filtrar por a y a+b pero no por b sola."}
+    },
+    {
+     "term": {"en": "Covering index", "es": "Índice cubridor"},
+     "def": {"en": "An index that contains every column a query needs, so the engine answers from the index alone without touching the table.", "es": "Un índice que contiene todas las columnas que necesita una consulta, así el motor responde solo desde el índice sin tocar la tabla."}
+    },
+    {
+     "term": {"en": "Selectivity", "es": "Selectividad"},
+     "def": {"en": "How many distinct values a column has; high selectivity (like email) makes an index worthwhile, low (like a boolean flag) rarely does.", "es": "Cuántos valores distintos tiene una columna; la alta selectividad (como email) hace que valga la pena un índice, la baja (como una bandera booleana) rara vez."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "An orders table with 50M rows. The hot query is: SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 20 — a user's 20 most recent orders. It currently runs 900 ms doing a full scan.", "es": "Una tabla orders con 50M de filas. La consulta caliente es: SELECT * FROM orders WHERE user_id = ? ORDER BY created_at DESC LIMIT 20 — las 20 órdenes más recientes de un usuario. Hoy corre en 900 ms haciendo un escaneo completo."},
+    "walkthrough": {"en": "An index on (user_id) alone finds the user's ~500 rows but must then sort them by created_at every time — better, ~40 ms. A composite (user_id, created_at DESC) finds the user and returns rows already in order, so the LIMIT 20 stops after reading 20 index entries: ~1 ms, a 900x win. Reversing to (created_at, user_id) is nearly useless here — it can't jump to one user. The cost side: each of these adds ~1.2 GB and slows every insert, since every new order must be threaded into the tree. Justified, because this query runs 10,000x/minute; a speculative index on a column no query filters would be pure write tax.", "es": "Un índice solo sobre (user_id) encuentra las ~500 filas del usuario pero luego debe ordenarlas por created_at cada vez: mejor, ~40 ms. Un compuesto (user_id, created_at DESC) encuentra al usuario y devuelve las filas ya ordenadas, así el LIMIT 20 se detiene tras leer 20 entradas del índice: ~1 ms, una mejora de 900x. Invertirlo a (created_at, user_id) es casi inútil aquí: no puede saltar a un usuario. El costo: cada uno de estos suma ~1,2 GB y hace más lento cada insert, porque cada orden nueva debe enhebrarse en el árbol. Justificado, porque esta consulta corre 10.000 veces/minuto; un índice especulativo sobre una columna que ninguna consulta filtra sería puro impuesto a la escritura."}
+   },
+   "pitfalls": [
+    {"en": "Indexing a low-selectivity column (a boolean, a status with 3 values); the engine ignores it and scans anyway.", "es": "Indexar una columna de baja selectividad (un booleano, un status con 3 valores); el motor lo ignora y escanea igual."},
+    {"en": "Wrapping the indexed column in a function (WHERE lower(email) = ...) which disables the plain index unless you built it on the expression.", "es": "Envolver la columna indexada en una función (WHERE lower(email) = ...), lo que inutiliza el índice normal a menos que lo hayas creado sobre la expresión."},
+    {"en": "Getting composite column order backwards, so the index can't serve the query's leading filter.", "es": "Invertir el orden de columnas del compuesto, de modo que el índice no puede servir el filtro principal de la consulta."},
+    {"en": "Piling on indexes 'just in case'; each one taxes every write and bloats storage with zero read payoff.", "es": "Acumular índices 'por si acaso'; cada uno grava cada escritura e infla el almacenamiento sin ningún beneficio de lectura."}
+   ],
+   "analogy": {
+    "en": "A B-tree is a phone book sorted by surname: you find 'Smith' fast and can also read everyone from Smith to Taylor in order. A hash index is a coat check ticket: hand over ticket #58 and get that exact coat instantly, but there's no way to ask for 'coats 50 through 60'.",
+    "es": "Un B-tree es una guía telefónica ordenada por apellido: encuentras 'Smith' rápido y además puedes leer en orden a todos de Smith a Taylor. Un índice hash es el tique del guardarropa: entregas el tique #58 y recibes ese abrigo exacto al instante, pero no hay forma de pedir 'los abrigos del 50 al 60'."
+   },
+   "depth": {
+    "en": "Write cost is not uniform. A B-tree on a monotonically increasing key (an auto-increment id or a timestamp) always inserts at the right edge — cheap and cache-friendly. An index on a random key (a UUIDv4) inserts all over the tree, causing page splits and random I/O that can cut write throughput several-fold. This is exactly why time-ordered UUIDs (v7) and sequential ids exist.",
+    "es": "El costo de escritura no es uniforme. Un B-tree sobre una clave monótona creciente (un id autoincremental o un timestamp) siempre inserta en el borde derecho: barato y amigable con la caché. Un índice sobre una clave aleatoria (un UUIDv4) inserta por todo el árbol, provocando divisiones de página e I/O aleatorio que puede reducir el throughput de escritura varias veces. Justo por esto existen los UUID ordenados por tiempo (v7) y los ids secuenciales."
+   },
+   "code": {
+    "lang": "sql",
+    "snippet": "-- Hot query: a user's 20 newest orders\nSELECT * FROM orders\nWHERE user_id = 42\nORDER BY created_at DESC\nLIMIT 20;\n\n-- Composite index matches filter THEN sort:\nCREATE INDEX idx_orders_user_recent\n  ON orders (user_id, created_at DESC);\n\n-- EXPLAIN now shows: Index Scan (no Sort node),\n-- reads 20 rows instead of 50,000,000.",
+    "caption": {"en": "Column order mirrors the query: equality filter first, then the sort key.", "es": "El orden de columnas refleja la consulta: primero el filtro de igualdad, luego la clave de orden."},
+    "annotations": [
+     {"line": 9, "note": {"en": "user_id first because it's the equality filter; created_at second to satisfy ORDER BY in place.", "es": "user_id primero por ser el filtro de igualdad; created_at segundo para satisfacer el ORDER BY en el lugar."}},
+     {"line": 12, "note": {"en": "Verify with EXPLAIN: a disappearing 'Sort' node is proof the index is doing the ordering.", "es": "Verifica con EXPLAIN: un nodo 'Sort' que desaparece prueba que el índice hace el ordenamiento."}}
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {"en": "B-tree (sorted, versatile) vs hash (unordered, equality-only).", "es": "B-tree (ordenado, versátil) vs hash (sin orden, solo igualdad)."},
+    "left": {
+     "title": {"en": "B-tree", "es": "B-tree"},
+     "points": [
+      {"en": "Keys kept in sorted order", "es": "Claves en orden ordenado"},
+      {"en": "Equality, ranges (>, BETWEEN), and ORDER BY", "es": "Igualdad, rangos (>, BETWEEN) y ORDER BY"},
+      {"en": "O(log n) lookup; the safe default", "es": "Búsqueda O(log n); el default seguro"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Hash", "es": "Hash"},
+     "points": [
+      {"en": "Key hashed to a bucket; no order", "es": "Clave hasheada a un bucket; sin orden"},
+      {"en": "O(1) exact equality only", "es": "Solo igualdad exacta O(1)"},
+      {"en": "Cannot do ranges or sorting at all", "es": "No puede hacer rangos ni ordenamiento en absoluto"}
+     ]
+    }
+   },
+   "visual": {"widgetId": "big-o"},
+   "source": "Kleppmann, DDIA, Ch.3 (Storage & Retrieval — Hash Indexes, B-Trees)"
+  },
+  {
+   "slug": "isolation-levels",
+   "keywords": [
+    {
+     "term": {"en": "Dirty read", "es": "Lectura sucia"},
+     "def": {"en": "Reading another transaction's uncommitted write that may still roll back; Read Committed already prevents it.", "es": "Leer la escritura no confirmada de otra transacción que aún puede revertirse; Read Committed ya la previene."}
+    },
+    {
+     "term": {"en": "Non-repeatable read", "es": "Lectura no repetible"},
+     "def": {"en": "Reading the same row twice in one transaction and getting different values because someone committed in between.", "es": "Leer la misma fila dos veces en una transacción y obtener valores distintos porque alguien confirmó en el medio."}
+    },
+    {
+     "term": {"en": "Snapshot isolation", "es": "Aislamiento por snapshot"},
+     "def": {"en": "Each transaction reads from one consistent point-in-time view; usually named Repeatable Read, implemented with MVCC.", "es": "Cada transacción lee de una vista consistente de un punto en el tiempo; suele llamarse Repeatable Read y se implementa con MVCC."}
+    },
+    {
+     "term": {"en": "Write skew", "es": "Write skew"},
+     "def": {"en": "Two transactions read overlapping data, each decides its write is valid, and together they break an invariant neither saw violated.", "es": "Dos transacciones leen datos solapados, cada una decide que su escritura es válida y juntas rompen un invariante que ninguna vio violado."}
+    },
+    {
+     "term": {"en": "Serializable", "es": "Serializable"},
+     "def": {"en": "The strongest level: the result is guaranteed equivalent to running the transactions one after another; the only level that stops write skew.", "es": "El nivel más fuerte: el resultado es equivalente a ejecutar las transacciones una tras otra; el único que detiene el write skew."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "Hospital on-call rule: at least 1 doctor must stay on call. Alice and Bob are the only two on call. At 2:00:00.000 both open the app to go off duty; both transactions read 'on_call count = 2, so ≥1 remains after I leave', both set themselves off.", "es": "Regla de guardia del hospital: al menos 1 médico debe quedar de guardia. Alice y Bob son los únicos dos de guardia. A las 2:00:00.000 ambos abren la app para retirarse; ambas transacciones leen 'cuenta de guardia = 2, así que queda ≥1 si me voy', y ambos se marcan como fuera."},
+    "walkthrough": {"en": "Under snapshot isolation each transaction reads its own consistent snapshot: both see count = 2, both pass the check, both commit — zero doctors on call. The invariant broke and no single transaction did anything wrong; this is write skew, and snapshot isolation does not prevent it. Under Serializable, the engine detects that the two transactions read a set that the other wrote, and aborts one; that doctor retries, now sees count = 1, and is correctly blocked from leaving. The cost is that abort-and-retry: at 2 conflicting transactions it's invisible, but on a hot row with hundreds of contenders, Serializable can throw a wall of serialization-failure retries that Read Committed would never raise.", "es": "Bajo aislamiento por snapshot cada transacción lee su propio snapshot consistente: ambas ven cuenta = 2, ambas pasan el chequeo, ambas confirman: cero médicos de guardia. El invariante se rompió y ninguna transacción hizo nada mal por sí sola; esto es write skew, y el snapshot no lo previene. Bajo Serializable, el motor detecta que las dos transacciones leyeron un conjunto que la otra escribió y aborta una; ese médico reintenta, ahora ve cuenta = 1 y queda correctamente bloqueado de irse. El costo es ese abortar-y-reintentar: con 2 transacciones en conflicto es invisible, pero en una fila caliente con cientos de competidores, Serializable puede lanzar un muro de reintentos por fallo de serialización que Read Committed nunca levantaría."}
+   },
+   "pitfalls": [
+    {"en": "Assuming 'Repeatable Read' means serializable — it's snapshot isolation and still allows write skew.", "es": "Suponer que 'Repeatable Read' significa serializable: es aislamiento por snapshot y aún permite write skew."},
+    {"en": "Trusting the SQL standard's level names; engines differ, e.g. Oracle's 'Serializable' is actually snapshot isolation.", "es": "Confiar en los nombres de nivel del estándar SQL; los motores difieren, p. ej. el 'Serializable' de Oracle es en realidad aislamiento por snapshot."},
+    {"en": "Enforcing an invariant with a read-then-write in app code and expecting isolation to protect it below Serializable.", "es": "Imponer un invariante con un leer-luego-escribir en el código de la app y esperar que el aislamiento lo proteja por debajo de Serializable."},
+    {"en": "Using Serializable without wrapping transactions in a retry loop; serialization failures are normal and must be retried.", "es": "Usar Serializable sin envolver las transacciones en un bucle de reintento; los fallos de serialización son normales y deben reintentarse."}
+   ],
+   "analogy": {
+    "en": "Two people editing a shared shopping list from separate copies (snapshots): each independently deletes 'milk' thinking the other still has it — the list ends up without milk. Serializable is like forcing them to take turns on the one live copy, so the second sees the first's change.",
+    "es": "Dos personas editan una lista de compras compartida desde copias separadas (snapshots): cada una borra 'leche' pensando que la otra aún la tiene; la lista termina sin leche. Serializable es como obligarlas a turnarse sobre la única copia viva, así la segunda ve el cambio de la primera."
+   },
+   "depth": {
+    "en": "Postgres implements Serializable as SSI (Serializable Snapshot Isolation): it runs optimistically on top of snapshots and tracks read/write dependencies, aborting a transaction only when it detects a dangerous cycle. That means Serializable in Postgres is cheap when conflicts are rare and expensive only under real contention — so the honest default for a correctness-critical invariant is often Serializable plus a retry loop, not a hand-rolled SELECT FOR UPDATE lock.",
+    "es": "Postgres implementa Serializable como SSI (Serializable Snapshot Isolation): corre de forma optimista sobre snapshots y rastrea dependencias de lectura/escritura, abortando una transacción solo cuando detecta un ciclo peligroso. Eso significa que Serializable en Postgres es barato cuando los conflictos son raros y caro solo bajo contención real; así que el default honesto para un invariante crítico suele ser Serializable más un bucle de reintento, no un SELECT FOR UPDATE armado a mano."
+   },
+   "code": {
+    "lang": "sql",
+    "snippet": "-- Write skew: this app-level check is NOT safe\n-- below Serializable, even under snapshot isolation.\nBEGIN;\n  SELECT count(*) FROM doctors\n    WHERE on_call = true;        -- both read 2\n  -- app: if count >= 2, allow going off duty\n  UPDATE doctors SET on_call = false\n    WHERE id = :me;              -- both commit -> 0 left\nCOMMIT;\n\n-- Fix: SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;\n-- then retry on serialization_failure (SQLSTATE 40001).",
+    "caption": {"en": "A read-then-write invariant that only Serializable makes safe.", "es": "Un invariante de leer-luego-escribir que solo Serializable vuelve seguro."},
+    "annotations": [
+     {"line": 5, "note": {"en": "Both transactions see 2 in their own snapshot; neither sees the other's pending UPDATE.", "es": "Ambas transacciones ven 2 en su propio snapshot; ninguna ve el UPDATE pendiente de la otra."}},
+     {"line": 8, "note": {"en": "Both writes commit and the ≥1 invariant is silently violated — classic write skew.", "es": "Ambas escrituras confirman y el invariante ≥1 se viola en silencio: write skew clásico."}},
+     {"line": 12, "note": {"en": "Serializable turns the conflict into an abort you catch and retry, not a corrupt state.", "es": "Serializable convierte el conflicto en un aborto que atrapas y reintentas, no en un estado corrupto."}}
+    ]
+   },
+   "diagram": {
+    "kind": "stack",
+    "caption": {"en": "Levels stacked weak→strong: each rung blocks one more anomaly at higher cost.", "es": "Niveles apilados débil→fuerte: cada peldaño bloquea una anomalía más a mayor costo."},
+    "nodes": [
+     {"label": {"en": "Read Uncommitted", "es": "Read Uncommitted"}, "note": {"en": "Allows dirty reads — almost never used", "es": "Permite lecturas sucias; casi nunca se usa"}},
+     {"label": {"en": "Read Committed", "es": "Read Committed"}, "note": {"en": "Stops dirty reads; the common default", "es": "Frena lecturas sucias; el default común"}},
+     {"label": {"en": "Snapshot / Repeatable Read", "es": "Snapshot / Repeatable Read"}, "note": {"en": "Stops non-repeatable reads; write skew survives", "es": "Frena lecturas no repetibles; el write skew sobrevive"}},
+     {"label": {"en": "Serializable", "es": "Serializable"}, "note": {"en": "Stops write skew; costs aborts + retries", "es": "Frena write skew; cuesta abortos + reintentos"}}
+    ]
+   },
+   "visual": {"widgetId": "consistency"},
+   "source": "Kleppmann, DDIA, Ch.7 (Weak Isolation Levels)"
+  }
+ ]
+}

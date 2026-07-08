@@ -1,0 +1,267 @@
+{
+ "lessonId": "systems-architecture-l3",
+ "concepts": [
+  {
+   "slug": "tradeoff-vocabulary",
+   "title": {
+    "en": "Naming the core tradeoffs: latency vs throughput, performance vs scalability",
+    "es": "Nombrar los tradeoffs centrales: latencia vs throughput, rendimiento vs escalabilidad"
+   },
+   "why": {
+    "en": "Trains you to frame a design as competing forces you can articulate, not a single 'fast/good' knob.",
+    "es": "Entrena a plantear un diseño como fuerzas en tensión que puedes articular, no como una sola perilla de 'rápido/bueno'."
+   },
+   "source": "The System Design Primer (donnemartin/system-design-primer) — 'Performance vs scalability', 'Latency vs throughput'",
+   "explanation": {
+    "en": "The single most useful habit at this level is refusing to say 'fast.' Fast hides two different things. Latency is how long one request takes end to end: the user clicked and waited 300ms. Throughput is how many requests you finish per second: the system handles 5,000 QPS. They are not the same, and they often trade against each other. Batching work raises throughput (you amortize fixed costs across many items) but raises latency for any single item that now waits for the batch to fill. A queue in front of a worker pool smooths throughput under spikes but adds waiting time to each job.\n\nThe second pair is performance versus scalability. Performance is: how does one request behave when the system is nearly idle? Scalability is: what happens to that behavior as load or data grows? A system with great performance and poor scalability is fast for one user and falls over at a thousand. A scalable system keeps its per-request behavior roughly flat as you add load — usually by adding resources. You can have one without the other, and confusing them is how teams optimize the wrong thing.\n\nThe judgment: when someone says 'it's slow,' make them pick a word. Is a single request slow (latency), or is the system slow because it's saturated and requests are queuing (throughput/scalability)? The fix is completely different. For latency you profile the request path; for throughput you add capacity or parallelism; for scalability you change the shape of the system. Naming the force tells you where to look.",
+    "es": "El hábito más útil de este nivel es negarse a decir 'rápido'. Rápido esconde dos cosas distintas. La latencia es cuánto tarda una petición de principio a fin: el usuario hizo clic y esperó 300ms. El throughput (rendimiento) es cuántas peticiones terminas por segundo: el sistema maneja 5.000 QPS. No son lo mismo, y a menudo se contraponen. Agrupar trabajo en lotes sube el throughput (repartes los costos fijos entre muchos elementos) pero sube la latencia de cada elemento que ahora espera a que el lote se llene. Una cola frente a un pool de workers suaviza el throughput ante picos, pero le agrega espera a cada trabajo.\n\nEl segundo par es performance (desempeño) versus escalabilidad. El desempeño es: ¿cómo se comporta una petición cuando el sistema está casi ocioso? La escalabilidad es: ¿qué le pasa a ese comportamiento cuando crece la carga o los datos? Un sistema con buen desempeño y mala escalabilidad es rápido para un usuario y se cae con mil. Un sistema escalable mantiene su comportamiento por petición más o menos plano al agregar carga, normalmente sumando recursos. Puedes tener uno sin el otro, y confundirlos es así como los equipos terminan optimizando lo que no debían.\n\nEl criterio: cuando alguien diga 'está lento', hazle elegir una palabra. ¿Una sola petición está lenta (latencia), o el sistema está lento porque está saturado y las peticiones se encolan (throughput/escalabilidad)? El arreglo es completamente distinto. Para latencia perfilas el camino de la petición; para throughput agregas capacidad o paralelismo; para escalabilidad cambias la forma del sistema. Nombrar la fuerza te dice dónde mirar."
+   },
+   "keyPoints": [
+    {
+     "en": "Latency = time for one request; throughput = requests finished per second. Batching and queuing usually raise one while hurting the other.",
+     "es": "Latencia = tiempo de una petición; throughput = peticiones terminadas por segundo. Agrupar y encolar suele subir uno mientras daña el otro."
+    },
+    {
+     "en": "Performance is behavior at low load; scalability is how that behavior holds as load grows. A fast system can still be unscalable.",
+     "es": "El desempeño es el comportamiento con poca carga; la escalabilidad es cómo se sostiene ese comportamiento al crecer la carga. Un sistema rápido puede igual no escalar."
+    },
+    {
+     "en": "When someone says 'slow,' force a word: latency, throughput, or scalability. Each points to a different fix.",
+     "es": "Cuando alguien diga 'lento', exige una palabra: latencia, throughput o escalabilidad. Cada una apunta a un arreglo distinto."
+    }
+   ],
+   "keywords": [
+    {
+     "term": {"en": "Latency", "es": "Latencia"},
+     "def": {"en": "The time a single request takes end to end, e.g. 300ms. Usually reported at a percentile (p50, p99), not an average.", "es": "El tiempo que tarda una sola petición de extremo a extremo, p. ej. 300ms. Suele reportarse en un percentil (p50, p99), no en promedio."}
+    },
+    {
+     "term": {"en": "Throughput", "es": "Throughput"},
+     "def": {"en": "How much work the system completes per unit time, usually requests per second (QPS/RPS) or items per second.", "es": "Cuánto trabajo completa el sistema por unidad de tiempo, normalmente peticiones por segundo (QPS/RPS) o elementos por segundo."}
+    },
+    {
+     "term": {"en": "Tail latency (p99)", "es": "Latencia de cola (p99)"},
+     "def": {"en": "The latency of the slowest 1% of requests. It dominates user pain and hides behind healthy-looking averages.", "es": "La latencia del 1% más lento de las peticiones. Domina el dolor del usuario y se esconde tras promedios que se ven sanos."}
+    },
+    {
+     "term": {"en": "Saturation", "es": "Saturación"},
+     "def": {"en": "The point where a resource (CPU, connections, queue) is fully used; beyond it, added load only grows the queue and latency, not throughput.", "es": "El punto donde un recurso (CPU, conexiones, cola) está al tope; más allá, la carga extra solo hace crecer la cola y la latencia, no el throughput."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "An image-thumbnail service processes each upload one at a time and sustains 200 images/sec at 20ms latency. A product manager asks to 'make it faster' for a 10x traffic spike.", "es": "Un servicio de miniaturas procesa cada subida una por una y sostiene 200 imágenes/seg con 20ms de latencia. Un product manager pide 'hacerlo más rápido' para un pico de tráfico 10x."},
+    "walkthrough": {"en": "You switch to batching 32 images per GPU call. Throughput jumps to ~2,000 images/sec because the fixed per-call overhead is now shared across 32 items. But each image now waits up to ~160ms for its batch to fill, so p99 latency rises from 20ms to ~180ms. Both numbers moved — one up, one down. 'Faster' was the wrong word: the spike needed throughput, and you bought it by spending latency. If this were a live user waiting on their own upload, that trade would be a regression, not a win.", "es": "Cambias a lotes de 32 imágenes por llamada a la GPU. El throughput salta a ~2.000 imágenes/seg porque el costo fijo por llamada ahora se reparte entre 32 elementos. Pero cada imagen espera hasta ~160ms a que su lote se llene, así que la latencia p99 sube de 20ms a ~180ms. Ambos números se movieron: uno arriba, otro abajo. 'Más rápido' era la palabra equivocada: el pico necesitaba throughput, y lo compraste gastando latencia. Si fuera un usuario en vivo esperando su propia subida, ese trueque sería un retroceso, no una victoria."}
+   },
+   "pitfalls": [
+    {"en": "Reporting average latency. An average of 50ms can hide a p99 of 2s that half your users feel. Always ask for a percentile.", "es": "Reportar latencia promedio. Un promedio de 50ms puede esconder un p99 de 2s que la mitad de tus usuarios sufre. Siempre pide un percentil."},
+    {"en": "Optimizing throughput for a workload where users wait synchronously. Batching a checkout button to raise QPS just makes every buyer wait longer.", "es": "Optimizar throughput en una carga donde los usuarios esperan de forma síncrona. Agrupar el botón de compra para subir QPS solo hace esperar más a cada comprador."},
+    {"en": "Assuming more concurrency always adds throughput. Past saturation, extra requests just lengthen the queue and inflate latency with zero gain.", "es": "Suponer que más concurrencia siempre suma throughput. Pasada la saturación, las peticiones extra solo alargan la cola e inflan la latencia sin ganancia alguna."}
+   ],
+   "analogy": {
+    "en": "A highway. Latency is how long your one car takes to cross town; throughput is how many cars pass the toll booth per minute. Adding lanes (throughput) can leave your personal trip time unchanged — and a traffic jam (saturation) means more cars entering only makes everyone's trip slower, not the road busier.",
+    "es": "Una autopista. La latencia es cuánto tarda tu único auto en cruzar la ciudad; el throughput es cuántos autos pasan el peaje por minuto. Agregar carriles (throughput) puede dejar igual tu tiempo de viaje personal, y un atasco (saturación) significa que más autos entrando solo hace más lento el viaje de todos, no más transitada la vía."
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {"en": "The same word 'slow' splits into two forces with opposite fixes.", "es": "La misma palabra 'lento' se divide en dos fuerzas con arreglos opuestos."},
+    "left": {
+     "title": {"en": "Latency (one request)", "es": "Latencia (una petición)"},
+     "points": [
+      {"en": "Measures: time for a single request", "es": "Mide: tiempo de una sola petición"},
+      {"en": "Symptom: this click feels slow even when idle", "es": "Síntoma: este clic se siente lento incluso sin carga"},
+      {"en": "Fix: profile the request path, cut hops", "es": "Arreglo: perfilar el camino de la petición, quitar saltos"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Throughput / scalability (system)", "es": "Throughput / escalabilidad (sistema)"},
+     "points": [
+      {"en": "Measures: requests finished per second", "es": "Mide: peticiones terminadas por segundo"},
+      {"en": "Symptom: fine at 2am, queues up at peak", "es": "Síntoma: bien a las 2am, se encola en el pico"},
+      {"en": "Fix: add capacity, parallelism, or reshape the system", "es": "Arreglo: sumar capacidad, paralelismo o rediseñar el sistema"}
+     ]
+    }
+   }
+  },
+  {
+   "slug": "horizontal-vs-vertical-scaling",
+   "title": {
+    "en": "Scaling up vs scaling out, and why statelessness is the enabler",
+    "es": "Escalar hacia arriba vs hacia los lados, y por qué la ausencia de estado lo habilita"
+   },
+   "why": {
+    "en": "Teaches the judgment that 'just add a bigger box' has a ceiling, and that horizontal scale is bought with statelessness and coordination cost.",
+    "es": "Enseña el criterio de que 'poner una máquina más grande' tiene techo, y que el escalado horizontal se paga con ausencia de estado y costo de coordinación."
+   },
+   "source": "The System Design Primer — 'Application layer' and scalability sections; roadmap.sh system-design (Load Balancers, Scaling)",
+   "explanation": {
+    "en": "There are two ways to give a system more room. Vertical scaling (scaling up) means buying a bigger box: more CPU, more RAM, faster disk. It is the easiest thing in the world — no code changes, just a bigger instance — and that is exactly why people over-rely on it. It has a hard ceiling: there is a largest machine you can buy, it costs disproportionately more at the top end, and while you resize it, you're down. One box is also one failure away from total outage.\n\nHorizontal scaling (scaling out) means adding more boxes behind a load balancer. There is no obvious ceiling and one dead box just means the others pick up the slack. But you don't get it for free. The moment you have two application servers, any state stored on one of them — a user's session, an in-memory cache, an uploaded file on local disk — is invisible to the other. The load balancer might send the next request to a machine that has never heard of this user. That is why statelessness is the enabler: if every request carries everything the server needs (or the server reads shared state from a database or a cache like Redis), then any box can serve any request, and adding boxes actually helps.\n\nThe judgment is a sequence, not a religion. Scale up first — it's cheap in engineering time and buys you runway while the product is still finding its shape. But design the app stateless from day one so that when the bigger box runs out, scaling out is a config change and not a rewrite. The cost you're buying with horizontal scale is coordination: shared session stores, sticky-session hacks you'll regret, and the discipline of never trusting local memory to survive.",
+    "es": "Hay dos maneras de darle más espacio a un sistema. El escalamiento vertical (scaling up) es comprar una máquina más grande: más CPU, más RAM, disco más rápido. Es lo más fácil del mundo —sin cambios de código, solo una instancia mayor— y por eso mismo se abusa de él. Tiene un techo duro: existe una máquina máxima que puedes comprar, cuesta desproporcionadamente más en la gama alta, y mientras la redimensionas, estás caído. Una sola máquina también está a una falla de una caída total.\n\nEl escalamiento horizontal (scaling out) es agregar más máquinas detrás de un balanceador de carga. No hay un techo obvio y una máquina muerta solo significa que las demás cubren el hueco. Pero no sale gratis. En cuanto tienes dos servidores de aplicación, cualquier estado guardado en uno —la sesión de un usuario, un caché en memoria, un archivo subido al disco local— es invisible para el otro. El balanceador podría mandar la siguiente petición a una máquina que nunca supo de este usuario. Por eso la ausencia de estado (statelessness) es el habilitador: si cada petición lleva todo lo que el servidor necesita (o el servidor lee estado compartido desde una base de datos o un caché como Redis), entonces cualquier máquina puede atender cualquier petición, y agregar máquinas de verdad ayuda.\n\nEl criterio es una secuencia, no una religión. Escala vertical primero: es barato en tiempo de ingeniería y te da pista mientras el producto todavía busca su forma. Pero diseña la app sin estado desde el día uno, para que cuando la máquina grande se quede corta, escalar horizontal sea un cambio de configuración y no una reescritura. El costo que compras con el escalamiento horizontal es coordinación: almacenes de sesión compartidos, trucos de sticky-session de los que te arrepentirás, y la disciplina de nunca confiar en que la memoria local sobreviva."
+   },
+   "keyPoints": [
+    {
+     "en": "Scaling up = bigger box (easy, but hard ceiling and a single point of failure). Scaling out = more boxes (no ceiling, but coordination cost).",
+     "es": "Escalar vertical = máquina más grande (fácil, pero techo duro y punto único de falla). Escalar horizontal = más máquinas (sin techo, pero con costo de coordinación)."
+    },
+    {
+     "en": "Statelessness is what makes horizontal scaling work: if any box can serve any request, adding boxes actually adds capacity.",
+     "es": "La ausencia de estado es lo que hace funcionar el escalamiento horizontal: si cualquier máquina atiende cualquier petición, agregar máquinas suma capacidad de verdad."
+    },
+    {
+     "en": "Move session, cache, and uploads out of local memory/disk into shared stores (DB, Redis, object storage) before you need to scale out.",
+     "es": "Saca sesión, caché y archivos subidos de la memoria/disco local hacia almacenes compartidos (BD, Redis, almacenamiento de objetos) antes de necesitar escalar horizontal."
+    }
+   ],
+   "keywords": [
+    {
+     "term": {"en": "Vertical scaling (scale up)", "es": "Escalamiento vertical (scale up)"},
+     "def": {"en": "Growing a single machine: more CPU, RAM, or faster disk. Simple, but bounded by the largest instance and a single failure domain.", "es": "Hacer crecer una sola máquina: más CPU, RAM o disco más rápido. Simple, pero acotado por la instancia más grande y un solo dominio de falla."}
+    },
+    {
+     "term": {"en": "Horizontal scaling (scale out)", "es": "Escalamiento horizontal (scale out)"},
+     "def": {"en": "Adding more machines behind a load balancer. No hard ceiling and tolerant to node loss, at the price of coordination.", "es": "Agregar más máquinas detrás de un balanceador de carga. Sin techo duro y tolerante a la pérdida de nodos, al precio de coordinación."}
+    },
+    {
+     "term": {"en": "Statelessness", "es": "Ausencia de estado"},
+     "def": {"en": "A server keeps no per-user data between requests; everything needed lives in the request or a shared store, so any node can serve anyone.", "es": "El servidor no guarda datos por usuario entre peticiones; todo lo necesario vive en la petición o en un almacén compartido, para que cualquier nodo atienda a cualquiera."}
+    },
+    {
+     "term": {"en": "Sticky sessions", "es": "Sesiones pegajosas (sticky)"},
+     "def": {"en": "A load-balancer trick that pins a user to one node so local state still works. It scales poorly and breaks when that node dies.", "es": "Un truco del balanceador que fija a un usuario a un nodo para que el estado local siga sirviendo. Escala mal y se rompe cuando ese nodo muere."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A monolith stores login sessions in local server memory. It runs fine on one 4-core box until traffic outgrows it and you add a second box behind a round-robin load balancer.", "es": "Un monolito guarda las sesiones de login en la memoria local del servidor. Corre bien en una máquina de 4 núcleos hasta que el tráfico la supera y agregas una segunda máquina tras un balanceador round-robin."},
+    "walkthrough": {"en": "Users start getting logged out at random. Here's why: the balancer sends request 1 to box A (which created the session in its RAM), then request 2 to box B — which has no record of that session and bounces the user to login. Roughly half of all follow-up requests fail. The fix isn't a bigger box; it's moving session state out. You point both boxes at a shared Redis holding sessions. Now box A writes the session to Redis, box B reads it, and either can serve either user. Adding box C later is a one-line config change instead of a new bug. The lesson: the problem was never CPU — it was that state lived in the wrong place.", "es": "Los usuarios empiezan a cerrar sesión al azar. La razón: el balanceador manda la petición 1 a la máquina A (que creó la sesión en su RAM), luego la petición 2 a la máquina B, que no tiene registro de esa sesión y rebota al usuario al login. Cerca de la mitad de las peticiones siguientes fallan. El arreglo no es una máquina más grande; es sacar el estado de sesión afuera. Apuntas ambas máquinas a un Redis compartido con las sesiones. Ahora A escribe la sesión en Redis, B la lee, y cualquiera atiende a cualquier usuario. Agregar la máquina C después es un cambio de una línea de configuración en vez de un bug nuevo. La lección: el problema nunca fue la CPU, sino que el estado vivía en el lugar equivocado."}
+   },
+   "pitfalls": [
+    {"en": "Reaching for sticky sessions to 'fix' the logout bug. It papers over the state problem and collapses the moment a node dies or you deploy.", "es": "Recurrir a sticky sessions para 'arreglar' el bug de logout. Tapa el problema de estado y se derrumba en cuanto un nodo muere o haces un despliegue."},
+    {"en": "Storing uploads on local disk. On box A the file exists; on box B the download 404s. Uploads belong in shared object storage (S3).", "es": "Guardar archivos subidos en el disco local. En la máquina A el archivo existe; en la B la descarga da 404. Los archivos van en almacenamiento de objetos compartido (S3)."},
+    {"en": "Treating an in-memory cache as a source of truth. Each node caches independently, so users see different data depending on which node answered.", "es": "Tratar un caché en memoria como fuente de verdad. Cada nodo cachea por su cuenta, así que los usuarios ven datos distintos según qué nodo respondió."},
+    {"en": "Scaling out the app tier while the single database stays the bottleneck. Ten app servers all hammer one DB, which now fails faster.", "es": "Escalar horizontal la capa de app mientras la única base de datos sigue siendo el cuello de botella. Diez servidores de app golpean una sola BD, que ahora falla más rápido."}
+   ],
+   "analogy": {
+    "en": "Vertical scaling is hiring one heroic chef and buying them a bigger stove; there's a limit to one person and if they're sick, dinner is cancelled. Horizontal scaling is hiring more line cooks — but it only works if every recipe and ingredient lives in a shared pantry, not in one cook's head. A cook who keeps secret notes (local state) can't be swapped for another.",
+    "es": "El escalamiento vertical es contratar a un chef heroico y comprarle una estufa más grande; hay un límite para una persona y si se enferma, se cancela la cena. El escalamiento horizontal es contratar más cocineros de línea, pero solo funciona si cada receta e ingrediente vive en una despensa compartida, no en la cabeza de un cocinero. Un cocinero con notas secretas (estado local) no puede reemplazarse por otro."
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {"en": "Two directions to add capacity — and what each one costs you.", "es": "Dos direcciones para sumar capacidad, y lo que cada una te cuesta."},
+    "left": {
+     "title": {"en": "Scale up (vertical)", "es": "Escalar arriba (vertical)"},
+     "points": [
+      {"en": "One box, more CPU/RAM/disk", "es": "Una máquina, más CPU/RAM/disco"},
+      {"en": "No code changes — easiest first move", "es": "Sin cambios de código: el primer paso más fácil"},
+      {"en": "Hard ceiling + single point of failure", "es": "Techo duro + punto único de falla"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Scale out (horizontal)", "es": "Escalar a los lados (horizontal)"},
+     "points": [
+      {"en": "Many boxes behind a load balancer", "es": "Muchas máquinas tras un balanceador"},
+      {"en": "No ceiling, survives node loss", "es": "Sin techo, sobrevive a la pérdida de nodos"},
+      {"en": "Requires statelessness + shared stores", "es": "Requiere ausencia de estado + almacenes compartidos"}
+     ]
+    }
+   },
+   "architecture": {
+    "kind": "flow",
+    "caption": {"en": "Stateless app tier: any node serves any request because all state is externalized.", "es": "Capa de app sin estado: cualquier nodo atiende cualquier petición porque todo el estado está externalizado."},
+    "nodes": [
+     {"label": {"en": "Client", "es": "Cliente"}},
+     {"label": {"en": "Load balancer", "es": "Balanceador de carga"}, "note": {"en": "round-robin to any node", "es": "round-robin a cualquier nodo"}},
+     {"label": {"en": "App node A / B / C", "es": "Nodo de app A / B / C"}, "note": {"en": "interchangeable, hold no user state", "es": "intercambiables, no guardan estado de usuario"}},
+     {"label": {"en": "Redis (sessions/cache)", "es": "Redis (sesiones/caché)"}, "note": {"en": "shared: any node reads/writes", "es": "compartido: cualquier nodo lee/escribe"}},
+     {"label": {"en": "Object storage + DB", "es": "Almacenamiento de objetos + BD"}, "note": {"en": "uploads and source of truth", "es": "archivos subidos y fuente de verdad"}}
+    ]
+   },
+   "visual": {"widgetId": "scaling-curves"}
+  },
+  {
+   "slug": "caching-fundamentals-and-costs",
+   "title": {
+    "en": "Caching: what it buys and what it costs (staleness, invalidation)",
+    "es": "Caché: qué te da y qué te cuesta (datos rancios, invalidación)"
+   },
+   "why": {
+    "en": "Builds the reflex that a cache is a consistency tradeoff, not free speed — invalidation is where the real design decision lives.",
+    "es": "Genera el reflejo de que una caché es un tradeoff de consistencia, no velocidad gratis: la invalidación es donde vive la verdadera decisión."
+   },
+   "source": "ByteByteGo system-design-101 — 'Top 5 Caching Strategies', 'Top 8 Cache Eviction Strategies'; System Design Primer — 'Cache'",
+   "explanation": {
+    "en": "A cache trades memory and consistency for speed. You keep a copy of expensive-to-compute or expensive-to-fetch data somewhere faster and closer, so most reads never touch the slow source. When it works, a cache turns a 50ms database query into a 1ms lookup and takes enormous load off your database. That part is real and it's why caches are everywhere. The trap is treating that speed as free.\n\nThe cost is that the copy can be wrong. The moment you cache a value, the source of truth can change while your copy sits there stale. Now you have a decision that has nothing to do with speed and everything to do with correctness: how do you invalidate? The common patterns each move the pain somewhere. A TTL (expire after N seconds) is dead simple but guarantees a window where users see stale data — fine for a product catalog, dangerous for an account balance. Write-through (update cache and DB together on every write) keeps them consistent but slows writes and caches data nobody may read. Cache-aside (app checks cache, on miss reads DB and populates) is the default, but you must remember to invalidate on writes, and forgetting is the classic bug. And when the cache fills, eviction (LRU, LFU) decides what to throw away — evict the wrong hot key and your hit rate collapses.\n\nThe judgment: before adding a cache, answer 'how wrong can this be, and for how long?' If the answer is 'never' or 'not even a second,' a cache is a liability, not a shortcut — you'll spend more effort keeping it correct than you save. If the answer is 'a few minutes of staleness is fine' (feeds, catalogs, config), a cache is a huge win. The interesting design work is never the read path; it's the invalidation.",
+    "es": "Un caché cambia memoria y consistencia por velocidad. Guardas una copia de datos caros de calcular o de traer en un lugar más rápido y cercano, para que la mayoría de las lecturas nunca toquen la fuente lenta. Cuando funciona, un caché convierte una consulta de base de datos de 50ms en una búsqueda de 1ms y le quita enorme carga a tu base de datos. Esa parte es real y por eso los cachés están en todas partes. La trampa es tratar esa velocidad como si fuera gratis.\n\nEl costo es que la copia puede estar equivocada. En cuanto cacheas un valor, la fuente de verdad puede cambiar mientras tu copia se queda ahí, obsoleta (stale). Ahora tienes una decisión que no tiene nada que ver con velocidad y todo que ver con correctitud: ¿cómo invalidas? Los patrones comunes mueven el dolor a otro lado. Un TTL (expira tras N segundos) es simplísimo pero garantiza una ventana en que los usuarios ven datos obsoletos: bien para un catálogo, peligroso para un saldo de cuenta. Write-through (actualizar caché y BD juntos en cada escritura) los mantiene consistentes pero ralentiza las escrituras y cachea datos que quizá nadie lea. Cache-aside (la app consulta el caché, y ante un miss lee la BD y la puebla) es lo habitual, pero debes acordarte de invalidar en las escrituras, y olvidarlo es el bug clásico. Y cuando el caché se llena, la expulsión (LRU, LFU) decide qué botar: expulsa la clave caliente equivocada y tu tasa de aciertos se desploma.\n\nEl criterio: antes de agregar un caché, responde '¿qué tan equivocado puede estar esto, y por cuánto tiempo?' Si la respuesta es 'nunca' o 'ni un segundo', un caché es un lastre, no un atajo: gastarás más esfuerzo en mantenerlo correcto del que ahorras. Si la respuesta es 'unos minutos de datos obsoletos está bien' (feeds, catálogos, configuración), un caché es una gran ganancia. El trabajo de diseño interesante nunca es el camino de lectura; es la invalidación."
+   },
+   "keyPoints": [
+    {
+     "en": "A cache buys speed and load relief; it costs memory and, crucially, consistency. The design lives in invalidation, not in the read.",
+     "es": "Un caché compra velocidad y alivio de carga; cuesta memoria y, sobre todo, consistencia. El diseño vive en la invalidación, no en la lectura."
+    },
+    {
+     "en": "Before caching, ask 'how stale can this data safely be?' Balances → not at all; catalogs/feeds → minutes are fine.",
+     "es": "Antes de cachear, pregunta '¿qué tan obsoletos pueden estar estos datos con seguridad?' Saldos → nada; catálogos/feeds → minutos están bien."
+    },
+    {
+     "en": "Know the patterns by their pain: TTL = simple but stale windows; write-through = consistent but slow writes; cache-aside = default but you must invalidate on write.",
+     "es": "Conoce los patrones por su dolor: TTL = simple pero con ventanas de datos obsoletos; write-through = consistente pero escrituras lentas; cache-aside = lo habitual pero debes invalidar al escribir."
+    }
+   ],
+   "keywords": [
+    {
+     "term": {"en": "Cache hit / miss", "es": "Acierto / fallo de caché"},
+     "def": {"en": "A hit is served from the cache (fast); a miss falls through to the slow source. Hit rate is the single most important cache metric.", "es": "Un acierto se sirve desde el caché (rápido); un fallo cae a la fuente lenta. La tasa de aciertos es la métrica de caché más importante."}
+    },
+    {
+     "term": {"en": "TTL (time to live)", "es": "TTL (tiempo de vida)"},
+     "def": {"en": "An expiry timer on a cached entry. Simple to reason about, but guarantees a staleness window equal to its length.", "es": "Un temporizador de expiración sobre una entrada cacheada. Fácil de razonar, pero garantiza una ventana de obsolescencia igual a su duración."}
+    },
+    {
+     "term": {"en": "Cache-aside", "es": "Cache-aside"},
+     "def": {"en": "The app checks the cache first; on a miss it reads the DB and populates the cache. The default pattern — but you must invalidate on writes.", "es": "La app consulta el caché primero; ante un fallo lee la BD y puebla el caché. El patrón por defecto, pero debes invalidar al escribir."}
+    },
+    {
+     "term": {"en": "Eviction (LRU/LFU)", "es": "Expulsión (LRU/LFU)"},
+     "def": {"en": "How a full cache chooses what to drop: LRU evicts the least recently used, LFU the least frequently used. Wrong choice tanks the hit rate.", "es": "Cómo un caché lleno elige qué botar: LRU expulsa lo menos usado recientemente, LFU lo menos usado en frecuencia. La elección errónea hunde la tasa de aciertos."}
+    },
+    {
+     "term": {"en": "Stale data", "es": "Datos obsoletos (stale)"},
+     "def": {"en": "A cached copy that no longer matches the source of truth because the source changed after caching. The core cost of any cache.", "es": "Una copia cacheada que ya no coincide con la fuente de verdad porque esta cambió tras el cacheo. El costo central de todo caché."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A product page does a 40ms Postgres query per view. At 3,000 views/sec the DB is at 90% CPU. You add cache-aside in Redis with a 60-second TTL.", "es": "Una página de producto hace una consulta de 40ms a Postgres por vista. A 3.000 vistas/seg la BD está al 90% de CPU. Agregas cache-aside en Redis con un TTL de 60 segundos."},
+    "walkthrough": {"en": "First request for a product misses, reads Postgres (40ms), and stores the result. For the next 60 seconds every request is a ~1ms Redis hit. If a product is viewed even twice a minute, ~98% of reads become hits, and DB CPU drops from 90% to under 10% because it now sees roughly 1 query per product per minute instead of thousands. The catch: when a merchant edits a price, the page keeps showing the old one for up to 60 seconds. That's the tradeoff you accepted — a stale price for a minute in exchange for a 40x cheaper read. For a catalog that's fine; you'd never make that trade on the checkout total.", "es": "La primera petición de un producto falla, lee Postgres (40ms) y guarda el resultado. Durante los siguientes 60 segundos cada petición es un acierto de ~1ms en Redis. Si un producto se ve aunque sea dos veces por minuto, ~98% de las lecturas se vuelven aciertos, y la CPU de la BD cae de 90% a menos de 10% porque ahora ve cerca de 1 consulta por producto por minuto en vez de miles. El detalle: cuando un comerciante edita un precio, la página sigue mostrando el viejo hasta 60 segundos. Ese es el trueque que aceptaste: un precio obsoleto por un minuto a cambio de una lectura 40x más barata. Para un catálogo está bien; jamás harías ese trueque en el total del checkout."}
+   },
+   "pitfalls": [
+    {"en": "Forgetting to invalidate on write in cache-aside. The DB updates, the cache doesn't, and users see stale data until the TTL saves you — or forever if there's no TTL.", "es": "Olvidar invalidar al escribir en cache-aside. La BD se actualiza, el caché no, y los usuarios ven datos obsoletos hasta que el TTL te salve, o para siempre si no hay TTL."},
+    {"en": "Caching data that must never be stale (balances, inventory-at-zero, permissions). The correctness cost dwarfs the speed you gain.", "es": "Cachear datos que jamás deben estar obsoletos (saldos, inventario en cero, permisos). El costo de correctitud supera con creces la velocidad ganada."},
+    {"en": "Ignoring the cold-cache stampede: when a hot key expires, thousands of simultaneous misses hit the DB at once and can knock it over.", "es": "Ignorar la estampida de caché frío: cuando una clave caliente expira, miles de fallos simultáneos golpean la BD a la vez y pueden tumbarla."},
+    {"en": "Bragging about a 99% hit rate while never measuring it. Without a hit-rate metric you can't tell a working cache from an expensive one that mostly misses.", "es": "Presumir un 99% de aciertos sin medirlo nunca. Sin una métrica de tasa de aciertos no distingues un caché que funciona de uno caro que casi siempre falla."}
+   ],
+   "analogy": {
+    "en": "A cache is a whiteboard copy of a fact that really lives in a locked filing cabinet. Reading the whiteboard is instant, but the instant someone updates the file in the cabinet, your whiteboard is a lie until somebody erases it. The hard question was never 'how do I read the whiteboard' — it's 'who erases it, and when.'",
+    "es": "Un caché es una copia en la pizarra de un dato que en realidad vive en un archivador bajo llave. Leer la pizarra es instantáneo, pero en cuanto alguien actualiza el archivo en el archivador, tu pizarra es una mentira hasta que alguien la borre. La pregunta difícil nunca fue 'cómo leo la pizarra', sino 'quién la borra, y cuándo'."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "def get_product(pid):\n    key = f\"product:{pid}\"\n    cached = redis.get(key)\n    if cached is not None:\n        return json.loads(cached)          # hit: ~1ms\n    row = db.query(\"SELECT * FROM products WHERE id=%s\", pid)  # miss: ~40ms\n    redis.set(key, json.dumps(row), ex=60) # populate with 60s TTL\n    return row\n\ndef update_price(pid, price):\n    db.execute(\"UPDATE products SET price=%s WHERE id=%s\", price, pid)\n    redis.delete(f\"product:{pid}\")         # invalidate — the line people forget",
+    "caption": {"en": "Cache-aside read plus the invalidation on write that keeps it honest.", "es": "Lectura cache-aside más la invalidación al escribir que la mantiene honesta."},
+    "annotations": [
+     {"line": 4, "note": {"en": "Cache hit: return the copy without ever touching the database.", "es": "Acierto de caché: devuelve la copia sin tocar la base de datos."}},
+     {"line": 7, "note": {"en": "The TTL is your safety net: even if invalidation is missed, staleness self-heals in 60s.", "es": "El TTL es tu red de seguridad: aunque falle la invalidación, la obsolescencia se autocorrige en 60s."}},
+     {"line": 12, "note": {"en": "The single most-forgotten line. Without it, edits are invisible until the TTL expires.", "es": "La línea que más se olvida. Sin ella, las ediciones son invisibles hasta que expire el TTL."}}
+    ]
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": {"en": "Cache-aside read path: hit returns instantly; miss reads the DB and backfills.", "es": "Camino de lectura cache-aside: el acierto responde al instante; el fallo lee la BD y rellena."},
+    "nodes": [
+     {"label": {"en": "Read request", "es": "Petición de lectura"}},
+     {"label": {"en": "Check cache", "es": "Consultar caché"}, "note": {"en": "hit → return (~1ms)", "es": "acierto → responder (~1ms)"}},
+     {"label": {"en": "Miss → query DB", "es": "Fallo → consultar BD"}, "note": {"en": "~40ms, source of truth", "es": "~40ms, fuente de verdad"}},
+     {"label": {"en": "Populate cache w/ TTL", "es": "Poblar caché con TTL"}, "note": {"en": "next reads are hits", "es": "las próximas lecturas son aciertos"}},
+     {"label": {"en": "Return to client", "es": "Devolver al cliente"}}
+    ]
+   }
+  }
+ ]
+}

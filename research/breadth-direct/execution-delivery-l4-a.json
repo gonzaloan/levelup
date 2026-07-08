@@ -1,0 +1,369 @@
+{
+ "lessonId": "execution-delivery-l4",
+ "concepts": [
+  {
+   "slug": "test-strategy-for-a-feature",
+   "keywords": [
+    {
+     "term": { "en": "Test pyramid", "es": "Pirámide de pruebas" },
+     "def": {
+      "en": "A test suite shaped with many fast unit tests at the base, fewer integration tests, and a thin cap of end-to-end tests.",
+      "es": "Una suite con forma de muchas pruebas unitarias rápidas en la base, menos de integración y una capa delgada de end-to-end arriba."
+     }
+    },
+    {
+     "term": { "en": "Ice-cream cone", "es": "Cono de helado" },
+     "def": {
+      "en": "The inverted pyramid: mostly slow UI tests and almost no unit tests — brittle, slow, distrusted.",
+      "es": "La pirámide invertida: en su mayoría pruebas de UI lentas y casi ninguna unitaria — frágil, lenta y sin confianza."
+     }
+    },
+    {
+     "term": { "en": "Contract test", "es": "Contract test" },
+     "def": {
+      "en": "A test asserting that a service sends and accepts the exact shape a boundary expects, verified by both sides without a shared live environment.",
+      "es": "Una prueba que afirma que un servicio envía y acepta la forma exacta que espera una frontera, verificada por ambos lados sin un entorno vivo compartido."
+     }
+    },
+    {
+     "term": { "en": "Flakiness", "es": "Inestabilidad (flakiness)" },
+     "def": {
+      "en": "A test that passes or fails without any code change; enough flakes and the team stops trusting the whole suite.",
+      "es": "Una prueba que pasa o falla sin cambiar el código; con suficientes fallos aleatorios el equipo deja de confiar en toda la suite."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "You're adding tiered discounts to checkout: 10% off over $100, 15% over $250, stacked with an existing loyalty coupon. How do you spend the test budget?",
+     "es": "Estás agregando descuentos por niveles al checkout: 10% sobre $100, 15% sobre $250, combinados con un cupón de lealtad existente. ¿Cómo gastas el presupuesto de pruebas?"
+    },
+    "walkthrough": {
+     "en": "Put the money at the base. ~15 unit tests pin the discount math: $99.99 gets 0%, $100.00 gets 10%, $250 gets 15%, and coupon-plus-tier ordering (discount before or after loyalty) is asserted for a $300 cart. Each runs in <10ms — the whole set finishes in under a second. One integration test confirms the pricing service reads the loyalty balance from the real cache. A contract test pins the shape sent to the payments provider (amount in cents, currency, idempotency key) so a field rename breaks a 200ms test, not a $300 double-charge in prod. Exactly ONE end-to-end test drives a browser through 'add $300 of items, apply coupon, see 15% + loyalty, pay' — proving the wiring holds. You do NOT re-verify the $100 vs $250 boundaries through the browser; that would turn a 900ms check into a 40-second one for zero extra coverage.",
+     "es": "Pon el dinero en la base. ~15 pruebas unitarias fijan la matemática del descuento: $99.99 recibe 0%, $100.00 recibe 10%, $250 recibe 15%, y el orden cupón-más-nivel (descuento antes o después de lealtad) se afirma para un carrito de $300. Cada una corre en <10ms — el conjunto entero termina en menos de un segundo. Una prueba de integración confirma que el servicio de precios lee el saldo de lealtad del caché real. Un contract test fija la forma enviada al proveedor de pagos (monto en centavos, moneda, clave de idempotencia) para que un renombre de campo rompa una prueba de 200ms, no un doble cargo de $300 en producción. Exactamente UNA prueba end-to-end lleva un navegador por 'agrega $300 en artículos, aplica cupón, ve 15% + lealtad, paga' — probando que el cableado se sostiene. NO vuelves a verificar los límites de $100 vs $250 por el navegador; eso convertiría un chequeo de 900ms en uno de 40 segundos sin cobertura extra."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Re-testing business logic through the UI — moving a 10ms assertion into a 30s browser run that catches the same bug slower and flakier.",
+     "es": "Reprobar la lógica de negocio a través de la UI — mover una aserción de 10ms a una corrida de navegador de 30s que atrapa el mismo bug más lento y con más flakiness."
+    },
+    {
+     "en": "Mistaking a slow integrated test for a contract test — spinning up the real provider gives you coupling and outages, not a verified pact.",
+     "es": "Confundir una prueba integrada lenta con un contract test — levantar el proveedor real te da acoplamiento y caídas, no un pacto verificado."
+    },
+    {
+     "en": "Chasing 100% coverage by testing trivial getters and framework code, inflating maintenance for tests that never catch a real bug.",
+     "es": "Perseguir 100% de cobertura probando getters triviales y código del framework, inflando el mantenimiento con pruebas que nunca atrapan un bug real."
+    },
+    {
+     "en": "Tolerating flaky E2E tests with a 'just rerun it' culture — every ignored red build erodes trust until a genuine failure gets rubber-stamped through.",
+     "es": "Tolerar pruebas E2E inestables con una cultura de 'solo vuelve a correrla' — cada build rojo ignorado erosiona la confianza hasta que un fallo genuino pasa sellado sin revisar."
+    }
+   ],
+   "analogy": {
+    "en": "A test budget is like grocery money: you buy staples in bulk cheaply (unit tests) and splurge on a few premium items (E2E) only where it matters — you don't buy caviar to test whether rice is edible.",
+    "es": "Un presupuesto de pruebas es como el dinero del supermercado: compras básicos a granel y barato (pruebas unitarias) y te das un lujo con pocos artículos premium (E2E) solo donde importa — no compras caviar para probar si el arroz se puede comer."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "def price(cart_total, has_loyalty):\n    tier = 0.15 if cart_total >= 250 else 0.10 if cart_total >= 100 else 0.0\n    subtotal = cart_total * (1 - tier)\n    return round(subtotal * 0.95, 2) if has_loyalty else round(subtotal, 2)\n\ndef test_tier_boundaries():\n    assert price(99.99, False) == 99.99   # below first tier\n    assert price(100.00, False) == 90.00  # exactly hits 10%\n    assert price(250.00, False) == 212.50 # exactly hits 15%\n\ndef test_loyalty_stacks_after_tier():\n    assert price(300.00, True) == 242.25  # 15% then 5% loyalty",
+    "caption": {
+     "en": "Boundary values ($99.99 vs $100.00) and stacking order live in millisecond unit tests, not the browser.",
+     "es": "Los valores límite ($99.99 vs $100.00) y el orden de combinación viven en pruebas unitarias de milisegundos, no en el navegador."
+    },
+    "annotations": [
+     { "line": 2, "note": { "en": "Tier boundary is exactly the kind of off-by-a-cent bug a unit test nails instantly.", "es": "El límite de nivel es justo el tipo de bug por un centavo que una prueba unitaria clava al instante." } },
+     { "line": 12, "note": { "en": "Order matters: 15% before 5% ≠ 5% before 15%; one assertion pins the decision.", "es": "El orden importa: 15% antes de 5% ≠ 5% antes de 15%; una aserción fija la decisión." } }
+    ]
+   },
+   "diagram": {
+    "kind": "stack",
+    "caption": {
+     "en": "Spend the budget bottom-heavy: cost and slowness rise as you climb, so keep the top thin.",
+     "es": "Gasta el presupuesto con peso abajo: el costo y la lentitud suben al escalar, así que mantén la punta delgada."
+    },
+    "nodes": [
+     { "label": { "en": "E2E (thin)", "es": "E2E (delgada)" }, "note": { "en": "Only what needs the whole system wired; slow, expensive.", "es": "Solo lo que necesita todo el sistema cableado; lento y caro." } },
+     { "label": { "en": "Integration + contract", "es": "Integración + contract" }, "note": { "en": "Boundaries and I/O; contract tests replace live integration.", "es": "Fronteras e I/O; los contract tests reemplazan la integración viva." } },
+     { "label": { "en": "Unit (broad base)", "es": "Unitarias (base amplia)" }, "note": { "en": "Business logic, milliseconds, most of the confidence per dollar.", "es": "Lógica de negocio, milisegundos, la mayor confianza por dólar." } }
+    ]
+   },
+   "source": "Martin Fowler / Ham Vocke, 'The Practical Test Pyramid' — contract tests & ice-cream-cone anti-pattern"
+  },
+  {
+   "slug": "decouple-deploy-from-release",
+   "keywords": [
+    {
+     "term": { "en": "Deploy vs release", "es": "Deploy vs release" },
+     "def": {
+      "en": "Deploy = the code is running in production; release = users can actually reach the new behavior. Two decisions, not one.",
+      "es": "Deploy = el código está corriendo en producción; release = los usuarios realmente pueden alcanzar el nuevo comportamiento. Dos decisiones, no una."
+     }
+    },
+    {
+     "term": { "en": "Feature flag", "es": "Feature flag" },
+     "def": {
+      "en": "A runtime conditional that gates whether code paths are exposed, letting you release via config with no redeploy.",
+      "es": "Un condicional en tiempo de ejecución que controla si se exponen rutas de código, permitiendo liberar por configuración sin redesplegar."
+     }
+    },
+    {
+     "term": { "en": "Branch by abstraction", "es": "Branch by abstraction" },
+     "def": {
+      "en": "Replacing a component in place by introducing an abstraction, migrating callers, building the new impl behind it, then deleting the old — trunk stays shippable throughout.",
+      "es": "Reemplazar un componente en su lugar introduciendo una abstracción, migrando a quienes la llaman, construyendo la nueva implementación detrás y luego borrando la vieja — trunk queda shippeable todo el tiempo."
+     }
+    },
+    {
+     "term": { "en": "Dark deploy", "es": "Deploy a oscuras" },
+     "def": {
+      "en": "Shipping code to production that runs but is invisible to users because its flag is off.",
+      "es": "Shippear código a producción que corre pero es invisible para los usuarios porque su flag está apagado."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "You're replacing a synchronous email send in signup with a queued worker. A big-bang cutover risks every new user's confirmation email if the queue misbehaves.",
+     "es": "Estás reemplazando un envío de correo síncrono en el registro por un worker en cola. Un cutover a lo grande arriesga el correo de confirmación de cada usuario nuevo si la cola falla."
+    },
+    "walkthrough": {
+     "en": "You wrap the send in an abstraction, `EmailDispatcher`, with two implementations behind a flag: the old inline sender and the new queue-backed one. You merge and deploy dark on Tuesday — the queue path is running in prod but the flag routes 100% to the old sender, so nothing user-facing changed. Wednesday you flip the flag for internal test accounts and watch the queue drain. Thursday you set it to 10% of real signups and compare delivery success (old: 99.4%, new: 99.5%) and median send latency (inline: 850ms blocking the request; queued: 12ms to enqueue). Both hold, so you widen to 50%, then 100% over two days. A week later, with the old path dark and unused, you delete the inline sender and the flag. At no point was there a scary weekend cutover, and at every hour a single config flip could have reverted to the known-good path in seconds.",
+     "es": "Envuelves el envío en una abstracción, `EmailDispatcher`, con dos implementaciones detrás de un flag: el viejo emisor en línea y el nuevo respaldado por cola. Mergeas y despliegas a oscuras el martes — la ruta de la cola corre en prod pero el flag enruta el 100% al emisor viejo, así que nada visible al usuario cambió. El miércoles enciendes el flag para cuentas de prueba internas y observas la cola drenar. El jueves lo pones al 10% de los registros reales y comparas éxito de entrega (viejo: 99.4%, nuevo: 99.5%) y latencia mediana de envío (en línea: 850ms bloqueando la petición; en cola: 12ms para encolar). Ambos se sostienen, así que amplías a 50% y luego 100% en dos días. Una semana después, con la ruta vieja apagada y sin uso, borras el emisor en línea y el flag. En ningún momento hubo un cutover de fin de semana aterrador, y a cada hora un solo cambio de config pudo revertir a la ruta conocida-buena en segundos."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Flag debt: shipping flags but never deleting the dead branch, so the code fills with stale conditionals nobody dares remove.",
+     "es": "Deuda de flags: shippear flags pero nunca borrar la rama muerta, así el código se llena de condicionales viejos que nadie se atreve a quitar."
+    },
+    {
+     "en": "Treating a long-lived feature branch as 'the same thing' as a flag — the branch still rots off trunk and produces a painful merge; the flag's whole point is daily integration.",
+     "es": "Tratar una rama de larga vida como 'lo mismo' que un flag — la rama igual se pudre fuera de trunk y produce un merge doloroso; el punto del flag es la integración diaria."
+    },
+    {
+     "en": "Flags that alter the database schema irreversibly — if 'off' can't restore old behavior because data already migrated, the flag isn't actually reversible.",
+     "es": "Flags que alteran el esquema de la base de datos de forma irreversible — si 'apagar' no puede restaurar el comportamiento viejo porque los datos ya migraron, el flag no es realmente reversible."
+    },
+    {
+     "en": "Coupling many features to one flag, so flipping it back to fix one thing also reverts three unrelated changes.",
+     "es": "Acoplar muchas features a un solo flag, así apagarlo para arreglar una cosa también revierte tres cambios no relacionados."
+    }
+   ],
+   "analogy": {
+    "en": "Deploying dark is like installing a light fixture with the breaker off: the wiring is in the wall and inspected, but nobody gets shocked until you deliberately flip the switch — and flipping it back is instant.",
+    "es": "Desplegar a oscuras es como instalar una lámpara con el interruptor general apagado: el cableado está en la pared e inspeccionado, pero nadie se electrocuta hasta que enciendes a propósito el interruptor — y apagarlo de nuevo es instantáneo."
+   },
+   "code": {
+    "lang": "javascript",
+    "snippet": "// Deployed to prod, but dark until the flag opens\nfunction sendConfirmation(user) {\n  if (flags.enabled('queued-email', user)) {\n    return emailQueue.enqueue(user.id);      // new path, released to a slice\n  }\n  return inlineMailer.send(user);            // old path, still default\n}",
+    "caption": {
+     "en": "The new path is deployed but gated; 'release' is flipping 'queued-email' for a percentage of users, not a redeploy.",
+     "es": "La ruta nueva está desplegada pero controlada; 'liberar' es encender 'queued-email' para un porcentaje de usuarios, no un redeploy."
+    },
+    "annotations": [
+     { "line": 4, "note": { "en": "flags.enabled takes the user so you can target internal accounts, then 10%, then 100%.", "es": "flags.enabled recibe al usuario para poder apuntar a cuentas internas, luego 10%, luego 100%." } },
+     { "line": 6, "note": { "en": "Old path stays intact — flipping the flag off is an instant, safe revert.", "es": "La ruta vieja queda intacta — apagar el flag es una reversión instantánea y segura." } }
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {
+     "en": "Collapsing deploy and release makes every ship a bet; separating them turns it into a controllable dial.",
+     "es": "Colapsar deploy y release hace de cada ship una apuesta; separarlos lo convierte en una perilla controlable."
+    },
+    "left": {
+     "title": { "en": "Coupled (deploy = release)", "es": "Acoplado (deploy = release)" },
+     "points": [
+      { "en": "Artifact lands → live for everyone at once", "es": "El artefacto aterriza → vivo para todos de golpe" },
+      { "en": "Only rollback is another full deploy", "es": "El único rollback es otro deploy completo" },
+      { "en": "Encourages long-lived branches that rot", "es": "Fomenta ramas de larga vida que se pudren" }
+     ]
+    },
+    "right": {
+     "title": { "en": "Decoupled (flag / abstraction)", "es": "Desacoplado (flag / abstracción)" },
+     "points": [
+      { "en": "Deploy dark, release by config to a slice", "es": "Deploy a oscuras, release por config a una porción" },
+      { "en": "Revert = flip the flag in seconds", "es": "Revertir = apagar el flag en segundos" },
+      { "en": "Merge to trunk daily, hide unfinished work", "es": "Merge a trunk a diario, ocultando trabajo inconcluso" }
+     ]
+    }
+   },
+   "source": "trunkbaseddevelopment.com (feature flags, branch by abstraction, release branches) + Humble & Farley, 'Continuous Delivery' (2010)"
+  },
+  {
+   "slug": "progressive-rollout",
+   "keywords": [
+    {
+     "term": { "en": "Canary release", "es": "Canary release" },
+     "def": {
+      "en": "Routing a small slice of live traffic (often 1–5%) to the new version and comparing its health against stable before widening.",
+      "es": "Enrutar una porción pequeña del tráfico vivo (a menudo 1–5%) a la nueva versión y comparar su salud contra la estable antes de ampliar."
+     }
+    },
+    {
+     "term": { "en": "Blue-green", "es": "Blue-green" },
+     "def": {
+      "en": "Two identical environments; one (blue) serves live traffic while the other (green) holds the new version, and you cut the load balancer between them.",
+      "es": "Dos entornos idénticos; uno (blue) sirve tráfico vivo mientras el otro (green) tiene la nueva versión, y conmutas el balanceador entre ellos."
+     }
+    },
+    {
+     "term": { "en": "Blast radius", "es": "Radio de impacto" },
+     "def": {
+      "en": "The fraction of users or traffic a bad change can harm before you catch it.",
+      "es": "La fracción de usuarios o tráfico que un cambio malo puede dañar antes de que lo atrapes."
+     }
+    },
+    {
+     "term": { "en": "Roll forward vs rollback", "es": "Roll forward vs rollback" },
+     "def": {
+      "en": "Rollback returns to the previous known-good version; roll forward fixes the problem with a new deploy — a deliberate choice, not a default.",
+      "es": "Rollback vuelve a la versión previa conocida-buena; roll forward arregla el problema con un nuevo deploy — una decisión deliberada, no un default."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "You're shipping a rewritten search ranker at 20,000 requests/second. A subtle relevance regression won't show in staging — only real query traffic exposes it.",
+     "es": "Estás shippeando un ranker de búsqueda reescrito a 20,000 peticiones/segundo. Una regresión sutil de relevancia no aparecerá en staging — solo el tráfico real de consultas la expone."
+    },
+    "walkthrough": {
+     "en": "You canary 2% (~400 req/s) to the new ranker and set automated guardrails: if the canary's 5xx rate exceeds stable by 0.5 percentage points, or p99 latency exceeds stable by 20%, the rollout aborts and reverts on its own. In the first 10 minutes the canary's error rate matches stable (0.08%) but p99 climbs from 180ms to 240ms — a 33% jump — so the automation rolls back and pages you, before 98% of users ever saw the slower path. You find an un-cached feature lookup, fix it, and re-canary; this time p99 holds at 175ms, so you widen 2% → 10% → 50% → 100% over an hour, pausing 10 minutes at each step to let the metrics settle. For the underlying infra swap you use blue-green: green (new ranker) runs warm alongside blue (old), and the final 100% cutover is one load-balancer change — if something you didn't measure surfaces at full traffic, cutting back to blue takes seconds because blue never went cold.",
+     "es": "Haces canary del 2% (~400 req/s) al nuevo ranker y pones guardarraíles automáticos: si la tasa de 5xx del canary supera a la estable por 0.5 puntos porcentuales, o la latencia p99 supera a la estable por 20%, el rollout aborta y revierte solo. En los primeros 10 minutos la tasa de errores del canary iguala a la estable (0.08%) pero el p99 sube de 180ms a 240ms — un salto de 33% — así que la automatización hace rollback y te avisa, antes de que el 98% de los usuarios viera la ruta más lenta. Encuentras una búsqueda de feature sin caché, la arreglas y vuelves a hacer canary; esta vez el p99 se sostiene en 175ms, así que amplías 2% → 10% → 50% → 100% en una hora, pausando 10 minutos en cada paso para dejar que las métricas se asienten. Para el cambio de infra subyacente usas blue-green: green (nuevo ranker) corre caliente junto a blue (viejo), y el cutover final al 100% es un solo cambio de balanceador — si algo que no mediste aparece a tráfico completo, volver a blue toma segundos porque blue nunca se enfrió."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Canarying without an automated abort — a human watching a dashboard at 2am is slower than the outage, so a bad canary spreads to 100% anyway.",
+     "es": "Hacer canary sin aborto automático — un humano mirando un dashboard a las 2am es más lento que la caída, así que un canary malo se propaga al 100% igual."
+    },
+    {
+     "en": "A canary too small to be statistically meaningful — 0.1% of low-traffic endpoints may see zero errors purely by chance, giving false confidence.",
+     "es": "Un canary demasiado pequeño para ser estadísticamente significativo — 0.1% de endpoints de bajo tráfico puede ver cero errores por pura suerte, dando falsa confianza."
+    },
+    {
+     "en": "Treating rollback as an emergency improvisation instead of a rehearsed one-command action — panic destroys judgment mid-incident.",
+     "es": "Tratar el rollback como una improvisación de emergencia en vez de una acción de un comando ensayada — el pánico destruye el criterio en medio del incidente."
+    },
+    {
+     "en": "Blue-green with stateful schema changes — if green migrated the database, cutting back to blue can corrupt or lose data because blue expects the old schema.",
+     "es": "Blue-green con cambios de esquema con estado — si green migró la base de datos, volver a blue puede corromper o perder datos porque blue espera el esquema viejo."
+    }
+   ],
+   "analogy": {
+    "en": "A canary release is the literal canary in the coal mine: you send a small, sensitive sentinel into the real environment first, and if it wobbles you pull everyone out before the whole shift is exposed.",
+    "es": "Un canary release es literalmente el canario en la mina: mandas un centinela pequeño y sensible al entorno real primero, y si tambalea sacas a todos antes de exponer al turno completo."
+   },
+   "depth": {
+    "en": "Canary and blue-green solve different problems and often combine: canary answers 'is this version good under real traffic?' by comparing two versions receiving live requests simultaneously, while blue-green answers 'how do I switch versions atomically with instant revert?' by keeping a warm standby. Blue-green alone offers a fast revert but exposes 100% at cutover — no early warning. Canary alone gives early warning but the revert may be a redeploy. Mature pipelines canary within the green environment before the blue→green cutover, getting both the statistical early signal and the instant routing-based rollback.",
+    "es": "Canary y blue-green resuelven problemas distintos y a menudo se combinan: canary responde '¿es buena esta versión bajo tráfico real?' comparando dos versiones que reciben peticiones vivas a la vez, mientras blue-green responde '¿cómo cambio versiones atómicamente con reversión instantánea?' manteniendo un standby caliente. Blue-green solo ofrece reversión rápida pero expone al 100% en el cutover — sin aviso temprano. Canary solo da aviso temprano pero la reversión puede ser un redeploy. Los pipelines maduros hacen canary dentro del entorno green antes del cutover blue→green, obteniendo la señal estadística temprana y el rollback instantáneo por enrutamiento."
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": {
+     "en": "Progressive rollout with automated guardrails: widen only on healthy metrics, auto-revert otherwise.",
+     "es": "Rollout progresivo con guardarraíles automáticos: amplía solo con métricas sanas, auto-revierte si no."
+    },
+    "nodes": [
+     { "label": { "en": "Deploy new version", "es": "Desplegar nueva versión" }, "note": { "en": "Running, receiving 0% of traffic yet.", "es": "Corriendo, aún recibiendo 0% del tráfico." } },
+     { "label": { "en": "Canary 1–5%", "es": "Canary 1–5%" }, "note": { "en": "Compare error rate + p99 against stable.", "es": "Compara tasa de errores + p99 contra estable." } },
+     { "label": { "en": "Guardrail check", "es": "Chequeo de guardarraíl" }, "note": { "en": "Breach threshold → auto-rollback + page.", "es": "Cruza umbral → auto-rollback + page." } },
+     { "label": { "en": "Widen 10→50→100%", "es": "Ampliar 10→50→100%" }, "note": { "en": "Pause at each step to let metrics settle.", "es": "Pausa en cada paso para dejar asentar las métricas." } }
+    ]
+   },
+   "source": "Humble & Farley, 'Continuous Delivery' (2010) — blue-green & canary releasing + Google SRE Book, 'Release Engineering' Ch.8 / 'Introducing Non-Abstract Large System Design' (canarying & progressive rollouts) (sre.google/sre-book/)"
+  },
+  {
+   "slug": "golden-signals-and-symptom-alerting",
+   "keywords": [
+    {
+     "term": { "en": "Golden signals", "es": "Señales doradas" },
+     "def": {
+      "en": "The four signals that cover most service health: latency, traffic, errors, and saturation.",
+      "es": "Las cuatro señales que cubren la mayoría de la salud de un servicio: latencia, tráfico, errores y saturación."
+     }
+    },
+    {
+     "term": { "en": "Symptom vs cause", "es": "Síntoma vs causa" },
+     "def": {
+      "en": "A symptom is what the user feels (checkout failing); a cause is a mechanism (CPU at 90%). Page on symptoms.",
+      "es": "Un síntoma es lo que el usuario siente (el checkout falla); una causa es un mecanismo (CPU al 90%). Alerta por síntomas."
+     }
+    },
+    {
+     "term": { "en": "Saturation", "es": "Saturación" },
+     "def": {
+      "en": "How full the system is — the resource closest to its limit, like queue depth, memory, or connection-pool usage.",
+      "es": "Qué tan lleno está el sistema — el recurso más cerca de su límite, como profundidad de cola, memoria o uso del pool de conexiones."
+     }
+    },
+    {
+     "term": { "en": "Alert fatigue", "es": "Fatiga de alertas" },
+     "def": {
+      "en": "So many low-value or false pages that responders start muting or ignoring them, so real outages get slept through.",
+      "es": "Tantas alertas de bajo valor o falsas que los responsables empiezan a silenciarlas o ignorarlas, así se duermen las caídas reales."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "Your payments service gets two alerts at 3am: (A) 'CPU at 92%' and (B) 'checkout success rate dropped from 99.6% to 94% over 5 minutes'. Which should wake a human?",
+     "es": "Tu servicio de pagos recibe dos alertas a las 3am: (A) 'CPU al 92%' y (B) 'la tasa de éxito del checkout cayó de 99.6% a 94% en 5 minutos'. ¿Cuál debe despertar a un humano?"
+    },
+    "walkthrough": {
+     "en": "Only B pages. It's a symptom: 6% of paying customers are failing right now, it's actionable, and it's novel. Alert A stays on a dashboard — 92% CPU during a traffic spike often means the service is efficiently busy and every user is served fine; paging on it wakes someone for a non-problem, and the tenth such false page is when they mute the channel. Once B pages you awake, THEN you glance at the cause metrics: you see the connection-pool saturation signal pinned at 100/100 and error latency (fast 500s from timeouts) spiking while success latency looks normal — which is exactly why you split them, since averaging would have hidden the failures behind a healthy-looking mean. The pool exhaustion is your lead: a slow downstream dependency is holding connections. High CPU, meanwhile, becomes a capacity-planning ticket for Tuesday, not a page. The test every alert must pass: 'would a user notice, and can I do something right now?' B passes; A doesn't.",
+     "es": "Solo B paginea. Es un síntoma: 6% de los clientes que pagan están fallando ahora mismo, es accionable y es novedoso. La alerta A queda en un dashboard — 92% de CPU durante un pico de tráfico a menudo significa que el servicio está eficientemente ocupado y cada usuario se sirve bien; alertar sobre eso despierta a alguien por un no-problema, y el décimo page falso así es cuando silencian el canal. Una vez que B te despierta, ENTONCES miras las métricas de causa: ves la señal de saturación del pool de conexiones clavada en 100/100 y la latencia de error (500s rápidos por timeouts) disparándose mientras la latencia de éxito se ve normal — que es justo por qué las separas, ya que promediar habría escondido los fallos detrás de una media de apariencia sana. El agotamiento del pool es tu pista: una dependencia lenta río abajo está reteniendo conexiones. La CPU alta, mientras tanto, se vuelve un ticket de planeación de capacidad para el martes, no un page. La prueba que cada alerta debe pasar: '¿lo notaría un usuario y puedo hacer algo ahora mismo?' B la pasa; A no."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Paging on causes (CPU, disk, cache hit rate) — most fire when the system is actually fine, and the resulting false alarms train people to ignore the pager.",
+     "es": "Alertar por causas (CPU, disco, hit rate del caché) — la mayoría se disparan cuando el sistema está bien, y las falsas alarmas resultantes enseñan a la gente a ignorar el pager."
+    },
+    {
+     "en": "Averaging latency instead of using percentiles — a healthy-looking mean hides the p99 tail where real users are timing out.",
+     "es": "Promediar la latencia en vez de usar percentiles — una media de apariencia sana esconde la cola p99 donde los usuarios reales están sufriendo timeouts."
+    },
+    {
+     "en": "Counting only 5xx as errors — the sneakiest failures return HTTP 200 with wrong or empty content, so error rate looks perfect while users are broken.",
+     "es": "Contar solo 5xx como errores — los fallos más traicioneros devuelven HTTP 200 con contenido incorrecto o vacío, así la tasa de errores se ve perfecta mientras los usuarios están rotos."
+    },
+    {
+     "en": "Lumping success and error latency together — a burst of fast 500s can drag the average down and look like an improvement.",
+     "es": "Juntar la latencia de éxito y de error — una ráfaga de 500s rápidos puede bajar el promedio y parecer una mejora."
+    }
+   ],
+   "analogy": {
+    "en": "Symptom alerting is like a smoke detector versus a thermometer: you want to be woken when there's smoke in the room (users are choking), not every time the oven reaches 200°C (a component is merely working hard).",
+    "es": "La alerta por síntomas es como un detector de humo frente a un termómetro: quieres que te despierten cuando hay humo en la habitación (los usuarios se ahogan), no cada vez que el horno llega a 200°C (un componente simplemente trabaja duro)."
+   },
+   "visual": { "widgetId": "latency-budget" },
+   "diagram": {
+    "kind": "compare",
+    "caption": {
+     "en": "The page/dashboard split: user-visible symptoms wake people, mechanisms wait for the debugging session.",
+     "es": "La división page/dashboard: los síntomas visibles al usuario despiertan gente, los mecanismos esperan a la sesión de depuración."
+    },
+    "left": {
+     "title": { "en": "Page (symptoms)", "es": "Page (síntomas)" },
+     "points": [
+      { "en": "Checkout error rate up", "es": "Sube la tasa de errores del checkout" },
+      { "en": "p99 latency crossed the SLO", "es": "La latencia p99 cruzó el SLO" },
+      { "en": "Traffic dropped to near zero", "es": "El tráfico cayó a casi cero" }
+     ]
+    },
+    "right": {
+     "title": { "en": "Dashboard (causes)", "es": "Dashboard (causas)" },
+     "points": [
+      { "en": "CPU at 90% (may be fine)", "es": "CPU al 90% (puede estar bien)" },
+      { "en": "Disk filling, cache hit rate down", "es": "Disco llenándose, hit rate del caché bajando" },
+      { "en": "Connection pool near saturation", "es": "Pool de conexiones cerca de saturarse" }
+     ]
+    }
+   },
+   "source": "Google SRE Book, 'Monitoring Distributed Systems' Ch.6 — the four golden signals & symptom- vs cause-based alerting (sre.google/sre-book/monitoring-distributed-systems/)"
+  }
+ ]
+}

@@ -1,0 +1,262 @@
+{
+ "lessonId": "systems-architecture-l4",
+ "concepts": [
+  {
+   "slug": "api-contract-and-idempotency",
+   "keywords": [
+    {
+     "term": { "en": "Idempotency key", "es": "Llave de idempotencia" },
+     "def": {
+      "en": "A client-generated unique token per logical operation; the server does the work once and returns the stored result for any repeat of that token.",
+      "es": "Un token único generado por el cliente por operación lógica; el servidor hace el trabajo una vez y devuelve el resultado guardado ante cualquier repetición de ese token."
+     }
+    },
+    {
+     "term": { "en": "At-least-once delivery", "es": "Entrega al-menos-una-vez" },
+     "def": {
+      "en": "The default guarantee of retrying networks: a message arrives one or more times, never zero, so duplicates are expected.",
+      "es": "La garantía por defecto de las redes con reintentos: un mensaje llega una o más veces, nunca cero, así que los duplicados son esperados."
+     }
+    },
+    {
+     "term": { "en": "Additive evolution", "es": "Evolución aditiva" },
+     "def": {
+      "en": "Changing an API only by adding optional fields or endpoints, never removing or repurposing what existing clients read.",
+      "es": "Cambiar una API solo agregando campos o endpoints opcionales, nunca quitando ni reutilizando lo que los clientes actuales leen."
+     }
+    },
+    {
+     "term": { "en": "Retryable vs terminal error", "es": "Error reintentable vs terminal" },
+     "def": {
+      "en": "A machine-readable distinction: 5xx/timeouts say 'try again', 4xx says 'the request itself is wrong, don't retry'.",
+      "es": "Una distinción legible por máquina: 5xx/timeouts dicen 'vuelve a intentar', 4xx dice 'la petición está mal, no reintentes'."
+     }
+    },
+    {
+     "term": { "en": "Exactly-once effect", "es": "Efecto exactamente-una-vez" },
+     "def": {
+      "en": "Not exactly-once delivery (impossible), but a single visible side effect achieved by deduplicating at-least-once delivery with a key.",
+      "es": "No entrega exactamente-una-vez (imposible), sino un único efecto visible logrado deduplicando la entrega al-menos-una-vez con una llave."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "A checkout charges $80. The mobile client posts the charge, the server bills Stripe successfully, but the 200 response is lost on a subway tunnel drop. The client's 10s timeout fires and it retries the exact same request.",
+     "es": "Un checkout cobra $80. El cliente móvil envía el cobro, el servidor factura en Stripe con éxito, pero la respuesta 200 se pierde al caer la red en un túnel del metro. El timeout de 10s del cliente dispara y reintenta la misma petición."
+    },
+    "walkthrough": {
+     "en": "Without a key: retry #2 hits the server, which has no memory of #1, calls Stripe again, and the customer is charged $160. With a key: the client generated 'idem-9f3c' before the first attempt and sends it on both. Attempt #1 inserts (idem-9f3c -> charge_id ch_abc, $80) into an idempotency table inside the same transaction as the charge. Attempt #2 tries to insert the same key, hits the unique constraint, and the server returns the stored ch_abc with the original 200. Net effect: one $80 charge, two identical responses. The window to watch: attempt #2 arriving while #1 is still in flight — the unique index (or a row lock on the key) is what serializes them, not application-level checking.",
+     "es": "Sin llave: el reintento #2 llega al servidor, que no recuerda al #1, llama a Stripe de nuevo, y al cliente se le cobran $160. Con llave: el cliente generó 'idem-9f3c' antes del primer intento y la envía en ambos. El intento #1 inserta (idem-9f3c -> charge_id ch_abc, $80) en una tabla de idempotencia dentro de la misma transacción que el cobro. El intento #2 intenta insertar la misma llave, choca con la restricción única, y el servidor devuelve el ch_abc guardado con el 200 original. Efecto neto: un cobro de $80, dos respuestas idénticas. La ventana a vigilar: el intento #2 llegando mientras el #1 aún está en vuelo — el índice único (o un lock de fila sobre la llave) es lo que los serializa, no una verificación a nivel de aplicación."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Reusing one idempotency key across genuinely different operations — the server dedupes the second real charge and silently drops it.",
+     "es": "Reusar una llave de idempotencia entre operaciones genuinamente distintas — el servidor deduplica el segundo cobro real y lo descarta en silencio."
+    },
+    {
+     "en": "Storing the key AFTER doing the side effect instead of in the same transaction — a crash in between leaves the effect done but the key unrecorded, so the retry repeats it.",
+     "es": "Guardar la llave DESPUÉS de hacer el efecto en vez de en la misma transacción — un crash intermedio deja el efecto hecho pero la llave sin registrar, así que el reintento lo repite."
+    },
+    {
+     "en": "Retrying on a 400/422 — those are terminal; blind retry loops hammer the server without ever succeeding.",
+     "es": "Reintentar ante un 400/422 — son terminales; los bucles de reintento ciego martillan al servidor sin nunca tener éxito."
+    },
+    {
+     "en": "Bumping the major version for an additive change, forcing every client to migrate for a field they could have ignored.",
+     "es": "Subir la versión mayor por un cambio aditivo, forzando a cada cliente a migrar por un campo que pudo haber ignorado."
+    }
+   ],
+   "analogy": {
+    "en": "An idempotency key is a coat-check ticket. Hand in your coat, get ticket #42. If you present #42 again, you don't get a second coat — you get the same one back. The ticket names one intent, not one visit.",
+    "es": "Una llave de idempotencia es un ticket de guardarropa. Entregas tu abrigo y recibes el ticket #42. Si presentas el #42 otra vez, no obtienes un segundo abrigo — recibes el mismo. El ticket nombra una intención, no una visita."
+   },
+   "depth": {
+    "en": "'Exactly-once delivery' over a network is provably impossible (the two-generals problem): the sender can never be sure its ack arrived. What idempotency buys is exactly-once *effect* on top of at-least-once *delivery* — you accept duplicates on the wire and collapse them at the boundary. This is why the same key discipline reappears in message consumers, webhook receivers, and payment flows: they are all the same problem wearing different clothes.",
+    "es": "La 'entrega exactamente-una-vez' sobre una red es demostrablemente imposible (el problema de los dos generales): el emisor nunca puede estar seguro de que su ack llegó. Lo que la idempotencia compra es el *efecto* exactamente-una-vez sobre la *entrega* al-menos-una-vez — aceptas duplicados en el cable y los colapsas en la frontera. Por eso la misma disciplina de llave reaparece en consumidores de mensajes, receptores de webhooks y flujos de pago: son el mismo problema con distinta ropa."
+   },
+   "code": {
+    "lang": "sql",
+    "snippet": "BEGIN;\n  -- unique key makes the retry lose the race deterministically\n  INSERT INTO idempotency_keys (key, request_hash, status)\n  VALUES ('idem-9f3c', :hash, 'in_progress')\n  ON CONFLICT (key) DO NOTHING;\n\n  -- 0 rows inserted => a prior request owns this key\n  -- app checks rowcount: if 0, read and return stored response\n\n  INSERT INTO charges (id, amount_cents, key)\n  VALUES ('ch_abc', 8000, 'idem-9f3c');\n\n  UPDATE idempotency_keys\n  SET status = 'done', response = :charge_json\n  WHERE key = 'idem-9f3c';\nCOMMIT;",
+    "caption": {
+     "en": "The charge and its idempotency record commit atomically, so a crash can never leave one without the other.",
+     "es": "El cobro y su registro de idempotencia se confirman atómicamente, así que un crash nunca puede dejar uno sin el otro."
+    },
+    "annotations": [
+     {
+      "line": 4,
+      "note": {
+       "en": "The UNIQUE constraint on key is the real concurrency guard — the DB serializes racing retries, not your code.",
+       "es": "La restricción UNIQUE sobre key es el verdadero guardián de concurrencia — la BD serializa los reintentos en carrera, no tu código."
+      }
+     },
+     {
+      "line": 5,
+      "note": {
+       "en": "ON CONFLICT DO NOTHING means the duplicate retry inserts 0 rows instead of erroring.",
+       "es": "ON CONFLICT DO NOTHING hace que el reintento duplicado inserte 0 filas en vez de dar error."
+      }
+     },
+     {
+      "line": 13,
+      "note": {
+       "en": "Same transaction as the charge: commit is all-or-nothing, closing the crash window.",
+       "es": "Misma transacción que el cobro: el commit es todo-o-nada, cerrando la ventana de crash."
+      }
+     }
+    ]
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": {
+     "en": "Two retries of one charge collapse to a single side effect via the key.",
+     "es": "Dos reintentos de un cobro colapsan a un solo efecto vía la llave."
+    },
+    "nodes": [
+     {
+      "label": { "en": "Client generates key idem-9f3c", "es": "Cliente genera llave idem-9f3c" }
+     },
+     {
+      "label": { "en": "Attempt #1: key is new", "es": "Intento #1: llave nueva" },
+      "note": { "en": "does the work, charges $80, stores result", "es": "hace el trabajo, cobra $80, guarda resultado" }
+     },
+     {
+      "label": { "en": "Response lost (timeout)", "es": "Respuesta perdida (timeout)" }
+     },
+     {
+      "label": { "en": "Attempt #2: same key", "es": "Intento #2: misma llave" },
+      "note": { "en": "unique constraint hits, returns stored ch_abc", "es": "choca restricción única, devuelve ch_abc guardado" }
+     },
+     {
+      "label": { "en": "One $80 charge, two 200s", "es": "Un cobro de $80, dos 200s" }
+     }
+    ]
+   },
+   "source": "ByteByteGo — 'Top 6 Cases to Apply Idempotency', '8 Tips for Efficient API Design'; Fowler RMM (level 3 hypermedia for evolvability)"
+  },
+  {
+   "slug": "async-messaging-when-to-queue",
+   "keywords": [
+    {
+     "term": { "en": "Back pressure", "es": "Contrapresión (back pressure)" },
+     "def": {
+      "en": "The queue absorbing a burst so a slow consumer drains at its own pace instead of being overwhelmed and toppling.",
+      "es": "La cola absorbiendo una ráfaga para que un consumidor lento drene a su propio ritmo en vez de ser saturado y colapsar."
+     }
+    },
+    {
+     "term": { "en": "Dead-letter queue (DLQ)", "es": "Cola de mensajes muertos (DLQ)" },
+     "def": {
+      "en": "A side queue where messages land after N failed processing attempts, so poison messages don't block the main flow forever.",
+      "es": "Una cola lateral donde caen los mensajes tras N intentos fallidos, para que los mensajes venenosos no bloqueen el flujo principal para siempre."
+     }
+    },
+    {
+     "term": { "en": "Fan-out", "es": "Fan-out" },
+     "def": {
+      "en": "One published event delivered to many independent consumers, each doing its own thing (analytics, email, search index).",
+      "es": "Un evento publicado entregado a muchos consumidores independientes, cada uno haciendo lo suyo (analítica, correo, índice de búsqueda)."
+     }
+    },
+    {
+     "term": { "en": "Temporal coupling", "es": "Acoplamiento temporal" },
+     "def": {
+      "en": "A synchronous call's hidden requirement that the callee be up and fast right now; a queue removes it.",
+      "es": "El requisito oculto de una llamada síncrona: que el receptor esté arriba y rápido ahora mismo; una cola lo elimina."
+     }
+    },
+    {
+     "term": { "en": "Correlation ID", "es": "ID de correlación" },
+     "def": {
+      "en": "A token stamped on a request and carried through producer, broker, and consumer so one logical flow stays traceable across hops.",
+      "es": "Un token puesto en una petición y llevado a través de productor, broker y consumidor para que un flujo lógico siga siendo rastreable entre saltos."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "A photo app lets users upload images that must be resized into 4 thumbnails. Resize takes ~6s of CPU per image. At launch, traffic averages 20 uploads/min but spikes to 600/min during a promo. Server has 8 worker cores.",
+     "es": "Una app de fotos deja subir imágenes que deben redimensionarse en 4 miniaturas. El resize toma ~6s de CPU por imagen. Al lanzar, el tráfico promedia 20 subidas/min pero salta a 600/min durante una promo. El servidor tiene 8 núcleos de worker."
+    },
+    "walkthrough": {
+     "en": "Synchronous math: 8 cores * (60s / 6s) = 80 images/min of resize capacity. At 20/min you're fine. At 600/min the request threads pile up waiting on CPU, latency climbs past the 30s timeout, and uploads start failing — the spike topples the service. Now put resize behind a queue: the upload handler validates, stores the raw image, enqueues a 'resize' message, and returns 202 in ~50ms. The 600/min spike lands in the queue; the 8 workers still drain at 80/min, so the queue depth grows to ~2,600 messages at peak and takes about 33 minutes to fully clear after the burst ends. The user never saw an error — they got 'processing, thumbnails shortly'. The cost you took on: you now monitor queue depth (alert if it climbs unbounded, meaning consumers can't keep up long-term), you made the resize consumer idempotent (a redelivered message must not create 8 thumbnails), and a corrupt image that crashes the worker goes to a DLQ after 3 tries instead of being retried forever.",
+     "es": "Cuenta síncrona: 8 núcleos * (60s / 6s) = 80 imágenes/min de capacidad de resize. A 20/min vas bien. A 600/min los hilos de petición se apilan esperando CPU, la latencia supera el timeout de 30s, y las subidas empiezan a fallar — el pico tumba el servicio. Ahora pon el resize tras una cola: el handler de subida valida, guarda la imagen cruda, encola un mensaje 'resize' y devuelve 202 en ~50ms. El pico de 600/min cae en la cola; los 8 workers siguen drenando a 80/min, así que la profundidad de la cola crece a ~2,600 mensajes en el pico y tarda unos 33 minutos en vaciarse tras terminar la ráfaga. El usuario nunca vio un error — recibió 'procesando, miniaturas en breve'. El costo que asumiste: ahora monitoreas la profundidad de la cola (alerta si crece sin límite, señal de que los consumidores no dan abasto a largo plazo), hiciste idempotente al consumidor de resize (un mensaje reentregado no debe crear 8 miniaturas), y una imagen corrupta que crashea al worker va a una DLQ tras 3 intentos en vez de reintentarse por siempre."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Queuing a flow the user is blocked on — a login or checkout price quote behind a queue just adds latency and eventual-consistency bugs for zero benefit.",
+     "es": "Encolar un flujo en el que el usuario está bloqueado — un login o una cotización de precio en checkout tras una cola solo agrega latencia y bugs de consistencia eventual sin beneficio."
+    },
+    {
+     "en": "Assuming the queue gives you ordering — most brokers only order within a partition; a global order costs you a single-consumer bottleneck.",
+     "es": "Suponer que la cola te da orden — la mayoría de los brokers solo ordenan dentro de una partición; un orden global te cuesta un cuello de botella de consumidor único."
+    },
+    {
+     "en": "Non-idempotent consumers on at-least-once delivery — a redelivered message re-runs the side effect (double email, double charge).",
+     "es": "Consumidores no idempotentes sobre entrega al-menos-una-vez — un mensaje reentregado re-ejecuta el efecto (doble correo, doble cobro)."
+    },
+    {
+     "en": "No DLQ, so one poison message that always throws blocks or endlessly recycles, starving good messages behind it.",
+     "es": "Sin DLQ, un mensaje venenoso que siempre lanza excepción bloquea o recicla sin fin, matando de hambre a los mensajes buenos detrás."
+    }
+   ],
+   "analogy": {
+    "en": "A restaurant kitchen ticket rail. The waiter (producer) clips orders and moves on — they don't stand at the pass waiting for the cook. During a rush the rail fills; the kitchen (consumer) works through it at its own steady pace instead of the dining room collapsing.",
+    "es": "El riel de comandas de una cocina. El mesero (productor) engancha las órdenes y sigue — no se queda parado esperando al cocinero. En hora pico el riel se llena; la cocina (consumidor) las resuelve a su propio ritmo constante en vez de que el comedor colapse."
+   },
+   "depth": {
+    "en": "Queue depth is a leading indicator, not just an alarm. A depth that oscillates and returns to near-zero means consumers keep up — healthy back pressure. A depth with positive slope over hours means arrival rate exceeds service rate; no amount of buffering saves you, you must add consumers or shed load. This is Little's Law in disguise: average wait = queue length / throughput, so a queue of 2,600 draining at 80/min implies a ~33-minute tail whether you like it or not.",
+    "es": "La profundidad de la cola es un indicador anticipado, no solo una alarma. Una profundidad que oscila y vuelve a casi cero significa que los consumidores dan abasto — contrapresión sana. Una profundidad con pendiente positiva durante horas significa que la tasa de llegada supera la de servicio; ningún buffer te salva, debes agregar consumidores o soltar carga. Esto es la ley de Little disfrazada: espera promedio = largo de cola / throughput, así que una cola de 2,600 drenando a 80/min implica una cola de ~33 minutos, te guste o no."
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {
+     "en": "Same 600/min spike: synchronous topples, queued absorbs.",
+     "es": "El mismo pico de 600/min: síncrono colapsa, con cola absorbe."
+    },
+    "left": {
+     "title": { "en": "Synchronous resize", "es": "Resize síncrono" },
+     "points": {
+      "en": [
+       "Request thread blocks ~6s on CPU",
+       "600/min >> 80/min capacity",
+       "Threads pile up, latency > 30s timeout",
+       "Uploads fail — spike topples service",
+       "One stack trace, easy to debug"
+      ],
+      "es": [
+       "El hilo de petición se bloquea ~6s en CPU",
+       "600/min >> 80/min de capacidad",
+       "Hilos se apilan, latencia > timeout de 30s",
+       "Subidas fallan — el pico tumba el servicio",
+       "Un solo stack trace, fácil de depurar"
+      ]
+     }
+    },
+    "right": {
+     "title": { "en": "Queued resize", "es": "Resize con cola" },
+     "points": {
+      "en": [
+       "Handler returns 202 in ~50ms",
+       "Spike buffered; depth peaks ~2,600",
+       "8 workers drain at 80/min, ~33min tail",
+       "User sees 'processing shortly', no error",
+       "You now own idempotency, DLQ, correlation IDs"
+      ],
+      "es": [
+       "El handler devuelve 202 en ~50ms",
+       "Pico amortiguado; profundidad ~2,600",
+       "8 workers drenan a 80/min, cola de ~33min",
+       "Usuario ve 'procesando en breve', sin error",
+       "Ahora son tuyos: idempotencia, DLQ, IDs de correlación"
+      ]
+     }
+    }
+   },
+   "visual": { "widgetId": "latency-budget" },
+   "source": "The System Design Primer — 'Asynchronism' (message queues, back pressure); ByteByteGo — 'Types of Message Queues'"
+  }
+ ]
+}

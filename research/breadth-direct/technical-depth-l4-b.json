@@ -1,0 +1,213 @@
+{
+ "lessonId": "technical-depth-l4",
+ "concepts": [
+  {
+   "slug": "network-latency-throughput",
+   "keywords": [
+    {
+     "term": {"en": "Latency", "es": "Latencia"},
+     "def": {"en": "How long a single call takes end to end, measured in time (ms).", "es": "Cuánto tarda una sola llamada de punta a punta, medida en tiempo (ms)."}
+    },
+    {
+     "term": {"en": "Throughput", "es": "Throughput"},
+     "def": {"en": "How many calls the system completes per unit time (requests/s).", "es": "Cuántas llamadas completa el sistema por unidad de tiempo (peticiones/s)."}
+    },
+    {
+     "term": {"en": "Tail latency (p99)", "es": "Latencia de cola (p99)"},
+     "def": {"en": "The slowest 1% of requests; what fan-out and impatient users actually feel.", "es": "El 1% de peticiones más lento; lo que de verdad sienten el fan-out y los usuarios impacientes."}
+    },
+    {
+     "term": {"en": "N+1 problem", "es": "Problema N+1"},
+     "def": {"en": "One query to get a list, then one extra query per item — many round trips where one would do.", "es": "Una consulta para traer una lista y luego una extra por cada ítem: muchas idas y vueltas donde bastaba una."}
+    },
+    {
+     "term": {"en": "Backoff + jitter", "es": "Backoff + jitter"},
+     "def": {"en": "Retrying after a growing, randomized delay so clients don't retry in lockstep and amplify load.", "es": "Reintentar tras un retraso creciente y aleatorizado para que los clientes no reintenten al unísono y amplifiquen la carga."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A product page lists 50 orders and shows each order's customer name.", "es": "Una página de producto lista 50 pedidos y muestra el nombre del cliente de cada uno."},
+    "walkthrough": {"en": "The naive loop issues 1 query for the orders, then 1 query per order for its customer: 51 round trips. Against a DB 1 ms away that is ~51 ms of pure network wait; against a 40 ms cross-region DB it is ~2,040 ms. Replacing the loop with a single `WHERE customer_id IN (...)` batch is 2 round trips — ~2 ms local, ~80 ms cross-region. Same rows, same CPU: the win is entirely fewer round trips.", "es": "El bucle ingenuo lanza 1 consulta para los pedidos y luego 1 consulta por pedido para su cliente: 51 idas y vueltas. Contra una BD a 1 ms son ~51 ms de pura espera de red; contra una BD entre regiones a 40 ms son ~2.040 ms. Reemplazar el bucle por un solo lote `WHERE customer_id IN (...)` son 2 idas y vueltas: ~2 ms local, ~80 ms entre regiones. Mismas filas, mismo CPU: la ganancia es enteramente menos idas y vueltas."}
+   },
+   "pitfalls": [
+    {"en": "Adding servers to fix a single slow request — parallelism raises throughput, never the latency of one call.", "es": "Agregar servidores para arreglar una sola petición lenta: el paralelismo sube el throughput, nunca la latencia de una llamada."},
+    {"en": "Reporting the average (p50) and ignoring p99, so the dashboard looks green while 1 user in 100 suffers.", "es": "Reportar el promedio (p50) e ignorar la p99, así el panel se ve verde mientras 1 usuario de cada 100 sufre."},
+    {"en": "Retrying without backoff+jitter, turning a blip into a retry storm that keeps the dependency down.", "es": "Reintentar sin backoff+jitter, convirtiendo un tropiezo en una tormenta de reintentos que mantiene caída la dependencia."},
+    {"en": "Omitting timeouts, so one hung remote call holds a request (and its thread/connection) hostage forever.", "es": "Omitir timeouts, así una llamada remota colgada tiene de rehén a una petición (y su hilo/conexión) para siempre."}
+   ],
+   "analogy": {
+    "en": "Latency is how long one delivery truck takes to arrive; throughput is how many trucks the highway clears per hour. Adding lanes moves more trucks but never speeds up the one you're waiting on.",
+    "es": "La latencia es cuánto tarda en llegar un camión de reparto; el throughput es cuántos camiones despeja la autopista por hora. Agregar carriles mueve más camiones pero nunca acelera el que estás esperando."
+   },
+   "depth": {
+    "en": "The 'at least one slow request' math for fan-out: if p99 = 1%, a page hitting N independent backends is slow with probability 1 − 0.99^N. At N=100 that is ~63%. This is why services with wide fan-out (search, feeds) invest in hedged requests: fire a duplicate to a second replica once the first crosses p95, and take whichever returns first, trading a little extra load for a much tighter tail.",
+    "es": "La matemática de 'al menos una petición lenta' en el fan-out: si p99 = 1%, una página que golpea N backends independientes es lenta con probabilidad 1 − 0,99^N. Con N=100 eso es ~63%. Por eso los servicios con fan-out ancho (búsqueda, feeds) invierten en peticiones cubiertas (hedged): lanzan una duplicada a una segunda réplica cuando la primera cruza la p95 y toman la que retorne antes, cambiando un poco de carga extra por una cola mucho más ajustada."
+   },
+   "code": {
+    "lang": "sql",
+    "snippet": "-- N+1: 1 + 50 round trips\nSELECT id, customer_id FROM orders WHERE product_id = 42;\n-- then, per order, in a loop:\nSELECT name FROM customers WHERE id = ?;\n\n-- Batched: 2 round trips total\nSELECT id, customer_id FROM orders WHERE product_id = 42;\nSELECT id, name FROM customers\nWHERE id IN (11, 12, 13, /* ...all 50 ids... */);",
+    "caption": {"en": "Collapse an N+1 loop into one IN(...) batch: same rows, 51 → 2 round trips.", "es": "Colapsa un bucle N+1 en un solo lote IN(...): mismas filas, 51 → 2 idas y vueltas."},
+    "annotations": [
+     {"line": 2, "note": {"en": "First round trip fetches every order and its customer_id.", "es": "La primera ida y vuelta trae cada pedido y su customer_id."}},
+     {"line": 4, "note": {"en": "This line runs once per order — 50 extra network hops.", "es": "Esta línea corre una vez por pedido: 50 saltos de red extra."}},
+     {"line": 8, "note": {"en": "One IN(...) query resolves all customers in a single hop.", "es": "Una consulta IN(...) resuelve todos los clientes en un solo salto."}}
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {"en": "Same query load, two shapes: chatty N+1 vs one batched call.", "es": "La misma carga de consulta, dos formas: N+1 verboso vs una llamada por lotes."},
+    "left": {
+     "title": {"en": "N+1 (chatty)", "es": "N+1 (verboso)"},
+     "points": [
+      {"en": "1 query for the list + 1 per item", "es": "1 consulta por la lista + 1 por ítem"},
+      {"en": "51 round trips → 51 × RTT of pure wait", "es": "51 idas y vueltas → 51 × RTT de pura espera"},
+      {"en": "Latency scales with item count", "es": "La latencia escala con la cantidad de ítems"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Batched (IN ...)", "es": "Por lotes (IN ...)"},
+     "points": [
+      {"en": "1 query for the list + 1 IN(...) for all items", "es": "1 consulta por la lista + 1 IN(...) para todos los ítems"},
+      {"en": "2 round trips regardless of count", "es": "2 idas y vueltas sin importar la cantidad"},
+      {"en": "Latency stays flat as items grow", "es": "La latencia se mantiene plana al crecer los ítems"}
+     ]
+    }
+   },
+   "visual": {"widgetId": "latency-budget"},
+   "source": "roadmap.sh/backend — Networking; Kleppmann, DDIA, Ch.8 (Unreliable Networks)"
+  },
+  {
+   "slug": "caching-strategies",
+   "keywords": [
+    {
+     "term": {"en": "Cache-aside", "es": "Cache-aside"},
+     "def": {"en": "App checks the cache; on a miss it reads the source, then populates the cache itself.", "es": "La app consulta la caché; si falla, lee la fuente y luego llena la caché ella misma."}
+    },
+    {
+     "term": {"en": "TTL", "es": "TTL"},
+     "def": {"en": "Time-to-live: the entry auto-expires after N seconds, bounding how stale it can get.", "es": "Tiempo de vida: la entrada expira sola tras N segundos, acotando cuán vieja puede ponerse."}
+    },
+    {
+     "term": {"en": "Invalidate-on-write", "es": "Invalidar al escribir"},
+     "def": {"en": "On every source change, delete or update the cached copy so reads never serve stale data.", "es": "En cada cambio de la fuente, borrar o actualizar la copia en caché para que las lecturas nunca sirvan datos rancios."}
+    },
+    {
+     "term": {"en": "Thundering herd", "es": "Thundering herd"},
+     "def": {"en": "A hot key expires and thousands of concurrent misses stampede the source at once.", "es": "Una clave popular expira y miles de fallos concurrentes estampidan la fuente a la vez."}
+    },
+    {
+     "term": {"en": "Hit ratio", "es": "Ratio de aciertos"},
+     "def": {"en": "Fraction of reads served from cache; the lever that turns a cache into an actual speedup.", "es": "Fracción de lecturas servidas desde la caché; la palanca que convierte una caché en una aceleración real."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "A product page gets 5,000 req/s but the product record changes maybe twice a day.", "es": "Una página de producto recibe 5.000 req/s pero el registro del producto cambia quizá dos veces al día."},
+    "walkthrough": {"en": "Read-heavy, write-rare, staleness tolerable: the sweet spot. A 60 s TTL means at most one DB read per key per minute — the origin sees ~1 req/min instead of 5,000/s, a >99.99% cut, and the worst-case staleness is 60 seconds. But when that key expires, all 5,000 in-flight requests miss at once and hammer the DB (thundering herd). Fix: a single-flight lock so exactly one request recomputes while the rest briefly wait or serve the old value.", "es": "Mucha lectura, poca escritura, obsolescencia tolerable: el punto dulce. Un TTL de 60 s significa como mucho una lectura a la BD por clave por minuto: el origen ve ~1 req/min en vez de 5.000/s, un recorte >99,99%, y la obsolescencia en el peor caso es de 60 segundos. Pero cuando esa clave expira, las 5.000 peticiones en vuelo fallan a la vez y martillan la BD (thundering herd). Arreglo: un lock single-flight para que exactamente una petición recalcule mientras el resto espera un instante o sirve el valor viejo."}
+   },
+   "pitfalls": [
+    {"en": "Caching data that must be exactly right — balances, permissions, inventory-at-checkout — and shipping a stale-data bug.", "es": "Cachear datos que deben ser exactos —saldos, permisos, inventario en el checkout— y enviar un bug de datos rancios."},
+    {"en": "Caching errors or empty results, so the cache now serves 'not found' or a 500 fast and for the full TTL.", "es": "Cachear errores o resultados vacíos, así la caché ahora sirve 'no encontrado' o un 500 rápido y por todo el TTL."},
+    {"en": "Forgetting a copy on invalidation — a CDN edge or client keeps serving old data you already 'fixed'.", "es": "Olvidar una copia al invalidar: un borde de CDN o un cliente sigue sirviendo datos viejos que ya 'arreglaste'."},
+    {"en": "No single-flight guard, so every popular key's expiry becomes a self-inflicted DB stampede.", "es": "Sin guarda single-flight, así la expiración de cada clave popular se vuelve una estampida autoinfligida contra la BD."}
+   ],
+   "analogy": {
+    "en": "A cache is a photocopy pinned to your desk so you don't walk to the archive each time. Fast — until the archive's original changes and your copy quietly lies. TTL is writing 'discard after 1pm' on it; invalidate-on-write is someone chasing down every photocopy the moment the original is edited.",
+    "es": "Una caché es una fotocopia clavada en tu escritorio para no caminar al archivo cada vez. Rápida, hasta que el original del archivo cambia y tu copia miente en silencio. El TTL es escribirle 'descartar después de la 1pm'; invalidar al escribir es alguien persiguiendo cada fotocopia en el momento en que se edita el original."
+   },
+   "depth": {
+    "en": "The two write patterns beyond cache-aside: write-through updates cache and source together on every write (reads always fresh, writes pay both costs), while write-back updates the cache and flushes to the source later (fast writes, but a cache crash loses data). Two extra herd defenses: jittered TTLs so keys don't all expire on the same tick, and stale-while-revalidate, where an expired entry is served immediately while a background refresh runs — trading a sliver more staleness for zero latency spikes.",
+    "es": "Los dos patrones de escritura más allá de cache-aside: write-through actualiza caché y fuente juntas en cada escritura (lecturas siempre frescas, las escrituras pagan ambos costos), mientras que write-back actualiza la caché y vuelca a la fuente después (escrituras rápidas, pero un crash de caché pierde datos). Dos defensas extra contra el herd: TTLs con jitter para que las claves no expiren todas en el mismo instante, y stale-while-revalidate, donde una entrada expirada se sirve de inmediato mientras corre un refresco en segundo plano, cambiando una pizca más de obsolescencia por cero picos de latencia."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "def get_product(pid):\n    key = f\"product:{pid}\"\n    val = redis.get(key)\n    if val is not None:\n        return json.loads(val)           # cache hit\n    # single-flight: only one caller recomputes\n    if redis.set(key + \":lock\", \"1\", nx=True, ex=5):\n        row = db.query(\"SELECT * FROM products WHERE id=%s\", pid)\n        redis.set(key, json.dumps(row), ex=60)  # 60s TTL\n        redis.delete(key + \":lock\")\n        return row\n    time.sleep(0.05)                     # lost the race: back off\n    return get_product(pid)              # retry, likely a hit now",
+    "caption": {"en": "Cache-aside read with a 60 s TTL and a single-flight lock to stop the thundering herd.", "es": "Lectura cache-aside con TTL de 60 s y un lock single-flight para frenar el thundering herd."},
+    "annotations": [
+     {"line": 5, "note": {"en": "Hit path: no DB touched, the 99%+ common case.", "es": "Camino de acierto: no se toca la BD, el caso común 99%+."}},
+     {"line": 7, "note": {"en": "SET NX EX grabs the lock atomically; only one winner recomputes.", "es": "SET NX EX toma el lock atómicamente; solo un ganador recalcula."}},
+     {"line": 9, "note": {"en": "Repopulate with a bounded TTL so worst-case staleness is 60 s.", "es": "Repuebla con un TTL acotado para que la obsolescencia máxima sea 60 s."}},
+     {"line": 12, "note": {"en": "Losers back off briefly, then retry into what is now a hit.", "es": "Los perdedores esperan un instante y reintentan hacia lo que ahora es un acierto."}}
+    ]
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": {"en": "Cache-aside read path with TTL expiry and single-flight refill.", "es": "Camino de lectura cache-aside con expiración por TTL y relleno single-flight."},
+    "nodes": [
+     {"label": {"en": "Read request", "es": "Petición de lectura"}},
+     {"label": {"en": "Cache lookup", "es": "Consulta a la caché"}, "note": {"en": "hit → return fast", "es": "acierto → retorna rápido"}},
+     {"label": {"en": "Miss / expired", "es": "Fallo / expirada"}, "note": {"en": "TTL elapsed", "es": "TTL vencido"}},
+     {"label": {"en": "Single-flight lock", "es": "Lock single-flight"}, "note": {"en": "one winner recomputes", "es": "un ganador recalcula"}},
+     {"label": {"en": "Read source + repopulate (TTL)", "es": "Lee la fuente + repuebla (TTL)"}}
+    ]
+   },
+   "visual": {"widgetId": "consistency"},
+   "source": "roadmap.sh/backend — Caching (Client/Server/CDN, invalidation)"
+  },
+  {
+   "slug": "performance-engineering-methodology-capacity-planning",
+   "keywords": [
+    {
+     "term": {"en": "Latency ladder", "es": "Escalera de latencia"},
+     "def": {"en": "Jeff Dean's orders-of-magnitude table: L1 ~1 ns, RAM ~100 ns, SSD ~100 µs, datacenter RTT ~500 µs, cross-continent ~150 ms.", "es": "La tabla de órdenes de magnitud de Jeff Dean: L1 ~1 ns, RAM ~100 ns, SSD ~100 µs, RTT en datacenter ~500 µs, entre continentes ~150 ms."}
+    },
+    {
+     "term": {"en": "USE method", "es": "Método USE"},
+     "def": {"en": "For each resource check Utilization, Saturation, Errors — Brendan Gregg's bottleneck-finding checklist.", "es": "Para cada recurso revisa Utilización, Saturación y Errores: la checklist de Brendan Gregg para hallar cuellos de botella."}
+    },
+    {
+     "term": {"en": "Saturation", "es": "Saturación"},
+     "def": {"en": "Work that has queued because a resource is full — the growing wait queue, not raw % busy.", "es": "Trabajo que se ha encolado porque un recurso está lleno: la cola de espera creciente, no el % ocupado."}
+    },
+    {
+     "term": {"en": "Back-of-envelope", "es": "Cálculo de servilleta"},
+     "def": {"en": "Rough arithmetic on peak traffic, sizes, and fan-out before building, to catch what breaks first.", "es": "Aritmética aproximada sobre tráfico pico, tamaños y fan-out antes de construir, para atrapar qué se rompe primero."}
+    },
+    {
+     "term": {"en": "Flame graph", "es": "Flame graph"},
+     "def": {"en": "A stacked profile showing where CPU time actually goes; wide bars are your real cost.", "es": "Un perfil apilado que muestra a dónde se va el tiempo de CPU; las barras anchas son tu costo real."}
+    }
+   ],
+   "example": {
+    "scenario": {"en": "'Ingest 100M events/day.' Does one box hold it, and where does it break?", "es": "'Ingerir 100M de eventos/día.' ¿Aguanta una sola máquina, y por dónde se rompe?"},
+    "walkthrough": {"en": "100M / 86,400 s ≈ 1,160/s average. Peak is rarely average — assume 5× → ~6,000/s. At 2 KB each that is ~12 MB/s, trivial for one NIC and disk. So throughput is a non-issue. But each event fans out to 3 downstream services: 6,000 × 3 = 18,000 outbound calls/s. If each holds a pooled connection for 20 ms, Little's Law says you need ~18,000 × 0.02 = 360 concurrent connections — and a default pool of 100 saturates, queues, and topples long before CPU does. The napkin found the real bottleneck before a line of code.", "es": "100M / 86.400 s ≈ 1.160/s promedio. El pico rara vez es el promedio: asume 5× → ~6.000/s. A 2 KB cada uno son ~12 MB/s, trivial para una NIC y un disco. Así que el throughput no es el problema. Pero cada evento se abre en abanico a 3 servicios aguas abajo: 6.000 × 3 = 18.000 llamadas salientes/s. Si cada una retiene una conexión del pool por 20 ms, la ley de Little dice que necesitas ~18.000 × 0,02 = 360 conexiones concurrentes, y un pool por defecto de 100 se satura, encola y se cae mucho antes que el CPU. La servilleta halló el cuello de botella real antes de una línea de código."}
+   },
+   "pitfalls": [
+    {"en": "Optimizing from a hunch: adding a cache for a p99 spike that a flame graph would show is GC or lock contention.", "es": "Optimizar por corazonada: agregar una caché para un pico p99 que un flame graph mostraría que es GC o contención de locks."},
+    {"en": "Budgeting with average traffic, so the 5× peak that actually arrives melts the system.", "es": "Presupuestar con tráfico promedio, así el pico 5× que sí llega derrite el sistema."},
+    {"en": "Extrapolating capacity linearly — 40% CPU at 1k rps does NOT mean 120% at 3k; the curve bends up early.", "es": "Extrapolar la capacidad linealmente: 40% de CPU a 1k rps NO implica 120% a 3k; la curva se dobla hacia arriba temprano."},
+    {"en": "Watching only CPU/RAM and missing the soft resources — connection and thread pools that saturate first.", "es": "Vigilar solo CPU/RAM y perderse los recursos blandos: los pools de conexiones e hilos que se saturan primero."}
+   ],
+   "analogy": {
+    "en": "The latency ladder is a chef knowing that chopping takes seconds, simmering minutes, and a supplier delivery days. If a dish is 'slow', that scale tells you instantly whether the holdup is plausibly at the cutting board or out on the road — you don't sharpen the knife to fix a late truck.",
+    "es": "La escalera de latencia es un chef que sabe que picar toma segundos, hervir minutos y una entrega del proveedor días. Si un plato va 'lento', esa escala te dice al instante si el atasco está plausiblemente en la tabla de cortar o allá afuera en la ruta: no afilas el cuchillo para arreglar un camión demorado."
+   },
+   "depth": {
+    "en": "Why the curve bends: Little's Law (L = λ × W) says concurrency = arrival rate × service time, and queueing theory adds that as utilization ρ approaches 1, wait time scales like 1/(1−ρ) — so going from 70% to 90% busy doesn't add 20% of pain, it roughly triples queue time. That non-linearity is exactly why load-testing to the real knee beats any linear spreadsheet, and why healthy systems target moderate utilization with headroom, not 95% 'efficiency'.",
+    "es": "Por qué se dobla la curva: la ley de Little (L = λ × W) dice que la concurrencia = tasa de llegada × tiempo de servicio, y la teoría de colas añade que cuando la utilización ρ se acerca a 1, el tiempo de espera escala como 1/(1−ρ), así que ir de 70% a 90% ocupado no suma 20% de dolor, sino que aproximadamente triplica el tiempo en cola. Esa no-linealidad es justo por qué probar con carga hasta el codo real le gana a cualquier hoja de cálculo lineal, y por qué los sistemas sanos apuntan a una utilización moderada con margen, no a un 95% de 'eficiencia'."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "EVENTS_PER_DAY = 100_000_000\nSECONDS = 86_400\nPEAK_FACTOR = 5          # peak is ~5x the daily average\nBYTES = 2_000            # per event\nFANOUT = 3               # downstream services per event\nHOLD_S = 0.020           # connection held per downstream call\n\navg_rps  = EVENTS_PER_DAY / SECONDS          # ~1157\npeak_rps = avg_rps * PEAK_FACTOR             # ~5787\nbandwidth_mb = peak_rps * BYTES / 1e6        # ~11.6 MB/s\nconns = peak_rps * FANOUT * HOLD_S           # Little's Law -> ~347\nprint(round(peak_rps), round(bandwidth_mb, 1), round(conns))",
+    "caption": {"en": "The napkin as code: peak rps, bandwidth, and required concurrent connections.", "es": "La servilleta como código: rps pico, ancho de banda y conexiones concurrentes necesarias."},
+    "annotations": [
+     {"line": 3, "note": {"en": "Never budget on the average — the peak is what melts the system.", "es": "Nunca presupuestes sobre el promedio: el pico es lo que derrite el sistema."}},
+     {"line": 11, "note": {"en": "Bandwidth is trivial (~12 MB/s), so throughput is not the constraint.", "es": "El ancho de banda es trivial (~12 MB/s), así que el throughput no es la restricción."}},
+     {"line": 12, "note": {"en": "Little's Law: ~347 connections needed — a 100-pool saturates first.", "es": "Ley de Little: ~347 conexiones necesarias; un pool de 100 se satura primero."}}
+    ]
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": {"en": "The measure-first loop: smell-test, profile, budget, load-test — then optimize.", "es": "El ciclo de medir primero: verificar, perfilar, presupuestar, probar con carga; luego optimizar."},
+    "nodes": [
+     {"label": {"en": "Smell-test vs latency ladder", "es": "Verificar contra la escalera de latencia"}, "note": {"en": "is this number even plausible?", "es": "¿este número es siquiera plausible?"}},
+     {"label": {"en": "Profile (USE + flame graph)", "es": "Perfilar (USE + flame graph)"}, "note": {"en": "find the real bottleneck", "es": "halla el cuello de botella real"}},
+     {"label": {"en": "Back-of-envelope budget", "es": "Presupuesto de servilleta"}, "note": {"en": "peak traffic, fan-out, pools", "es": "tráfico pico, fan-out, pools"}},
+     {"label": {"en": "Load-test to the knee", "es": "Probar con carga hasta el codo"}, "note": {"en": "the curve bends, don't extrapolate", "es": "la curva se dobla, no extrapoles"}},
+     {"label": {"en": "Optimize p99", "es": "Optimizar la p99"}, "note": {"en": "the tail users feel", "es": "la cola que sienten los usuarios"}}
+    ]
+   },
+   "visual": {"widgetId": "scaling-curves"},
+   "source": "Brendan Gregg, \"Systems Performance: Enterprise and the Cloud\", 2nd ed. (2020) — the USE method; and Jeff Dean's \"Latency Numbers Every Programmer Should Know.\""
+  }
+ ]
+}

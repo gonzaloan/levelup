@@ -1,0 +1,307 @@
+{
+ "lessonId": "systems-architecture-l6",
+ "concepts": [
+  {
+   "slug": "distributed-data-sagas-outbox",
+   "keywords": [
+    {
+     "term": { "en": "Saga", "es": "Saga" },
+     "def": {
+      "en": "A business flow modeled as a sequence of local transactions, one per service, with a compensating transaction defined for each step.",
+      "es": "Un flujo de negocio modelado como una secuencia de transacciones locales, una por servicio, con una transacción de compensación definida para cada paso."
+     }
+    },
+    {
+     "term": { "en": "Compensating transaction", "es": "Transacción de compensación" },
+     "def": {
+      "en": "A semantic undo of a completed step — a refund, a cancellation email — not a database rollback, because the effect already happened.",
+      "es": "Un deshacer semántico de un paso ya completado —un reembolso, un correo de cancelación— no un rollback de base de datos, porque el efecto ya ocurrió."
+     }
+    },
+    {
+     "term": { "en": "Transactional outbox", "es": "Outbox transaccional" },
+     "def": {
+      "en": "A table written in the same local transaction as the state change; a relay later publishes those rows to the broker, making state-change and event atomic.",
+      "es": "Una tabla escrita en la misma transacción local que el cambio de estado; un relay publica luego esas filas al broker, haciendo atómicos el cambio de estado y el evento."
+     }
+    },
+    {
+     "term": { "en": "Idempotency key", "es": "Clave de idempotencia" },
+     "def": {
+      "en": "A unique id (often the event id) a consumer records so replaying the same message twice produces the effect exactly once.",
+      "es": "Un id único (a menudo el id del evento) que el consumidor registra para que reprocesar el mismo mensaje dos veces produzca el efecto una sola vez."
+     }
+    },
+    {
+     "term": { "en": "Choreography vs orchestration", "es": "Coreografía vs orquestación" },
+     "def": {
+      "en": "Choreography: services react to each other's events, decoupled but scattered. Orchestration: a central coordinator drives every step from one place.",
+      "es": "Coreografía: los servicios reaccionan a los eventos de otros, desacoplados pero dispersos. Orquestación: un coordinador central maneja cada paso desde un solo lugar."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "A travel-booking saga must reserve a flight, charge a card, and book a hotel; the hotel step fails because the room sold out.",
+     "es": "Una saga de reserva de viaje debe apartar un vuelo, cobrar la tarjeta y reservar el hotel; el paso del hotel falla porque la habitación se agotó."
+    },
+    "walkthrough": {
+     "en": "Step 1 reserves the flight (local commit in flight-svc). Step 2 charges $840 to the card (local commit in payment-svc, event written to its outbox). Step 3 tries to book the hotel and gets a 409 — sold out. The orchestrator now runs compensations in reverse: refund the $840 (not a rollback — the charge settled with Stripe, so it issues a refund that lands in 3-5 business days) and release the flight seat. The customer sees 'booking failed, your card was not charged' only after the refund is confirmed. Because Stripe's refund API is retried at-least-once, payment-svc keys each refund by the saga id so a duplicate refund event is a no-op instead of paying the customer $840 twice.",
+     "es": "El paso 1 aparta el vuelo (commit local en flight-svc). El paso 2 cobra $840 a la tarjeta (commit local en payment-svc, evento escrito en su outbox). El paso 3 intenta reservar el hotel y recibe un 409: agotado. El orquestador ejecuta ahora las compensaciones en reversa: reembolsa los $840 (no es un rollback —el cargo se liquidó en Stripe, así que emite un reembolso que llega en 3-5 días hábiles— ) y libera el asiento del vuelo. El cliente ve 'reserva fallida, no se cobró tu tarjeta' solo después de confirmar el reembolso. Como la API de reembolsos de Stripe se reintenta at-least-once, payment-svc indexa cada reembolso por el id de la saga para que un evento de reembolso duplicado sea un no-op en vez de pagarle al cliente $840 dos veces."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Assuming compensation restores the original state — it doesn't; a refunded charge still shows two transactions on the statement and any side effects (emails sent, inventory decremented elsewhere) may linger.",
+     "es": "Suponer que la compensación restaura el estado original: no lo hace; un cargo reembolsado igual muestra dos transacciones en el estado de cuenta y los efectos colaterales (correos enviados, inventario descontado en otro lado) pueden quedar."
+    },
+    {
+     "en": "Polling the outbox table on a tight loop hammers the database; use change-data-capture (e.g. Debezium reading the WAL) or a batched poll with an indexed 'unpublished' flag.",
+     "es": "Sondear la tabla outbox en un bucle apretado castiga la base de datos; usa change-data-capture (p. ej. Debezium leyendo el WAL) o un sondeo por lotes con un flag 'no publicado' indexado."
+    },
+    {
+     "en": "Forgetting that compensations can also fail — the refund call can time out — so the saga log itself must be durable and the compensation retried, or you leak money.",
+     "es": "Olvidar que las compensaciones también pueden fallar —la llamada de reembolso puede expirar— así que el propio log de la saga debe ser durable y la compensación reintentarse, o pierdes dinero."
+    }
+   ],
+   "analogy": {
+    "en": "A saga is like a restaurant order fired to the kitchen: if the dessert station is out, the waiter doesn't un-cook the steak — they comp it or bring a substitute. Each station already did its work; you make the guest whole, you don't rewind time.",
+    "es": "Una saga es como un pedido lanzado a la cocina: si la estación de postres se quedó sin nada, el mesero no des-cocina el bistec —lo bonifica o trae un sustituto—. Cada estación ya hizo su trabajo; dejas entero al comensal, no retrocedes el tiempo."
+   },
+   "code": {
+    "lang": "sql",
+    "snippet": "BEGIN;\n  UPDATE orders\n     SET status = 'PAID'\n   WHERE id = 42;\n\n  INSERT INTO outbox (id, aggregate_id, type, payload, published)\n  VALUES (gen_random_uuid(), 42, 'OrderPaid',\n          '{\"orderId\":42,\"amount\":840}', false);\nCOMMIT;\n-- A separate relay polls WHERE published = false,\n-- publishes to Kafka, then sets published = true.",
+    "caption": {
+     "en": "State change and event insert commit atomically in one local transaction; the relay ships the event afterward.",
+     "es": "El cambio de estado y la inserción del evento se confirman atómicamente en una transacción local; el relay envía el evento después."
+    },
+    "annotations": [
+     {
+      "line": 2,
+      "note": {
+       "en": "The business state change and the outbox row share one transaction — either both land or neither does.",
+       "es": "El cambio de estado de negocio y la fila del outbox comparten una transacción: o quedan ambos o ninguno."
+      }
+     },
+     {
+      "line": 6,
+      "note": {
+       "en": "'published = false' is the relay's work queue; it flips to true only after a successful broker ack.",
+       "es": "'published = false' es la cola de trabajo del relay; pasa a true solo tras un ack exitoso del broker."
+      }
+     }
+    ]
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": {
+     "en": "Outbox pattern: one transaction writes both rows; an async relay delivers to the broker.",
+     "es": "Patrón outbox: una transacción escribe ambas filas; un relay asíncrono entrega al broker."
+    },
+    "nodes": [
+     {
+      "label": { "en": "Service commits: state + outbox row (1 tx)", "es": "Servicio commitea: estado + fila outbox (1 tx)" }
+     },
+     {
+      "label": { "en": "Relay polls unpublished rows", "es": "Relay sondea filas no publicadas" }
+     },
+     {
+      "label": { "en": "Publish to broker (retry until ack)", "es": "Publica al broker (reintenta hasta ack)" },
+      "note": { "en": "at-least-once", "es": "at-least-once" }
+     },
+     {
+      "label": { "en": "Idempotent consumer dedups by event id", "es": "Consumidor idempotente deduplica por id de evento" }
+     }
+    ]
+   },
+   "source": "microservices.io — Saga pattern and Transactional Outbox (Chris Richardson)"
+  },
+  {
+   "slug": "designing-for-failure-resilience",
+   "keywords": [
+    {
+     "term": { "en": "Timeout", "es": "Timeout" },
+     "def": {
+      "en": "A hard deadline on a remote call; without it a slow dependency holds threads until the pool is exhausted and the caller dies too.",
+      "es": "Un límite de tiempo estricto para una llamada remota; sin él, una dependencia lenta retiene threads hasta agotar el pool y el llamador también muere."
+     }
+    },
+    {
+     "term": { "en": "Exponential backoff + jitter", "es": "Backoff exponencial + jitter" },
+     "def": {
+      "en": "Retry after 1s, 2s, 4s… with random spread added, so thousands of clients don't retry in lockstep and re-crash a recovering service.",
+      "es": "Reintentar tras 1s, 2s, 4s… con dispersión aleatoria añadida, para que miles de clientes no reintenten al unísono y vuelvan a tumbar un servicio que se recuperaba."
+     }
+    },
+    {
+     "term": { "en": "Circuit breaker", "es": "Circuit breaker" },
+     "def": {
+      "en": "A stateful gate that trips open after a failure threshold, fails fast during a cooldown, then half-opens to probe recovery.",
+      "es": "Una compuerta con estado que se abre tras un umbral de fallas, falla rápido durante un enfriamiento, y luego se entreabre para sondear la recuperación."
+     }
+    },
+    {
+     "term": { "en": "Bulkhead", "es": "Mamparo (bulkhead)" },
+     "def": {
+      "en": "Isolating resources (separate thread pools/connection pools per dependency) so one failing downstream can't drown every request.",
+      "es": "Aislar recursos (pools de threads/conexiones separados por dependencia) para que un downstream que falla no ahogue todas las peticiones."
+     }
+    },
+    {
+     "term": { "en": "Fallback", "es": "Fallback" },
+     "def": {
+      "en": "A degraded answer served when a dependency is down — a cached value, a default, a queued write — so the feature degrades instead of the product collapsing.",
+      "es": "Una respuesta degradada que se sirve cuando una dependencia está caída —un valor en caché, un default, una escritura encolada— para que la funcionalidad se degrade en vez de derrumbarse el producto."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "A product page calls a recommendations service that starts timing out; without protection the whole page stops loading.",
+     "es": "Una página de producto llama a un servicio de recomendaciones que empieza a expirar; sin protección, toda la página deja de cargar."
+    },
+    "walkthrough": {
+     "en": "The recs service degrades: p99 climbs from 40ms to 3s. The product page has a 200ms timeout on that call, so each request fails fast at 200ms instead of hanging. The circuit breaker is configured to trip when >50% of the last 20 calls fail; after ~12 failures it opens and stops calling recs entirely for a 30s cooldown. During that cooldown the page serves a fallback — a cached 'popular in this category' list — so users still see recommendations, just not personalized ones. After 30s the breaker half-opens, lets 1 probe request through; it succeeds, the breaker closes, and personalized recs resume. Net effect: recs was down for 4 minutes, but the product page never once failed to load. Compare the naive version: no timeout, no breaker — the page's thread pool of 200 fills with threads blocked on recs within seconds, and the entire storefront returns 503.",
+     "es": "El servicio de recs se degrada: su p99 sube de 40ms a 3s. La página de producto tiene un timeout de 200ms en esa llamada, así que cada petición falla rápido a los 200ms en vez de colgarse. El circuit breaker está configurado para abrirse cuando >50% de las últimas 20 llamadas fallan; tras ~12 fallas se abre y deja de llamar a recs por completo durante un enfriamiento de 30s. Durante ese enfriamiento la página sirve un fallback —una lista en caché de 'populares en esta categoría'— así los usuarios igual ven recomendaciones, solo que no personalizadas. Tras 30s el breaker se entreabre y deja pasar 1 petición de prueba; tiene éxito, el breaker se cierra y las recs personalizadas se reanudan. Efecto neto: recs estuvo caído 4 minutos, pero la página de producto nunca dejó de cargar. Compara la versión ingenua: sin timeout, sin breaker —el pool de 200 threads de la página se llena en segundos de threads bloqueados en recs, y toda la tienda devuelve 503—."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Retrying non-idempotent writes: a 'create payment' that timed out may have actually succeeded, so a retry double-charges. Retry only reads or operations guarded by an idempotency key.",
+     "es": "Reintentar escrituras no idempotentes: un 'crear pago' que expiró pudo haber tenido éxito, así que el reintento cobra doble. Reintenta solo lecturas u operaciones protegidas por una clave de idempotencia."
+    },
+    {
+     "en": "Retries stacked at every layer multiply: 3 retries at the gateway × 3 at the service × 3 at the client = 27 calls per user click, turning a blip into a self-inflicted DDoS. Retry at one layer only.",
+     "es": "Reintentos apilados en cada capa se multiplican: 3 en el gateway × 3 en el servicio × 3 en el cliente = 27 llamadas por clic, convirtiendo un tropiezo en un DDoS autoinfligido. Reintenta en una sola capa."
+    },
+    {
+     "en": "A timeout longer than the caller's own timeout is pointless — the caller already gave up. Timeouts must shrink as you go deeper in the call chain, not grow.",
+     "es": "Un timeout más largo que el del propio llamador es inútil: el llamador ya se rindió. Los timeouts deben achicarse a medida que bajas en la cadena de llamadas, no crecer."
+    }
+   ],
+   "analogy": {
+    "en": "A circuit breaker in your house doesn't keep resetting itself into a short — it trips and stays open until someone fixes the fault. Retrying a dead service without a breaker is flipping the switch back on again and again while the wires smoke.",
+    "es": "El breaker eléctrico de tu casa no se resetea una y otra vez sobre un cortocircuito: se abre y se queda abierto hasta que alguien arregla la falla. Reintentar un servicio muerto sin breaker es volver a subir la palanca una y otra vez mientras los cables echan humo."
+   },
+   "diagram": {
+    "kind": "flow",
+    "caption": {
+     "en": "Circuit breaker state machine: closed → open on failure threshold → half-open probe → closed on success.",
+     "es": "Máquina de estados del circuit breaker: cerrado → abierto al superar el umbral → semiabierto para sondear → cerrado si tiene éxito."
+    },
+    "nodes": [
+     {
+      "label": { "en": "CLOSED — calls pass, count failures", "es": "CERRADO — pasan las llamadas, cuenta fallas" }
+     },
+     {
+      "label": { "en": "OPEN — fail fast, no calls (cooldown)", "es": "ABIERTO — falla rápido, sin llamadas (enfriamiento)" },
+      "note": { "en": "trips at >50% of last 20", "es": "se abre con >50% de las últimas 20" }
+     },
+     {
+      "label": { "en": "HALF-OPEN — allow 1 probe", "es": "SEMIABIERTO — permite 1 sondeo" }
+     },
+     {
+      "label": { "en": "Probe ok → CLOSED; probe fails → OPEN", "es": "Sondeo ok → CERRADO; falla → ABIERTO" }
+     }
+    ]
+   },
+   "source": "L. Peter Deutsch & James Gosling — 'The Eight Fallacies of Distributed Computing' (Sun Microsystems, 1994/1997); ByteByteGo — 'Resiliency Patterns', 'Retry Strategies for System Failures'"
+  },
+  {
+   "slug": "observability-for-distributed-systems",
+   "keywords": [
+    {
+     "term": { "en": "SLI / SLO", "es": "SLI / SLO" },
+     "def": {
+      "en": "SLI is a measured indicator (fraction of requests under 300ms); SLO is the target for it (99.5% over 28 days) that defines 'healthy'.",
+      "es": "El SLI es un indicador medido (fracción de peticiones bajo 300ms); el SLO es el objetivo para él (99.5% en 28 días) que define 'sano'."
+     }
+    },
+    {
+     "term": { "en": "Error budget", "es": "Presupuesto de error" },
+     "def": {
+      "en": "The gap between the SLO and 100% — with a 99.9% SLO you may be 'unhealthy' 0.1% of the time; spend it on risk or feature velocity.",
+      "es": "La brecha entre el SLO y el 100%: con un SLO de 99.9% puedes estar 'no sano' el 0.1% del tiempo; gástalo en riesgo o velocidad de features."
+     }
+    },
+    {
+     "term": { "en": "Distributed trace", "es": "Traza distribuida" },
+     "def": {
+      "en": "A trace_id propagated across every hop, assembling one request's spans across services so you can see which hop ate the latency.",
+      "es": "Un trace_id propagado por cada salto, que ensambla los spans de una petición a través de servicios para ver qué salto se comió la latencia."
+     }
+    },
+    {
+     "term": { "en": "Burn rate", "es": "Tasa de quema" },
+     "def": {
+      "en": "How fast you're consuming the error budget relative to normal; a 14.4x burn eats a 30-day budget in ~2 days and should page.",
+      "es": "Qué tan rápido consumes el presupuesto de error respecto a lo normal; una quema de 14.4x agota un presupuesto de 30 días en ~2 días y debe generar alerta."
+     }
+    },
+    {
+     "term": { "en": "Symptom vs cause alerting", "es": "Alertar por síntoma vs por causa" },
+     "def": {
+      "en": "Page on what the user feels (elevated errors/latency), not on internal causes (high CPU) that may not affect anyone.",
+      "es": "Alerta por lo que el usuario siente (errores/latencia elevados), no por causas internas (CPU alta) que pueden no afectar a nadie."
+     }
+    }
+   ],
+   "example": {
+    "scenario": {
+     "en": "A checkout API has a 99.9%-over-30-days availability SLO; a bad deploy starts returning 5xx and you must decide whether to page and freeze.",
+     "es": "Una API de checkout tiene un SLO de disponibilidad de 99.9% en 30 días; un deploy malo empieza a devolver 5xx y debes decidir si alertar y congelar."
+    },
+    "walkthrough": {
+     "en": "The service does ~10M requests/30 days. A 99.9% SLO means the error budget is 0.1% = 10,000 failed requests per month. Normally you burn ~333/day (1x). After the deploy, error rate jumps to 5%: at 5% you're failing ~500,000/month — a burn rate of 50x. At 50x the entire 30-day budget is gone in ~14 hours, so a fast-burn alert (e.g. >14.4x over 5 minutes AND 1 hour) pages immediately. The on-call rolls back, error rate drops to baseline, and you've spent maybe 4% of the month's budget on a 40-minute incident. The dashboards showed elevated 5xx (symptom); the trace_id on a sample failing request showed the new payment-adapter span throwing on a null field (cause) — the metric told you to act, the trace told you what to fix. Crucially you did NOT page on the 'CPU at 85%' alert firing at the same time, because CPU high with the SLO met is not a user-facing problem.",
+     "es": "El servicio hace ~10M de peticiones/30 días. Un SLO de 99.9% significa que el presupuesto de error es 0.1% = 10,000 peticiones fallidas al mes. Normalmente quemas ~333/día (1x). Tras el deploy, la tasa de error salta a 5%: al 5% estás fallando ~500,000/mes, una tasa de quema de 50x. A 50x, todo el presupuesto de 30 días se acaba en ~14 horas, así que una alerta de quema rápida (p. ej. >14.4x en 5 minutos Y 1 hora) genera aviso de inmediato. El on-call hace rollback, la tasa de error vuelve a la base, y gastaste quizá el 4% del presupuesto del mes en un incidente de 40 minutos. Los dashboards mostraron 5xx elevados (síntoma); el trace_id de una petición fallida de muestra mostró el nuevo span del adaptador de pagos lanzando sobre un campo nulo (causa): la métrica te dijo que actuaras, la traza te dijo qué arreglar. Y algo clave: NO alertaste por el aviso de 'CPU al 85%' que se disparó a la vez, porque CPU alta con el SLO cumplido no es un problema que vea el usuario."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Chasing 100% availability: the last nines cost exponentially more and leave no error budget for deploys or experiments — pick a target the business actually needs.",
+     "es": "Perseguir 100% de disponibilidad: los últimos nueves cuestan exponencialmente más y no dejan presupuesto de error para deploys ni experimentos; elige un objetivo que el negocio de verdad necesite."
+    },
+    {
+     "en": "Breaking trace context: one service that doesn't propagate the trace_id (or a queue hop that drops it) leaves a hole exactly where the latency probably hides.",
+     "es": "Romper el contexto de traza: un servicio que no propaga el trace_id (o un salto por cola que lo pierde) deja un hueco justo donde probablemente se esconde la latencia."
+    },
+    {
+     "en": "Averages lie: p50 latency looking fine hides a p99 disaster affecting your highest-value users; SLO on percentiles, not the mean.",
+     "es": "Los promedios mienten: un p50 que se ve bien esconde un desastre en p99 que afecta a tus usuarios más valiosos; pon el SLO sobre percentiles, no sobre la media."
+    },
+    {
+     "en": "Logging everything at high volume becomes a cost and noise problem that buries the one log line that mattered; sample, and lean on metrics for aggregates.",
+     "es": "Loguear todo a gran volumen se vuelve un problema de costo y ruido que entierra la única línea de log que importaba; muestrea, y apóyate en métricas para los agregados."
+    }
+   ],
+   "analogy": {
+    "en": "An error budget is a monthly data plan for downtime: as long as you have gigabytes left you stream freely (ship, experiment); when you're nearly out you throttle everything risky until the plan resets.",
+    "es": "Un presupuesto de error es un plan mensual de datos para la caída: mientras te queden gigas navegas libre (lanzas, experimentas); cuando casi se acaba, limitas todo lo riesgoso hasta que el plan se reinicia."
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {
+     "en": "The three signals answer different questions — you need all three.",
+     "es": "Las tres señales responden preguntas distintas: necesitas las tres."
+    },
+    "left": {
+     "title": { "en": "Metrics & Logs", "es": "Métricas y Logs" },
+     "points": [
+      { "en": "Metrics: cheap aggregates (rate, error %, p99) → dashboards & alerts", "es": "Métricas: agregados baratos (tasa, % error, p99) → dashboards y alertas" },
+      { "en": "Answer 'how much / how often', not 'why this one'", "es": "Responden 'cuánto / con qué frecuencia', no 'por qué esta'" },
+      { "en": "Logs: detailed discrete events, precise but costly & noisy at scale", "es": "Logs: eventos discretos detallados, precisos pero caros y ruidosos a escala" }
+     ]
+    },
+    "right": {
+     "title": { "en": "Distributed Traces", "es": "Trazas distribuidas" },
+     "points": [
+      { "en": "One trace_id follows a request across every service hop", "es": "Un trace_id sigue una petición por cada salto entre servicios" },
+      { "en": "Shows which span ate the 800ms in a 7-service call", "es": "Muestra qué span se comió los 800ms en una llamada de 7 servicios" },
+      { "en": "The piece that makes a service mesh debuggable", "es": "La pieza que hace depurable una malla de servicios" }
+     ]
+    }
+   },
+   "source": "Google SRE Book — 'Service Level Objectives' (SLIs/SLOs/error budgets, sre.google/sre-book/service-level-objectives/); ByteByteGo — observability 'Logging, Tracing, Metrics' / distributed tracing sections"
+  }
+ ]
+}

@@ -1,0 +1,191 @@
+{
+ "lessonId": "systems-architecture-l3",
+ "concepts": [
+  {
+   "slug": "rest-resource-modeling",
+   "keywords": [
+    {
+     "en": {"term": "Resource", "def": "A noun in your system that has its own address (URL): /users/42, /orders/99. The thing you act on, not the action."},
+     "es": {"term": "Recurso", "def": "Un sustantivo de tu sistema con su propia dirección (URL): /users/42, /orders/99. La cosa sobre la que actúas, no la acción."}
+    },
+    {
+     "en": {"term": "Safe method", "def": "An HTTP verb that must not change server state. GET and HEAD are safe: a client can call them any number of times with no side effects."},
+     "es": {"term": "Método seguro", "def": "Un verbo HTTP que no debe cambiar el estado del servidor. GET y HEAD son seguros: un cliente puede llamarlos cuantas veces quiera sin efectos secundarios."}
+    },
+    {
+     "en": {"term": "Idempotent method", "def": "A verb where N identical calls leave the same state as one call. PUT, DELETE, and GET are idempotent; POST is not."},
+     "es": {"term": "Método idempotente", "def": "Un verbo donde N llamadas idénticas dejan el mismo estado que una sola. PUT, DELETE y GET son idempotentes; POST no lo es."}
+    },
+    {
+     "en": {"term": "Richardson Maturity Model", "def": "A 0-3 scale grading how much of HTTP an API uses: L0 tunnels RPC, L1 adds resources, L2 adds verbs + status codes, L3 adds hypermedia."},
+     "es": {"term": "Modelo de Madurez de Richardson", "def": "Una escala 0-3 que califica cuánto de HTTP usa una API: L0 tuneliza RPC, L1 agrega recursos, L2 agrega verbos + códigos de estado, L3 agrega hipermedia."}
+    },
+    {
+     "en": {"term": "Status code semantics", "def": "Codes that mean what they say: 200 OK, 201 Created, 400 bad request, 404 not found, 409 conflict. Not 200-with-an-error-in-the-body."},
+     "es": {"term": "Semántica de códigos de estado", "def": "Códigos que significan lo que dicen: 200 OK, 201 Creado, 400 petición inválida, 404 no encontrado, 409 conflicto. No 200-con-un-error-en-el-cuerpo."}
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "You inherit an order API stuck at Level 0: every call is POST /api with a body like {\"action\":\"cancelOrder\",\"id\":99}. Cancellations sometimes fire twice because a mobile client retries on flaky wifi, double-charging refunds. You promote it to Level 2.",
+     "walkthrough": "The order becomes an addressable resource: GET /orders/99 reads it and returns 200 with the order, or 404 if it never existed. Reading is now safe, so a CDN or the browser can cache it and a retry costs nothing. Cancellation stops being a verb buried in a body and becomes a state change on the resource: PATCH /orders/99 with {\"status\":\"cancelled\"}, or a small action sub-resource POST /orders/99/cancellation. Because PATCH-to-cancelled is idempotent, the mobile client's double-fire is harmless: the second call sees the order is already cancelled and returns 200 (or 409 Conflict if you want to signal 'already done'), and no second refund is issued. The retry bug disappears not because you added retry logic, but because you matched the verb to its real meaning."
+    },
+    "es": {
+     "scenario": "Heredas una API de pedidos atascada en Nivel 0: cada llamada es POST /api con un cuerpo como {\"action\":\"cancelOrder\",\"id\":99}. Las cancelaciones a veces se disparan dos veces porque un cliente móvil reintenta con wifi inestable, duplicando reembolsos. La subes a Nivel 2.",
+     "walkthrough": "El pedido se vuelve un recurso direccionable: GET /orders/99 lo lee y devuelve 200 con el pedido, o 404 si nunca existió. Leer ahora es seguro, así que una CDN o el navegador pueden cachearlo y un reintento no cuesta nada. Cancelar deja de ser un verbo enterrado en un cuerpo y pasa a ser un cambio de estado sobre el recurso: PATCH /orders/99 con {\"status\":\"cancelled\"}, o un pequeño subrecurso de acción POST /orders/99/cancellation. Como el PATCH-a-cancelado es idempotente, el doble disparo del cliente móvil es inofensivo: la segunda llamada ve que el pedido ya está cancelado y devuelve 200 (o 409 Conflicto si quieres señalar 'ya está hecho'), y no se emite un segundo reembolso. El bug del reintento desaparece no porque agregaste lógica de reintentos, sino porque alineaste el verbo con su significado real."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Verbs in the URL: /getUser, /createOrder, /deleteUser. That's Level 0 dressed as Level 1. The URL should name the resource; the HTTP method supplies the verb.",
+     "es": "Verbos en la URL: /getUser, /createOrder, /deleteUser. Eso es Nivel 0 disfrazado de Nivel 1. La URL debe nombrar el recurso; el método HTTP aporta el verbo."
+    },
+    {
+     "en": "A GET that mutates state. A crawler, a link prefetcher, or a retry will silently trigger it. Never put a side effect behind a safe method.",
+     "es": "Un GET que muta el estado. Un crawler, un prefetch de enlaces o un reintento lo dispararán en silencio. Nunca pongas un efecto secundario detrás de un método seguro."
+    },
+    {
+     "en": "Returning 200 for everything, with success/failure hidden in the JSON body. Monitoring, proxies, and clients can't tell an error from a success without parsing your custom shape.",
+     "es": "Devolver 200 para todo, con éxito/fracaso escondido en el cuerpo JSON. El monitoreo, los proxies y los clientes no pueden distinguir un error de un éxito sin parsear tu formato propio."
+    },
+    {
+     "en": "Purism: torturing a genuine action ('resend invoice') into a fake noun. Pragmatic action sub-resources (POST /invoices/7/resend) are fine and clearer than contortions.",
+     "es": "Purismo: torturar una acción genuina ('reenviar factura') hasta volverla un sustantivo falso. Los subrecursos de acción pragmáticos (POST /invoices/7/resend) están bien y son más claros que las contorsiones."
+    }
+   ],
+   "analogy": {
+    "en": "Level 0 is calling one receptionist and describing every request out loud: 'I'd like to, uh, cancel order ninety-nine.' Level 2 is a building with numbered rooms (/orders/99) and doors labeled with what you may do to each room. Anyone in the building — the mail carrier, the cleaner, security — knows what a 'DELETE on room 99' means without asking you.",
+    "es": "El Nivel 0 es llamar a un solo recepcionista y describir cada petición en voz alta: 'quisiera, eh, cancelar el pedido noventa y nueve'. El Nivel 2 es un edificio con salas numeradas (/orders/99) y puertas rotuladas con lo que puedes hacer en cada sala. Cualquiera en el edificio —el cartero, el de limpieza, seguridad— sabe qué significa un 'DELETE en la sala 99' sin preguntarte."
+   },
+   "depth": {
+    "en": "PUT vs PATCH is the sharpest L2 distinction: PUT replaces the whole resource (send the full representation; missing fields become null), while PATCH sends only the changed fields. Confuse them and a PUT that omits a field will silently erase it. Both are idempotent, unlike POST — which is exactly why 'create' (POST /orders, server assigns the id) differs from 'create-or-replace-at-a-known-id' (PUT /orders/99). Idempotency is not academic: it's what makes a client safe to retry after a timeout without fear of duplicating the effect.",
+    "es": "PUT vs PATCH es la distinción más filosa de L2: PUT reemplaza el recurso completo (envías la representación entera; los campos omitidos quedan en null), mientras que PATCH envía solo los campos cambiados. Confúndelos y un PUT que omite un campo lo borrará en silencio. Ambos son idempotentes, a diferencia de POST —por eso mismo 'crear' (POST /orders, el servidor asigna el id) difiere de 'crear-o-reemplazar-en-un-id-conocido' (PUT /orders/99)—. La idempotencia no es académica: es lo que permite que un cliente reintente con seguridad tras un timeout sin miedo a duplicar el efecto."
+   },
+   "code": {
+    "lang": "http",
+    "snippet": "# Level 0 (RPC over HTTP) — everything is a POST, always 200\nPOST /api\n{\"action\": \"cancelOrder\", \"id\": 99}\n--> 200 OK  {\"ok\": false, \"error\": \"not found\"}\n\n# Level 2 (resources + honest verbs + status codes)\nGET    /orders/99            --> 200 OK        (safe, cacheable)\nGET    /orders/12345         --> 404 Not Found\nPATCH  /orders/99            --> 200 OK        (idempotent cancel)\n       {\"status\": \"cancelled\"}\nPOST   /orders               --> 201 Created + Location: /orders/100\n       {\"item\": \"book\", \"qty\": 1}\nDELETE /orders/99            --> 204 No Content (idempotent)",
+    "caption": {
+     "en": "The same order operations at Level 0 vs Level 2. Note how the verb and status code carry the meaning that L0 buried in the body.",
+     "es": "Las mismas operaciones sobre pedidos en Nivel 0 vs Nivel 2. Observa cómo el verbo y el código de estado cargan el significado que L0 enterró en el cuerpo."
+    },
+    "annotations": [
+     {"line": 4, "note": {"en": "Failure hidden inside a 200 — monitoring sees a success.", "es": "El fallo escondido dentro de un 200 — el monitoreo ve un éxito."}},
+     {"line": 8, "note": {"en": "Safe + cacheable: a CDN or browser can serve this without hitting your server.", "es": "Seguro + cacheable: una CDN o el navegador pueden servir esto sin tocar tu servidor."}},
+     {"line": 10, "note": {"en": "Idempotent: a retried cancel is harmless, no double refund.", "es": "Idempotente: una cancelación reintentada es inofensiva, sin doble reembolso."}},
+     {"line": 12, "note": {"en": "201 + Location header tells the client the URL of the new resource.", "es": "201 + cabecera Location le dice al cliente la URL del nuevo recurso."}}
+    ]
+   },
+   "diagram": {
+    "kind": "compare",
+    "caption": {
+     "en": "Level 0 tunnels every intent through one endpoint; Level 2 spreads intent across addressable resources and standard verbs.",
+     "es": "El Nivel 0 tuneliza toda la intención por un endpoint; el Nivel 2 reparte la intención entre recursos direccionables y verbos estándar."
+    },
+    "left": {
+     "title": {"en": "Level 0 — RPC tunnel", "es": "Nivel 0 — túnel RPC"},
+     "points": [
+      {"en": "One endpoint: POST /api", "es": "Un endpoint: POST /api"},
+      {"en": "Intent lives in the body ({action})", "es": "La intención vive en el cuerpo ({action})"},
+      {"en": "Everything returns 200", "es": "Todo devuelve 200"},
+      {"en": "No caching, no addressability", "es": "Sin caché, sin direccionabilidad"}
+     ]
+    },
+    "right": {
+     "title": {"en": "Level 2 — resources + verbs", "es": "Nivel 2 — recursos + verbos"},
+     "points": [
+      {"en": "Nouns with URLs: /orders/99", "es": "Sustantivos con URLs: /orders/99"},
+      {"en": "GET/POST/PATCH/DELETE carry intent", "es": "GET/POST/PATCH/DELETE cargan la intención"},
+      {"en": "Status codes mean what they say", "es": "Los códigos de estado significan lo que dicen"},
+      {"en": "HTTP ecosystem can reason about it", "es": "El ecosistema HTTP puede razonar sobre ella"}
+     ]
+    }
+   },
+   "source": "Martin Fowler — 'Richardson Maturity Model' (martinfowler.com/articles/richardsonMaturityModel.html)"
+  },
+  {
+   "slug": "capacity-estimation",
+   "keywords": [
+    {
+     "en": {"term": "QPS (queries per second)", "def": "Requests the system finishes per second. The headline number: it decides single-server vs horizontal scaling before you draw a box."},
+     "es": {"term": "QPS (consultas por segundo)", "def": "Peticiones que el sistema termina por segundo. El número protagonista: decide servidor único vs escalamiento horizontal antes de dibujar una caja."}
+    },
+    {
+     "en": {"term": "DAU (daily active users)", "def": "Distinct users active per day. The top of the funnel you multiply by requests-per-user to reach total daily load."},
+     "es": {"term": "DAU (usuarios activos diarios)", "def": "Usuarios distintos activos por día. La punta del embudo que multiplicas por peticiones-por-usuario para llegar a la carga diaria total."}
+    },
+    {
+     "en": {"term": "Peak factor", "def": "How much busier the busiest moment is than the average. Traffic isn't flat; 2-3x average is a safe planning multiplier."},
+     "es": {"term": "Factor de pico", "def": "Cuánto más ocupado está el momento más cargado que el promedio. El tráfico no es plano; 2-3x el promedio es un multiplicador de planificación prudente."}
+    },
+    {
+     "en": {"term": "Latency ladder", "def": "The rungs of access time by orders of magnitude: memory (ns), SSD (~100µs), local network (~0.5ms), cross-region (tens-hundreds of ms)."},
+     "es": {"term": "Escalera de latencia", "def": "Los peldaños del tiempo de acceso por órdenes de magnitud: memoria (ns), SSD (~100µs), red local (~0,5ms), entre regiones (decenas-cientos de ms)."}
+    },
+    {
+     "en": {"term": "Order of magnitude", "def": "A factor of 10. Estimation aims to land the right power of ten, not the exact figure — being 3x off is fine; being 100x off is a wrong design."},
+     "es": {"term": "Orden de magnitud", "def": "Un factor de 10. La estimación busca acertar la potencia de diez correcta, no la cifra exacta — errar por 3x está bien; errar por 100x es un diseño equivocado."}
+    }
+   ],
+   "example": {
+    "en": {
+     "scenario": "Someone proposes a photo-sharing feature and asks 'can one server handle it?' You have 10M DAU, each uploading 2 photos and viewing 200 per day, photos average 1.5MB. Bound it before designing.",
+     "walkthrough": "Writes: 10M × 2 = 20M uploads/day. Divide by ~100,000 sec/day ≈ 200 writes/sec average, ×3 peak ≈ 600 write QPS. Reads: 10M × 200 = 2B views/day ≈ 20,000/sec average, ×3 peak ≈ 60,000 read QPS. That read number alone answers the question: 60,000 QPS is not one-server territory — you're horizontally scaled with a CDN in front, no debate. Storage: 20M photos/day × 1.5MB = 30TB/day, ≈ 11PB/year. That does not fit on a disk or even one machine; you need object storage (e.g., S3) and it dominates your cost model. Bandwidth out: 2B views × 1.5MB ÷ 100,000 sec ≈ 30GB/sec — a CDN isn't optional, it's the whole architecture. Three multiplications turned a vague question into hard constraints, and you haven't written a line of code."
+    },
+    "es": {
+     "scenario": "Alguien propone una función de compartir fotos y pregunta '¿aguanta un solo servidor?' Tienes 10M DAU, cada uno sube 2 fotos y ve 200 al día, las fotos pesan 1,5MB en promedio. Acótalo antes de diseñar.",
+     "walkthrough": "Escrituras: 10M × 2 = 20M subidas/día. Divide entre ~100.000 seg/día ≈ 200 escrituras/seg promedio, ×3 pico ≈ 600 QPS de escritura. Lecturas: 10M × 200 = 2.000M vistas/día ≈ 20.000/seg promedio, ×3 pico ≈ 60.000 QPS de lectura. Ese número de lectura por sí solo responde la pregunta: 60.000 QPS no es territorio de un servidor — estás escalado horizontalmente con una CDN delante, sin discusión. Almacenamiento: 20M fotos/día × 1,5MB = 30TB/día, ≈ 11PB/año. Eso no cabe en un disco ni en una máquina; necesitas almacenamiento de objetos (p. ej., S3) y domina tu modelo de costos. Ancho de banda de salida: 2.000M vistas × 1,5MB ÷ 100.000 seg ≈ 30GB/seg — una CDN no es opcional, es toda la arquitectura. Tres multiplicaciones convirtieron una pregunta vaga en restricciones duras, y no escribiste una línea de código."
+    }
+   },
+   "pitfalls": [
+    {
+     "en": "Designing for the average and forgetting the peak. A system sized for 2,000 QPS average falls over at the 6,000 QPS dinner-hour spike. Always apply the peak factor.",
+     "es": "Diseñar para el promedio y olvidar el pico. Un sistema dimensionado para 2.000 QPS promedio se cae con el pico de 6.000 QPS de la hora de la cena. Aplica siempre el factor de pico."
+    },
+    {
+     "en": "Chasing false precision. '73.42TB' signals you've missed the point — the estimate exists to trigger a decision (one disk vs partitioning), and clean round numbers keep the mental math honest.",
+     "es": "Perseguir falsa precisión. '73,42TB' delata que no captaste el punto — la estimación existe para disparar una decisión (un disco vs particionar), y los números redondos mantienen honesto el cálculo mental."
+    },
+    {
+     "en": "Ignoring the read/write ratio. Most systems read far more than they write; sizing everything as if writes dominate leads you to the wrong bottleneck (and the wrong database).",
+     "es": "Ignorar la razón lectura/escritura. La mayoría de los sistemas leen mucho más de lo que escriben; dimensionar todo como si dominaran las escrituras te lleva al cuello de botella equivocado (y a la base de datos equivocada)."
+    },
+    {
+     "en": "Hiding a cross-region round trip inside a request path. One 100ms intercontinental hop can dwarf everything else; if you don't know the latency ladder you won't spot it in the design.",
+     "es": "Esconder un viaje entre regiones dentro del camino de una petición. Un salto intercontinental de 100ms puede empequeñecer todo lo demás; si no conoces la escalera de latencia no lo detectarás en el diseño."
+    }
+   ],
+   "analogy": {
+    "en": "It's the same reflex a builder uses before pouring concrete: you don't compute the exact weight of a house, you estimate 'roughly 40 tons' to know whether the ground needs a slab or deep pilings. Wrong by 20% changes nothing; wrong by 10x collapses the building. Capacity math is that load-bearing check for software.",
+    "es": "Es el mismo reflejo que usa un constructor antes de verter concreto: no calculas el peso exacto de una casa, estimas 'unas 40 toneladas' para saber si el suelo necesita una losa o pilotes profundos. Errar por 20% no cambia nada; errar por 10x colapsa el edificio. La matemática de capacidad es esa verificación estructural para el software."
+   },
+   "depth": {
+    "en": "The latency ladder is really a lesson in ratios you can feel: if a memory read (100ns) were 1 second, an SSD read (100µs) would be ~15 minutes, a datacenter round trip (0.5ms) ~1.5 hours, and a cross-continent round trip (150ms) would be ~17 days. That's why a single needless cross-region call can cost more than thousands of local operations, and why moving a hot value from a database into memory (Redis) isn't a small win — it's climbing several rungs of the ladder at once. The estimate that matters most is often not QPS but where in the ladder each step of a request lands.",
+    "es": "La escalera de latencia es en realidad una lección de razones que puedes sentir: si una lectura de memoria (100ns) fuera 1 segundo, una lectura de SSD (100µs) sería ~15 minutos, un ida y vuelta dentro del centro de datos (0,5ms) ~1,5 horas, y un ida y vuelta intercontinental (150ms) sería ~17 días. Por eso una sola llamada innecesaria entre regiones puede costar más que miles de operaciones locales, y por eso mover un valor caliente de una base de datos a la memoria (Redis) no es una ganancia pequeña — es subir varios peldaños de la escalera a la vez. La estimación que más importa a menudo no es el QPS sino en qué peldaño de la escalera cae cada paso de una petición."
+   },
+   "code": {
+    "lang": "python",
+    "snippet": "DAU = 10_000_000\nwrites_per_user = 2\nreads_per_user  = 200\nSEC_PER_DAY = 100_000        # ~86,400, rounded for mental math\nPEAK = 3                     # busiest moment vs average\n\nwrite_qps = DAU * writes_per_user / SEC_PER_DAY * PEAK\nread_qps  = DAU * reads_per_user  / SEC_PER_DAY * PEAK\nprint(round(write_qps), round(read_qps))   # 600 60000\n\nphoto_mb = 1.5\nstorage_tb_per_day = DAU * writes_per_user * photo_mb / 1_000_000\nprint(round(storage_tb_per_day))           # 30 TB/day -> object storage",
+    "caption": {
+     "en": "The whole back-of-the-envelope pass as a few multiplications. The output numbers, not the code, are the deliverable.",
+     "es": "Toda la pasada a groso modo como unas pocas multiplicaciones. Los números de salida, no el código, son el entregable."
+    },
+    "annotations": [
+     {"line": 4, "note": {"en": "The 100,000-sec shortcut: turns per-day counts into per-second load in your head.", "es": "El atajo de 100.000 seg: pasa conteos por día a carga por segundo mentalmente."}},
+     {"line": 9, "note": {"en": "60,000 read QPS answers 'one server?' instantly: no.", "es": "60.000 QPS de lectura responde '¿un servidor?' al instante: no."}},
+     {"line": 13, "note": {"en": "30 TB/day rules out a single disk before any design begins.", "es": "30 TB/día descarta un solo disco antes de empezar cualquier diseño."}}
+    ]
+   },
+   "diagram": {
+    "kind": "axes",
+    "caption": {
+     "en": "The latency ladder on a log scale — each rung is orders of magnitude slower than the one below. Distance and mechanism, not code, set these.",
+     "es": "La escalera de latencia en escala logarítmica — cada peldaño es órdenes de magnitud más lento que el de abajo. La distancia y el mecanismo, no el código, los fijan."
+    },
+    "xAxis": {"en": "where the data lives (near -> far)", "es": "dónde vive el dato (cerca -> lejos)"},
+    "yAxis": {"en": "access time, log scale (ns -> hundreds of ms)", "es": "tiempo de acceso, escala log (ns -> cientos de ms)"}
+   },
+   "visual": {"widgetId": "latency-budget"},
+   "source": "Alex Xu, 'System Design Interview' / ByteByteGo — 'Which Latency Numbers Should You Know?'"
+  }
+ ]
+}
