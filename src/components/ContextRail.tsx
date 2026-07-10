@@ -8,6 +8,7 @@ import { useState, useMemo } from "react";
 import { t, type Locale } from "@/i18n/config";
 import { m, type MessageKey } from "@/i18n/messages";
 import { Schematic } from "./Schematic";
+import { CodeView } from "./lesson/CodeView";
 import type { ConceptLesson } from "@/lib/types";
 
 type TabKey = "takeaways" | "keywords" | "code" | "example" | "architecture";
@@ -63,17 +64,7 @@ export function ContextRail({
           </dl>
         )}
         {cur === "code" && (
-          <figure className="rail-code">
-            <pre className="mono"><code>{concept.code!.snippet}</code></pre>
-            {concept.code!.annotations?.length ? (
-              <ol className="rail-code-notes">
-                {concept.code!.annotations.map((a, i) => (
-                  <li key={i}><span className="mono rail-code-line">L{a.line}</span> {t(a.note, locale)}</li>
-                ))}
-              </ol>
-            ) : null}
-            {concept.code!.caption && <figcaption className="dim">{t(concept.code!.caption, locale)}</figcaption>}
-          </figure>
+          <CodeView code={concept.code!} locale={locale} track={track} />
         )}
         {cur === "example" && (
           <div className="rail-example">

@@ -1,1 +1,116 @@
-/* 18-schematic-anim — filled by build agent */
+/* ═══════════════════════════════════════════════════════════════════════
+   SCHEMATIC — staged reveal + travelling flow token + replay control.
+
+   Imported AFTER 02-content.css, so these rules win the cascade. The
+   Schematic component sets `data-armed="true"` on the `.schematic` figure
+   ONLY once it scrolls into view (IntersectionObserver) AND the user has no
+   reduced-motion preference — and the replay button drops/re-adds it to
+   restart. Everything is therefore VISIBLE BY DEFAULT (no-JS / SSR / reduced
+   motion): the animated states below apply only under
+   `.schematic[data-armed="true"]` inside `prefers-reduced-motion: no-preference`.
+   Motion is transform/opacity only. Never `opacity:0` as a base state.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Connector geometry (flow arrows) — makes room for the travelling token.
+      These are layout rules (not motion) so they apply in every mode. ─────── */
+.schematic-arrow {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 1.4rem;
+}
+.schematic-track-line {
+  position: absolute;
+  left: 2px;
+  right: 10px;
+  height: 2px;
+  background: color-mix(in oklab, var(--track, var(--gen)) 55%, transparent);
+  border-radius: var(--r-pill);
+}
+.schematic-arrowhead { position: relative; z-index: 1; line-height: 1; }
+.schematic-token {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 7px;
+  height: 7px;
+  margin-top: -3.5px;
+  border-radius: 50%;
+  background: var(--track-accent, var(--gen-accent));
+  box-shadow: 0 0 8px var(--track, var(--gen));
+  /* Invisible until an armed run drives it — it is a decorative pulse, never
+     information, so hiding it by default costs nothing (aria-hidden arrow). */
+  opacity: 0;
+}
+
+/* ── Footer: caption on the left, replay control on the right ───────────── */
+.schematic-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+  margin-top: var(--s-4);
+  padding-top: var(--s-3);
+  border-top: 1px solid var(--hairline);
+}
+.schematic-foot:empty { display: none; }
+.schematic-replay {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-1);
+  margin-left: auto;
+  padding: var(--s-2) var(--s-3);
+  min-height: 40px;
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--r-sm);
+  background: var(--film-1);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: color var(--fast) var(--eout), border-color var(--fast) var(--eout),
+    background var(--fast) var(--eout);
+}
+.schematic-replay:hover { color: var(--text); border-color: var(--track, var(--gen)); background: var(--film-2); }
+.schematic-replay span { font-size: 0.9rem; line-height: 1; }
+
+/* ── Armed reveal — only inside no-preference, only once data-armed fires ── */
+@media (prefers-reduced-motion: no-preference) {
+  /* Staged fade-up of flow cells / stack rows, sequenced by the per-node --i.
+     `both` holds the pre-reveal state during the stagger delay; this is safe
+     because the whole block is gated on data-armed (JS-set, in-view only). */
+  .schematic[data-armed="true"] .schematic-flow-cell,
+  .schematic[data-armed="true"] .schematic-stack-row {
+    animation: lu-schematic-reveal var(--dur-3) var(--ease-out-expo) both;
+    animation-delay: calc(var(--i, 0) * 90ms);
+  }
+
+  /* The token travels the connector once, staggered so it reads as flow moving
+     step→step down the chain. Runs after the two adjacent boxes have revealed. */
+  .schematic[data-armed="true"] .schematic-token {
+    animation: lu-schematic-token 900ms var(--eout) both;
+    animation-delay: calc(var(--i, 0) * 90ms + 320ms);
+  }
+}
+
+@keyframes lu-schematic-reveal {
+  from { opacity: 0.001; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+/* Token: fade in at the start of the line, glide to the arrowhead, fade out. */
+@keyframes lu-schematic-token {
+  0%   { opacity: 0; transform: translateX(0); }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; transform: translateX(30px); }
+}
+
+/* ── Pixel skin: square token, chunky connector ─────────────────────────── */
+[data-theme="pixel"] .schematic-token { border-radius: 0; box-shadow: 2px 2px 0 var(--db-shadow); }
+[data-theme="pixel"] .schematic-track-line { height: 3px; }
+[data-theme="pixel"] .schematic-replay { border-radius: 0; border-width: 2px; }
+[data-theme="pixel"] .schematic-foot { border-top-width: 2px; border-color: var(--hairline); }

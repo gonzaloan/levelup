@@ -48,19 +48,59 @@ export default async function Landing({ params }: { params: Promise<{ locale: st
   if (!isLocale(locale)) notFound();
   const L = locale as Locale;
 
+  const stats: { n: string; l: { en: string; es: string } }[] = [
+    { n: String(totalConcepts()), l: { en: "concepts", es: "conceptos" } },
+    { n: String(ORDERED_DOMAINS.length), l: { en: "domains", es: "dominios" } },
+    { n: String(LEVELS.length), l: { en: "levels", es: "niveles" } },
+    { n: String(CHECKPOINTS.length), l: { en: "final bosses", es: "jefes finales" } },
+  ];
+
   return (
     <>
-      {/* HERO */}
-      <section className="wrap" style={{ paddingTop: "var(--s-16)", paddingBottom: "var(--s-10)" }}>
-        <div className="hero-grid">
-          <div className="hero-copy">
-            <p className="eyebrow" style={{ marginBottom: "var(--s-5)" }}>{t(C.eyebrow, L)}</p>
-            <h1 className="display" style={{ fontSize: "var(--t-hero)", marginBottom: "var(--s-6)" }}>
-              {t(C.h1a, L)}<span className="accent">{t(C.h1accent, L)}</span>
-            </h1>
-            <p className="prose" style={{ fontSize: "1.125rem" }}>{t(C.sub, L)}</p>
+      {/* HERO — an optional decorative art layer (public/hero/ascent.webp) is
+          referenced as a masked CSS background. If the file is absent the browser
+          silently shows the authored radial wash + star chart underneath, so the
+          hero always reads as intentional whether or not the art exists. */}
+      <section style={{ position: "relative", overflow: "clip" }}>
+        <div aria-hidden="true" style={{
+          position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none",
+          backgroundImage: "radial-gradient(90% 120% at 78% 8%, var(--gen-glow), transparent 60%), url(/hero/ascent.webp)",
+          backgroundRepeat: "no-repeat, no-repeat",
+          backgroundPosition: "center, right -6% top -10%",
+          backgroundSize: "cover, min(46%, 620px) auto",
+          opacity: 0.5,
+          maskImage: "linear-gradient(180deg, transparent 0, #000 18%, #000 62%, transparent 100%)",
+          WebkitMaskImage: "linear-gradient(180deg, transparent 0, #000 18%, #000 62%, transparent 100%)",
+        }} />
+        <div className="wrap" style={{ position: "relative", zIndex: 1, paddingTop: "var(--s-16)", paddingBottom: "var(--s-12)" }}>
+          <div className="hero-grid">
+            <div className="hero-copy">
+              <p className="eyebrow" style={{ marginBottom: "var(--s-5)" }}>{t(C.eyebrow, L)}</p>
+              <h1 className="display" style={{ fontSize: "var(--t-hero)", marginBottom: "var(--s-6)" }}>
+                {t(C.h1a, L)}<span className="accent">{t(C.h1accent, L)}</span>
+              </h1>
+              <p className="prose" style={{ fontSize: "1.125rem", marginBottom: "var(--s-8)" }}>{t(C.sub, L)}</p>
+
+              {/* Primary actions + trust stats — gives the first screen a clear CTA */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s-3)", marginBottom: "var(--s-8)" }}>
+                <Link href={`/${L}/learn`} className="btn btn-primary" style={{ fontSize: "1rem", padding: "var(--s-3) var(--s-6)" }}>
+                  {t(C.pathActa, L)} →
+                </Link>
+                <Link href={`/${L}/assess`} className="btn" style={{ fontSize: "1rem", padding: "var(--s-3) var(--s-6)" }}>
+                  {t(C.pathBcta, L)}
+                </Link>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s-6)", borderTop: "1px solid var(--hairline)", paddingTop: "var(--s-5)" }}>
+                {stats.map((s, i) => (
+                  <div key={i}>
+                    <div className="mono" style={{ fontSize: "1.5rem", fontWeight: 700, lineHeight: 1, color: "var(--text)" }}>{s.n}</div>
+                    <div className="eyebrow" style={{ marginTop: 5 }}>{t(s.l, L)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="hero-viz blueprint"><LandingChart locale={L} /></div>
           </div>
-          <div className="hero-viz blueprint"><LandingChart locale={L} /></div>
         </div>
       </section>
 

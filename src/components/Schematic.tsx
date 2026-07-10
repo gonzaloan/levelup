@@ -3,27 +3,78 @@
 // blueprint language. No raster. The content fleet emits a constrained,
 // declarative spec (flow / compare / stack / axes) and this renders it in the
 // track accent. Diagrams are here to clarify one idea, not to decorate.
+import { useEffect, useRef, useState } from "react";
 import { t, type Locale } from "@/i18n/config";
+import { m } from "@/i18n/messages";
 import type { Schematic as SchematicSpec } from "@/lib/types";
 
 export function Schematic({ spec, locale, animate = true }: { spec: SchematicSpec; locale: Locale; animate?: boolean }) {
+  const figRef = useRef<HTMLElement>(null);
+  // `armed` drives the CSS reveal. It is FALSE by default → content is fully
+  // visible with no motion (no-JS / SSR / reduced-motion safe). We only arm it
+  // once the figure scrolls into view (IntersectionObserver), and the CSS is
+  // itself double-gated on prefers-reduced-motion, so motion never hides
+  // below-fold content.
+  const [armed, setArmed] = useState(false);
+  // flow/stack reveal their nodes in sequence; a replay control re-triggers it.
+  const staged = spec && (spec.kind === "flow" || spec.kind === "stack");
+
+  useEffect(() => {
+    if (!animate || !staged) return;
+    const reduce =
+      typeof window !== "undefined" &&
+      !!window.matchMedia &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce) return; // leave everything static + visible
+    const el = figRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") {
+      setArmed(true);
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) {
+            setArmed(true);
+            io.disconnect();
+            break;
+          }
+        }
+      },
+      { threshold: 0.35 },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [animate, staged]);
+
+  // Replay: drop the armed attribute, then re-add it next frame so the CSS
+  // animation restarts from the top.
+  const replay = () => {
+    setArmed(false);
+    requestAnimationFrame(() => requestAnimationFrame(() => setArmed(true)));
+  };
+
   if (!spec || spec.kind === "none") return null;
-  // `animate` adds the reveal class; the actual motion is CSS and is itself
-  // gated on prefers-reduced-motion, so content is always visible by default
-  // and motion only enhances (never hides below-fold content).
   return (
-    <figure className={`schematic blueprint${animate ? " schematic-animate" : ""}`} style={{ margin: 0 }}>
+    <figure ref={figRef} className="schematic blueprint" data-armed={armed ? "true" : undefined} style={{ margin: 0 }}>
       <div className="schematic-body">
         {spec.kind === "flow" && <Flow spec={spec} locale={locale} />}
         {spec.kind === "stack" && <Stack spec={spec} locale={locale} />}
         {spec.kind === "compare" && <Compare spec={spec} locale={locale} />}
         {spec.kind === "axes" && <Axes spec={spec} locale={locale} />}
       </div>
-      {spec.caption && (
-        <figcaption className="eyebrow" style={{ marginTop: "var(--s-3)", textTransform: "none", letterSpacing: 0, color: "var(--text-3)" }}>
-          {t(spec.caption, locale)}
-        </figcaption>
-      )}
+      <div className="schematic-foot">
+        {spec.caption && (
+          <figcaption className="eyebrow" style={{ textTransform: "none", letterSpacing: 0, color: "var(--text-3)" }}>
+            {t(spec.caption, locale)}
+          </figcaption>
+        )}
+        {animate && staged && (
+          <button type="button" className="schematic-replay" onClick={replay} aria-label={m("schematic.replay", locale)}>
+            <span aria-hidden="true">↻</span> {m("schematic.replay", locale)}
+          </button>
+        )}
+      </div>
     </figure>
   );
 }
@@ -39,7 +90,13 @@ function Flow({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
             <span className="schematic-box-label">{t(n.label, locale)}</span>
             {n.note && <span className="schematic-box-note">{t(n.note, locale)}</span>}
           </div>
-          {i < nodes.length - 1 && <span className="schematic-arrow" aria-hidden="true">→</span>}
+          {i < nodes.length - 1 && (
+            <span className="schematic-arrow" aria-hidden="true" style={{ ["--i" as string]: String(i) }}>
+              <span className="schematic-track-line" />
+              <span className="schematic-arrowhead">→</span>
+              <span className="schematic-token" />
+            </span>
+          )}
         </div>
       ))}
     </div>

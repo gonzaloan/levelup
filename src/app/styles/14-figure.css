@@ -1,1 +1,202 @@
-/* 14-figure — filled by build agent */
+/* ═══════════════════════════════════════════════════════════════════════
+   FIGURE ZOOM — an accessible lightbox that enlarges an authored figure
+   (a Schematic diagram or a viz Widget) up to ~92vw × 88vh. Plus the
+   sub-concept card grid and the "remember this" mnemonic callout that the
+   ConceptPane renders after the pitfalls.
+
+   Motion contract: the overlay fades/scales in on `.is-open` and out on
+   `.is-closing`. FigureZoom.handleClose() (non-reduced-motion path) waits for
+   the overlay's `transitionend` before it unmounts + restores focus, so a REAL
+   opacity transition MUST exist on `.figzoom-overlay` or the modal would never
+   close. Under prefers-reduced-motion the component skips the exit animation
+   (unmounts immediately) and we also collapse the transitions here.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Trigger + hint (the inline "enlarge" affordance on the figure) ──────── */
+.figzoom { display: flex; flex-direction: column; gap: var(--s-2); }
+.figzoom-inline { position: relative; }
+/* The enlarge control rides in the figure's top-right corner. It is a real
+   ≥40px tap target (btn-sm sets min-height:0, so we restore a floor here). */
+.figzoom-trigger.btn.btn-sm {
+  position: absolute;
+  top: var(--s-3);
+  right: var(--s-3);
+  z-index: 2;
+  min-height: 40px;
+  gap: var(--s-1);
+  background: color-mix(in oklab, var(--surface-2) 88%, transparent);
+  backdrop-filter: blur(3px);
+  border-color: var(--hairline-2);
+  color: var(--text-2);
+  opacity: 0.72;
+  transition: opacity var(--base) var(--eout), border-color var(--base) var(--eout),
+    color var(--base) var(--eout), transform var(--fast) var(--eout);
+}
+.figzoom-inline:hover .figzoom-trigger.btn.btn-sm,
+.figzoom-trigger.btn.btn-sm:focus-visible { opacity: 1; }
+.figzoom-trigger.btn.btn-sm:hover { border-color: var(--track, var(--gen)); color: var(--text); }
+.figzoom-hint {
+  align-self: flex-end;
+  font-size: 0.625rem;
+  letter-spacing: 0.14em;
+  color: var(--text-4);
+}
+
+/* ── Lightbox overlay (portalled to <body>) ─────────────────────────────── */
+.figzoom-overlay {
+  position: fixed;
+  inset: 0;
+  /* Above the sky (-1/-2), grain (40), nav (50) and reward toast (200). */
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(16px, 4vw, 40px);
+  background: var(--overlay);
+  backdrop-filter: blur(6px);
+  opacity: 0;
+  transition: opacity var(--base) var(--eout);
+}
+.figzoom-overlay.is-open { opacity: 1; }
+.figzoom-overlay.is-closing { opacity: 0; }
+
+.figzoom-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-4);
+  max-width: 92vw;
+  max-height: 88vh;
+  padding: var(--s-6);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--film-2), transparent 40%), var(--surface);
+  box-shadow: var(--shadow-lg), var(--edge-hi);
+  transform: scale(0.96);
+  transition: transform var(--base) var(--ease-out-expo);
+}
+.figzoom-overlay.is-open .figzoom-dialog { transform: scale(1); }
+
+.figzoom-stage {
+  max-width: 88vw;
+  max-height: 74vh;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+}
+/* The enlarged figure fills the stage; keep the aspect intact. */
+.figzoom-stage > * { width: min(88vw, 900px); max-width: 100%; }
+.figzoom-stage svg { width: 100%; height: auto; max-height: 74vh; }
+/* Inside the lightbox the figure's own frame is redundant — flatten it. */
+.figzoom-stage .schematic,
+.figzoom-stage .viz { border: none; background: transparent; padding: 0; }
+
+.figzoom-close {
+  position: absolute;
+  top: calc(-1 * var(--s-3));
+  right: calc(-1 * var(--s-3));
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--hairline-2);
+  background: var(--surface-3);
+  color: var(--text);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: background var(--fast) var(--eout), border-color var(--fast) var(--eout),
+    transform var(--fast) var(--eout);
+}
+.figzoom-close:hover { background: var(--surface-2); border-color: var(--track, var(--gen)); transform: scale(1.05); }
+.figzoom-close:active { transform: scale(1); }
+@media (max-width: 640px) {
+  .figzoom-close { top: var(--s-2); right: var(--s-2); }
+}
+
+.figzoom-cap {
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  line-height: 1.5;
+  text-align: center;
+  max-width: 60ch;
+  color: var(--text-2);
+}
+
+/* Double-gate: honour reduced-motion even though the global reset already
+   near-zeroes durations — keep the panel un-scaled so nothing "pops". */
+@media (prefers-reduced-motion: reduce) {
+  .figzoom-overlay, .figzoom-dialog { transition: none; }
+  .figzoom-dialog, .figzoom-overlay.is-open .figzoom-dialog { transform: none; }
+}
+
+/* ── Pixel skin: hard frame, zero radius, gold inset + drop shadow ──────── */
+[data-theme="pixel"] .figzoom-overlay { background: rgba(20, 12, 28, 0.95); backdrop-filter: none; }
+[data-theme="pixel"] .figzoom-dialog {
+  border: 3px solid var(--db-sand);
+  border-radius: 0;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 2px var(--db-wine), 6px 6px 0 var(--db-shadow);
+}
+[data-theme="pixel"] .figzoom-close {
+  border-radius: 0;
+  border: 3px solid var(--db-gold);
+  background: var(--db-gold);
+  color: var(--db-shadow);
+  box-shadow: 3px 3px 0 var(--db-shadow);
+}
+[data-theme="pixel"] .figzoom-close:hover { transform: translate(1px, 1px); box-shadow: 2px 2px 0 var(--db-shadow); }
+[data-theme="pixel"] .figzoom-trigger.btn.btn-sm { backdrop-filter: none; opacity: 1; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SUB-CONCEPT CARDS + MNEMONIC — enrichment blocks rendered by ConceptPane
+   after the pitfalls (feature-detected: absent on un-enriched concepts).
+   ═══════════════════════════════════════════════════════════════════════ */
+.subcards {
+  margin-top: var(--s-5);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--s-3);
+}
+.subcard {
+  padding: var(--s-3) var(--s-4);
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--track, var(--gen));
+  border-radius: var(--r-sm);
+  background: var(--film-1);
+  transition: border-color var(--base) var(--eout), background var(--base) var(--eout);
+}
+.subcard:hover { border-color: var(--hairline-2); border-left-color: var(--track, var(--gen)); background: var(--film-2); }
+.subcard-label {
+  font-family: var(--font-head);
+  font-weight: 700;
+  font-size: var(--t-sm);
+  color: var(--track-accent, var(--gen-accent));
+  margin: 0;
+}
+.subcard-detail { font-size: var(--t-sm); color: var(--text-2); margin: var(--s-1) 0 0; }
+
+.mnemonic-callout {
+  margin-top: var(--s-5);
+  padding: var(--s-4);
+  border: 1px solid color-mix(in oklab, var(--amber) 32%, var(--hairline));
+  border-radius: var(--r-md);
+  background:
+    radial-gradient(120% 120% at 100% 0%, var(--amber-dim), transparent 60%),
+    var(--film-1);
+}
+.mnemonic-callout .eyebrow { color: var(--amber-accent); display: block; margin-bottom: var(--s-2); }
+.mnemonic-text {
+  font-family: var(--font-display);
+  font-size: var(--t-h3);
+  line-height: 1.25;
+  color: var(--text);
+  margin: 0;
+}
+
+[data-theme="pixel"] .subcard { border-radius: 0; border-width: 2px; border-left-width: 4px; }
+[data-theme="pixel"] .mnemonic-callout { border-radius: 0; border-width: 3px; border-color: var(--db-gold); }
+[data-theme="pixel"] .mnemonic-text { font-family: var(--f-inter), 'Inter', sans-serif; font-weight: 800; font-size: 1.25rem; }

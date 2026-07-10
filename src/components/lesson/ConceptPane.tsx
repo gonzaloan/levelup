@@ -5,6 +5,7 @@ import { useState } from "react";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import { Schematic } from "../Schematic";
+import { FigureZoom } from "../FigureZoom";
 import { getWidget } from "../viz";
 import { para } from "./util";
 import type { Concept, ConceptLesson } from "@/lib/types";
@@ -33,14 +34,19 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
         </p>
       )}
 
-      {/* Interactive widget takes priority; else the inline diagram. */}
+      {/* Interactive widget takes priority; else the inline diagram. Either is
+          wrapped in FigureZoom so a learner can enlarge it in a lightbox. */}
       {Widget ? (
         <div style={{ margin: "var(--s-5) 0" }}>
-          <Widget locale={locale} track={track as "general" | "ai"} params={lessonConcept.visual!.params} />
+          <FigureZoom locale={locale} label={meta ? meta.title : undefined}>
+            <Widget locale={locale} track={track as "general" | "ai"} params={lessonConcept.visual!.params} />
+          </FigureZoom>
         </div>
       ) : lessonConcept.diagram && lessonConcept.diagram.kind !== "none" ? (
         <div style={{ margin: "var(--s-5) 0" }}>
-          <Schematic spec={lessonConcept.diagram} locale={locale} />
+          <FigureZoom locale={locale} label={lessonConcept.diagram.caption ?? (meta ? meta.title : undefined)}>
+            <Schematic spec={lessonConcept.diagram} locale={locale} />
+          </FigureZoom>
         </div>
       ) : null}
 
@@ -65,6 +71,26 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
           </ul>
         </div>
       ) : null}
+
+      {/* Sub-concept cards — a scannable grid of facets of this concept. */}
+      {lessonConcept.children?.length ? (
+        <div className="subcards">
+          {lessonConcept.children.map((c, i) => (
+            <div key={i} className="subcard">
+              <p className="subcard-label">{t(c.label, locale)}</p>
+              <p className="subcard-detail">{t(c.detail, locale)}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Mnemonic — a distinct "remember this" memory hook. */}
+      {lessonConcept.mnemonic && (
+        <div className="mnemonic-callout">
+          <span className="eyebrow">{t({ en: "Remember this", es: "Recuerda esto" }, locale)}</span>
+          <p className="mnemonic-text">{t(lessonConcept.mnemonic, locale)}</p>
+        </div>
+      )}
 
       {(lessonConcept.source || meta?.source) && (
         <p className="eyebrow" style={{ marginTop: "var(--s-4)", fontSize: "0.625rem", color: "var(--text-4)", letterSpacing: "0.08em" }}>

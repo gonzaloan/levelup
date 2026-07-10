@@ -3,20 +3,55 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { m } from "@/i18n/messages";
-import { OTHER_LOCALE, LOCALE_LABEL, type Locale } from "@/i18n/config";
+import { OTHER_LOCALE, LOCALE_LABEL, t, type Locale } from "@/i18n/config";
 import { ThemeToggle } from "./ThemeToggle";
 
-// An authored observatory mark: a small sextant/star reticle. Gives the brand a
-// glyph it didn't have — crosshair + a charted star, in the instrument voice.
+// Authored bilingual screen-reader strings for nav controls. Kept inline (rendered
+// via t()) rather than in the shared message catalog so ES users hear ES announcements
+// without editing a file shared across the fleet. Real Spanish, not machine-translated.
+const A11Y = {
+  switchLang: { en: "Switch language", es: "Cambiar idioma" },
+  openMenu: { en: "Open menu", es: "Abrir menú" },
+  closeMenu: { en: "Close menu", es: "Cerrar menú" },
+} as const;
+
+// An authored observatory mark: a small sextant/star reticle in a framed disc.
+// Gives the brand a glyph it didn't have — crosshair + a charted star, in the
+// instrument voice. If a decorative brand emblem WebP has been generated it is
+// layered on top with an onError fallback; the authored SVG is always the base,
+// so the mark is complete whether or not the art file exists.
 function Mark() {
+  const [hasEmblem, setHasEmblem] = useState(false);
   return (
-    <svg width="22" height="22" viewBox="-11 -11 22 22" aria-hidden="true" style={{ flex: "none" }}>
-      <circle r="9.5" fill="none" stroke="var(--hairline-2)" strokeWidth="1" />
-      <path d="M0,-10 L0,10 M-10,0 L10,0" stroke="var(--hairline-2)" strokeWidth="0.6" opacity="0.7" />
-      <path d="M0,-6 L0,6 M-6,0 L6,0" stroke="var(--gen)" strokeWidth="0.75" opacity="0.5" />
-      <circle cx="3.2" cy="-3.2" r="2.4" fill="var(--gen)" />
-      <circle cx="3.2" cy="-3.2" r="4.6" fill="none" stroke="var(--gen)" strokeWidth="0.5" opacity="0.5" />
-    </svg>
+    <span
+      aria-hidden="true"
+      style={{
+        position: "relative", flex: "none", width: 26, height: 26,
+        display: "grid", placeItems: "center", borderRadius: "var(--r-sm)",
+        border: "1px solid var(--hairline-2)",
+        background: "radial-gradient(120% 120% at 70% 20%, var(--film-2), transparent 60%)",
+        boxShadow: "var(--edge-hi)",
+      }}
+    >
+      <svg width="18" height="18" viewBox="-11 -11 22 22" style={{ display: "block", opacity: hasEmblem ? 0 : 1 }}>
+        <circle r="9.5" fill="none" stroke="var(--hairline-2)" strokeWidth="1" />
+        <path d="M0,-10 L0,10 M-10,0 L10,0" stroke="var(--hairline-2)" strokeWidth="0.6" opacity="0.7" />
+        <path d="M0,-6 L0,6 M-6,0 L6,0" stroke="var(--gen)" strokeWidth="0.75" opacity="0.5" />
+        <circle cx="3.2" cy="-3.2" r="2.4" fill="var(--gen)" />
+        <circle cx="3.2" cy="-3.2" r="4.6" fill="none" stroke="var(--gen)" strokeWidth="0.5" opacity="0.5" />
+      </svg>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/brand/emblem.webp" alt=""
+        onLoad={() => setHasEmblem(true)}
+        onError={(e) => { e.currentTarget.style.display = "none"; }}
+        style={{
+          position: "absolute", inset: 3, width: "calc(100% - 6px)", height: "calc(100% - 6px)",
+          objectFit: "contain", borderRadius: "var(--r-xs)",
+          opacity: hasEmblem ? 1 : 0, transition: "opacity var(--base) var(--eout)",
+        }}
+      />
+    </span>
   );
 }
 
@@ -61,17 +96,18 @@ export function Nav({ locale }: { locale: Locale }) {
         borderBottom: "1px solid var(--hairline)",
       }}
     >
-      <nav className="wrap" style={{ display: "flex", alignItems: "center", gap: "var(--s-5)", height: 60 }}>
-        <Link href={`/${locale}`} style={{ display: "flex", alignItems: "center", gap: 8 }} onClick={() => setOpen(false)}>
+      <nav className="wrap" style={{ display: "flex", alignItems: "center", gap: "var(--s-6)", height: 60 }}>
+        <Link href={`/${locale}`} aria-label="level·up — home"
+          style={{ display: "flex", alignItems: "center", gap: 10 }} onClick={() => setOpen(false)}>
           <Mark />
-          <span style={{ display: "flex", alignItems: "baseline", gap: 5 }}>
-            <span className="display" style={{ fontSize: "1.5rem", lineHeight: 1 }}>level</span>
-            <span className="mono" style={{ color: "var(--gen)", fontSize: "1.1rem" }}>·up</span>
+          <span style={{ display: "flex", alignItems: "baseline", gap: 3 }}>
+            <span className="display" style={{ fontSize: "1.4rem", lineHeight: 1, letterSpacing: "-0.01em" }}>level</span>
+            <span className="mono" style={{ color: "var(--gen)", fontSize: "1.05rem", fontWeight: 700, letterSpacing: "-0.02em" }}>·up</span>
           </span>
         </Link>
 
         {/* Desktop links */}
-        <div className="nav-links-desktop" style={{ display: "flex", gap: "var(--s-5)", marginLeft: "var(--s-4)" }}>
+        <div className="nav-links-desktop" style={{ display: "flex", gap: "var(--s-5)", marginLeft: "var(--s-2)" }}>
           {links.map((l) => (
             <NavLink key={l.href} href={l.href} active={pathname.startsWith(l.href)}>
               {m(l.key, locale)}
@@ -81,24 +117,30 @@ export function Nav({ locale }: { locale: Locale }) {
 
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--s-3)" }}>
           <ThemeToggle labelStudio={m("theme.studio", locale)} labelPixel={m("theme.pixel", locale)} />
-          <Link href={otherHref} className="eyebrow" aria-label="Switch language"
-            style={{ border: "1px solid var(--hairline-2)", borderRadius: "var(--r-xs)", padding: "3px 8px" }}>
+          <Link href={otherHref} className="eyebrow" aria-label={t(A11Y.switchLang, locale)}
+            style={{
+              display: "inline-flex", alignItems: "center", height: 40,
+              border: "1px solid var(--hairline-2)", borderRadius: "var(--r-sm)",
+              padding: "0 10px", color: "var(--text-2)",
+              transition: "color var(--base) var(--eout), border-color var(--base) var(--eout)",
+            }}>
             {LOCALE_LABEL[OTHER_LOCALE[locale]]}
           </Link>
-          <Link href={`/${locale}/learn`} className="btn btn-primary nav-cta-desktop" style={{ padding: "var(--s-2) var(--s-4)" }}>
+          <Link href={`/${locale}/learn`} className="btn btn-primary nav-cta-desktop" style={{ height: 40, padding: "0 var(--s-4)" }}>
             {m("nav.start", locale)}
           </Link>
           {/* Mobile hamburger */}
           <button
             ref={burgerRef}
             className="nav-burger"
-            aria-label={open ? "Close menu" : "Open menu"}
+            aria-label={open ? t(A11Y.closeMenu, locale) : t(A11Y.openMenu, locale)}
             aria-expanded={open}
             aria-controls="nav-sheet"
             onClick={() => setOpen((o) => !o)}
             style={{
               display: "none", background: "none", border: "1px solid var(--hairline-2)",
-              borderRadius: "var(--r-xs)", padding: "6px 8px", cursor: "pointer",
+              borderRadius: "var(--r-sm)", width: 40, height: 40, placeItems: "center",
+              cursor: "pointer",
             }}
           >
             <svg width="18" height="14" viewBox="0 0 18 14" aria-hidden="true">
@@ -121,10 +163,16 @@ export function Nav({ locale }: { locale: Locale }) {
               return (
                 <Link key={l.href} href={l.href} onClick={() => setOpen(false)}
                   style={{
+                    display: "flex", alignItems: "center", gap: "var(--s-3)",
                     fontFamily: "var(--font-head)", fontWeight: 600, fontSize: "1.0625rem",
-                    padding: "var(--s-2) 0",
+                    padding: "var(--s-3) var(--s-3)", borderRadius: "var(--r-sm)",
+                    background: active ? "var(--film-2)" : "transparent",
                     color: active ? "var(--gen)" : "var(--text)",
                   }}>
+                  <span aria-hidden="true" style={{
+                    width: 3, height: "1.1em", borderRadius: 2,
+                    background: active ? "var(--gen)" : "transparent",
+                  }} />
                   {m(l.key, locale)}
                 </Link>
               );

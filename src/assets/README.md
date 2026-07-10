@@ -25,3 +25,22 @@ The authored inline-SVG `BossGlyph` in `BossIntro.tsx` remains as the fallback w
 
 > Source prompts + full-res PNGs are kept under `research/sd-experiment/` (git-ignored working area).
 > Any THIRD-PARTY raster added later must still be CC0 / public domain with its row recorded here.
+
+## Hero / world / brand art
+
+Decorative landing/world/brand key-art, **generated locally** with Stable Diffusion
+(dreamshaperXL Lightning) on the project owner's machine, then downscaled and compressed to WebP
+(hero 1024w, worlds 640×640, emblem 512×512). Treated as **project-owned local art** on the same
+terms as the boss art above (neither claimed as CC0 nor redistributed as such). Full-res source PNGs
++ the generation spec live under `research/sd-gen/` (git-ignored working area).
+
+| file (`public/…`) | what | source | license |
+|------|------|--------|---------|
+| hero/ascent.webp | landing hero — climber ascending a star-chart mountain | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| worlds/technical-depth.webp | world splash — crystalline data-strata cavern | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| worlds/systems-architecture.webp | world splash — blueprint bridge/aqueduct of light | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| worlds/execution-delivery.webp | world splash — launch gantry / shipping port at dawn | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| worlds/direction-influence.webp | world splash — lighthouse guiding distant ships | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| worlds/leveling-scope.webp | world splash — ascending trail with milestone cairns | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| worlds/ai-engineering.webp | world splash — clay-orange neural cathedral, cyan signal | SD dreamshaperXL Lightning (local) | project-owned local generation |
+| brand/emblem.webp | brand emblem — abstract sextant + chevron + star | SD dreamshaperXL Lightning (local) | project-owned local generation |

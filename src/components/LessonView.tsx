@@ -18,10 +18,13 @@ import { checksForLesson } from "@/lib/checks";
 import { ConceptPane } from "./lesson/ConceptPane";
 import { MidQuiz } from "./lesson/MidQuiz";
 import { Practice } from "./lesson/Practice";
+import { FlashcardDeck } from "./lesson/FlashcardDeck";
+import { CheatSheet } from "./lesson/CheatSheet";
+import { ExamRunner } from "./lesson/ExamRunner";
 import { para, lessonLevel, lessonAxisId } from "./lesson/util";
 import type { Lesson, Concept } from "@/lib/types";
 
-type Stage = "learn" | "check" | "practice" | "done";
+type Stage = "learn" | "recall" | "check" | "practice" | "done";
 
 export function LessonView({
   locale, lesson, concepts, checkpointId, nextLesson,
@@ -40,20 +43,30 @@ export function LessonView({
   const [stage, setStage] = useState<Stage>("learn");
   // -1 = overview pane, then 0..n-1 concept panes
   const [idx, setIdx] = useState(-1);
+  // Optional lesson-flow features surfaced from the done/summary stage.
+  const [showCheat, setShowCheat] = useState(false);
+  const [showExam, setShowExam] = useState(false);
 
   const total = lesson.concepts.length;
+  // All authored flashcards across the lesson's concepts — one optional recall
+  // deck. If no concept has any, the recall step simply never appears.
+  const flashcards = lesson.concepts.flatMap((c) => c.flashcards ?? []);
+  const hasCheat = !!lesson.cheatSheet && lesson.cheatSheet.length > 0;
+  const hasExam = lesson.midQuiz.length > 0;
   // Up to 2 formative checks for this lesson (instant feedback, no score).
   const practiceChecks = checksForLesson(lesson.lessonId).slice(0, 2);
-  const afterCheck = () => { setStage(practiceChecks.length ? "practice" : "done"); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const scrollTop = () => window.scrollTo({ top: 0, behavior: "smooth" });
+  const afterCheck = () => { setStage(practiceChecks.length ? "practice" : "done"); scrollTop(); };
 
   function advance() {
     if (idx + 1 < total) {
       setIdx(idx + 1);
       window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
-      // finished reading — mark all concepts read, go to check
+      // finished reading — mark all concepts read, then optionally recall,
+      // otherwise straight to the check.
       markConceptsRead(lesson.concepts.map((c) => c.slug));
-      setStage("check");
+      setStage(flashcards.length ? "recall" : "check");
       window.scrollTo({ top: 0, behavior: "smooth" });
     }
   }
@@ -120,6 +133,11 @@ export function LessonView({
         </div>
       )}
 
+      {stage === "recall" && (
+        <FlashcardDeck locale={locale} cards={flashcards} track={track}
+          onDone={() => { setStage("check"); scrollTop(); }} />
+      )}
+
       {stage === "check" && (
         <MidQuiz locale={locale} items={lesson.midQuiz} track={track} onDone={afterCheck} />
       )}
@@ -140,6 +158,28 @@ export function LessonView({
               </Link>
             )}
           </div>
+          {/* Optional lesson-flow extras: a timed run over the check items and
+              the printable quick-reference sheet. Both feature-detected. */}
+          {(hasExam || hasCheat) && (
+            <div className="lesson-extras" style={{ display: "flex", gap: "var(--s-3)", flexWrap: "wrap" }}>
+              {hasExam && (
+                <button className="btn" aria-expanded={showExam} onClick={() => setShowExam((v) => !v)}>
+                  ◇ {m("exam.title", locale)}
+                </button>
+              )}
+              {hasCheat && (
+                <button className="btn" aria-expanded={showCheat} onClick={() => setShowCheat((v) => !v)}>
+                  ▤ {m("cheat.open", locale)}
+                </button>
+              )}
+            </div>
+          )}
+          {showExam && hasExam && (
+            <ExamRunner locale={locale} items={lesson.midQuiz} track={track} onExit={() => setShowExam(false)} />
+          )}
+          {showCheat && hasCheat && (
+            <CheatSheet locale={locale} sections={lesson.cheatSheet} track={track} />
+          )}
           {nextLesson && (
             <Link href={`/${locale}/lesson/${nextLesson.id}`} className="card card-interactive" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--s-4)" }}>
               <div>
@@ -160,14 +200,14 @@ export function LessonView({
 // the stage machine, so it stays with the view.
 function LessonRail({ stage, idx, total, locale }: { stage: Stage; idx: number; total: number; locale: Locale }) {
   const readCount = stage === "learn" ? Math.max(0, idx + 1) : total;
-  const pct = stage === "done" ? 100 : stage === "practice" ? 95 : stage === "check" ? 90 : Math.round(((idx + 1) / (total + 1)) * 80);
+  const pct = stage === "done" ? 100 : stage === "practice" ? 95 : stage === "check" ? 90 : stage === "recall" ? 85 : Math.round(((idx + 1) / (total + 1)) * 80);
   return (
     <div>
       <div className="meter" style={{ ["--meter-val" as string]: String(pct), ["--meter-accent" as string]: "var(--track)" }} />
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
         <span className="eyebrow">{readCount}/{total} {m("lesson.progress", locale)}</span>
         <span className="eyebrow">
-          {stage === "learn" ? m("lesson.read", locale) : stage === "check" ? m("lesson.check", locale) : m("lesson.finalTest", locale)}
+          {stage === "learn" ? m("lesson.read", locale) : stage === "recall" ? m("flash.title", locale) : stage === "check" ? m("lesson.check", locale) : m("lesson.finalTest", locale)}
         </span>
       </div>
     </div>

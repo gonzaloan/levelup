@@ -1,1 +1,204 @@
-/* 17-flashcards — filled by build agent */
+/* ═══════════════════════════════════════════════════════════════════════
+   17-flashcards — the optional recall step (FlashcardDeck) and the timed exam
+   run (ExamRunner). Both are lesson-flow features that sit inside .card chrome.
+
+   Flip mechanic: a 3D rotateY on the inner face, double-gated on
+   prefers-reduced-motion (which falls back to a plain cross-fade). Content is
+   visible by default — the front face is never opacity:0 without JS, because
+   the deck only mounts client-side anyway, but we keep the static state legible.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* ── Flashcard ────────────────────────────────────────────────────────────*/
+.flashcard {
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  perspective: 1200px;
+  font: inherit;
+  color: inherit;
+  text-align: center;
+}
+.flashcard-inner {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 220px;
+  transform-style: preserve-3d;
+  transition: transform var(--dur-3) var(--ease-spring);
+}
+.flashcard[data-flipped="true"] .flashcard-inner { transform: rotateY(180deg); }
+
+.flashcard-face {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-4);
+  padding: var(--s-8) var(--s-6);
+  border: 1px solid var(--hairline-2);
+  border-radius: var(--r-lg);
+  background: linear-gradient(180deg, var(--film-3), transparent 55%), var(--surface-2);
+  box-shadow: var(--edge-hi);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flashcard-front { border-top: 2px solid var(--track, var(--gen)); }
+.flashcard-back {
+  transform: rotateY(180deg);
+  border-top: 2px solid var(--track-accent, var(--gen-accent));
+  background: linear-gradient(180deg, var(--track-glow, var(--gen-glow)), transparent 60%), var(--surface-3);
+}
+.flashcard-text {
+  font-family: var(--font-head);
+  font-weight: 600;
+  font-size: 1.125rem;
+  line-height: 1.4;
+  color: var(--text);
+  max-width: 52ch;
+}
+.flashcard-back .flashcard-text { font-weight: 500; color: var(--text); }
+.flashcard-hint {
+  color: var(--text-4);
+  font-size: var(--t-xs);
+}
+.flashcard:focus-visible { outline: none; }
+.flashcard:focus-visible .flashcard-face {
+  outline: 2px solid var(--ai-signal);
+  outline-offset: 3px;
+}
+
+/* Self-grade buttons — instrument tint, tap target ≥ 40px. */
+.flashcard-grade { min-height: 42px; }
+.flashcard-grade[data-grade="got"] { border-color: color-mix(in oklab, var(--ok) 55%, var(--hairline-2)); color: var(--ok); }
+.flashcard-grade[data-grade="got"]:hover { border-color: var(--ok); background: var(--ok-bg); }
+.flashcard-grade[data-grade="missed"] { border-color: color-mix(in oklab, var(--warn) 45%, var(--hairline-2)); color: var(--warn); }
+.flashcard-grade[data-grade="missed"]:hover { border-color: var(--warn); background: var(--warn-bg); }
+
+/* Reduced motion: no 3D flip — cross-fade the two faces instead. */
+@media (prefers-reduced-motion: reduce) {
+  .flashcard-inner { transition: none; transform: none !important; }
+  .flashcard-face {
+    backface-visibility: visible;
+    -webkit-backface-visibility: visible;
+    transition: opacity var(--dur-2) var(--eout);
+  }
+  .flashcard-back { transform: none; opacity: 0; pointer-events: none; }
+  .flashcard[data-flipped="true"] .flashcard-front { opacity: 0; pointer-events: none; }
+  .flashcard[data-flipped="true"] .flashcard-back { opacity: 1; pointer-events: auto; }
+}
+
+/* ── Timed exam (ExamRunner) ──────────────────────────────────────────────*/
+.exam { --exam-accent: var(--track, var(--gen)); }
+.exam-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-4);
+  padding-bottom: var(--s-3);
+  border-bottom: 1px solid var(--hairline);
+  flex-wrap: wrap;
+}
+.exam-clock {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  padding: 2px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline-2);
+  background: var(--film-2);
+}
+.exam-clock[data-low="true"] {
+  color: var(--bad);
+  border-color: color-mix(in oklab, var(--bad) 55%, transparent);
+  background: var(--bad-bg);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .exam-clock[data-low="true"] { animation: lu-exam-pulse 1s var(--eout) infinite; }
+}
+@keyframes lu-exam-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
+.exam-review-row {
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+}
+.exam-review-row[data-correct="true"]  { border-left: 3px solid var(--ok); }
+.exam-review-row[data-correct="false"] { border-left: 3px solid var(--bad); }
+
+/* ── Pixel skin (DawnBringer-16) ──────────────────────────────────────────
+   Match the chunky hard-shadow frame every sibling new module (13/16/18)
+   adopts: zero radius, 2-3px borders, 3px 3px 0 db-shadow drop, db-gold /
+   db-* accent tints. Card chrome comes from the global .card pixel rule; here
+   we re-skin the custom surfaces the base .card rule can't reach. */
+[data-theme="pixel"] .flashcard-face {
+  border-radius: 0;
+  border: 2px solid var(--hairline-2);
+  background: var(--db-shadow);
+  box-shadow: 3px 3px 0 var(--db-shadow);
+}
+[data-theme="pixel"] .flashcard-front { border-top: 3px solid var(--db-gold); }
+[data-theme="pixel"] .flashcard-back {
+  border-top: 3px solid var(--db-teal);
+  background: var(--db-navy);
+}
+[data-theme="pixel"] .flashcard-text { color: var(--db-white); }
+[data-theme="pixel"] .flashcard:focus-visible .flashcard-face {
+  outline: 3px solid var(--db-gold);
+  outline-offset: 3px;
+}
+
+[data-theme="pixel"] .flashcard-grade {
+  border-radius: 0;
+  border-width: 2px;
+  box-shadow: 3px 3px 0 var(--db-shadow);
+}
+[data-theme="pixel"] .flashcard-grade[data-grade="got"] {
+  border-color: var(--db-grass);
+  color: var(--db-grass);
+}
+[data-theme="pixel"] .flashcard-grade[data-grade="got"]:hover {
+  background: var(--db-grass);
+  color: var(--db-shadow);
+}
+[data-theme="pixel"] .flashcard-grade[data-grade="missed"] {
+  border-color: var(--db-orange);
+  color: var(--db-orange);
+}
+[data-theme="pixel"] .flashcard-grade[data-grade="missed"]:hover {
+  background: var(--db-orange);
+  color: var(--db-shadow);
+}
+
+[data-theme="pixel"] .exam-bar { border-bottom: 2px solid var(--hairline-2); }
+[data-theme="pixel"] .exam-clock {
+  border-radius: 0;
+  border: 2px solid var(--db-gold);
+  color: var(--db-gold);
+  background: var(--db-shadow);
+  box-shadow: 3px 3px 0 var(--db-shadow);
+}
+[data-theme="pixel"] .exam-clock[data-low="true"] {
+  border-color: var(--db-red);
+  color: var(--db-red);
+  background: var(--db-shadow);
+}
+[data-theme="pixel"] .exam-review-row {
+  border-radius: 0;
+  border: 2px solid var(--hairline-2);
+  background: var(--db-shadow);
+}
+[data-theme="pixel"] .exam-review-row[data-correct="true"]  { border-left: 4px solid var(--db-grass); }
+[data-theme="pixel"] .exam-review-row[data-correct="false"] { border-left: 4px solid var(--db-red); }

@@ -10,6 +10,7 @@ import { MODULES_BY_ID } from "@/content/registry";
 import { AXIS_BY_ID, BAND_RANGE } from "@/lib/axes";
 import { CountUp } from "./Motion";
 import { BadgeShelf } from "./BadgeShelf";
+import { RankLadder } from "./RankLadder";
 
 export function MeView({ locale }: { locale: Locale }) {
   const [p, setP] = useState<Progress | null>(null);
@@ -39,6 +40,10 @@ export function MeView({ locale }: { locale: Locale }) {
           accent="var(--ai)"
         />
       </div>
+
+      {/* Named rank ladder — projects the same Signal shown above onto an
+          ordered set of ranks; does not invent a new score. */}
+      <RankLadder signal={p.signal} locale={locale} />
 
       {/* Placement summary — band chips per axis, or a prompt to take it */}
       {p.assessment ? (
