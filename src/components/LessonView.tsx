@@ -80,14 +80,32 @@ export function LessonView({
   return (
     <div className="wrap lesson-wrap" data-track={track} style={{ paddingTop: "var(--s-10)", paddingBottom: "var(--s-16)" }}>
       <SceneryBackground track={track as "general" | "ai"} />
-      {/* header */}
-      <div style={{ display: "flex", gap: "var(--s-3)", alignItems: "center", marginBottom: "var(--s-3)", flexWrap: "wrap" }}>
-        <span className="level-tag">{level}</span>
-        <span className="eyebrow">{t(axis.name, locale)}</span>
+      {/* header — the domain's world splash (public/worlds/<axis.key>.webp) rides
+          behind the title as a masked, aria-hidden decorative layer, exactly like
+          the landing hero. axis.key matches the filename 1:1; if the file is
+          absent the authored SceneryBackground shows through underneath, so the
+          header always reads as intentional whether or not the art exists. */}
+      <div style={{ position: "relative", overflow: "clip", marginBottom: "var(--s-5)" }}>
+        <div aria-hidden="true" style={{
+          position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none",
+          backgroundImage: `linear-gradient(90deg, var(--bg), transparent 55%), url(/worlds/${axis.key}.webp)`,
+          backgroundRepeat: "no-repeat, no-repeat",
+          backgroundPosition: "center, right center",
+          backgroundSize: "cover, min(52%, 420px) auto",
+          opacity: 0.45,
+          maskImage: "linear-gradient(90deg, transparent 0, #000 42%, #000 82%, transparent 100%)",
+          WebkitMaskImage: "linear-gradient(90deg, transparent 0, #000 42%, #000 82%, transparent 100%)",
+        }} />
+        <div style={{ position: "relative", zIndex: 1 }}>
+          <div style={{ display: "flex", gap: "var(--s-3)", alignItems: "center", marginBottom: "var(--s-3)", flexWrap: "wrap" }}>
+            <span className="level-tag">{level}</span>
+            <span className="eyebrow">{t(axis.name, locale)}</span>
+          </div>
+          <h1 className="display" style={{ fontSize: "var(--t-h1)" }}>
+            {t(axis.name, locale)} · {level}
+          </h1>
+        </div>
       </div>
-      <h1 className="display" style={{ fontSize: "var(--t-h1)", marginBottom: "var(--s-5)" }}>
-        {t(axis.name, locale)} · {level}
-      </h1>
 
       {/* progress rail: overview + one dot per concept + check + test */}
       <LessonRail stage={stage} idx={idx} total={total} locale={locale} />
