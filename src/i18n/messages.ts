@@ -169,6 +169,64 @@ export const MESSAGES = {
   "ach.earnedThis":     { en: "This credential recognizes:", es: "Esta credencial reconoce:" },
   "ach.howEarned":      { en: "How it's earned", es: "Cómo se consigue" },
   "ach.backToProgress": { en: "Back to your progress", es: "Volver a tu progreso" },
+
+  // ── Code view (hover-to-explain, rainbow braces, reveal) ──────────────
+  "code.show":          { en: "Show the code", es: "Mostrar el código" },
+  "code.hide":          { en: "Hide the code", es: "Ocultar el código" },
+  "code.lines":         { en: "lines", es: "líneas" },
+  "code.copy":          { en: "Copy", es: "Copiar" },
+  "code.copied":        { en: "Copied", es: "Copiado" },
+  "code.annotationsHint": { en: "Hover or focus the underlined tokens for an explanation.",
+                            es: "Pasa el cursor o enfoca los términos subrayados para ver la explicación." },
+
+  // ── Figure zoom (accessible lightbox) ─────────────────────────────────
+  "figure.zoom":        { en: "Enlarge diagram", es: "Ampliar diagrama" },
+  "figure.close":       { en: "Close", es: "Cerrar" },
+  "figure.zoomHint":    { en: "Click to enlarge", es: "Clic para ampliar" },
+
+  // ── Animated schematic replay ─────────────────────────────────────────
+  "schematic.replay":   { en: "Replay animation", es: "Repetir animación" },
+  "schematic.play":     { en: "Play", es: "Reproducir" },
+
+  // ── Rank ladder (XP → named rank) ─────────────────────────────────────
+  "rank.title":         { en: "Rank", es: "Rango" },
+  "rank.next":          { en: "Next rank", es: "Siguiente rango" },
+  "rank.toNext":        { en: "signal to next rank", es: "señal para el siguiente rango" },
+  "rank.max":           { en: "Top rank reached", es: "Rango máximo alcanzado" },
+  "rank.current":       { en: "Current rank", es: "Rango actual" },
+
+  // ── Flashcard recall step ─────────────────────────────────────────────
+  "flash.title":        { en: "Recall", es: "Recuerdo" },
+  "flash.intro":        { en: "Try to recall before you flip. Self-graded, no score.",
+                          es: "Intenta recordar antes de girar. Autoevaluado, sin puntaje." },
+  "flash.flip":         { en: "Flip", es: "Girar" },
+  "flash.gotIt":        { en: "I knew it", es: "Lo sabía" },
+  "flash.missed":       { en: "Missed it", es: "No lo sabía" },
+  "flash.next":         { en: "Next card", es: "Siguiente tarjeta" },
+  "flash.done":         { en: "Done recalling", es: "Repaso hecho" },
+  "flash.tapToFlip":    { en: "Tap to reveal", es: "Toca para revelar" },
+  "flash.recalled":     { en: "recalled", es: "recordadas" },
+
+  // ── Cheat sheet / quick reference ─────────────────────────────────────
+  "cheat.title":        { en: "Quick reference", es: "Referencia rápida" },
+  "cheat.intro":        { en: "The revision sheet for this level — everything worth memorizing, on one page.",
+                          es: "La hoja de repaso de este nivel — todo lo que vale la pena memorizar, en una página." },
+  "cheat.open":         { en: "Open quick reference", es: "Abrir referencia rápida" },
+  "cheat.print":        { en: "Print", es: "Imprimir" },
+  "cheat.empty":        { en: "No quick reference for this level yet.", es: "Aún no hay referencia rápida para este nivel." },
+
+  // ── Timed exam simulator ──────────────────────────────────────────────
+  "exam.title":         { en: "Timed exam", es: "Examen cronometrado" },
+  "exam.intro":         { en: "A timed, higher-stakes run. The clock does not stop.",
+                          es: "Una prueba cronometrada de mayor exigencia. El reloj no se detiene." },
+  "exam.begin":         { en: "Begin timed exam", es: "Comenzar examen cronometrado" },
+  "exam.timeLeft":      { en: "Time left", es: "Tiempo restante" },
+  "exam.submit":        { en: "Submit exam", es: "Entregar examen" },
+  "exam.timeUp":        { en: "Time's up", es: "Se acabó el tiempo" },
+  "exam.score":         { en: "Score", es: "Puntaje" },
+  "exam.passed":        { en: "Passed", es: "Aprobado" },
+  "exam.failed":        { en: "Not yet — review and retry", es: "Aún no — repasa e inténtalo de nuevo" },
+  "exam.question":      { en: "Question", es: "Pregunta" },
 } as const;
 
 export type MessageKey = keyof typeof MESSAGES;

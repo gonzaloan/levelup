@@ -171,6 +171,10 @@ export interface ConceptExample { scenario: I18nText; walkthrough: I18nText; }
 // Reference to an interactive widget from the viz kit (src/components/viz).
 export interface ConceptVisual { widgetId: string; params?: Record<string, unknown>; }
 
+// A scannable sub-concept card (get-certified's `children`) — one facet of the
+// concept broken out with its own micro-explanation.
+export interface ConceptChild { label: I18nText; detail: I18nText; }
+
 export interface ConceptLesson {
   slug: string;
   explanation: I18nText;       // authored prose, \n\n-separated paragraphs
@@ -186,6 +190,15 @@ export interface ConceptLesson {
   pitfalls?: I18nText[];       // common traps / "how this goes wrong"
   analogy?: I18nText;          // a plain-language analogy that makes it click
   source?: string;             // checkable citation for enriched claims
+  children?: ConceptChild[];   // scannable sub-concept cards
+  mnemonic?: I18nText;         // a memory hook
+  flashcards?: { front: I18nText; back: I18nText }[]; // recall step (self-graded)
+}
+
+// A structured quick-reference / cheat sheet section for a level.
+export interface CheatSection {
+  heading: I18nText;
+  rows: { term: I18nText; note: I18nText }[];
 }
 export interface QuizItem {
   stem: I18nText;
@@ -196,6 +209,7 @@ export interface Lesson {
   overview: I18nText;          // the general concept, read first
   concepts: ConceptLesson[];
   midQuiz: QuizItem[];
+  cheatSheet?: CheatSection[]; // optional quick-reference for this level
 }
 
 // ── Novel knowledge-check mechanics (beyond multiple-choice) ─────────────
