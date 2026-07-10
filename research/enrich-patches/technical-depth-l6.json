@@ -1,0 +1,558 @@
+{
+  "lessonId": "technical-depth-l6",
+  "cheatSheet": [
+    {
+      "heading": {
+        "en": "Consistency & tradeoff frameworks",
+        "es": "Marcos de consistencia y compensaciones"
+      },
+      "rows": [
+        {
+          "term": { "en": "PACELC", "es": "PACELC" },
+          "note": {
+            "en": "If Partition -> Availability vs Consistency; Else -> Latency vs Consistency. Consistency taxes EVERY request, not just partitions.",
+            "es": "Si hay Partición -> Disponibilidad vs Consistencia; Si no (Else) -> Latencia vs Consistencia. La consistencia grava CADA petición, no solo las particiones."
+          }
+        },
+        {
+          "term": { "en": "Datastore classes", "es": "Clases de almacén" },
+          "note": {
+            "en": "DynamoDB/Cassandra = PA/EL (available + low latency, eventual). Spanner = PC/EC (refuses stale data, pays commit-wait latency).",
+            "es": "DynamoDB/Cassandra = PA/EL (disponible + baja latencia, eventual). Spanner = PC/EC (rechaza datos obsoletos, paga latencia de commit-wait)."
+          }
+        },
+        {
+          "term": { "en": "Linearizability", "es": "Linealizabilidad" },
+          "note": {
+            "en": "Recency of a SINGLE object: a read sees the latest write in real-time order. Orthogonal to serializability.",
+            "es": "Actualidad de UN objeto: una lectura ve la última escritura en orden de tiempo real. Ortogonal a la serializabilidad."
+          }
+        },
+        {
+          "term": { "en": "Serializability", "es": "Serializabilidad" },
+          "note": {
+            "en": "Concurrent multi-object transactions behave as if run one at a time. Says nothing about recency.",
+            "es": "Las transacciones concurrentes multi-objeto se comportan como si se ejecutaran de a una. No dice nada sobre actualidad."
+          }
+        },
+        {
+          "term": { "en": "Strict serializable", "es": "Serializable estricto" },
+          "note": {
+            "en": "Both axes at once: real-time total order of transactions. Strongest and most expensive (Spanner target).",
+            "es": "Ambos ejes a la vez: orden total en tiempo real de las transacciones. El más fuerte y costoso (objetivo de Spanner)."
+          }
+        },
+        {
+          "term": { "en": "Model per requirement", "es": "Modelo por requisito" },
+          "note": {
+            "en": "Causal for chat, eventual for counters, serializable/strict for money. Name the exact model, never say just 'strong'.",
+            "es": "Causal para chat, eventual para contadores, serializable/estricto para dinero. Nombra el modelo exacto, nunca digas solo 'fuerte'."
+          }
+        }
+      ]
+    },
+    {
+      "heading": {
+        "en": "Agreement & delivery",
+        "es": "Acuerdo y entrega"
+      },
+      "rows": [
+        {
+          "term": { "en": "Exactly-once", "es": "Exactamente una vez" },
+          "note": {
+            "en": "Delivery is impossible. Achieve exactly-once EFFECT = at-least-once delivery + idempotent dedup key.",
+            "es": "La entrega es imposible. Se logra el EFECTO de exactamente una vez = entrega al menos una vez + clave de deduplicación idempotente."
+          }
+        },
+        {
+          "term": { "en": "Dedup key first", "es": "Clave de dedup primero" },
+          "note": {
+            "en": "Design the idempotency key / txn ID / offset BEFORE the retry. Stripe requires Idempotency-Key on charges.",
+            "es": "Diseña la clave de idempotencia / ID de transacción / offset ANTES del reintento. Stripe exige Idempotency-Key en los cobros."
+          }
+        },
+        {
+          "term": { "en": "Consensus", "es": "Consenso" },
+          "note": {
+            "en": "Raft/Paxos only for one agreed total order that survives failure: leader election, replicated log. Majority per decision.",
+            "es": "Raft/Paxos solo para un orden total acordado que sobrevive fallos: elección de líder, log replicado. Mayoría por decisión."
+          }
+        },
+        {
+          "term": { "en": "Quorum R+W>N", "es": "Quórum R+W>N" },
+          "note": {
+            "en": "Durability + availability without a leader, but NO total order. Fine for KV/cart; wrong where ordering matters.",
+            "es": "Durabilidad + disponibilidad sin líder, pero SIN orden total. Sirve para KV/carrito; incorrecto donde importa el orden."
+          }
+        },
+        {
+          "term": { "en": "2PC", "es": "2PC" },
+          "note": {
+            "en": "Atomic commit across participants, but BLOCKS if coordinator dies after prepare. Only span shards with a consensus-backed coordinator.",
+            "es": "Commit atómico entre participantes, pero se BLOQUEA si el coordinador muere tras el prepare. Cruza shards solo con un coordinador respaldado por consenso."
+          }
+        }
+      ]
+    },
+    {
+      "heading": {
+        "en": "Failure modes & overload",
+        "es": "Modos de fallo y sobrecarga"
+      },
+      "rows": [
+        {
+          "term": { "en": "Wall clocks lie", "es": "Los relojes de pared mienten" },
+          "note": {
+            "en": "Drift, NTP jumps, leap seconds. Never order events or expire leases by comparing wall clocks across machines.",
+            "es": "Deriva, saltos de NTP, segundos intercalares. Nunca ordenes eventos ni expires arrendamientos comparando relojes de pared entre máquinas."
+          }
+        },
+        {
+          "term": { "en": "Clock types", "es": "Tipos de reloj" },
+          "note": {
+            "en": "Logical clocks (Lamport, version vectors) for causality; monotonic for elapsed time on one machine.",
+            "es": "Relojes lógicos (Lamport, vectores de versión) para causalidad; monotónico para tiempo transcurrido en una máquina."
+          }
+        },
+        {
+          "term": { "en": "Dead is unknowable", "es": "Muerto es indeterminable" },
+          "note": {
+            "en": "GC pause, descheduled VM, and partition all look like death — then wake mid-write. Never trust a heartbeat alone.",
+            "es": "Pausa de GC, VM desprogramada y partición parecen muerte, y luego despiertan a media escritura. Nunca confíes solo en un heartbeat."
+          }
+        },
+        {
+          "term": { "en": "Split-brain defenses", "es": "Defensas anti split-brain" },
+          "note": {
+            "en": "Fencing tokens (monotonic, checked by storage), leases with expiry, quorum majorities.",
+            "es": "Tokens de fencing (monotónicos, verificados por el almacenamiento), arrendamientos con expiración, mayorías de quórum."
+          }
+        },
+        {
+          "term": { "en": "Unbounded queue", "es": "Cola sin límite" },
+          "note": {
+            "en": "The core collapse: overload -> latency -> timeouts -> retries -> more overload. Bound every queue and thread pool.",
+            "es": "El colapso central: sobrecarga -> latencia -> timeouts -> reintentos -> más sobrecarga. Acota toda cola y pool de hilos."
+          }
+        },
+        {
+          "term": { "en": "Shed early", "es": "Descarta temprano" },
+          "note": {
+            "en": "Reject fast (429/503) so accepted work meets its deadline. Deadlines + jittered backoff + retry budget + circuit breakers.",
+            "es": "Rechaza rápido (429/503) para que el trabajo aceptado cumpla su plazo. Plazos + backoff con jitter + presupuesto de reintentos + cortacircuitos."
+          }
+        }
+      ]
+    }
+  ],
+  "concepts": {
+    "pacelc-tradeoffs": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "What does the 'ELC' part of PACELC add that CAP misses?",
+            "es": "¿Qué añade la parte 'ELC' de PACELC que CAP omite?"
+          },
+          "back": {
+            "en": "Else (no partition, the normal case) you still trade Latency vs Consistency on every request — CAP only describes the rare partition.",
+            "es": "Si no hay partición (Else, el caso normal) igual intercambias Latencia vs Consistencia en cada petición; CAP solo describe la partición, que es rara."
+          }
+        },
+        {
+          "front": {
+            "en": "Why does consistency physically cost latency?",
+            "es": "¿Por qué la consistencia cuesta latencia físicamente?"
+          },
+          "back": {
+            "en": "A consistent write must wait for other replicas to acknowledge (quorum, sync replication, consensus round); skipping the wait is fast but risks a stale read elsewhere.",
+            "es": "Una escritura consistente debe esperar el acuse de otras réplicas (quórum, replicación síncrona, ronda de consenso); saltarse la espera es rápido pero arriesga una lectura obsoleta en otro lugar."
+          }
+        },
+        {
+          "front": {
+            "en": "Classify DynamoDB/Cassandra and Spanner in PACELC.",
+            "es": "Clasifica DynamoDB/Cassandra y Spanner en PACELC."
+          },
+          "back": {
+            "en": "DynamoDB/Cassandra = PA/EL (available, low-latency, eventual). Spanner = PC/EC (refuses stale data, pays TrueTime commit-wait).",
+            "es": "DynamoDB/Cassandra = PA/EL (disponible, baja latencia, eventual). Spanner = PC/EC (rechaza datos obsoletos, paga el commit-wait de TrueTime)."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "Partition branch (A/C)", "es": "Rama de partición (A/C)" },
+          "detail": {
+            "en": "During a partition you choose availability (serve possibly stale) or consistency (reject writes) — the classic CAP dilemma.",
+            "es": "Durante una partición eliges disponibilidad (servir datos posiblemente obsoletos) o consistencia (rechazar escrituras): el dilema clásico de CAP."
+          }
+        },
+        {
+          "label": { "en": "Else branch (L/C)", "es": "Rama Else (L/C)" },
+          "detail": {
+            "en": "In the healthy state you still pay: stronger consistency means waiting for replicas, so higher latency on every request.",
+            "es": "En estado sano igual pagas: más consistencia implica esperar a las réplicas, por lo que más latencia en cada petición."
+          }
+        },
+        {
+          "label": { "en": "No 'better' choice", "es": "No hay opción 'mejor'" },
+          "detail": {
+            "en": "PA/EL and PC/EC are legitimate designs for different needs; the failure is choosing implicitly instead of on purpose.",
+            "es": "PA/EL y PC/EC son diseños legítimos para necesidades distintas; el error es elegir de forma implícita en vez de a propósito."
+          }
+        },
+        {
+          "label": { "en": "State it in the design doc", "es": "Decláralo en el design doc" },
+          "detail": {
+            "en": "A quorum read (R+W>N) in a checkout flow is an EC choice that buys latency — write it down so nobody is surprised by p99.",
+            "es": "Una lectura por quórum (R+W>N) en un flujo de checkout es una decisión EC que compra latencia; escríbelo para que nadie se sorprenda con el p99."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "PAC-ELC: during Partition pick A or C, Else (normally) pick L or C — consistency always bills you.",
+        "es": "PAC-ELC: en Partición elige A o C; si no (Else, lo normal) elige L o C; la consistencia siempre te pasa factura."
+      }
+    },
+    "consistency-model-spectrum": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Linearizability and serializability are not one scale — what does each axis actually govern?",
+            "es": "Linealizabilidad y serializabilidad no son una sola escala: ¿qué gobierna cada eje?"
+          },
+          "back": {
+            "en": "Linearizability = recency/real-time order of a single object's reads. Serializability = ordering of concurrent multi-object transactions. Orthogonal.",
+            "es": "Linealizabilidad = actualidad/orden en tiempo real de las lecturas de un solo objeto. Serializabilidad = orden de transacciones concurrentes multi-objeto. Ortogonales."
+          }
+        },
+        {
+          "front": {
+            "en": "How can Postgres serializable-snapshot isolation be serializable yet not linearizable?",
+            "es": "¿Cómo puede el aislamiento serializable por snapshot de Postgres ser serializable y a la vez no linealizable?"
+          },
+          "back": {
+            "en": "It gives a correct transaction order, but a read can come from a consistent snapshot slightly in the past — correct ordering, not most-recent value.",
+            "es": "Da un orden de transacciones correcto, pero una lectura puede venir de un snapshot consistente ligeramente en el pasado: orden correcto, no el valor más reciente."
+          }
+        },
+        {
+          "front": {
+            "en": "Which consistency model does a group chat need, and why not eventual?",
+            "es": "¿Qué modelo de consistencia necesita un chat grupal, y por qué no eventual?"
+          },
+          "back": {
+            "en": "Causal consistency: a reply must never appear before the message it answers, though unrelated messages may reorder. Cheap and available.",
+            "es": "Consistencia causal: una respuesta nunca debe aparecer antes del mensaje que responde, aunque mensajes no relacionados puedan reordenarse. Barata y disponible."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "Recency axis", "es": "Eje de actualidad" },
+          "detail": {
+            "en": "Linearizability: a single register always returns the latest committed value in real-time order; no transactions required.",
+            "es": "Linealizabilidad: un registro único siempre devuelve el último valor confirmado en orden de tiempo real; no requiere transacciones."
+          }
+        },
+        {
+          "label": { "en": "Isolation axis", "es": "Eje de aislamiento" },
+          "detail": {
+            "en": "Serializability: concurrent multi-object transactions produce some equivalent serial order, regardless of recency.",
+            "es": "Serializabilidad: las transacciones concurrentes multi-objeto producen algún orden serial equivalente, sin importar la actualidad."
+          }
+        },
+        {
+          "label": { "en": "Strict serializable", "es": "Serializable estricto" },
+          "detail": {
+            "en": "Both axes combined — a real-time total order of transactions — is the strongest and most expensive model (Spanner aims here).",
+            "es": "Ambos ejes combinados —un orden total en tiempo real de transacciones— es el modelo más fuerte y costoso (objetivo de Spanner)."
+          }
+        },
+        {
+          "label": { "en": "Match model to need", "es": "Ajusta el modelo a la necesidad" },
+          "detail": {
+            "en": "Causal for chat, eventual for a follower count, serializable/strict for moving money; picking too weak builds fast-but-wrong systems.",
+            "es": "Causal para chat, eventual para un contador de seguidores, serializable/estricto para mover dinero; elegir algo demasiado débil crea sistemas rápidos pero incorrectos."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "Linear = latest (one object); Serial = order (many objects); Strict = both.",
+        "es": "Lineal = lo último (un objeto); Serial = orden (muchos objetos); Estricto = ambos."
+      }
+    },
+    "delivery-semantics-idempotency": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Why is exactly-once DELIVERY impossible on a real network?",
+            "es": "¿Por qué es imposible la ENTREGA exactamente una vez en una red real?"
+          },
+          "back": {
+            "en": "The network can lose the message or the ack, and the sender can't tell which, so it must retry — and retries create duplicates.",
+            "es": "La red puede perder el mensaje o el acuse, y el emisor no puede distinguir cuál, así que debe reintentar, y los reintentos crean duplicados."
+          }
+        },
+        {
+          "front": {
+            "en": "What is the honest recipe for exactly-once EFFECT?",
+            "es": "¿Cuál es la receta honesta para el EFECTO de exactamente una vez?"
+          },
+          "back": {
+            "en": "At-least-once delivery + idempotent processing keyed by a stable dedup key; the consumer records applied keys and makes a repeat a no-op.",
+            "es": "Entrega al menos una vez + procesamiento idempotente indexado por una clave de deduplicación estable; el consumidor registra las claves aplicadas y convierte una repetición en un no-op."
+          }
+        },
+        {
+          "front": {
+            "en": "What breaks with POST /charge and no idempotency key?",
+            "es": "¿Qué falla con POST /charge sin clave de idempotencia?"
+          },
+          "back": {
+            "en": "The client times out, retries, and you charge the customer twice — which is why Stripe requires an Idempotency-Key header.",
+            "es": "El cliente sufre timeout, reintenta y cobras al cliente dos veces, por eso Stripe exige un encabezado Idempotency-Key."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "The three semantics", "es": "Las tres semánticas" },
+          "detail": {
+            "en": "At-most-once (may lose), at-least-once (may duplicate), exactly-once (unachievable as delivery) — pick at-least-once + dedup.",
+            "es": "Como máximo una vez (puede perder), al menos una vez (puede duplicar), exactamente una vez (inalcanzable como entrega): elige al menos una vez + dedup."
+          }
+        },
+        {
+          "label": { "en": "Retries cut both ways", "es": "Los reintentos cortan por ambos lados" },
+          "detail": {
+            "en": "Retrying is how you buy reliability and also how you create duplicates — you cannot have one without accepting the other.",
+            "es": "Reintentar es como compras confiabilidad y también como creas duplicados: no puedes tener lo uno sin aceptar lo otro."
+          }
+        },
+        {
+          "label": { "en": "Design the dedup key first", "es": "Diseña la clave de dedup primero" },
+          "detail": {
+            "en": "Choose the idempotency key / txn ID / offset before the retry logic — the retry is the easy part.",
+            "es": "Elige la clave de idempotencia / ID de transacción / offset antes de la lógica de reintento; el reintento es la parte fácil."
+          }
+        },
+        {
+          "label": { "en": "Kafka 'exactly-once'", "es": "'Exactamente una vez' de Kafka" },
+          "detail": {
+            "en": "It's a producer sequence number plus transactional offset commits — at-least-once with dedup underneath, not magic.",
+            "es": "Es un número de secuencia del productor más commits de offset transaccionales: al menos una vez con dedup por debajo, no magia."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "At-least-once + idempotent key = exactly-once effect. Key before retry.",
+        "es": "Al menos una vez + clave idempotente = efecto de exactamente una vez. La clave antes del reintento."
+      }
+    },
+    "consensus-and-atomic-commit": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "When do you TRULY need consensus (Raft/Paxos)?",
+            "es": "¿Cuándo necesitas VERDADERAMENTE consenso (Raft/Paxos)?"
+          },
+          "back": {
+            "en": "Only when nodes must agree on one total order that survives failure: electing exactly one leader or appending to a replicated log — that order prevents split-brain.",
+            "es": "Solo cuando los nodos deben acordar un orden total que sobrevive fallos: elegir exactamente un líder o anexar a un log replicado; ese orden previene el split-brain."
+          }
+        },
+        {
+          "front": {
+            "en": "What does a Dynamo-style quorum (R+W>N) give you and what does it NOT?",
+            "es": "¿Qué te da un quórum estilo Dynamo (R+W>N) y qué NO?"
+          },
+          "back": {
+            "en": "It gives durability and availability without a leader, but NOT a total order — fine for KV/cart with LWW or CRDT, wrong where ordering matters.",
+            "es": "Da durabilidad y disponibilidad sin líder, pero NO un orden total; sirve para KV/carrito con LWW o CRDT, e incorrecto donde importa el orden."
+          }
+        },
+        {
+          "front": {
+            "en": "Why is 2PC a blocking protocol, and how do modern systems mitigate it?",
+            "es": "¿Por qué 2PC es un protocolo bloqueante y cómo lo mitigan los sistemas modernos?"
+          },
+          "back": {
+            "en": "If the coordinator dies after 'prepare', participants hold locks and wait indefinitely; fix by backing the coordinator with consensus (Spanner runs Paxos under 2PC) or avoiding cross-shard txns.",
+            "es": "Si el coordinador muere tras el 'prepare', los participantes retienen bloqueos y esperan indefinidamente; se arregla respaldando al coordinador con consenso (Spanner corre Paxos bajo 2PC) o evitando transacciones entre shards."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "Consensus = order + leader", "es": "Consenso = orden + líder" },
+          "detail": {
+            "en": "Majority agreement over multiple round-trips buys a single total order and one leader — expensive, so use it only when order must survive failure.",
+            "es": "El acuerdo de la mayoría en varias rondas compra un único orden total y un líder; es costoso, úsalo solo cuando el orden deba sobrevivir a fallos."
+          }
+        },
+        {
+          "label": { "en": "Single-leader shortcut", "es": "Atajo de líder único" },
+          "detail": {
+            "en": "A single-leader DB with async followers gives a total order for free (the leader) — no consensus per write, just careful failover.",
+            "es": "Una BD de líder único con seguidores asíncronos da un orden total gratis (el líder): sin consenso por escritura, solo un failover cuidadoso."
+          }
+        },
+        {
+          "label": { "en": "Quorum for durable+available", "es": "Quórum para durable+disponible" },
+          "detail": {
+            "en": "R+W>N overlaps read and write sets for durability and availability without electing a leader — but gives no ordering guarantee.",
+            "es": "R+W>N solapa los conjuntos de lectura y escritura para durabilidad y disponibilidad sin elegir líder, pero no garantiza orden."
+          }
+        },
+        {
+          "label": { "en": "Atomic commit ≠ consensus", "es": "Commit atómico ≠ consenso" },
+          "detail": {
+            "en": "2PC ensures all-or-nothing across participants but blocks on coordinator failure; only span shards with a fault-tolerant, consensus-backed coordinator.",
+            "es": "2PC asegura todo-o-nada entre participantes pero se bloquea si falla el coordinador; cruza shards solo con un coordinador tolerante a fallos y respaldado por consenso."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "Consensus for who-leads and what-order; quorum for durable-and-available; 2PC only across shards, only fault-tolerant.",
+        "es": "Consenso para quién-lidera y qué-orden; quórum para durable-y-disponible; 2PC solo entre shards y solo tolerante a fallos."
+      }
+    },
+    "distributed-failure-modes": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Why is 'last write wins by wall-clock timestamp' dangerous across machines?",
+            "es": "¿Por qué es peligroso 'gana la última escritura por timestamp de reloj de pared' entre máquinas?"
+          },
+          "back": {
+            "en": "Wall clocks drift, get corrected by NTP forward/backward, and can go backwards on a leap second — so LWW can silently drop the newer write when a clock is ahead.",
+            "es": "Los relojes de pared derivan, se corrigen con NTP hacia adelante/atrás y pueden retroceder en un segundo intercalar, así que LWW puede descartar en silencio la escritura más nueva cuando un reloj va adelantado."
+          }
+        },
+        {
+          "front": {
+            "en": "Why can't you tell from outside whether a node is dead?",
+            "es": "¿Por qué no puedes saber desde afuera si un nodo está muerto?"
+          },
+          "back": {
+            "en": "A long GC pause, a descheduled VM, or a partition look identical to death — and then the node wakes up, possibly mid-write.",
+            "es": "Una pausa larga de GC, una VM desprogramada o una partición se ven idénticas a la muerte, y luego el nodo despierta, posiblemente a media escritura."
+          }
+        },
+        {
+          "front": {
+            "en": "How does a fencing token stop a resurrected old leader?",
+            "es": "¿Cómo detiene un token de fencing a un antiguo líder resucitado?"
+          },
+          "back": {
+            "en": "It's a monotonically increasing number the storage layer checks; the old leader's stale (lower) token is rejected, so its late writes never apply.",
+            "es": "Es un número monotónicamente creciente que el almacenamiento verifica; el token obsoleto (menor) del viejo líder se rechaza, así sus escrituras tardías nunca se aplican."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "Clocks are untrustworthy", "es": "Los relojes no son de fiar" },
+          "detail": {
+            "en": "Use logical clocks (Lamport, version vectors) for causality and monotonic clocks for elapsed time on one machine — never cross-machine wall-clock ordering.",
+            "es": "Usa relojes lógicos (Lamport, vectores de versión) para causalidad y relojes monotónicos para tiempo transcurrido en una máquina; nunca ordenes por reloj de pared entre máquinas."
+          }
+        },
+        {
+          "label": { "en": "TrueTime exception", "es": "La excepción de TrueTime" },
+          "detail": {
+            "en": "Spanner orders by timestamp only because TrueTime exposes clock uncertainty and commit-waits it out — it doesn't pretend clocks are exact.",
+            "es": "Spanner ordena por timestamp solo porque TrueTime expone la incertidumbre del reloj y la espera con commit-wait; no finge que los relojes sean exactos."
+          }
+        },
+        {
+          "label": { "en": "Death is indistinguishable", "es": "La muerte es indistinguible" },
+          "detail": {
+            "en": "Assume every 'dead' node might come back mid-write; a heartbeat timeout only tells you a node is unreachable, not gone.",
+            "es": "Asume que cada nodo 'muerto' puede volver a media escritura; un timeout de heartbeat solo indica que un nodo es inalcanzable, no que desapareció."
+          }
+        },
+        {
+          "label": { "en": "Split-brain defenses", "es": "Defensas contra split-brain" },
+          "detail": {
+            "en": "Combine fencing tokens, leases with expiry, and quorum majorities so a minority side or a stale leader can't act alone.",
+            "es": "Combina tokens de fencing, arrendamientos con expiración y mayorías de quórum para que un lado minoritario o un líder obsoleto no actúen solos."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "Two lies of distributed systems: 'the clock is right' and 'the node is dead.' Fence, lease, quorum.",
+        "es": "Dos mentiras de los sistemas distribuidos: 'el reloj es correcto' y 'el nodo está muerto'. Fencing, arrendamiento, quórum."
+      }
+    },
+    "backpressure-flow-control": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Trace the cascading-failure loop that starts with an unbounded queue.",
+            "es": "Traza el bucle de fallo en cascada que empieza con una cola sin límite."
+          },
+          "back": {
+            "en": "Overload -> queue grows -> latency climbs -> clients time out and retry -> retries add MORE load -> queue grows faster -> total unavailability.",
+            "es": "Sobrecarga -> la cola crece -> la latencia sube -> los clientes hacen timeout y reintentan -> los reintentos añaden MÁS carga -> la cola crece más rápido -> indisponibilidad total."
+          }
+        },
+        {
+          "front": {
+            "en": "Backpressure vs load shedding — what's the difference?",
+            "es": "Backpressure vs descarte de carga (load shedding): ¿cuál es la diferencia?"
+          },
+          "back": {
+            "en": "Backpressure signals 'slow down' up the chain (bounded queues rejecting when full, demand signals); load shedding deliberately rejects/degrades over-capacity requests fast (429/503).",
+            "es": "El backpressure señala 'más despacio' hacia arriba (colas acotadas que rechazan al llenarse, señales de demanda); el descarte de carga rechaza/degrada rápido las peticiones fuera de capacidad (429/503)."
+          }
+        },
+        {
+          "front": {
+            "en": "Why shed load early instead of accepting everything?",
+            "es": "¿Por qué descartar carga temprano en vez de aceptar todo?"
+          },
+          "back": {
+            "en": "Rejecting cheaply at the front door lets accepted requests meet their deadline; a half-served request that times out is wasted work that helped no one.",
+            "es": "Rechazar barato en la puerta permite que las peticiones aceptadas cumplan su plazo; una petición servida a medias que hace timeout es trabajo desperdiciado que no ayudó a nadie."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "Bound everything", "es": "Acota todo" },
+          "detail": {
+            "en": "Bound every queue and thread pool so work can't pile up without limit — the unbounded queue is the root of the collapse.",
+            "es": "Acota toda cola y pool de hilos para que el trabajo no se acumule sin límite; la cola sin límite es la raíz del colapso."
+          }
+        },
+        {
+          "label": { "en": "Propagate deadlines", "es": "Propaga los plazos" },
+          "detail": {
+            "en": "Put deadlines on requests and pass them downstream so work for a client who already gave up is cancelled.",
+            "es": "Pon plazos a las peticiones y propágalos aguas abajo para cancelar el trabajo de un cliente que ya se rindió."
+          }
+        },
+        {
+          "label": { "en": "Backoff + retry budget", "es": "Backoff + presupuesto de reintentos" },
+          "detail": {
+            "en": "Use exponential backoff WITH jitter to avoid synchronized thundering herds, cap retries, and hold a retry budget (e.g. <=10% of requests).",
+            "es": "Usa backoff exponencial CON jitter para evitar estampidas sincronizadas, limita los reintentos y mantén un presupuesto (p. ej. <=10% de las peticiones)."
+          }
+        },
+        {
+          "label": { "en": "Circuit breakers", "es": "Cortacircuitos" },
+          "detail": {
+            "en": "Trip a breaker so a failing dependency stops receiving traffic instead of dragging the whole system down — degrade gracefully by design.",
+            "es": "Dispara un cortacircuito para que una dependencia que falla deje de recibir tráfico en vez de arrastrar a todo el sistema; degrada con gracia por diseño."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "Bound, deadline, jitter, budget, break — graceful degradation beats total failure.",
+        "es": "Acotar, plazo, jitter, presupuesto, cortar: la degradación con gracia vence al fallo total."
+      }
+    }
+  }
+}

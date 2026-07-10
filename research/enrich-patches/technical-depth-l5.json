@@ -1,0 +1,724 @@
+{
+  "lessonId": "technical-depth-l5",
+  "cheatSheet": [
+    {
+      "heading": {
+        "en": "Durability & storage engines",
+        "es": "Durabilidad y motores de almacenamiento"
+      },
+      "rows": [
+        {
+          "term": { "en": "Durable write", "es": "Escritura durable" },
+          "note": {
+            "en": "Not when write() returns — only when the WAL is fsynced to stable storage. fsync forces OS page-cache bytes down to the physical device.",
+            "es": "No cuando write() retorna, sino cuando el WAL se ha hecho fsync a almacenamiento estable. fsync fuerza los bytes de la caché de página del SO al dispositivo físico."
+          }
+        },
+        {
+          "term": { "en": "WAL (redo log)", "es": "WAL (log de redo)" },
+          "note": {
+            "en": "Source of truth. Append + fsync before touching B-tree pages; crash recovery replays it from the last checkpoint.",
+            "es": "La fuente de verdad. Se hace append + fsync antes de tocar las páginas del B-tree; la recuperación tras caída lo reproduce desde el último checkpoint."
+          }
+        },
+        {
+          "term": { "en": "fsync=off / async commit", "es": "fsync=off / commit asíncrono" },
+          "note": {
+            "en": "Trades the D in ACID for throughput. Valid only when deliberate — never let it be an accident.",
+            "es": "Cambia la D de ACID por rendimiento. Válido solo si es deliberado; nunca dejes que sea un accidente."
+          }
+        },
+        {
+          "term": { "en": "Three amplifications", "es": "Las tres amplificaciones" },
+          "note": {
+            "en": "Read (extra reads/query), write (extra physical writes/logical write), space (extra disk/logical byte). Every engine picks which to pay.",
+            "es": "Lectura (lecturas extra por consulta), escritura (escrituras físicas extra por escritura lógica), espacio (disco extra por byte lógico). Cada motor elige cuál pagar."
+          }
+        },
+        {
+          "term": { "en": "LSM-tree", "es": "Árbol LSM" },
+          "note": {
+            "en": "Write-optimized: buffer in memory, flush sequential SSTables, compact later. Higher read amp + compaction tail-latency risk. RocksDB, Cassandra.",
+            "es": "Optimizado para escritura: acumula en memoria, vuelca SSTables secuenciales y compacta después. Mayor amplificación de lectura y riesgo de latencia de cola por compactación. RocksDB, Cassandra."
+          }
+        },
+        {
+          "term": { "en": "B-tree", "es": "Árbol B" },
+          "note": {
+            "en": "Read-optimized: in-place page updates protected by WAL, predictable p99, range scans. Higher write amp (8KB page rewrites, splits). Postgres, InnoDB.",
+            "es": "Optimizado para lectura: actualización de páginas en el sitio protegida por WAL, p99 predecible, barridos por rango. Mayor amplificación de escritura (reescritura de páginas de 8KB, divisiones). Postgres, InnoDB."
+          }
+        }
+      ]
+    },
+    {
+      "heading": {
+        "en": "Distributed data: replication, partitioning, consistency",
+        "es": "Datos distribuidos: replicación, particionado, consistencia"
+      },
+      "rows": [
+        {
+          "term": { "en": "Single-leader", "es": "Líder único" },
+          "note": {
+            "en": "The right default. No write conflicts (one place orders writes). Cost: replica reads can be stale; failover pauses writes.",
+            "es": "El valor por defecto correcto. Sin conflictos de escritura (un solo lugar ordena). Costo: las lecturas en réplica pueden estar obsoletas; el failover pausa las escrituras."
+          }
+        },
+        {
+          "term": { "en": "Multi-leader / leaderless", "es": "Multi-líder / sin líder" },
+          "note": {
+            "en": "Multi-leader = multi-region local writes but you MUST resolve conflicts (LWW silently loses data). Leaderless = quorums W+R>N + version vectors + read repair.",
+            "es": "Multi-líder = escrituras locales multirregión pero DEBES resolver conflictos (LWW pierde datos en silencio). Sin líder = quórumes W+R>N + vectores de versión + reparación en lectura."
+          }
+        },
+        {
+          "term": { "en": "Partition key", "es": "Clave de partición" },
+          "note": {
+            "en": "Decides everything. A hot shard can't be fixed by adding nodes. Fear access skew, not data size — traffic hitting 5% of the data.",
+            "es": "Lo decide todo. Un shard caliente no se arregla agregando nodos. Teme al sesgo de acceso, no al tamaño de los datos: el tráfico golpeando el 5% de ellos."
+          }
+        },
+        {
+          "term": { "en": "Key-range vs hash", "es": "Rango de clave vs hash" },
+          "note": {
+            "en": "Key-range: range scans, but a monotonic key (timestamp/auto-id) = permanent hot spot. Hash: even writes, but scatter/gather scans. Single hot key still needs special-casing.",
+            "es": "Rango: barridos por rango, pero una clave monótona (timestamp/auto-id) = punto caliente permanente. Hash: escrituras uniformes, pero barridos de dispersión/recolección. Una sola clave caliente aún requiere trato especial."
+          }
+        },
+        {
+          "term": { "en": "Linearizability", "es": "Linealizabilidad" },
+          "note": {
+            "en": "Illusion of one up-to-date copy: every read sees the latest completed write or newer. Costs latency (coordinate per op) + availability (isolated node must refuse). NOT about transactions/isolation.",
+            "es": "Ilusión de una única copia al día: toda lectura ve la última escritura completada o una más nueva. Cuesta latencia (coordinar por operación) y disponibilidad (un nodo aislado debe rehusar). NO trata de transacciones ni aislamiento."
+          }
+        },
+        {
+          "term": { "en": "CAP theorem", "es": "Teorema CAP" },
+          "note": {
+            "en": "Not 'pick 2 of 3'. Only bites during a partition: then choose CP (refuse to stay linearizable) or AP (serve possibly-stale). CAP's C = linearizability exactly.",
+            "es": "No es 'elige 2 de 3'. Solo aplica durante una partición: entonces elige CP (rehúsa para seguir linealizable) o AP (sirve datos posiblemente obsoletos). La C de CAP = linealizabilidad exactamente."
+          }
+        }
+      ]
+    },
+    {
+      "heading": {
+        "en": "Derived data & streaming",
+        "es": "Datos derivados y streaming"
+      },
+      "rows": [
+        {
+          "term": { "en": "Dual write (anti-pattern)", "es": "Escritura dual (antipatrón)" },
+          "note": {
+            "en": "Writing to Postgres AND Kafka/Elasticsearch with no shared transaction. A crash between them permanently desyncs stores; retries can't fix it.",
+            "es": "Escribir a Postgres Y a Kafka/Elasticsearch sin transacción compartida. Una caída entre ambas desincroniza los almacenes de forma permanente; los reintentos no lo arreglan."
+          }
+        },
+        {
+          "term": { "en": "One ordered log", "es": "Un único log ordenado" },
+          "note": {
+            "en": "Pick one system of record (WAL/CDC via Debezium, or an append-only event log). Derive indexes/caches/warehouse from it as consumers.",
+            "es": "Elige un sistema de registro (WAL/CDC vía Debezium, o un log de eventos de solo append). Deriva índices/cachés/almacén desde él como consumidores."
+          }
+        },
+        {
+          "term": { "en": "Derived data is disposable", "es": "Los datos derivados son desechables" },
+          "note": {
+            "en": "Corrupt index or schema change? Delete it and replay the log from offset zero. You can't do that with the system of record — keep the boundary explicit.",
+            "es": "¿Índice corrupto o cambio de esquema? Bórralo y reproduce el log desde el offset cero. No puedes hacerlo con el sistema de registro; mantén la frontera explícita."
+          }
+        },
+        {
+          "term": { "en": "Effectively-once", "es": "Efectivamente una vez" },
+          "note": {
+            "en": "'Exactly-once' delivery doesn't exist — networks force at-least-once, so consumers see duplicates. Build idempotent consumers (upsert by PK, dedup on event id).",
+            "es": "La entrega 'exactamente una vez' no existe: las redes fuerzan al-menos-una-vez, así que los consumidores ven duplicados. Construye consumidores idempotentes (upsert por PK, deduplicación por id de evento)."
+          }
+        },
+        {
+          "term": { "en": "Event vs processing time", "es": "Tiempo de evento vs de procesamiento" },
+          "note": {
+            "en": "Event time (when it happened) drifts from processing time (when you saw it). An offline mobile client delivers late events. Set watermarks + a late-data policy or aggregates undercount silently.",
+            "es": "El tiempo de evento (cuándo ocurrió) se desvía del de procesamiento (cuándo lo viste). Un móvil sin conexión entrega eventos tardíos. Define watermarks y una política de datos tardíos o los agregados subcuentan en silencio."
+          }
+        }
+      ]
+    },
+    {
+      "heading": {
+        "en": "Security engineering",
+        "es": "Ingeniería de seguridad"
+      },
+      "rows": [
+        {
+          "term": { "en": "Threat model at design time", "es": "Modelado de amenazas en el diseño" },
+          "note": {
+            "en": "Data-flow diagram + trust boundaries + STRIDE per boundary. Deliverable = the 2-3 architectural decisions you'd have gotten wrong, not a filled-in checklist.",
+            "es": "Diagrama de flujo de datos + fronteras de confianza + STRIDE por frontera. El entregable = las 2-3 decisiones de arquitectura que habrías errado, no una lista de verificación rellenada."
+          }
+        },
+        {
+          "term": { "en": "STRIDE", "es": "STRIDE" },
+          "note": {
+            "en": "Spoofing, Tampering, Repudiation, Information disclosure, Denial of service, Elevation of privilege — walked across each trust boundary.",
+            "es": "Spoofing (suplantación), Tampering (manipulación), Repudiation (repudio), Information disclosure (fuga de información), Denial of service (denegación de servicio), Elevation of privilege (elevación de privilegios), recorrido en cada frontera de confianza."
+          }
+        },
+        {
+          "term": { "en": "Authn ≠ authz", "es": "Autenticación ≠ autorización" },
+          "note": {
+            "en": "Authn = who you are; authz = what you may do. Enforce authorization per request at the resource that owns the data. A blindly-trusted gateway token = confused deputy.",
+            "es": "Autenticación = quién eres; autorización = qué puedes hacer. Aplica la autorización por petición en el recurso que posee los datos. Un token del gateway confiado a ciegas = adjunto confundido."
+          }
+        },
+        {
+          "term": { "en": "Assume secrets leak", "es": "Asume que los secretos se filtran" },
+          "note": {
+            "en": "Prefer short-lived leased credentials with auto-rotation over long-lived env-var passwords. Bounds the blast radius when (not if) they leak.",
+            "es": "Prefiere credenciales de corta vida arrendadas con rotación automática sobre contraseñas de larga vida en variables de entorno. Acota el radio de impacto cuando (no si) se filtran."
+          }
+        },
+        {
+          "term": { "en": "Pipeline is production", "es": "El pipeline es producción" },
+          "note": {
+            "en": "Pin + lock dependencies, verify signatures (Sigstore/cosign), ship an SBOM. SolarWinds and xz-utils were pipeline compromises, not app bugs.",
+            "es": "Fija + bloquea dependencias, verifica firmas (Sigstore/cosign), publica un SBOM. SolarWinds y xz-utils fueron compromisos del pipeline, no fallos de la aplicación."
+          }
+        },
+        {
+          "term": { "en": "Triage by likelihood × blast radius", "es": "Prioriza por probabilidad × radio de impacto" },
+          "note": {
+            "en": "Not every STRIDE cell deserves work. Spend defense-in-depth where a single failure is catastrophic; be honest where 'good enough' is genuinely good enough.",
+            "es": "No toda celda de STRIDE merece trabajo. Invierte en defensa en profundidad donde un solo fallo sea catastrófico; sé honesto sobre dónde 'suficiente' realmente basta."
+          }
+        }
+      ]
+    }
+  ],
+  "concepts": {
+    "durability-and-crash-recovery": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Your write function returned success. Is the data durable? Why or why not?",
+            "es": "Tu función de escritura retornó éxito. ¿Es durable el dato? ¿Por qué sí o por qué no?"
+          },
+          "back": {
+            "en": "No. write() only copies bytes into the OS page cache; a power loss there loses acknowledged data. It's durable only once fsync forces those bytes to stable storage.",
+            "es": "No. write() solo copia los bytes a la caché de página del SO; una pérdida de energía ahí pierde datos ya confirmados. Solo es durable cuando fsync fuerza esos bytes a almacenamiento estable."
+          }
+        },
+        {
+          "front": {
+            "en": "After a crash mid-update, how does the engine rebuild correct state, and what is the source of truth?",
+            "es": "Tras una caída a mitad de una actualización, ¿cómo reconstruye el motor el estado correcto y cuál es la fuente de verdad?"
+          },
+          "back": {
+            "en": "Recovery replays the write-ahead log from the last checkpoint to rebuild the pages. The log — not the data pages — is the source of truth for what happened.",
+            "es": "La recuperación reproduce el write-ahead log desde el último checkpoint para reconstruir las páginas. El log, no las páginas de datos, es la fuente de verdad de lo que ocurrió."
+          }
+        },
+        {
+          "front": {
+            "en": "What exactly does one fsync promise?",
+            "es": "¿Qué promete exactamente un fsync?"
+          },
+          "back": {
+            "en": "Everything logged before this point survives a crash; everything after it may not. That's the durability boundary — one promise, nothing more.",
+            "es": "Todo lo registrado antes de este punto sobrevive a una caída; todo lo posterior puede no hacerlo. Esa es la frontera de durabilidad: una promesa, nada más."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "WAL before pages", "es": "WAL antes que las páginas" },
+          "detail": {
+            "en": "The engine appends the change to a sequential log and fsyncs it before touching the actual B-tree pages.",
+            "es": "El motor agrega el cambio a un log secuencial y le hace fsync antes de tocar las páginas reales del B-tree."
+          }
+        },
+        {
+          "label": { "en": "fsync is the whole game", "es": "fsync lo es todo" },
+          "detail": {
+            "en": "Without it, bytes sit in a volatile cache; Postgres with fsync=off is fast and quietly lying about durability.",
+            "es": "Sin él, los bytes quedan en una caché volátil; Postgres con fsync=off es rápido y miente en silencio sobre la durabilidad."
+          }
+        },
+        {
+          "label": { "en": "Volatile disk caches", "es": "Cachés de disco volátiles" },
+          "detail": {
+            "en": "Cheap disks with a volatile write cache can lose acknowledged data on power loss even after a correct fsync.",
+            "es": "Los discos baratos con caché de escritura volátil pueden perder datos confirmados ante un corte de energía incluso tras un fsync correcto."
+          }
+        },
+        {
+          "label": { "en": "Know your durability boundary", "es": "Conoce tu frontera de durabilidad" },
+          "detail": {
+            "en": "Acking before the WAL is fsynced (loose group commit, async commit) chooses throughput over the guarantee — fine if deliberate, dangerous if accidental.",
+            "es": "Confirmar antes de que el WAL tenga fsync (group commit laxo, commit asíncrono) elige rendimiento sobre la garantía: bien si es deliberado, peligroso si es accidental."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "The D in ACID is only as strong as the last fsync that actually reached hardware.",
+        "es": "La D de ACID es tan fuerte como el último fsync que de verdad llegó al hardware."
+      }
+    },
+    "storage-engines-lsm-vs-btree": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Name the three taxes every storage engine pays, and what each measures.",
+            "es": "Nombra los tres impuestos que paga todo motor de almacenamiento y qué mide cada uno."
+          },
+          "back": {
+            "en": "Read amplification (extra reads per query), write amplification (extra physical writes per logical write), space amplification (extra disk per logical byte). Engines choose which to pay.",
+            "es": "Amplificación de lectura (lecturas extra por consulta), de escritura (escrituras físicas extra por escritura lógica) y de espacio (disco extra por byte lógico). Los motores eligen cuál pagar."
+          }
+        },
+        {
+          "front": {
+            "en": "Heavy time-series ingestion vs read-heavy OLTP needing stable p99 — which engine each, and why?",
+            "es": "Ingesta pesada de series temporales vs OLTP intensivo en lectura que necesita p99 estable: ¿qué motor para cada uno y por qué?"
+          },
+          "back": {
+            "en": "Ingestion → LSM: sequential writes + compaction beat rewriting pages. Read-heavy OLTP → B-tree: you don't want compaction randomly stealing I/O during a read spike.",
+            "es": "Ingesta → LSM: escrituras secuenciales + compactación superan a reescribir páginas. OLTP de lectura → B-tree: no quieres que la compactación robe E/S al azar durante un pico de lectura."
+          }
+        },
+        {
+          "front": {
+            "en": "Why can an LSM read be slower than a B-tree read?",
+            "es": "¿Por qué una lectura LSM puede ser más lenta que una lectura B-tree?"
+          },
+          "back": {
+            "en": "An LSM read may check several SSTables (read amplification), whereas a B-tree read is a single tree traversal with predictable latency.",
+            "es": "Una lectura LSM puede revisar varias SSTables (amplificación de lectura), mientras que una lectura B-tree es un solo recorrido del árbol con latencia predecible."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "B-tree: update in place", "es": "B-tree: actualiza en el sitio" },
+          "detail": {
+            "en": "Finds the page and overwrites it (WAL-protected); costs write amp — a small update can rewrite an 8KB page plus WAL plus splits.",
+            "es": "Encuentra la página y la sobrescribe (protegido por WAL); cuesta amplificación de escritura: una actualización pequeña puede reescribir una página de 8KB más el WAL y las divisiones."
+          }
+        },
+        {
+          "label": { "en": "LSM: never in place", "es": "LSM: nunca en el sitio" },
+          "detail": {
+            "en": "Buffers writes in memory, flushes sorted SSTables sequentially, merges later via compaction — fast cheap writes, but compaction competes for I/O.",
+            "es": "Acumula escrituras en memoria, vuelca SSTables ordenadas secuencialmente y las fusiona luego por compactación: escrituras rápidas y baratas, pero la compactación compite por E/S."
+          }
+        },
+        {
+          "label": { "en": "Watch space amplification", "es": "Vigila la amplificación de espacio" },
+          "detail": {
+            "en": "LSMs can hold multiple copies of a key until compaction reclaims them; B-trees leave page fragmentation.",
+            "es": "Los LSM pueden guardar varias copias de una clave hasta que la compactación las recupere; los B-tree dejan fragmentación de páginas."
+          }
+        },
+        {
+          "label": { "en": "'Fast' is not an answer", "es": "'Rápido' no es una respuesta" },
+          "detail": {
+            "en": "Always ask fast at what, and amplifying what — pick by your workload, not by which database is trendy.",
+            "es": "Pregunta siempre rápido en qué y amplificando qué: elige por tu carga de trabajo, no por qué base de datos está de moda."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "B-tree Buys reads (pays write amp); LSM Loads writes (pays read amp).",
+        "es": "B-tree compra lecturas (paga amplificación de escritura); LSM carga escrituras (paga amplificación de lectura)."
+      }
+    },
+    "replication-models": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Why does single-leader replication have no write conflicts, and what are its two costs?",
+            "es": "¿Por qué la replicación de líder único no tiene conflictos de escritura y cuáles son sus dos costos?"
+          },
+          "back": {
+            "en": "One leader decides the order of all writes, so no conflict is possible. Costs: followers lag (stale replica reads) and losing the leader needs a failover during which writes stop.",
+            "es": "Un solo líder decide el orden de todas las escrituras, así que no hay conflicto posible. Costos: los seguidores se retrasan (lecturas obsoletas en réplica) y perder al líder exige un failover durante el cual las escrituras se detienen."
+          }
+        },
+        {
+          "front": {
+            "en": "In leaderless replication, what condition guarantees a read overlaps the latest write?",
+            "es": "En replicación sin líder, ¿qué condición garantiza que una lectura solape la última escritura?"
+          },
+          "back": {
+            "en": "W + R > N: if writes go to W nodes and reads read R nodes out of N, the read set overlaps the write set. Conflicts are handled with version vectors and read repair.",
+            "es": "W + R > N: si las escrituras van a W nodos y las lecturas leen R de N, el conjunto de lectura solapa el de escritura. Los conflictos se manejan con vectores de versión y reparación en lectura."
+          }
+        },
+        {
+          "front": {
+            "en": "Why is last-write-wins dangerous in a multi-leader setup?",
+            "es": "¿Por qué es peligroso last-write-wins en un montaje multi-líder?"
+          },
+          "back": {
+            "en": "Two leaders can accept conflicting writes to the same row; LWW silently discards one, losing data. You need real merge logic or CRDTs as a first-class feature.",
+            "es": "Dos líderes pueden aceptar escrituras conflictivas a la misma fila; LWW descarta una en silencio y pierde datos. Necesitas lógica de fusión real o CRDTs como característica de primer nivel."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "Single-leader = default", "es": "Líder único = por defecto" },
+          "detail": {
+            "en": "All writes to one leader that streams its log to followers; simple and correct — leave it only when a concrete requirement forces you.",
+            "es": "Todas las escrituras a un líder que transmite su log a los seguidores; simple y correcto: abandónalo solo cuando un requisito concreto te obligue."
+          }
+        },
+        {
+          "label": { "en": "Multi-leader", "es": "Multi-líder" },
+          "detail": {
+            "en": "Two datacenters each accept writes: low-latency local writes and survives a region, but budget conflict resolution as a first-class feature.",
+            "es": "Dos centros de datos aceptan escrituras: escrituras locales de baja latencia y sobrevive a una región, pero presupuesta la resolución de conflictos como característica de primer nivel."
+          }
+        },
+        {
+          "label": { "en": "Leaderless", "es": "Sin líder" },
+          "detail": {
+            "en": "Any replica takes a write (Dynamo, Cassandra, Riak); correctness comes from quorums, and you tune consistency per query.",
+            "es": "Cualquier réplica acepta una escritura (Dynamo, Cassandra, Riak); la corrección viene de los quórumes y ajustas la consistencia por consulta."
+          }
+        },
+        {
+          "label": { "en": "The two questions", "es": "Las dos preguntas" },
+          "detail": {
+            "en": "If you can't answer 'how stale can a read be?' and 'what happens to two conflicting writes?', you haven't chosen a topology — you've inherited a bug.",
+            "es": "Si no puedes responder '¿cuán obsoleta puede estar una lectura?' y '¿qué pasa con dos escrituras conflictivas?', no elegiste una topología: heredaste un bug."
+          }
+        }
+      ]
+    },
+    "partitioning-sharding": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Why can't adding ten nodes fix a hot shard?",
+            "es": "¿Por qué agregar diez nodos no arregla un shard caliente?"
+          },
+          "back": {
+            "en": "The hot key still lives on one partition, so that one node keeps doing most of the work and melts while the new nodes sit idle. The partition key, not hardware, decides load.",
+            "es": "La clave caliente sigue viviendo en una partición, así que ese nodo sigue haciendo casi todo el trabajo y se funde mientras los nuevos están ociosos. La clave de partición, no el hardware, decide la carga."
+          }
+        },
+        {
+          "front": {
+            "en": "Why does a monotonically increasing partition key create a hot spot under key-range partitioning?",
+            "es": "¿Por qué una clave de partición monótonamente creciente crea un punto caliente con particionado por rango?"
+          },
+          "back": {
+            "en": "Every new write (a timestamp or auto-increment id) sorts to the last shard, so that shard is a permanent hot spot while the rest sit idle.",
+            "es": "Cada escritura nueva (un timestamp o id autoincremental) se ordena en el último shard, así que ese shard es un punto caliente permanente mientras el resto está ocioso."
+          }
+        },
+        {
+          "front": {
+            "en": "Hash partitioning spreads writes evenly — what does it cost, and what can it still not solve?",
+            "es": "El particionado por hash reparte las escrituras uniformemente: ¿qué cuesta y qué sigue sin resolver?"
+          },
+          "back": {
+            "en": "You lose ordering, so range scans become a scatter/gather across all shards. And a single hot key (the celebrity problem) still hashes to one shard — special-case it.",
+            "es": "Pierdes el orden, así que los barridos por rango se vuelven una dispersión/recolección por todos los shards. Y una sola clave caliente (el problema de la celebridad) aún cae en un shard: dale trato especial."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "Key-range partitioning", "es": "Particionado por rango de clave" },
+          "detail": {
+            "en": "Keeps keys sorted (A = a–f, B = g–m) for efficient range scans; time-series stores love it, but sequential keys break it.",
+            "es": "Mantiene las claves ordenadas (A = a–f, B = g–m) para barridos por rango eficientes; los almacenes de series temporales lo adoran, pero las claves secuenciales lo rompen."
+          }
+        },
+        {
+          "label": { "en": "Hash partitioning", "es": "Particionado por hash" },
+          "detail": {
+            "en": "Runs the key through a hash and distributes by hash value: even writes, no timestamp hot spot, but no ordering.",
+            "es": "Pasa la clave por un hash y distribuye por el valor de hash: escrituras uniformes, sin punto caliente de timestamp, pero sin orden."
+          }
+        },
+        {
+          "label": { "en": "The celebrity problem", "es": "El problema de la celebridad" },
+          "detail": {
+            "en": "One user with millions of followers hashes to a single shard and overwhelms it; append a random suffix or cache that key.",
+            "es": "Un usuario con millones de seguidores cae en un solo shard y lo satura; agrega un sufijo aleatorio o cachea esa clave."
+          }
+        },
+        {
+          "label": { "en": "Rebalancing", "es": "Reequilibrado" },
+          "detail": {
+            "en": "Use a fixed number of partitions or consistent hashing so adding a node moves a slice of data, not the entire dataset.",
+            "es": "Usa un número fijo de particiones o hashing consistente para que agregar un nodo mueva una porción de datos, no todo el conjunto."
+          }
+        }
+      ],
+      "mnemonic": {
+        "en": "The failure to fear isn't 'too much data' — it's 'all the traffic hitting 5% of it.'",
+        "es": "El fallo que hay que temer no es 'demasiados datos', sino 'todo el tráfico golpeando el 5% de ellos'."
+      }
+    },
+    "linearizability-vs-eventual": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "State the linearizability guarantee precisely — and what it is NOT about.",
+            "es": "Enuncia con precisión la garantía de linealizabilidad, y sobre qué NO trata."
+          },
+          "back": {
+            "en": "It behaves as if there's a single up-to-date copy: once a write completes, every subsequent read from any client on any node sees that value or newer. It is NOT about transactions or isolation.",
+            "es": "Se comporta como si hubiera una única copia al día: una vez que una escritura completa, toda lectura posterior de cualquier cliente en cualquier nodo ve ese valor o uno más nuevo. NO trata de transacciones ni de aislamiento."
+          }
+        },
+        {
+          "front": {
+            "en": "What two things does linearizability cost, and why?",
+            "es": "¿Qué dos cosas cuesta la linealizabilidad y por qué?"
+          },
+          "back": {
+            "en": "Latency (nodes must coordinate before answering, on every op) and availability (a node cut off from peers must refuse to answer rather than risk returning stale data).",
+            "es": "Latencia (los nodos deben coordinarse antes de responder, en cada operación) y disponibilidad (un nodo aislado de sus pares debe rehusar responder en vez de arriesgarse a devolver datos obsoletos)."
+          }
+        },
+        {
+          "front": {
+            "en": "Give two cases that genuinely need linearizability and two that don't.",
+            "es": "Da dos casos que realmente necesitan linealizabilidad y dos que no."
+          },
+          "back": {
+            "en": "Need it: uniqueness constraints (unique username), distributed locks/leader election, 'has this payment been applied?'. Don't: a timeline, a like count, a product recommendation.",
+            "es": "La necesitan: restricciones de unicidad (nombre de usuario único), locks distribuidos/elección de líder, '¿ya se aplicó este pago?'. No: una línea de tiempo, un conteo de likes, una recomendación de producto."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "A recency guarantee", "es": "Una garantía de recencia" },
+          "detail": {
+            "en": "No client ever sees the clock go backwards; reads never trust a local, possibly-lagging replica without coordinating.",
+            "es": "Ningún cliente ve el reloj retroceder; las lecturas nunca confían en una réplica local, posiblemente retrasada, sin coordinarse."
+          }
+        },
+        {
+          "label": { "en": "Eventual consistency", "es": "Consistencia eventual" },
+          "detail": {
+            "en": "Replicas accept reads/writes locally and converge later: a read may be seconds old, but latency stays low and nodes stay available when isolated.",
+            "es": "Las réplicas aceptan lecturas/escrituras localmente y convergen después: una lectura puede tener segundos de antigüedad, pero la latencia sigue baja y los nodos disponibles al aislarse."
+          }
+        },
+        {
+          "label": { "en": "Most of the internet is eventual", "es": "Casi todo internet es eventual" },
+          "detail": {
+            "en": "A follower count stale for two seconds hurts no one; slapping 'strong consistency' on everything builds a slow, fragile system.",
+            "es": "Un conteo de seguidores obsoleto por dos segundos no daña a nadie; pegar 'consistencia fuerte' a todo construye un sistema lento y frágil."
+          }
+        },
+        {
+          "label": { "en": "It is CAP's 'C'", "es": "Es la 'C' de CAP" },
+          "detail": {
+            "en": "This exact definition — not transactions, not isolation — is what the C in the CAP theorem means.",
+            "es": "Esta definición exacta, no transacciones ni aislamiento, es lo que significa la C del teorema CAP."
+          }
+        }
+      ]
+    },
+    "cap-theorem": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "Why is 'pick two of three' the wrong reading of CAP?",
+            "es": "¿Por qué 'elige dos de tres' es la lectura equivocada de CAP?"
+          },
+          "back": {
+            "en": "When the network is healthy you get both C and A. CAP only forces a choice during a partition; the honest reading is 'when partitioned, choose C or A' — the rest of the time the question doesn't apply.",
+            "es": "Con la red sana obtienes C y A a la vez. CAP solo fuerza una elección durante una partición; la lectura honesta es 'al particionarse, elige C o A'; el resto del tiempo la pregunta no aplica."
+          }
+        },
+        {
+          "front": {
+            "en": "During a partition a node gets a request but can't reach peers. What are its only two options?",
+            "es": "Durante una partición un nodo recibe una petición pero no alcanza a sus pares. ¿Cuáles son sus dos únicas opciones?"
+          },
+          "back": {
+            "en": "Refuse to serve until it can coordinate — keeps linearizability (CP), unavailable meanwhile. Or answer from local state — stays available (AP), risking stale/conflicting data. Gilbert and Lynch proved there's no third.",
+            "es": "Rehusar servir hasta poder coordinarse: conserva la linealizabilidad (CP), pero indisponible mientras tanto. O responder desde el estado local: sigue disponible (AP), arriesgando datos obsoletos/conflictivos. Gilbert y Lynch probaron que no hay tercera."
+          }
+        },
+        {
+          "front": {
+            "en": "Why treat a GC pause or a slow switch as a partition?",
+            "es": "¿Por qué tratar una pausa de GC o un switch lento como una partición?"
+          },
+          "back": {
+            "en": "They all look like a partition to the system, so partitions aren't hypothetical — you must decide CP vs AP per subsystem in advance, or the system decides for you, usually wrong, at 3 a.m.",
+            "es": "Todos lucen como una partición para el sistema, así que las particiones no son hipotéticas: debes decidir CP vs AP por subsistema de antemano, o el sistema decide por ti, casi siempre mal, a las 3 a.m."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "CAP only bites under partition", "es": "CAP solo aplica al particionarse" },
+          "detail": {
+            "en": "With a healthy network you get both consistency and availability; the trade only exists while the partition lasts.",
+            "es": "Con red sana obtienes consistencia y disponibilidad; la compensación solo existe mientras dura la partición."
+          }
+        },
+        {
+          "label": { "en": "CP: choose consistency", "es": "CP: elige consistencia" },
+          "detail": {
+            "en": "etcd/ZooKeeper for leader election or locks would rather stop than let two leaders exist.",
+            "es": "etcd/ZooKeeper para elección de líder o locks prefieren detenerse antes que permitir dos líderes."
+          }
+        },
+        {
+          "label": { "en": "AP: choose availability", "es": "AP: elige disponibilidad" },
+          "detail": {
+            "en": "A shopping cart or DNS would rather show slightly stale data than tell the user 'unavailable.'",
+            "es": "Un carrito de compras o DNS prefieren mostrar datos algo obsoletos antes que decirle al usuario 'no disponible'."
+          }
+        },
+        {
+          "label": { "en": "CAP's C = linearizability", "es": "La C de CAP = linealizabilidad" },
+          "detail": {
+            "en": "The C is exactly linearizability — not transactions or isolation; the staff move is to decide per subsystem and say it out loud.",
+            "es": "La C es exactamente la linealizabilidad, no transacciones ni aislamiento; la jugada de staff es decidir por subsistema y decirlo en voz alta."
+          }
+        }
+      ]
+    },
+    "stream-processing-derived-data-systems": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "What is a dual write, and why can't retries fix the bug it causes?",
+            "es": "¿Qué es una escritura dual y por qué los reintentos no arreglan el bug que causa?"
+          },
+          "back": {
+            "en": "Writing to two stores (Postgres then Kafka/Elasticsearch) with no shared transaction. A crash between them desyncs the stores; retries can't fix it because nothing decides a single truth about what happened and in what order.",
+            "es": "Escribir a dos almacenes (Postgres y luego Kafka/Elasticsearch) sin transacción compartida. Una caída entre ambas los desincroniza; los reintentos no lo arreglan porque nada decide una única verdad de qué pasó y en qué orden."
+          }
+        },
+        {
+          "front": {
+            "en": "Why is 'exactly-once delivery' marketing, and what do you build instead?",
+            "es": "¿Por qué 'entrega exactamente una vez' es marketing y qué construyes en su lugar?"
+          },
+          "back": {
+            "en": "Networks and crashes force at-least-once, so consumers see duplicates. You build effectively-once: idempotent consumers (upsert by PK, dedup on event id) or transactional read-process-write in one system.",
+            "es": "Las redes y las caídas fuerzan al-menos-una-vez, así que los consumidores ven duplicados. Construyes efectivamente-una-vez: consumidores idempotentes (upsert por PK, deduplicación por id de evento) o read-process-write transaccional en un solo sistema."
+          }
+        },
+        {
+          "front": {
+            "en": "In streaming, how do event time and processing time differ, and what silently breaks if you ignore it?",
+            "es": "En streaming, ¿en qué difieren el tiempo de evento y el de procesamiento, y qué se rompe en silencio si lo ignoras?"
+          },
+          "back": {
+            "en": "Event time is when it happened; processing time is when you saw it. A mobile client offline for an hour delivers late events, so windowed aggregates that assume in-order arrival undercount your dashboards.",
+            "es": "El tiempo de evento es cuándo ocurrió; el de procesamiento, cuándo lo viste. Un cliente móvil sin conexión por una hora entrega eventos tardíos, así que los agregados por ventana que asumen llegada en orden subcuentan tus paneles."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "One system of record", "es": "Un sistema de registro" },
+          "detail": {
+            "en": "Pick one truth (a replication log via CDC/Debezium, or an append-only event log) that assigns order; derive everything else from it.",
+            "es": "Elige una verdad (un log de replicación vía CDC/Debezium, o un log de eventos de solo append) que asigne el orden; deriva todo lo demás de él."
+          }
+        },
+        {
+          "label": { "en": "Derived data is disposable", "es": "Los datos derivados son desechables" },
+          "detail": {
+            "en": "Index/cache/warehouse are consumers of the log; if one corrupts or its schema changes, delete it and replay from offset zero.",
+            "es": "Índice/caché/almacén son consumidores del log; si uno se corrompe o cambia su esquema, bórralo y reprodúcelo desde el offset cero."
+          }
+        },
+        {
+          "label": { "en": "Chase idempotence", "es": "Persigue la idempotencia" },
+          "detail": {
+            "en": "Effectively-once comes from idempotent consumers or transactional read-process-write — not a magic delivery mode.",
+            "es": "El efectivamente-una-vez viene de consumidores idempotentes o de read-process-write transaccional, no de un modo de entrega mágico."
+          }
+        },
+        {
+          "label": { "en": "Batch = stream", "es": "Batch = stream" },
+          "detail": {
+            "en": "Same computation over bounded vs unbounded input; decide up front how late is too late (watermarks) and whether you correct or drop.",
+            "es": "La misma computación sobre entrada acotada vs no acotada; decide de antemano cuán tarde es demasiado (watermarks) y si corriges o descartas."
+          }
+        }
+      ]
+    },
+    "security-engineering-threat-modeling-authn": {
+      "flashcards": [
+        {
+          "front": {
+            "en": "What are the steps of design-time threat modeling, and what is the real deliverable?",
+            "es": "¿Cuáles son los pasos del modelado de amenazas en el diseño y cuál es el entregable real?"
+          },
+          "back": {
+            "en": "Draw a data-flow diagram, mark trust boundaries (where data crosses from less- to more-trusted), walk STRIDE across each. The deliverable isn't a checklist — it's the 2-3 architectural decisions you'd have gotten wrong.",
+            "es": "Dibuja un diagrama de flujo de datos, marca las fronteras de confianza (donde el dato cruza de menos a más confiable), recorre STRIDE en cada una. El entregable no es una lista de verificación: son las 2-3 decisiones de arquitectura que habrías errado."
+          }
+        },
+        {
+          "front": {
+            "en": "Distinguish authn from authz, and describe the confused-deputy bug they cause when conflated.",
+            "es": "Distingue autenticación de autorización y describe el bug de adjunto confundido que causan al confundirse."
+          },
+          "back": {
+            "en": "Authn = who you are; authz = what you may do. A JWT validated at the gateway but trusted blindly downstream lets service B do whatever the token claims because A 'already checked.' Enforce authz per request at the resource that owns the data.",
+            "es": "Autenticación = quién eres; autorización = qué puedes hacer. Un JWT validado en el gateway pero confiado a ciegas aguas abajo deja que el servicio B haga lo que el token diga porque A 'ya revisó'. Aplica la autorización por petición en el recurso que posee los datos."
+          }
+        },
+        {
+          "front": {
+            "en": "How do you rank threats at staff level, and what does that imply about coverage?",
+            "es": "¿Cómo priorizas amenazas a nivel staff y qué implica eso sobre la cobertura?"
+          },
+          "back": {
+            "en": "Rank by realistic likelihood × blast radius. Not every STRIDE cell deserves work — spend defense-in-depth where a single failure is catastrophic, and be honest where 'good enough' is genuinely good enough. Security is triage, not paranoia.",
+            "es": "Prioriza por probabilidad realista × radio de impacto. No toda celda de STRIDE merece trabajo: invierte en defensa en profundidad donde un solo fallo sea catastrófico, y sé honesto donde 'suficiente' realmente basta. La seguridad es triaje, no paranoia."
+          }
+        }
+      ],
+      "children": [
+        {
+          "label": { "en": "STRIDE per boundary", "es": "STRIDE por frontera" },
+          "detail": {
+            "en": "Spoofing, Tampering, Repudiation, Information disclosure, Denial of service, Elevation of privilege — walked at each trust boundary.",
+            "es": "Spoofing, Tampering, Repudiation, fuga de Información, Denegación de servicio, Elevación de privilegios, recorrido en cada frontera de confianza."
+          }
+        },
+        {
+          "label": { "en": "Don't roll your own", "es": "No hagas tu propia cripto" },
+          "detail": {
+            "en": "Use OIDC, mTLS and vetted libraries for crypto and session logic rather than inventing them.",
+            "es": "Usa OIDC, mTLS y librerías auditadas para la cripto y la lógica de sesión en vez de inventarlas."
+          }
+        },
+        {
+          "label": { "en": "Assume secrets leak", "es": "Asume que los secretos se filtran" },
+          "detail": {
+            "en": "A DB password in an env var is a breach awaiting one bad log; prefer short-lived leased credentials that auto-rotate to bound the blast radius.",
+            "es": "Una contraseña de BD en una variable de entorno es una brecha a la espera de un log mal hecho; prefiere credenciales de corta vida arrendadas con rotación automática para acotar el radio de impacto."
+          }
+        },
+        {
+          "label": { "en": "Pipeline is production", "es": "El pipeline es producción" },
+          "detail": {
+            "en": "Pin and lock dependencies, verify signatures (Sigstore/cosign), generate an SBOM — SolarWinds and xz-utils compromised the pipeline, not the app.",
+            "es": "Fija y bloquea dependencias, verifica firmas (Sigstore/cosign), genera un SBOM: SolarWinds y xz-utils comprometieron el pipeline, no la aplicación."
+          }
+        }
+      ]
+    }
+  }
+}
