@@ -27,6 +27,9 @@ CALLER_REF="levelup-$(git -C "$(dirname "$0")/.." rev-parse --short HEAD 2>/dev/
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 OUT="$ROOT/out"
+# AWS CLI on Windows needs native paths (C:\...) for file://,fileb:// args, not
+# the git-bash /c/... form. `pwd -W` yields the Windows path; fall back to $HERE.
+HERE_W="$(cd "$HERE" && pwd -W 2>/dev/null || echo "$HERE")"
 
 DRYRUN="${DRYRUN:-0}"
 aws() {
@@ -58,12 +61,12 @@ if aws cloudfront describe-function --name "$FUNC_NAME" >/dev/null 2>&1; then
   ETAG=$(aws cloudfront describe-function --name "$FUNC_NAME" --query ETag --output text)
   aws cloudfront update-function --name "$FUNC_NAME" --if-match "$ETAG" \
     --function-config Comment="levelup uri rewrite",Runtime="cloudfront-js-2.0" \
-    --function-code "fileb://$HERE/cf-rewrite.js" >/dev/null
+    --function-code "fileb://$HERE_W/cf-rewrite.js" >/dev/null
   ETAG=$(aws cloudfront describe-function --name "$FUNC_NAME" --query ETag --output text)
 else
   aws cloudfront create-function --name "$FUNC_NAME" \
     --function-config Comment="levelup uri rewrite",Runtime="cloudfront-js-2.0" \
-    --function-code "fileb://$HERE/cf-rewrite.js" >/dev/null
+    --function-code "fileb://$HERE_W/cf-rewrite.js" >/dev/null
   ETAG=$(aws cloudfront describe-function --name "$FUNC_NAME" --query ETag --output text)
 fi
 if [[ "$DRYRUN" != "1" ]]; then
@@ -132,12 +135,12 @@ JSON
     DIST_DOMAIN="dryrun.cloudfront.net"
   else
     read -r DIST_ID DIST_DOMAIN < <(aws cloudfront create-distribution \
-      --distribution-config "file://$HERE/.dist-config.json" \
-      --query "[Distribution.Id, Distribution.DomainName]" --output text)
+      --distribution-config "file://$HERE_W/.dist-config.json" \
+      --query "[Distribution.Id, Distribution.DomainName]" --output text | tr -d '\r')
   fi
 else
   echo "▶ Reusing distribution $DIST_ID"
-  DIST_DOMAIN=$(aws cloudfront get-distribution --id "$DIST_ID" --query "Distribution.DomainName" --output text)
+  DIST_DOMAIN=$(aws cloudfront get-distribution --id "$DIST_ID" --query "Distribution.DomainName" --output text | tr -d '\r')
 fi
 echo "▶ Distribution: $DIST_ID ($DIST_DOMAIN)"
 
@@ -158,7 +161,7 @@ if [[ "$DRYRUN" != "1" ]]; then
   }]
 }
 JSON
-  aws s3api put-bucket-policy --bucket "$BUCKET" --policy "file://$HERE/.bucket-policy.json"
+  aws s3api put-bucket-policy --bucket "$BUCKET" --policy "file://$HERE_W/.bucket-policy.json"
 fi
 
 # 6) Upload the out/ tree with correct content-types + cache headers.
@@ -192,7 +195,7 @@ if [[ "$DRYRUN" != "1" ]]; then
   ]
 }
 JSON
-  aws route53 change-resource-record-sets --hosted-zone-id "$ZONE_ID" --change-batch "file://$HERE/.dns.json" \
+  aws route53 change-resource-record-sets --hosted-zone-id "$ZONE_ID" --change-batch "file://$HERE_W/.dns.json" \
     --query "ChangeInfo.Status" --output text
 fi
 
