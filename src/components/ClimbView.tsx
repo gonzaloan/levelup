@@ -126,8 +126,8 @@ function StageCard({ stage, locale }: { stage: Stage; locale: Locale }) {
         {locked ? (
           <p className="stage-locked-note">
             {t({
-              en: `Unlocks when you clear ${stage.quorum > 0 ? stage.quorum : "the"} checkpoints of the stage below. Scope here: ${""}`,
-              es: `Se desbloquea al superar ${stage.quorum > 0 ? stage.quorum : "los"} puntos de control de la etapa anterior. Alcance aquí: ${""}`,
+              en: "Unlocks when you clear the checkpoint quorum of the stage below. Scope here: ",
+              es: "Se desbloquea al superar el cupo de puntos de control de la etapa anterior. Alcance aquí: ",
             }, locale)}
             <em>{t(mandate.scope, locale)}</em>
           </p>

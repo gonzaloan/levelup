@@ -26,10 +26,16 @@ const FALLBACK: Params = {
   sweetNote: { en: "The sweet spot: most value per unit of effort.", es: "El punto justo: más valor por unidad de esfuerzo." },
 };
 
-// y (0..1) for x (0..1) per shape.
-function curveY(shape: Shape, x: number): number {
+// y (0..1) for x (0..1) per shape. sweet (0..1) is where the U-valley sits.
+function curveY(shape: Shape, x: number, sweet: number): number {
   switch (shape) {
-    case "u": return 1 - 4 * (x - 0.5) * (x - 0.5); // inverted-U peak at 0.5 -> use 1-... for cost-U we invert display
+    case "u": {
+      // Valley: the y-axis is a BAD quantity (cost/risk/harm), so the minimum
+      // (best) must sit AT the sweet spot and rise toward both extremes.
+      const norm = Math.max(sweet, 1 - sweet) || 1;
+      const d = (x - sweet) / norm;
+      return d * d; // 0 at the sweet spot, ->1 toward the far extreme
+    }
     case "diminishing": return 1 - Math.pow(1 - x, 2);
     case "linear-up": return x;
   }
@@ -42,16 +48,17 @@ export function TradeoffCurve({ locale, params }: WidgetProps) {
   const T = (v: I18nText) => (es ? v.es : v.en);
 
   const sweet = p.sweetSpot ?? 55;
+  const sweetF = sweet / 100;
   const region = x < sweet - 12 ? "low" : x > sweet + 12 ? "high" : "sweet";
 
   // Build the path (60 samples) in a 100×60 viewBox.
   const pts = Array.from({ length: 61 }, (_, i) => {
     const xf = i / 60;
-    const yf = curveY(p.shape, xf);
+    const yf = curveY(p.shape, xf, sweetF);
     return `${xf * 100},${60 - yf * 54 - 3}`;
   }).join(" ");
   const curX = x / 100;
-  const curY = 60 - curveY(p.shape, curX) * 54 - 3;
+  const curY = 60 - curveY(p.shape, curX, sweetF) * 54 - 3;
 
   return (
     <VizFrame

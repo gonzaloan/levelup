@@ -171,12 +171,12 @@ export function ArchitectBuilder({
           </defs>
           {edges.map((e, i) => {
             const a = posOf(e.from), b = posOf(e.to);
-            const ok = revealed
-              ? grade.criteria.some((c) => c.kind === "edge" && c.ok) // colored below per-edge is complex; keep neutral+reveal panel
-              : true;
+            // Per-edge correctness colouring is intentionally NOT attempted here
+            // (the grader keys criteria by node TYPE, not instance edge); the
+            // per-criterion verdict list below is the authoritative feedback.
             return (
               <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-                stroke="var(--track, var(--gen))" strokeWidth={0.6} strokeOpacity={ok ? 0.85 : 0.5}
+                stroke="var(--track, var(--gen))" strokeWidth={0.6} strokeOpacity={0.85}
                 markerEnd="url(#arch-arrow)" vectorEffect="non-scaling-stroke" />
             );
           })}
@@ -230,7 +230,7 @@ export function ArchitectBuilder({
 
       {/* reveal: per-criterion feedback */}
       {revealed && (
-        <div className="check-reveal arch-reveal" data-correct={grade.correct}
+        <div className="check-reveal arch-reveal" data-correct={grade.correct} role="status" aria-live="polite"
           style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", borderRadius: "var(--r-sm)",
             background: grade.correct ? "var(--ok-bg)" : "var(--bad-bg)" }}>
           <p className="eyebrow" style={{ color: grade.correct ? "var(--ok)" : "var(--bad)", marginBottom: 8 }}>

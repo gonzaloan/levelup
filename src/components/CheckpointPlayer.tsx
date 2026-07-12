@@ -148,7 +148,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
               <span className="eyebrow" style={{ display: "block", marginTop: "var(--s-3)" }}>{totalSteps} · {t(gateLabel, locale)}</span>
             </div>
           </BossIntro>
-          <Link href={`/${locale}/path`} className="eyebrow">← {m("chk.backToPath", locale)}</Link>
+          <Link href={`/${locale}/learn`} className="eyebrow">← {m("chk.backToPath", locale)}</Link>
         </div>
       )}
 
@@ -223,7 +223,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
             {finalScore < clear && (
               <button className="btn" onClick={retry}>{m("chk.retry", locale)}</button>
             )}
-            <Link href={`/${locale}/path`} className={`btn${finalScore >= clear ? ` btn-primary${track === "ai" ? " btn-ai" : ""}` : ""}`}>
+            <Link href={`/${locale}/learn`} className={`btn${finalScore >= clear ? ` btn-primary${track === "ai" ? " btn-ai" : ""}` : ""}`}>
               {m("chk.backToPath", locale)} →
             </Link>
           </div>
