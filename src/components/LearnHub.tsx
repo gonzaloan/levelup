@@ -24,7 +24,7 @@ const AXIS_GRAD: Record<number, string> = {
   6: "linear-gradient(135deg,#6e2f1c,#b3583b,#d97757)",
 };
 const LEVEL_WHAT: Record<Level, { en: string; es: string }> = {
-  L3: { en: "Build the foundations — reason about cost and correctness on one machine.", es: "Construye las bases — razona sobre costo y correctitud en una máquina." },
+  L3: { en: "Build the foundations — reason about cost and correctness on one machine.", es: "Construye las bases — razona sobre costo y corrección en una máquina." },
   L4: { en: "Own your area — make the design calls and ship reliably.", es: "Sé dueño de tu área — toma las decisiones de diseño y entrega con fiabilidad." },
   L5: { en: "Cross the Staff threshold — set the technical approach across a team.", es: "Cruza el umbral Staff — fija el enfoque técnico de un equipo." },
   L6: { en: "Staff — set multi-team, multi-quarter direction.", es: "Staff — fija dirección multi-equipo y multi-trimestre." },

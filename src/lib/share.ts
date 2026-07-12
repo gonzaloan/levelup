@@ -7,7 +7,7 @@ import type { Achievement } from "./badges";
 import { t, type Locale } from "@/i18n/config";
 
 /** Absolute origin for share URLs. In the browser we read it live; SSG passes it in. */
-export function siteOrigin(fallback = "https://levelup.gonzalo-munoz.com"): string {
+export function siteOrigin(fallback = "https://levelup.skillrealm.dev"): string {
   if (typeof window !== "undefined" && window.location?.origin) return window.location.origin;
   return fallback;
 }

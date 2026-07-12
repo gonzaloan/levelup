@@ -50,7 +50,7 @@ export const metadata: Metadata = {
   title: "level-up — the second half of an engineering career",
   description:
     "The definitive guide to the part of engineering coding practice can't teach you: the judgment, scope, and leverage that move you from Senior toward Staff and Principal. Bilingual EN/ES.",
-  metadataBase: new URL("https://levelup.gonzalo-munoz.com"),
+  metadataBase: new URL("https://levelup.skillrealm.dev"),
 };
 
 // Apply the saved theme before paint so there's no flash. Static-export safe.
@@ -58,7 +58,7 @@ const THEME_BOOT = `(function(){try{var t=localStorage.getItem('levelup.theme');
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
       </head>
