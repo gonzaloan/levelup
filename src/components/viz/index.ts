@@ -15,6 +15,9 @@ import { TokenEconomics } from "./TokenEconomics";
 import { ThreatModelBoard } from "./ThreatModelBoard";
 import { ScalingCurves } from "./ScalingCurves";
 import { EvalHarness } from "./EvalHarness";
+import { SpectrumSlider } from "./SpectrumSlider";
+import { DecisionFlow } from "./DecisionFlow";
+import { TradeoffCurve } from "./TradeoffCurve";
 
 export const WIDGETS: Record<string, ComponentType<WidgetProps>> = {
   "big-o": BigOExplorer,
@@ -27,6 +30,11 @@ export const WIDGETS: Record<string, ComponentType<WidgetProps>> = {
   "threat-board": ThreatModelBoard,
   "scaling-curves": ScalingCurves,
   "eval-harness": EvalHarness,
+  // Parameterized, author-driven widgets — one component serves many concepts
+  // via concept.visual.params (no keyword-fitting; they teach only what's authored).
+  "spectrum": SpectrumSlider,
+  "decision-flow": DecisionFlow,
+  "tradeoff-curve": TradeoffCurve,
 };
 
 export function getWidget(id: string): ComponentType<WidgetProps> | null {

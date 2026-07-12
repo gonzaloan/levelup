@@ -1,0 +1,225 @@
+{
+  "builds": [
+    {
+      "id": "build-scale-read-heavy",
+      "concept": "horizontal-vs-vertical-scaling",
+      "track": "general",
+      "title": { "en": "Scale a read-heavy web tier", "es": "Escala una capa web con muchas lecturas" },
+      "prompt": {
+        "en": "Reads dominate 20:1. Assemble a tier that scales out horizontally: put stateless app servers behind a load balancer, add a cache in front of the database, and keep sessions out of the app servers.",
+        "es": "Las lecturas dominan 20:1. Arma una capa que escale horizontalmente: pon servidores de app sin estado detrás de un balanceador, agrega una caché frente a la base de datos y mantén las sesiones fuera de los servidores de app."
+      },
+      "palette": [
+        { "type": "client", "label": { "en": "Client", "es": "Cliente" }, "hint": { "en": "The browser / caller", "es": "El navegador / llamador" } },
+        { "type": "lb", "label": { "en": "Load balancer", "es": "Balanceador" }, "hint": { "en": "Spreads traffic across app servers", "es": "Reparte el tráfico entre servidores" } },
+        { "type": "app", "label": { "en": "App server (stateless)", "es": "Servidor app (sin estado)" }, "hint": { "en": "Add more copies to scale out", "es": "Agrega copias para escalar" } },
+        { "type": "cache", "label": { "en": "Cache", "es": "Caché" }, "hint": { "en": "Absorbs repeated reads", "es": "Absorbe lecturas repetidas" } },
+        { "type": "db", "label": { "en": "Database", "es": "Base de datos" }, "hint": { "en": "System of record", "es": "Fuente de verdad" } },
+        { "type": "session", "label": { "en": "Session store", "es": "Almacén de sesión" }, "hint": { "en": "Keeps app servers stateless", "es": "Mantiene los servidores sin estado" } }
+      ],
+      "requiredNodes": [
+        { "type": "lb", "note": { "en": "Without a load balancer you can't spread load across copies.", "es": "Sin balanceador no puedes repartir carga entre copias." } },
+        { "type": "app", "min": 2, "note": { "en": "Horizontal scaling means MORE than one stateless app server.", "es": "Escalar horizontalmente significa MÁS de un servidor sin estado." } },
+        { "type": "cache", "note": { "en": "A read-heavy tier needs a cache to protect the database.", "es": "Una capa con muchas lecturas necesita una caché para proteger la base." } },
+        { "type": "db" },
+        { "type": "session", "note": { "en": "Sessions belong in a shared store, not in-process.", "es": "Las sesiones van en un almacén compartido, no en el proceso." } }
+      ],
+      "requiredEdges": [
+        { "from": "client", "to": "lb", "note": { "en": "Clients hit the load balancer, not an app server directly.", "es": "Los clientes llegan al balanceador, no a un servidor directo." } },
+        { "from": "lb", "to": "app", "note": { "en": "The balancer fans out to the app pool.", "es": "El balanceador reparte al grupo de app." } },
+        { "from": "app", "to": "cache", "note": { "en": "Read through the cache first.", "es": "Lee primero a través de la caché." } },
+        { "from": "cache", "to": "db", "note": { "en": "Cache misses fall through to the database.", "es": "Los fallos de caché caen a la base de datos." } },
+        { "from": "app", "to": "session", "note": { "en": "App servers read session from the shared store.", "es": "Los servidores leen la sesión del almacén compartido." } }
+      ],
+      "forbiddenEdges": [
+        { "from": "client", "to": "app", "note": { "en": "Bypassing the balancer defeats horizontal scaling.", "es": "Saltarse el balanceador anula el escalado horizontal." } },
+        { "from": "app", "to": "db", "note": { "en": "Going straight to the DB skips the cache the workload needs.", "es": "Ir directo a la base omite la caché que la carga necesita." } }
+      ],
+      "explain": {
+        "en": "Clients → load balancer → a pool of stateless app servers → cache → database, with sessions in a shared store. Statelessness is what lets you add app servers freely; the cache absorbs the 20:1 read skew so the database isn't the bottleneck.",
+        "es": "Clientes → balanceador → grupo de servidores sin estado → caché → base de datos, con las sesiones en un almacén compartido. La ausencia de estado es lo que te deja agregar servidores; la caché absorbe el sesgo de lecturas 20:1 para que la base no sea el cuello de botella."
+      }
+    },
+    {
+      "id": "build-read-replicas",
+      "concept": "replication-and-sharding-tradeoffs",
+      "track": "general",
+      "title": { "en": "Offload reads with replicas", "es": "Descarga lecturas con réplicas" },
+      "prompt": {
+        "en": "Writes go to the primary; reads can be served by replicas. Route writes to the primary and reads to a replica, and replicate primary → replica. Don't send writes to a replica.",
+        "es": "Las escrituras van al primario; las lecturas pueden servirse desde réplicas. Enruta escrituras al primario y lecturas a una réplica, y replica primario → réplica. No mandes escrituras a una réplica."
+      },
+      "palette": [
+        { "type": "app", "label": { "en": "App", "es": "App" } },
+        { "type": "primary", "label": { "en": "Primary DB", "es": "BD primaria" }, "hint": { "en": "Takes all writes", "es": "Recibe todas las escrituras" } },
+        { "type": "replica", "label": { "en": "Read replica", "es": "Réplica de lectura" }, "hint": { "en": "Serves reads only", "es": "Sirve solo lecturas" } }
+      ],
+      "requiredNodes": [
+        { "type": "app" },
+        { "type": "primary" },
+        { "type": "replica", "note": { "en": "You need at least one replica to offload reads.", "es": "Necesitas al menos una réplica para descargar lecturas." } }
+      ],
+      "requiredEdges": [
+        { "from": "app", "to": "primary", "note": { "en": "Writes must go to the primary.", "es": "Las escrituras van al primario." } },
+        { "from": "app", "to": "replica", "note": { "en": "Reads are served from the replica.", "es": "Las lecturas se sirven desde la réplica." } },
+        { "from": "primary", "to": "replica", "note": { "en": "The primary replicates to the replica (async, hence lag).", "es": "El primario replica a la réplica (asíncrono, de ahí el retraso)." } }
+      ],
+      "forbiddenEdges": [
+        { "from": "replica", "to": "primary", "note": { "en": "Replicas don't push data back to the primary — replication is one-way.", "es": "Las réplicas no empujan datos de vuelta al primario — la replicación es en un sentido." } }
+      ],
+      "explain": {
+        "en": "App writes → primary, app reads → replica, and primary → replica replication carries the data across. Replication is asynchronous, so a read-after-write can be stale — that lag is the tradeoff you accept for read scale.",
+        "es": "La app escribe → primario, lee → réplica, y la replicación primario → réplica lleva los datos. La replicación es asíncrona, así que una lectura tras escritura puede estar desactualizada — ese retraso es el compromiso que aceptas por escalar lecturas."
+      }
+    },
+    {
+      "id": "build-async-queue",
+      "concept": "async-messaging-when-to-queue",
+      "track": "general",
+      "title": { "en": "Decouple a slow job with a queue", "es": "Desacopla un trabajo lento con una cola" },
+      "prompt": {
+        "en": "A slow task (video encode, email blast) shouldn't block the request. Put a queue between the producer API and a worker, so the API returns fast and the worker processes off the queue.",
+        "es": "Una tarea lenta (codificar video, envío masivo) no debe bloquear la petición. Pon una cola entre la API productora y un worker, para que la API responda rápido y el worker procese desde la cola."
+      },
+      "palette": [
+        { "type": "client", "label": { "en": "Client", "es": "Cliente" } },
+        { "type": "api", "label": { "en": "API (producer)", "es": "API (productora)" }, "hint": { "en": "Accepts the request, enqueues work", "es": "Acepta la petición y encola el trabajo" } },
+        { "type": "queue", "label": { "en": "Queue", "es": "Cola" }, "hint": { "en": "Buffers work; absorbs spikes", "es": "Amortigua el trabajo; absorbe picos" } },
+        { "type": "worker", "label": { "en": "Worker (consumer)", "es": "Worker (consumidor)" }, "hint": { "en": "Processes jobs asynchronously", "es": "Procesa trabajos de forma asíncrona" } },
+        { "type": "db", "label": { "en": "Database", "es": "Base de datos" } }
+      ],
+      "requiredNodes": [
+        { "type": "api" },
+        { "type": "queue", "note": { "en": "The queue is the whole point — it decouples producer from consumer.", "es": "La cola es todo el punto — desacopla productor de consumidor." } },
+        { "type": "worker" }
+      ],
+      "requiredEdges": [
+        { "from": "client", "to": "api", "note": { "en": "The client calls the API.", "es": "El cliente llama a la API." } },
+        { "from": "api", "to": "queue", "note": { "en": "The API enqueues the job and returns immediately.", "es": "La API encola el trabajo y responde de inmediato." } },
+        { "from": "queue", "to": "worker", "note": { "en": "The worker consumes from the queue.", "es": "El worker consume desde la cola." } }
+      ],
+      "forbiddenEdges": [
+        { "from": "api", "to": "worker", "note": { "en": "Calling the worker directly re-couples them and reintroduces the blocking wait.", "es": "Llamar al worker directo los re-acopla y reintroduce la espera bloqueante." } }
+      ],
+      "explain": {
+        "en": "Client → API → queue → worker. The API's job is to accept and enqueue, then return fast; the worker drains the queue on its own schedule. The queue also absorbs load spikes and lets you retry failed jobs — the coupling you remove is worth the operational surface you add.",
+        "es": "Cliente → API → cola → worker. El trabajo de la API es aceptar y encolar, luego responder rápido; el worker vacía la cola a su ritmo. La cola además absorbe picos y permite reintentar trabajos fallidos — el acoplamiento que quitas vale la superficie operativa que agregas."
+      }
+    },
+    {
+      "id": "build-event-driven",
+      "concept": "event-driven-architecture-tradeoffs",
+      "track": "general",
+      "title": { "en": "Fan out with events", "es": "Propaga con eventos" },
+      "prompt": {
+        "en": "One action (order placed) must trigger several independent reactions (email, inventory, analytics). Publish one event to a broker and let each consumer subscribe — don't have the order service call each one directly.",
+        "es": "Una acción (pedido creado) debe disparar varias reacciones independientes (email, inventario, analítica). Publica un evento a un broker y deja que cada consumidor se suscriba — no hagas que el servicio de pedidos llame a cada uno directamente."
+      },
+      "palette": [
+        { "type": "producer", "label": { "en": "Order service", "es": "Servicio de pedidos" }, "hint": { "en": "Publishes the 'order placed' event", "es": "Publica el evento 'pedido creado'" } },
+        { "type": "broker", "label": { "en": "Event broker", "es": "Broker de eventos" }, "hint": { "en": "Delivers events to subscribers", "es": "Entrega eventos a suscriptores" } },
+        { "type": "email", "label": { "en": "Email consumer", "es": "Consumidor de email" } },
+        { "type": "inventory", "label": { "en": "Inventory consumer", "es": "Consumidor de inventario" } },
+        { "type": "analytics", "label": { "en": "Analytics consumer", "es": "Consumidor de analítica" } }
+      ],
+      "requiredNodes": [
+        { "type": "producer" },
+        { "type": "broker", "note": { "en": "The broker is what decouples the producer from its consumers.", "es": "El broker es lo que desacopla al productor de sus consumidores." } },
+        { "type": "email" },
+        { "type": "inventory" },
+        { "type": "analytics" }
+      ],
+      "requiredEdges": [
+        { "from": "producer", "to": "broker", "note": { "en": "Publish ONE event to the broker.", "es": "Publica UN evento al broker." } },
+        { "from": "broker", "to": "email", "note": { "en": "Each consumer subscribes to the broker.", "es": "Cada consumidor se suscribe al broker." } },
+        { "from": "broker", "to": "inventory", "note": { "en": "Adding a consumer doesn't touch the producer.", "es": "Agregar un consumidor no toca al productor." } },
+        { "from": "broker", "to": "analytics", "note": { "en": "The producer never learns who listens.", "es": "El productor nunca sabe quién escucha." } }
+      ],
+      "forbiddenEdges": [
+        { "from": "producer", "to": "email", "note": { "en": "Direct calls re-couple the producer to every consumer — the thing events exist to avoid.", "es": "Las llamadas directas re-acoplan al productor con cada consumidor — justo lo que los eventos evitan." } },
+        { "from": "producer", "to": "inventory", "note": { "en": "", "es": "" } },
+        { "from": "producer", "to": "analytics", "note": { "en": "", "es": "" } }
+      ],
+      "explain": {
+        "en": "Order service → broker, and broker → each consumer. The producer publishes once and stays ignorant of who listens; you add a fourth reaction by adding a subscriber, touching nothing upstream. The cost you accept: harder end-to-end debugging and eventual, not immediate, consistency.",
+        "es": "Servicio de pedidos → broker, y broker → cada consumidor. El productor publica una vez y no sabe quién escucha; agregas una cuarta reacción sumando un suscriptor, sin tocar nada aguas arriba. El costo que aceptas: depurar de extremo a extremo es más difícil y la consistencia es eventual, no inmediata."
+      }
+    },
+    {
+      "id": "build-rag-system",
+      "concept": "rag-as-system",
+      "track": "ai",
+      "title": { "en": "Assemble a production RAG path", "es": "Arma una ruta RAG de producción" },
+      "prompt": {
+        "en": "Build the query path for retrieval-augmented generation: embed the query, retrieve candidates from a vector index, rerank them, then pass the top context to the LLM. The index is filled offline by a chunk-and-embed pipeline over your documents.",
+        "es": "Construye la ruta de consulta para generación aumentada por recuperación: embebe la consulta, recupera candidatos de un índice vectorial, reordénalos y pasa el mejor contexto al LLM. El índice se llena offline con un pipeline de trozeo y embebido sobre tus documentos."
+      },
+      "palette": [
+        { "type": "query", "label": { "en": "User query", "es": "Consulta" } },
+        { "type": "embed", "label": { "en": "Embedder", "es": "Embebedor" }, "hint": { "en": "Turns text into a vector", "es": "Convierte texto en vector" } },
+        { "type": "index", "label": { "en": "Vector index", "es": "Índice vectorial" }, "hint": { "en": "Nearest-neighbor search", "es": "Búsqueda de vecinos cercanos" } },
+        { "type": "rerank", "label": { "en": "Reranker", "es": "Reordenador" }, "hint": { "en": "Reorders candidates by relevance", "es": "Reordena candidatos por relevancia" } },
+        { "type": "llm", "label": { "en": "LLM", "es": "LLM" }, "hint": { "en": "Generates the grounded answer", "es": "Genera la respuesta fundamentada" } },
+        { "type": "docs", "label": { "en": "Documents", "es": "Documentos" }, "hint": { "en": "The source corpus", "es": "El corpus fuente" } },
+        { "type": "ingest", "label": { "en": "Chunk + embed pipeline", "es": "Pipeline de trozeo + embebido" }, "hint": { "en": "Offline: fills the index", "es": "Offline: llena el índice" } }
+      ],
+      "requiredNodes": [
+        { "type": "embed", "note": { "en": "The query must be embedded to search the vector index.", "es": "La consulta debe embeberse para buscar en el índice." } },
+        { "type": "index" },
+        { "type": "rerank", "note": { "en": "Reranking is what turns 'recall' into 'precision' — most RAG quality lives here.", "es": "El reordenamiento convierte 'recall' en 'precisión' — gran parte de la calidad RAG vive aquí." } },
+        { "type": "llm" },
+        { "type": "ingest", "note": { "en": "The index doesn't fill itself — an offline pipeline chunks and embeds the docs.", "es": "El índice no se llena solo — un pipeline offline trocea y embebe los documentos." } }
+      ],
+      "requiredEdges": [
+        { "from": "query", "to": "embed", "note": { "en": "Embed the incoming query.", "es": "Embebe la consulta entrante." } },
+        { "from": "embed", "to": "index", "note": { "en": "Search the index with the query vector.", "es": "Busca en el índice con el vector de la consulta." } },
+        { "from": "index", "to": "rerank", "note": { "en": "Rerank the retrieved candidates.", "es": "Reordena los candidatos recuperados." } },
+        { "from": "rerank", "to": "llm", "note": { "en": "Pass the top reranked context to the LLM.", "es": "Pasa el mejor contexto reordenado al LLM." } },
+        { "from": "docs", "to": "ingest", "note": { "en": "The pipeline reads your documents.", "es": "El pipeline lee tus documentos." } },
+        { "from": "ingest", "to": "index", "note": { "en": "The pipeline writes embeddings into the index (offline).", "es": "El pipeline escribe embeddings en el índice (offline)." } }
+      ],
+      "forbiddenEdges": [
+        { "from": "query", "to": "llm", "note": { "en": "Sending the raw query straight to the LLM is just prompting — there's no retrieval, so no grounding.", "es": "Mandar la consulta cruda al LLM es solo prompting — no hay recuperación, así que no hay fundamento." } },
+        { "from": "index", "to": "llm", "note": { "en": "Skipping the reranker ships noisy top-k context; retrieval recall isn't answer precision.", "es": "Saltarse el reordenador envía contexto ruidoso; el recall no es precisión de respuesta." } }
+      ],
+      "explain": {
+        "en": "Query → embed → index → rerank → LLM is the online path; documents → chunk/embed pipeline → index is the offline path that fills it. The reranker is the highest-leverage stage: retrieval gets you candidates (recall), reranking gets you the RIGHT ones (precision), and most 'the LLM hallucinated' bugs are actually retrieval or ranking failures.",
+        "es": "Consulta → embeber → índice → reordenar → LLM es la ruta en línea; documentos → pipeline de trozeo/embebido → índice es la ruta offline que lo llena. El reordenador es la etapa de mayor apalancamiento: la recuperación te da candidatos (recall), el reordenamiento te da los CORRECTOS (precisión), y la mayoría de los bugs de 'el LLM alucinó' son en realidad fallos de recuperación o ranking."
+      }
+    },
+    {
+      "id": "build-strangler-migration",
+      "concept": "leading-large-scale-migrations-system",
+      "track": "general",
+      "title": { "en": "Migrate safely with a strangler", "es": "Migra con seguridad usando un estrangulador" },
+      "prompt": {
+        "en": "You're replacing a legacy system without a big-bang cutover. Put a routing façade in front; it sends already-migrated traffic to the new system and everything else to the legacy one. Route through the façade — never let clients call the two systems directly.",
+        "es": "Reemplazas un sistema heredado sin un corte total. Pon una fachada de enrutamiento delante; envía el tráfico ya migrado al sistema nuevo y el resto al heredado. Enruta por la fachada — nunca dejes que los clientes llamen a los dos sistemas directamente."
+      },
+      "palette": [
+        { "type": "client", "label": { "en": "Client", "es": "Cliente" } },
+        { "type": "facade", "label": { "en": "Routing façade", "es": "Fachada de enrutamiento" }, "hint": { "en": "Decides legacy vs new per route", "es": "Decide heredado vs nuevo por ruta" } },
+        { "type": "legacy", "label": { "en": "Legacy system", "es": "Sistema heredado" } },
+        { "type": "new", "label": { "en": "New system", "es": "Sistema nuevo" } }
+      ],
+      "requiredNodes": [
+        { "type": "facade", "note": { "en": "The façade is the seam that makes incremental migration possible.", "es": "La fachada es la costura que hace posible la migración incremental." } },
+        { "type": "legacy" },
+        { "type": "new" }
+      ],
+      "requiredEdges": [
+        { "from": "client", "to": "facade", "note": { "en": "All traffic enters through the façade.", "es": "Todo el tráfico entra por la fachada." } },
+        { "from": "facade", "to": "legacy", "note": { "en": "Not-yet-migrated routes go to legacy.", "es": "Las rutas aún no migradas van al heredado." } },
+        { "from": "facade", "to": "new", "note": { "en": "Migrated routes go to the new system.", "es": "Las rutas migradas van al sistema nuevo." } }
+      ],
+      "forbiddenEdges": [
+        { "from": "client", "to": "legacy", "note": { "en": "A direct client→legacy path can't be migrated route-by-route.", "es": "Una ruta directa cliente→heredado no puede migrarse ruta por ruta." } },
+        { "from": "client", "to": "new", "note": { "en": "Bypassing the façade splits routing logic and breaks safe rollback.", "es": "Saltarse la fachada divide la lógica de enrutamiento y rompe el rollback seguro." } }
+      ],
+      "explain": {
+        "en": "Client → façade, then façade → legacy and façade → new. The façade is the single control point: you move one route at a time to the new system, keep the rest on legacy, and can roll a route back instantly by flipping the façade. That incrementality is exactly what a big-bang rewrite gives up.",
+        "es": "Cliente → fachada, luego fachada → heredado y fachada → nuevo. La fachada es el único punto de control: mueves una ruta a la vez al sistema nuevo, mantienes el resto en el heredado y puedes revertir una ruta al instante cambiando la fachada. Esa incrementalidad es justo lo que un reescribir de golpe sacrifica."
+      }
+    }
+  ]
+}

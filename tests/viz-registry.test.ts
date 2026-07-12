@@ -7,6 +7,8 @@ import { getWidget, WIDGET_IDS } from "@/components/viz";
 const EXPECTED = [
   "big-o", "sort-race", "consistency", "rag-pipeline", "consensus",
   "latency-budget", "token-economics", "threat-board", "scaling-curves", "eval-harness",
+  // parameterized generic widgets (one component serves many concepts via params)
+  "spectrum", "decision-flow", "tradeoff-curve",
 ];
 
 describe("viz widget registry", () => {
@@ -14,7 +16,7 @@ describe("viz widget registry", () => {
     expect(getWidget("does-not-exist")).toBeNull();
   });
 
-  it("registers all ten signature widgets as components", () => {
+  it("registers all signature + generic widgets as components", () => {
     for (const id of EXPECTED) {
       const W = getWidget(id);
       expect(W, `widget "${id}" should be registered`).toBeTruthy();

@@ -33,7 +33,7 @@ const LEVEL_WHAT: Record<Level, { en: string; es: string }> = {
 
 type Track = "general" | "ai";
 
-export function LearnHub({ locale }: { locale: Locale }) {
+export function LearnHub({ locale, embedded = false }: { locale: Locale; embedded?: boolean }) {
   const [pixel, setPixel] = useState(false);
   useEffect(() => {
     const check = () => setPixel(document.documentElement.getAttribute("data-theme") === "pixel");
@@ -65,12 +65,8 @@ export function LearnHub({ locale }: { locale: Locale }) {
 
   if (pixel) return <PixelOverworld locale={locale} />;
 
-  return (
-    <div className="wrap" style={{ paddingTop: "var(--s-10)", paddingBottom: "var(--s-16)" }}>
-      <div className="ws-head">
-        <h1 className="ws-title"><span className="code">{t({ en: "Learn", es: "Aprender" }, locale)}</span>{t({ en: "Climb the ladder, one concept at a time.", es: "Sube la escalera, un concepto a la vez." }, locale)}</h1>
-      </div>
-
+  const inner = (
+    <>
       {/* Track toggle — the old "Tracks" menu, now a clear switch */}
       <div className="gc-trackseg" role="tablist" aria-label={t({ en: "Track", es: "Ruta" }, locale)}>
         <button role="tab" aria-selected={track === "general"} className={track === "general" ? "active" : ""} onClick={() => { setTrack("general"); }}>
@@ -115,6 +111,18 @@ export function LearnHub({ locale }: { locale: Locale }) {
           ))}
         </div>
       </div>
+    </>
+  );
+
+  // Embedded (inside LearnShell's Browse tab): skip our own wrap + page title.
+  if (embedded) return inner;
+
+  return (
+    <div className="wrap" style={{ paddingTop: "var(--s-10)", paddingBottom: "var(--s-16)" }}>
+      <div className="ws-head">
+        <h1 className="ws-title"><span className="code">{t({ en: "Learn", es: "Aprender" }, locale)}</span>{t({ en: "Climb the ladder, one concept at a time.", es: "Sube la escalera, un concepto a la vez." }, locale)}</h1>
+      </div>
+      {inner}
     </div>
   );
 }

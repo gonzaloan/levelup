@@ -253,6 +253,48 @@ export interface CategorizeCheck extends CheckBase {
 }
 export type CheckItem = ClozeCheck | OrderCheck | MatchCheck | CategorizeCheck;
 
+// ── Architecture Builder (constructive check — "build it, don't pick it") ─────
+// The learner assembles a system by placing typed components from a palette and
+// connecting them (directed edges). Graded deterministically against a target
+// topology: required components present, required connections present, and known
+// anti-pattern connections ABSENT. Partial credit + per-criterion feedback.
+// Input is drag OR tap-to-place OR keyboard — grading is on the resulting graph,
+// so it satisfies both the "drag to build" ask and the tap/keyboard a11y bar.
+export interface BuildPaletteItem {
+  type: string;                // stable id, e.g. "client", "lb", "cache", "db"
+  label: I18nText;             // display name
+  glyph?: string;              // optional short symbol/emoji-free tag for the node
+  hint?: I18nText;             // what this component is for
+}
+export interface BuildRequiredNode {
+  type: string;                // palette type that must appear
+  min?: number;                // at least this many (default 1)
+  note?: I18nText;             // why it's needed (shown in feedback)
+}
+export interface BuildEdgeRule {
+  from: string;                // palette type
+  to: string;                  // palette type
+  note: I18nText;              // why this connection matters / why it's wrong
+}
+export interface BuildChallenge {
+  id: string;
+  concept: string;             // concept slug this trains
+  track: Track;
+  title: I18nText;
+  prompt: I18nText;            // the scenario: "assemble a read-heavy web tier…"
+  palette: BuildPaletteItem[];
+  requiredNodes: BuildRequiredNode[];
+  requiredEdges: BuildEdgeRule[];   // directed connections that MUST exist
+  forbiddenEdges?: BuildEdgeRule[]; // anti-pattern connections that must NOT exist
+  explain: I18nText;           // shown on reveal — the reference architecture rationale
+}
+// What a builder emits: placed node instances (id + type) and directed edges.
+export interface BuildNodeInstance { id: string; type: string; }
+export interface BuildResponse {
+  nodes: BuildNodeInstance[];
+  edges: { from: string; to: string }[]; // by node instance id
+}
+
 // A single step in the recommended cross-domain learning path.
 export interface PathStep {
   kind: "concept" | "checkpoint";

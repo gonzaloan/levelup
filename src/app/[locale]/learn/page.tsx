@@ -1,6 +1,6 @@
 import { isLocale, type Locale, LOCALES } from "@/i18n/config";
 import { notFound } from "next/navigation";
-import { LearnHub } from "@/components/LearnHub";
+import { LearnShell } from "@/components/LearnShell";
 
 export function generateStaticParams() {
   return LOCALES.map((locale) => ({ locale }));
@@ -9,5 +9,5 @@ export function generateStaticParams() {
 export default async function LearnPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
   if (!isLocale(locale)) notFound();
-  return <LearnHub locale={locale as Locale} />;
+  return <LearnShell locale={locale as Locale} />;
 }

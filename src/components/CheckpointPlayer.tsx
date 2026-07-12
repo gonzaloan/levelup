@@ -15,7 +15,9 @@ import { recordCheckpoint } from "@/lib/store";
 import { fireReward } from "./Reward";
 import { BossIntro, BossHealth } from "./BossIntro";
 import { checksForConcept } from "@/lib/checks";
+import { buildsForConcept } from "@/lib/build";
 import { CheckHost } from "./checks/CheckHost";
+import { ArchitectBuilder } from "./checks/ArchitectBuilder";
 import { load } from "@/lib/store";
 import { earnedBadges } from "@/lib/badges";
 import type { Checkpoint, CheckpointItem } from "@/lib/types";
@@ -44,10 +46,18 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   const gradedChecks = checkpoint.coversConcepts
     .flatMap((slug) => checksForConcept(slug))
     .slice(0, 2);
-  const totalSteps = items.length + gradedChecks.length;
+  // At most one graded Architecture Build for a covered concept, appended last —
+  // a constructive item worth the same single boolean as any other step.
+  const gradedBuild = checkpoint.coversConcepts
+    .flatMap((slug) => buildsForConcept(slug))
+    .slice(0, 1)[0];
+  const checksStart = items.length;
+  const buildStart = items.length + gradedChecks.length;
+  const totalSteps = items.length + gradedChecks.length + (gradedBuild ? 1 : 0);
   const inMcq = idx < items.length;
   const item: CheckpointItem | undefined = inMcq ? items[idx] : undefined;
-  const gradedCheck = !inMcq ? gradedChecks[idx - items.length] : undefined;
+  const gradedCheck = idx >= checksStart && idx < buildStart ? gradedChecks[idx - checksStart] : undefined;
+  const buildStep = gradedBuild && idx >= buildStart ? gradedBuild : undefined;
   const clear = clearThreshold(totalSteps);
   // Human-facing gate: "miss at most one" reads truer than a percent at n≤5.
   const gateLabel = { en: "one miss allowed", es: "se permite un error" };
@@ -187,6 +197,12 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
               <CheckHost key={gradedCheck.id} item={gradedCheck} locale={locale} mode="graded" onResult={onCheckResult} />
             </div>
           )}
+
+          {buildStep && (
+            <div className="card">
+              <ArchitectBuilder key={buildStep.id} challenge={buildStep} locale={locale} mode="graded" onResult={onCheckResult} />
+            </div>
+          )}
         </div>
       )}
 
@@ -200,7 +216,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
               <span className="stat">{Math.round(finalScore * 100)}%</span>
             </div>
             <p className="dim text-sm">
-              {m("chk.score", locale)}: {correctCount}/{items.length} · {t(gateLabel, locale)}
+              {m("chk.score", locale)}: {correctCount}/{totalSteps} · {t(gateLabel, locale)}
             </p>
           </div>
           <div style={{ display: "flex", gap: "var(--s-4)", flexWrap: "wrap" }}>

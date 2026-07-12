@@ -79,11 +79,14 @@ export function Nav({ locale }: { locale: Locale }) {
   }, [open]);
 
   // Simplified nav (get-certified model): a tiny, unambiguous set of verbs.
-  const links: { href: string; key: Parameters<typeof m>[0] }[] = [
-    { href: `/${locale}/learn`, key: "nav.learn" },
-    { href: `/${locale}/ladder`, key: "nav.ladder" },
-    { href: `/${locale}/practice`, key: "nav.practice" },
-    { href: `/${locale}/me`, key: "nav.me" },
+  // Labels are either a shared message key or an inline {en,es} (new chrome —
+  // per the build contract, don't edit the shared messages catalog for these).
+  const links: { href: string; label: string }[] = [
+    { href: `/${locale}/learn`, label: m("nav.learn", locale) },
+    { href: `/${locale}/build`, label: t({ en: "Build Lab", es: "Diseñar" }, locale) },
+    { href: `/${locale}/ladder`, label: m("nav.ladder", locale) },
+    { href: `/${locale}/practice`, label: m("nav.practice", locale) },
+    { href: `/${locale}/me`, label: m("nav.me", locale) },
   ];
 
   return (
@@ -110,7 +113,7 @@ export function Nav({ locale }: { locale: Locale }) {
         <div className="nav-links-desktop" style={{ display: "flex", gap: "var(--s-5)", marginLeft: "var(--s-2)" }}>
           {links.map((l) => (
             <NavLink key={l.href} href={l.href} active={pathname.startsWith(l.href)}>
-              {m(l.key, locale)}
+              {l.label}
             </NavLink>
           ))}
         </div>
@@ -173,7 +176,7 @@ export function Nav({ locale }: { locale: Locale }) {
                     width: 3, height: "1.1em", borderRadius: 2,
                     background: active ? "var(--gen)" : "transparent",
                   }} />
-                  {m(l.key, locale)}
+                  {l.label}
                 </Link>
               );
             })}
