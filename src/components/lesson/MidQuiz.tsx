@@ -6,13 +6,22 @@ import { useState } from "react";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import type { QuizItem } from "@/lib/types";
+import { shuffleOptions, itemKey } from "@/lib/shuffle";
 
-export function MidQuiz({ locale, items, track, onDone }: { locale: Locale; items: QuizItem[]; track: string; onDone: () => void }) {
+export function MidQuiz({
+  locale, items, track, onDone, scope = "midquiz",
+}: {
+  locale: Locale; items: QuizItem[]; track: string; onDone: () => void;
+  /** Seeds the deterministic option shuffle; pass the lessonId so each lesson's
+   *  ordering is stable and distinct. See lib/shuffle.ts for why we shuffle. */
+  scope?: string;
+}) {
   const [i, setI] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
   const item = items[i];
   if (!item) { onDone(); return null; }
   const revealed = picked !== null;
+  const displayOptions = shuffleOptions(item.options, itemKey(scope, i, item.stem.en));
   function next() {
     if (i + 1 < items.length) { setI(i + 1); setPicked(null); }
     else onDone();
@@ -26,7 +35,8 @@ export function MidQuiz({ locale, items, track, onDone }: { locale: Locale; item
       <div className="card">
         <p style={{ color: "var(--text)", marginBottom: "var(--s-5)", fontSize: "1.0625rem" }}>{t(item.stem, locale)}</p>
         <div className="stack">
-          {item.options.map((o, oi) => {
+          {/* Shuffled display order; `originalIndex` drives state + rationale. */}
+          {displayOptions.map(({ option: o, originalIndex: oi }) => {
             const isPicked = picked === oi;
             const border = revealed ? (o.correct ? "var(--ok)" : isPicked ? "var(--bad)" : "var(--hairline)") : "var(--hairline)";
             return (

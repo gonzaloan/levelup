@@ -15,6 +15,7 @@ import { recordCheckpoint } from "@/lib/store";
 import { fireReward } from "./Reward";
 import { BossIntro, BossHealth } from "./BossIntro";
 import { checksForConcept } from "@/lib/checks";
+import { shuffleOptions, itemKey } from "@/lib/shuffle";
 import { buildsForConcept } from "@/lib/build";
 import { CheckHost } from "./checks/CheckHost";
 import { ArchitectBuilder } from "./checks/ArchitectBuilder";
@@ -59,6 +60,10 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   const gradedCheck = idx >= checksStart && idx < buildStart ? gradedChecks[idx - checksStart] : undefined;
   const buildStep = gradedBuild && idx >= buildStart ? gradedBuild : undefined;
   const clear = clearThreshold(totalSteps);
+  // Display order for the current MCQ's options, stable per item.
+  const displayOptions = item
+    ? shuffleOptions(item.options, itemKey(checkpoint.id, idx, item.stem.en))
+    : [];
   // Human-facing gate: "miss at most one" reads truer than a percent at n≤5.
   const gateLabel = { en: "one miss allowed", es: "se permite un error" };
 
@@ -163,7 +168,12 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
             <div className="card">
               <p style={{ color: "var(--text)", marginBottom: "var(--s-5)", fontSize: "1.0625rem" }}>{t(item.stem, locale)}</p>
               <div className="stack">
-                {item.options.map((o, oi) => {
+                {/* Options are rendered in a deterministic shuffled order (see
+                    lib/shuffle.ts): the authored JSON puts the correct answer
+                    first almost everywhere, which made the gate clickable
+                    without reading. `originalIndex` is what grading, `picked`
+                    and the rationale key off — never the display position. */}
+                {displayOptions.map(({ option: o, originalIndex: oi }) => {
                   const isPicked = picked === oi;
                   const revealed = picked !== null;
                   const border = revealed

@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import type { QuizItem } from "@/lib/types";
+import { shuffleOptions, itemKey } from "@/lib/shuffle";
 
 const PASS_RATIO = 0.7;          // 70% to pass
 const SECONDS_PER_ITEM = 45;     // deterministic budget per question
@@ -23,11 +24,13 @@ function fmt(secs: number): string {
   return `${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
 }
 
-export function ExamRunner({ locale, items, track, onExit }: {
+export function ExamRunner({ locale, items, track, onExit, scope = "exam" }: {
   locale: Locale;
   items: QuizItem[];
   track: string;
   onExit?: () => void;
+  /** Seeds the deterministic option shuffle — pass the lessonId. */
+  scope?: string;
 }) {
   const totalSecs = Math.max(60, items.length * SECONDS_PER_ITEM);
   const [phase, setPhase] = useState<"intro" | "running" | "result">("intro");
@@ -133,6 +136,11 @@ export function ExamRunner({ locale, items, track, onExit }: {
   const picked = answers[cur];
   const low = remaining <= 15;
   const last = cur + 1 >= items.length;
+  // Same seeded shuffle as the other players, but scoped to "exam" so a learner
+  // who just did the formative check doesn't see an identical option order.
+  const displayOptions = item
+    ? shuffleOptions(item.options, itemKey(`${scope}:exam`, cur, item.stem.en))
+    : [];
 
   function pick(oi: number) {
     setAnswers((prev) => { const next = [...prev]; next[cur] = oi; return next; });
@@ -153,7 +161,8 @@ export function ExamRunner({ locale, items, track, onExit }: {
 
       <p style={{ color: "var(--text)", margin: "var(--s-5) 0", fontSize: "1.0625rem" }}>{t(item.stem, locale)}</p>
       <div className="stack">
-        {item.options.map((o, oi) => {
+        {/* Shuffled display order; `originalIndex` is what `answers` stores. */}
+        {displayOptions.map(({ option: o, originalIndex: oi }) => {
           const isPicked = picked === oi;
           return (
             <button key={oi} className="btn" aria-pressed={isPicked} onClick={() => pick(oi)}

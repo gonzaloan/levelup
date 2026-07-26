@@ -9,6 +9,7 @@ import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import { AXIS_BY_ID } from "@/lib/axes";
 import { cbmScore } from "@/lib/scoring";
+import { shuffleOptions } from "@/lib/shuffle";
 import type { Module, Item, Sjt, FieldWork, Response, Confidence } from "@/lib/types";
 import { RoomPlayer } from "./RoomPlayer";
 import { FieldWorkView } from "./FieldWorkView";
@@ -185,7 +186,12 @@ function Retrieval({ locale, items, mod, onDone }: { locale: Locale; items: Item
       <div className="card">
         <p style={{ color: "var(--text)", marginBottom: "var(--s-5)" }}>{t(item.stem, locale)}</p>
         <div className="stack">
-          {item.options.map((o) => {
+          {/* Shuffled display order (lib/shuffle.ts). This surface gates module
+              mastery, and 66% of the item bank has the key at index 0 — without
+              this, "always click option 1, always answer confident" masters 6 of
+              14 modules with a perfect CBM score. Selection is by option id, so
+              nothing downstream depends on display position. */}
+          {shuffleOptions(item.options, `retrieval:${item.id}`).map(({ option: o }) => {
             const isChosen = picked === o.id;
             const border = revealed ? (o.correct ? "var(--ok)" : isChosen ? "var(--bad)" : "var(--hairline)") : (isChosen ? "var(--gen)" : "var(--hairline)");
             return (

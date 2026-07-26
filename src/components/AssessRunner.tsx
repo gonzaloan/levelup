@@ -11,6 +11,7 @@ import type { AxisId } from "@/lib/axes";
 import type { Item, Response, Confidence, Sjt } from "@/lib/types";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
+import { shuffleOptions } from "@/lib/shuffle";
 
 type Phase = "intro" | "self" | "items" | "done";
 
@@ -21,6 +22,7 @@ const SELF_PROMPTS: Record<AxisId, { en: string; es: string }> = {
   4: { en: "My design docs include real Alternatives-Considered and Non-Goals, and I get pulled into decisions.", es: "Mis design docs incluyen Alternativas-Consideradas y No-Objetivos reales, y me involucran en decisiones." },
   5: { en: "I sponsor other engineers — I spend my own capital to get them opportunities.", es: "Apadrino a otros ingenieros — gasto mi propio capital para conseguirles oportunidades." },
   6: { en: "I ship AI features on evals, not vibes, and I can name how an agent with tool access gets prompt-injected.", es: "Entrego features de IA con evals, no por intuición, y sé nombrar cómo se inyecta un prompt en un agente con acceso a herramientas." },
+  7: { en: "I can name my system's failure domains and its cost per unit of work, and I've pre-provisioned recovery rather than relying on a control-plane call.", es: "Puedo nombrar los dominios de falla de mi sistema y su costo por unidad de trabajo, y tengo la recuperación pre-aprovisionada en vez de depender de una llamada al plano de control." },
 };
 
 export function AssessRunner({ locale, items }: { locale: Locale; items: Item[]; rooms?: Sjt[] }) {
@@ -149,6 +151,9 @@ export function AssessRunner({ locale, items }: { locale: Locale; items: Item[];
 
   if (phase === "items" && currentItem) {
     const pct = Math.round((answered / totalTarget) * 100);
+    // Stable per item id: re-rendering (picking a confidence level, for example)
+    // must never reshuffle the options under the learner's cursor.
+    const displayOptions = shuffleOptions(currentItem.options, `assess:${currentItem.id}`);
     return (
       <div className="stack">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -160,7 +165,12 @@ export function AssessRunner({ locale, items }: { locale: Locale; items: Item[];
         <div className="card">
           <p style={{ fontSize: "1.0625rem", color: "var(--text)", marginBottom: "var(--s-5)" }}>{t(currentItem.stem, locale)}</p>
           <div className="stack">
-            {currentItem.options.map((o) => (
+            {/* Deterministic shuffle (lib/shuffle.ts): the authored banks put the
+                correct option first in most items, which would let a learner
+                place high by always picking the first one — and the placement is
+                the whole point of this screen. Selection is by option id, so
+                nothing downstream depends on display order. */}
+            {displayOptions.map(({ option: o }) => (
               <button key={o.id} className="btn" aria-pressed={picked === o.id}
                 onClick={() => setPicked(o.id)}
                 style={{ textAlign: "left", width: "100%", justifyContent: "flex-start", padding: "var(--s-3) var(--s-4)",
