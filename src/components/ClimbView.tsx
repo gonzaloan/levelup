@@ -14,16 +14,11 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { t, type Locale } from "@/i18n/config";
-import { AXIS_BY_ID } from "@/lib/axes";
+import { AXIS_BY_ID, AXIS_COLOR } from "@/lib/axes";
 import {
   buildClimb, climbSummary, LEVEL_MANDATE, type Stage, type StageDomainCell,
 } from "@/lib/climb";
 import { load, type Progress } from "@/lib/store";
-
-const AXIS_COLOR: Record<number, string> = {
-  1: "var(--gen)", 2: "var(--gen-accent)", 3: "var(--ai-signal)",
-  4: "var(--star)", 5: "var(--gen-accent)", 6: "var(--ai)",
-};
 
 export function ClimbView({ locale }: { locale: Locale }) {
   const [progress, setProgress] = useState<Progress | null>(null);

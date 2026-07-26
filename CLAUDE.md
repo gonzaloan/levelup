@@ -17,8 +17,18 @@ before making changes.
 - `src/app/styles/*.css` — the design system, one concern per module; **import order = cascade order**.
 - `src/components/` — UI. Sub-areas: `lesson/`, `checks/`, `viz/` (interactive concept widgets).
 - `src/lib/` — logic (see `src/lib/README.md` for the domain/data/shared map).
-- `src/content/data/*.json` — the content-as-data (curriculum, lessons, checks). Large; edit via
-  scripts/merges, not by hand.
+- `src/content/data/*.json` — the content-as-data (curriculum, lessons, checks, resources). Large;
+  edit via the validating merge scripts in `tools/`, never by hand:
+  - `merge-domain.cjs` — a whole domain into the spine (validates prereq DAG, no cycles, no
+    forward references, bilingual, no calques).
+  - `merge-checkpoints.cjs` — checkpoints (exactly one correct option, concepts in the right band).
+  - `merge-lessons.cjs` — lessons (diagram shape must match its `kind` or it renders empty;
+    `architecture` must not restate `diagram`; widgetId must exist in the viz registry).
+  - `merge-resources.cjs` + `apply-resource-map.cjs` — the reading list and its concept mapping.
+  - `assemble-lesson.cjs` — stitches per-batch authored partials into one lesson.
+  - `check-links.mjs` — link liveness. A 200 is NOT enough: it also fails a redirect that lands off
+    the article (a "working" link that delivers nothing).
+  Each takes `--check` to validate what is already shipped.
 - `src/i18n/` — locales + the UI message catalog (`messages.ts`).
 - `docs/specs/`, `docs/superpowers/plans/` — design specs and implementation plans.
 - `research/` — throwaway working area (fleet inputs, SD experiment). Largely gitignored.
@@ -38,6 +48,15 @@ before making changes.
   is additive (old renderers ignore unknown fields). Pure-domain `lib` modules stay React-free.
 - **Assessment integrity**: `scoring.ts` is the honest engine — don't casually change it. Graded
   checks resolve to a boolean and feed the same gate as MCQs; formative checks never score.
+  **Option order is shuffled at render** (`src/lib/shuffle.ts`, seeded by a stable item key, never
+  random): the authored JSON puts the correct answer first in ~97% of items, which made every quiz
+  clickable without reading. Any new quiz surface MUST shuffle, and must key state/grading off the
+  ORIGINAL index — never the display position.
+- **Derive counts and maps from the spine, never hardcode them.** Adding the 7th domain broke five
+  places that had literal `"six domains"`, a hardcoded domain→axis map with a silent `?? 1` fallback
+  (every Cloud lesson rendered as "Technical Depth"), a `DOMAIN_ORDER.indexOf` sort that put the
+  unlisted domain FIRST, a hardcoded domain allowlist in a merge script, and the same list in a test.
+  If you write a domain id or a count as a literal, assume it will be wrong within a month.
 
 ## Hard bars (project identity)
 - **"Must not look AI-generated"**: hand-authored SVG/CSS for anything explanatory. Diffusion/raster

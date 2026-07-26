@@ -15,6 +15,8 @@ import { ConceptNav } from "./ConceptNav";
 import { ContextRail } from "./ContextRail";
 import { markConceptsRead } from "@/lib/store";
 import { checksForLesson } from "@/lib/checks";
+import { resourcesForConcepts } from "@/lib/resources";
+import { ResourceList } from "./ResourceList";
 import { ConceptPane } from "./lesson/ConceptPane";
 import { MidQuiz } from "./lesson/MidQuiz";
 import { Practice } from "./lesson/Practice";
@@ -55,6 +57,10 @@ export function LessonView({
   const hasExam = lesson.midQuiz.length > 0;
   // Up to 2 formative checks for this lesson (instant feedback, no score).
   const practiceChecks = checksForLesson(lesson.lessonId).slice(0, 2);
+  // Primary sources attached to any concept in this lesson (deduped, essentials
+  // first). Empty for lessons whose concepts have no mapped resources yet —
+  // ResourceList renders nothing at all in that case.
+  const lessonResources = resourcesForConcepts(lesson.concepts.map((c) => c.slug));
   const scrollTop = () => window.scrollTo({ top: 0, behavior: "smooth" });
   const afterCheck = () => { setStage(practiceChecks.length ? "practice" : "done"); scrollTop(); };
 
@@ -157,7 +163,7 @@ export function LessonView({
       )}
 
       {stage === "check" && (
-        <MidQuiz locale={locale} items={lesson.midQuiz} track={track} onDone={afterCheck} />
+        <MidQuiz locale={locale} items={lesson.midQuiz} track={track} onDone={afterCheck} scope={lesson.lessonId} />
       )}
 
       {stage === "practice" && (
@@ -193,10 +199,17 @@ export function LessonView({
             </div>
           )}
           {showExam && hasExam && (
-            <ExamRunner locale={locale} items={lesson.midQuiz} track={track} onExit={() => setShowExam(false)} />
+            <ExamRunner locale={locale} items={lesson.midQuiz} track={track} onExit={() => setShowExam(false)} scope={lesson.lessonId} />
           )}
           {showCheat && hasCheat && (
             <CheatSheet locale={locale} sections={lesson.cheatSheet} track={track} />
+          )}
+          {/* Primary sources for everything this lesson covered. Placed at the
+              end deliberately: the reading list is what you take AWAY, not a
+              detour that competes with the lesson you're still inside. */}
+          <ResourceList locale={locale} resources={lessonResources} />
+          {lessonResources.length > 0 && (
+            <Link href={`/${locale}/resources`} className="eyebrow">{m("res.openAll", locale)} →</Link>
           )}
           {nextLesson && (
             <Link href={`/${locale}/lesson/${nextLesson.id}`} className="card card-interactive" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--s-4)" }}>

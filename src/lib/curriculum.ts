@@ -24,13 +24,23 @@ export const CHECKPOINTS: Checkpoint[] = DATA.checkpoints;
 export const DOMAIN_BY_ID = new Map(DOMAINS.map((d) => [d.id, d]));
 export const CHECKPOINT_BY_ID = new Map(CHECKPOINTS.map((c) => [c.id, c]));
 
-// Fixed domain display order = the axis order (radar geometry). AI last (flagship).
+// Fixed domain display order = the axis order (radar geometry). The two
+// specialist tracks sit last: AI Engineering then Cloud & Platform.
+//
+// Sorting by `indexOf` alone put any UNLISTED domain first (-1 < 0), which is how
+// Cloud & Platform silently jumped to the head of the Climb the day it was added.
+// Unknown ids now sort to the end, and the axis order is the tiebreaker — so a
+// future domain lands somewhere sensible whether or not this list is updated.
 const DOMAIN_ORDER = [
   "technical-depth", "systems-architecture", "execution-delivery",
-  "direction-influence", "leveling-scope", "ai-engineering",
+  "direction-influence", "leveling-scope", "ai-engineering", "cloud-platform",
 ];
+const orderIndex = (id: string) => {
+  const i = DOMAIN_ORDER.indexOf(id);
+  return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+};
 export const ORDERED_DOMAINS: CurriculumDomain[] = [...DOMAINS].sort(
-  (a, b) => DOMAIN_ORDER.indexOf(a.id) - DOMAIN_ORDER.indexOf(b.id)
+  (a, b) => orderIndex(a.id) - orderIndex(b.id) || a.axisId - b.axisId
 );
 
 // All concepts, flattened, with their domain/level context — for lookups.

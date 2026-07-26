@@ -81,10 +81,13 @@ export function Nav({ locale }: { locale: Locale }) {
   // Simplified nav (get-certified model): a tiny, unambiguous set of verbs.
   // Labels are either a shared message key or an inline {en,es} (new chrome —
   // per the build contract, don't edit the shared messages catalog for these).
+  // Today leads: the daily brief is the habit surface and the default return
+  // visit. Learn stays second for anyone who'd rather binge a whole lesson.
   const links: { href: string; label: string }[] = [
+    { href: `/${locale}/today`, label: m("nav.today", locale) },
     { href: `/${locale}/learn`, label: m("nav.learn", locale) },
     { href: `/${locale}/build`, label: t({ en: "Build Lab", es: "Diseñar" }, locale) },
-    { href: `/${locale}/ladder`, label: m("nav.ladder", locale) },
+    { href: `/${locale}/resources`, label: t({ en: "Reading", es: "Lecturas" }, locale) },
     { href: `/${locale}/practice`, label: m("nav.practice", locale) },
     { href: `/${locale}/me`, label: m("nav.me", locale) },
   ];

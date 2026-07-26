@@ -35,6 +35,7 @@ const DOMAIN_ACCENT: Record<string, string> = {
   "technical-depth": "#6dc2ca", "systems-architecture": "#597dce",
   "execution-delivery": "#6daa2c", "direction-influence": "#dad45e",
   "leveling-scope": "#d2aa99", "ai-engineering": "#d98a5b",
+  "cloud-platform": "#e8a33d",
 };
 
 // helper predicates over the curriculum
@@ -77,14 +78,15 @@ export const ACHIEVEMENTS: Achievement[] = [
     id: "half-climb", category: "milestone", tier: "silver", accent: "#597dce",
     name: { en: "Halfway Up", es: "A Mitad de Camino" },
     description: { en: "Cleared half of all checkpoints.", es: "Superaste la mitad de los puntos de control." },
-    criteria: { en: "Clear at least 15 of the 30 checkpoints.", es: "Supera al menos 15 de los 30 puntos de control." },
-    earned: (p) => p.checkpointsCleared.length >= 15,
+    criteria: { en: `Clear at least half of the ${CHECKPOINTS.length} checkpoints.`, es: `Supera al menos la mitad de los ${CHECKPOINTS.length} puntos de control.` },
+    // Derived: the spine grows, so a literal "15 of 30" would drift out of truth.
+    earned: (p) => p.checkpointsCleared.length >= Math.ceil(CHECKPOINTS.length / 2),
   },
   {
     id: "full-climb", category: "milestone", tier: "platinum", accent: "#e9e59a",
     name: { en: "The Summit", es: "La Cumbre" },
     description: { en: "Cleared every checkpoint. Principal-grade.", es: "Superaste todos los puntos de control. Nivel Principal." },
-    criteria: { en: "Clear all 30 checkpoints across every domain and level.", es: "Supera los 30 puntos de control de todos los dominios y niveles." },
+    criteria: { en: `Clear all ${CHECKPOINTS.length} checkpoints across every domain and level.`, es: `Supera los ${CHECKPOINTS.length} puntos de control de todos los dominios y niveles.` },
     earned: (p) => clearedAll(p, CHECKPOINTS.map((c) => c.id)),
   },
   // Per-domain mastery (6)
@@ -103,7 +105,8 @@ export const ACHIEVEMENTS: Achievement[] = [
     id: `level-${lv.toLowerCase()}`, category: "level", tier: "silver", accent: "#9ecbff",
     name: { en: `${lv} Complete`, es: `${lv} Completo` },
     description: { en: `Cleared every domain's ${lv} checkpoint.`, es: `Superaste el punto de control ${lv} de cada dominio.` },
-    criteria: { en: `Clear all six ${lv} checkpoints.`, es: `Supera los seis puntos de control ${lv}.` },
+    // Count derived from the spine so a new domain doesn't make the criteria lie.
+    criteria: { en: `Clear all ${ORDERED_DOMAINS.length} ${lv} checkpoints.`, es: `Supera los ${ORDERED_DOMAINS.length} puntos de control ${lv}.` },
     earned: (p) => clearedAll(p, levelCheckpointIds(lv)),
   })),
 ];

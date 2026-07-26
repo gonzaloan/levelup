@@ -3,6 +3,9 @@
 // Locale-independent IDs so switching language never loses progress.
 // Cognito+DynamoDB sync is Phase 2 — this module is the single seam for it.
 import type { AssessmentResult, Response } from "./types";
+import type { ReviewState } from "./review";
+import { firstSchedule, schedule, type Grade } from "./review";
+import { markDay, type StreakState } from "./daily";
 
 const KEY = "levelup.v1";
 
@@ -20,6 +23,21 @@ export interface Progress {
   signal: number;                   // "XP" as competence feedback
   cadence: { enabled: boolean; weeks: string[] }; // opt-in, forgiving
   archetype?: string;
+  // ── Daily Brief layer (additive; absent in older saves, defaulted below) ──
+  reviews: Record<string, ReviewState>;   // concept slug -> spaced-review state
+  streak: StreakState;                    // day keys on which a brief was completed
+  dailyLog: Record<string, DailyRecord>;  // day key -> what happened that day
+  skipped: string[];                      // concept slugs the learner set aside
+}
+
+/** What a learner did on one day — the shareable record of a brief. */
+export interface DailyRecord {
+  conceptSlug?: string;      // the fresh concept served
+  domainId?: string;
+  learned: boolean;          // read the fresh concept
+  checkPassed?: boolean;     // passed the day's knowledge check on first try
+  reviewsDone: number;
+  completedAt: number;       // epoch ms (display only; never used for logic)
 }
 
 const EMPTY: Progress = {
@@ -34,6 +52,10 @@ const EMPTY: Progress = {
   checkpointScores: {},
   signal: 0,
   cadence: { enabled: false, weeks: [] },
+  reviews: {},
+  streak: { days: [] },
+  dailyLog: {},
+  skipped: [],
 };
 
 export function load(): Progress {
@@ -172,4 +194,65 @@ export function recordGauntlet(
     };
   });
   return { progress, newlyCleared };
+}
+
+// ── Daily Brief ───────────────────────────────────────────────────────────
+// The store is the only place that touches the clock. Every scheduling decision
+// lives in the PURE modules (daily.ts / review.ts) and receives `today` as an
+// argument, so the engine stays testable and the SSG build can never drift.
+
+/** Today's day key in the LEARNER'S local timezone (the day they experience). */
+export function todayKey(now: Date = new Date()): string {
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Enroll a concept into spaced review the first time it is learned. Idempotent:
+ * re-reading a concept must not reset a schedule you've already climbed.
+ */
+export function enrollReview(slug: string, today = todayKey()): Progress {
+  return update((p) =>
+    p.reviews[slug] ? p : { ...p, reviews: { ...p.reviews, [slug]: firstSchedule(today) } }
+  );
+}
+
+/** Record a graded review of a concept, advancing its schedule. */
+export function recordReview(slug: string, grade: Grade, today = todayKey()): Progress {
+  return update((p) => ({
+    ...p,
+    reviews: { ...p.reviews, [slug]: schedule(p.reviews[slug], grade, today) },
+  }));
+}
+
+/**
+ * Complete today's brief. Awards Signal once per day (competence feedback, not
+ * a grind quota) and records the day for the streak. Idempotent per day.
+ */
+export function completeDaily(record: Omit<DailyRecord, "completedAt">, today = todayKey()): {
+  progress: Progress;
+  newlyCompleted: boolean;
+} {
+  const before = load();
+  const already = !!before.dailyLog[today];
+  const progress = update((p) => ({
+    ...p,
+    dailyLog: { ...p.dailyLog, [today]: { ...record, completedAt: Date.now() } },
+    streak: markDay(p.streak, today),
+    signal: p.signal + (already ? 0 : 10),
+  }));
+  return { progress, newlyCompleted: !already };
+}
+
+/** Set a concept aside so the brief stops serving it (reversible). */
+export function skipConcept(slug: string): Progress {
+  return update((p) =>
+    p.skipped.includes(slug) ? p : { ...p, skipped: [...p.skipped, slug] }
+  );
+}
+
+export function unskipConcept(slug: string): Progress {
+  return update((p) => ({ ...p, skipped: p.skipped.filter((s) => s !== slug) }));
 }

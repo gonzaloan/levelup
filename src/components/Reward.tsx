@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { usePrefersMotion } from "@/lib/motion";
 
 export interface RewardDetail {
-  kind: "mastery" | "room" | "boss" | "gauntlet";
+  kind: "mastery" | "room" | "boss" | "gauntlet" | "daily";
   /** short instrument label, already localized, e.g. "DEPTH · STAR CHARTED" */
   title: string;
   /** one in-voice sentence, already localized */

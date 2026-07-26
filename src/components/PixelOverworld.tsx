@@ -1,7 +1,7 @@
 "use client";
 // The pixel-mode Curriculum: a Mario-3 "choose your world" overworld, faithful
 // to get-certified's pixel picker. A dawn sky with a pixel sun, drifting pixel
-// clouds and a parallax mountain band; each of the six domains is a "continent"
+// clouds and a parallax mountain band; each domain in the spine is a "continent"
 // standing on a tiled island with its own landmark sprite; clicking a continent
 // opens its level path (L3→L7) as a winding row of pixel nodes. All sprites are
 // crisp authored SVG from the ported engine.
@@ -23,7 +23,14 @@ const WORLD: Record<string, { sprite: string; ground: string; accent: string; de
   "direction-influence":   { sprite: "signpost",    ground: "dirt",  accent: "#dad45e", deep: "#854c30" },
   "leveling-scope":        { sprite: "tree",        ground: "grass", accent: "#d2aa99", deep: "#442434" },
   "ai-engineering":        { sprite: "keepCCA",     ground: "dirt",  accent: "#d98a5b", deep: "#3a2b6b" },
+  "cloud-platform":        { sprite: "cloud",       ground: "sand",  accent: "#e8a33d", deep: "#4a3a1e" },
 };
+
+// A domain added to the spine without a WORLD entry used to crash the pixel
+// overworld on `w.sprite`. Landmarks are decoration, so an unmapped domain gets a
+// generic one rather than taking the page down.
+const WORLD_FALLBACK = { sprite: "signpost", ground: "grass", accent: "#dad45e", deep: "#30346d" };
+const world = (domainId: string) => WORLD[domainId] ?? WORLD_FALLBACK;
 
 export function PixelOverworld({ locale }: { locale: Locale }) {
   const router = useRouter();
@@ -87,7 +94,7 @@ export function PixelOverworld({ locale }: { locale: Locale }) {
             <p className="pp-sub">{m("pixel.chooseWorldSub", locale)}</p>
             <div className="pp-continents">
               {ORDERED_DOMAINS.map((dom) => {
-                const w = WORLD[dom.id];
+                const w = world(dom.id);
                 const axis = AXIS_BY_ID[dom.axisId];
                 const domCheckpoints = LEVELS.map((lv) => checkpointsAfter(dom.id, lv)).filter(Boolean);
                 const clearedN = domCheckpoints.filter((c) => cleared.has(c!.id)).length;
@@ -141,7 +148,7 @@ function WorldPath({ locale, domainId, progress, onBack, onOpenLesson }: {
 }) {
   const dom = ORDERED_DOMAINS.find((d) => d.id === domainId)!;
   const axis = AXIS_BY_ID[dom.axisId];
-  const w = WORLD[domainId];
+  const w = world(domainId);
   const cleared = new Set(progress?.checkpointsCleared ?? []);
   const levelsWith = LEVELS.filter((lv) => dom.levels.find((l) => l.level === lv)?.concepts.length);
 

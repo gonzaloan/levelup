@@ -72,6 +72,16 @@ export const BOSS_BY_DOMAIN: Record<string, BossAsset> = {
     source: "level-up — dreamshaperXL Lightning",
     accent: "#d98a5b",
   },
+  "cloud-platform": {
+    file: "/bosses/cloud-platform.webp",
+    // The failure this domain actually teaches: a recovery path that depends on
+    // the control plane, at the moment the control plane can't answer.
+    name: { en: "The Control-Plane Wraith", es: "El Espectro del Plano de Control" },
+    title: { en: "Keeper of the Locked Gate", es: "Guardián de la Puerta Cerrada" },
+    license: "locally generated (Stable Diffusion, project-owned)",
+    source: "level-up — dreamshaperXL Lightning",
+    accent: "#e8a33d",
+  },
 };
 
 const FALLBACK: BossAsset = {

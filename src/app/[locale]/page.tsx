@@ -32,7 +32,9 @@ const C = {
   s3t: { en: "Clear the level to ascend", es: "Supera el nivel para subir" },
   s3d: { en: "To rise a level you must clear checkpoints across most domains — breadth, not one grind. The next stage stays locked until you do.", es: "Para subir de nivel debes superar puntos de control en la mayoría de los dominios — amplitud, no una sola veta. La siguiente etapa sigue bloqueada hasta lograrlo." },
   climb: { en: "The five levels", es: "Los cinco niveles" },
-  domainsTitle: { en: "Six domains", es: "Seis dominios" },
+  // Derived, not hardcoded: the spine gained a 7th domain (Cloud & Platform) and
+  // a literal "Six" would have quietly become a lie on the landing page.
+  domainsTitle: { en: "domains", es: "dominios" },
 } as const;
 
 const LEVEL_WHAT: Record<Level, { en: string; es: string }> = {
@@ -158,9 +160,9 @@ export default async function Landing({ params }: { params: Promise<{ locale: st
         </div>
       </section>
 
-      {/* SIX DOMAINS */}
+      {/* DOMAINS (count derived from the spine) */}
       <section className="wrap" style={{ padding: "0 var(--s-6) var(--s-16)" }}>
-        <p className="eyebrow" style={{ marginBottom: "var(--s-5)" }}>{t(C.domainsTitle, L)} · {totalConcepts()} {t({ en: "concepts", es: "conceptos" }, L)} · {CHECKPOINTS.length} {t({ en: "bosses", es: "jefes" }, L)}</p>
+        <p className="eyebrow" style={{ marginBottom: "var(--s-5)" }}>{ORDERED_DOMAINS.length} {t(C.domainsTitle, L)} · {totalConcepts()} {t({ en: "concepts", es: "conceptos" }, L)} · {CHECKPOINTS.length} {t({ en: "bosses", es: "jefes" }, L)}</p>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))", gap: "var(--s-3)" }}>
           {ORDERED_DOMAINS.map((d, i) => (
             <Link key={d.id} href={`/${L}/learn`} className="card card-interactive" style={{ padding: "var(--s-4)", display: "flex", gap: "var(--s-3)", alignItems: "flex-start" }}>

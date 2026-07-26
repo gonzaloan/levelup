@@ -1,5 +1,6 @@
 // Small shared helpers for the lesson view + its subcomponents.
-import type { Level } from "@/lib/axes";
+import type { AxisId, Level } from "@/lib/axes";
+import { DOMAIN_BY_ID } from "@/lib/curriculum";
 
 /** Split authored prose into trimmed, non-empty paragraphs. */
 export function para(s: string): string[] {
@@ -10,11 +11,17 @@ export function lessonLevel(id: string): Level {
   return id.split("-").pop()!.toUpperCase() as Level;
 }
 
-export function lessonAxisId(id: string): 1 | 2 | 3 | 4 | 5 | 6 {
-  const map: Record<string, 1 | 2 | 3 | 4 | 5 | 6> = {
-    "technical-depth": 1, "systems-architecture": 2, "execution-delivery": 3,
-    "direction-influence": 4, "leveling-scope": 5, "ai-engineering": 6,
-  };
-  const domain = id.replace(/-l[3-7]$/, "");
-  return map[domain] ?? 1;
+/**
+ * The axis a lessonId belongs to, read from the curriculum spine.
+ *
+ * This was a hardcoded domain→axis map with a silent `?? 1` fallback, which meant
+ * a new domain didn't fail — it rendered every one of its lessons under the FIRST
+ * axis's name and colour. Deriving it from the spine makes the mapping impossible
+ * to get out of sync, and an unknown id now throws instead of lying.
+ */
+export function lessonAxisId(id: string): AxisId {
+  const domainId = id.replace(/-l[3-7]$/, "");
+  const axisId = DOMAIN_BY_ID.get(domainId)?.axisId;
+  if (!axisId) throw new Error(`lessonAxisId: no spine domain for lessonId "${id}"`);
+  return axisId;
 }

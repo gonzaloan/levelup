@@ -11,7 +11,7 @@ const MODEL = "sd\dreamshaperXL_lightningDPMSDE.safetensors [fdbe56354b]";
 
 const NEG = "text, watermark, signature, blurry, jpeg artifacts, deformed, extra limbs, low quality, ugly, oversaturated, logo text, letters";
 
-async function gen({ prompt, negative = NEG, width = 768, height = 768, steps = 8, cfg = 2, seed = 12345, out }) {
+async function gen({ prompt, negative_prompt, negative = negative_prompt || NEG, width = 768, height = 768, steps = 8, cfg = 2, seed = 12345, out }) {
   const body = {
     prompt, negative_prompt: negative,
     width, height, steps, cfg_scale: cfg, seed,

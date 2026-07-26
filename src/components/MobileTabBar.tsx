@@ -8,7 +8,9 @@ import type { Locale } from "@/i18n/config";
 
 export function MobileTabBar({ locale }: { locale: Locale }) {
   const pathname = usePathname();
+  // Five thumb tabs, Today first — the daily brief is the reason to come back.
   const tabs: { href: string; key: Parameters<typeof m>[0]; ico: string }[] = [
+    { href: `/${locale}/today`, key: "nav.today", ico: "◉" },
     { href: `/${locale}/learn`, key: "nav.learn", ico: "▦" },
     { href: `/${locale}/ladder`, key: "nav.ladder", ico: "◆" },
     { href: `/${locale}/practice`, key: "nav.practice", ico: "✎" },

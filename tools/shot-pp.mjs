@@ -1,0 +1,12 @@
+import { chromium } from '@playwright/test';
+const b = await chromium.launch();
+const ctx = await b.newContext({ viewport:{width:1440,height:1000} });
+const p = await ctx.newPage();
+const errs=[]; p.on('console',m=>{if(m.type()==='error')errs.push(m.text())}); p.on('pageerror',e=>errs.push('PAGEERROR '+e.message));
+await p.goto('http://localhost:4190/', {waitUntil:'networkidle'});
+const el = p.locator('#products');
+await el.scrollIntoViewIfNeeded();
+await p.waitForTimeout(900);
+await el.screenshot({path:'research/audit-2026-07-25/pp-products.png'});
+console.log('ERRORS:', errs.length? errs.slice(0,3).join(' | '):'none');
+await b.close();

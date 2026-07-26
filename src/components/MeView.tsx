@@ -98,7 +98,7 @@ export function MeView({ locale }: { locale: Locale }) {
           can't deliver from a static export. Just points at the work. */}
       <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--s-4)", flexWrap: "wrap" }}>
         <span className="dim text-sm">
-          {t({ en: "The curriculum is the ordered plan: six domains, five levels, one climb. Follow it, or let the diagnostic place you at your frontier.", es: "El temario es el plan ordenado: seis dominios, cinco niveles, una subida. Síguelo, o deja que el diagnóstico te ubique en tu frontera." }, locale)}
+          {t({ en: "The curriculum is the ordered plan: every domain, five levels, one climb. Follow it, or let the diagnostic place you at your frontier.", es: "El temario es el plan ordenado: cada dominio, cinco niveles, una subida. Síguelo, o deja que el diagnóstico te ubique en tu frontera." }, locale)}
         </span>
         <Link href={`/${locale}/learn`} className="btn">{m("nav.learn", locale)} →</Link>
       </div>

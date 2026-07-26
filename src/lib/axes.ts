@@ -4,7 +4,7 @@
 // internal scaffold only. See research/04-brief-amendments-v2.md §A2.
 import type { I18nText } from "@/i18n/config";
 
-export type AxisId = 1 | 2 | 3 | 4 | 5 | 6;
+export type AxisId = 1 | 2 | 3 | 4 | 5 | 6 | 7;
 
 export interface Axis {
   id: AxisId;
@@ -79,7 +79,38 @@ export const AXES: Axis[] = [
       es: "Evals como ingeniería, diseño de recuperación y agentes, seguridad de LLM, y ser dueño del costo por tarea exitosa en producción.",
     },
   },
+  {
+    // The second specialist axis. Distributed-systems theory (axis 1) and design
+    // judgment (axis 2) tell you what SHOULD happen; this axis is about owning it
+    // on a real cloud, where the constraints are a provider's actual primitives,
+    // its actual failure domains, and a bill. Kept separate from architecture
+    // because "can you draw a cell-based design" and "do you know what AZ-
+    // independence costs you in this account structure" are different skills, and
+    // Staff+ cloud work lives in the second one.
+    id: 7,
+    key: "cloud-platform",
+    name: { en: "Cloud & Platform Engineering", es: "Ingeniería de Nube y Plataforma" },
+    short: { en: "Cloud", es: "Nube" },
+    measures: {
+      en: "Owning a cloud footprint end to end: isolation and failure domains, multi-account governance, cost as a design constraint, and the paved roads other teams build on.",
+      es: "Ser dueño de una huella de nube de punta a punta: dominios de aislamiento y de falla, gobierno multi-cuenta, el costo como restricción de diseño, y los caminos pavimentados sobre los que construyen otros equipos.",
+    },
+  },
 ];
+
+// The one place axis→colour lives. Each axis gets a distinguishable accent from
+// the existing token palette (no new hues invented): the two track colours plus
+// the instrument accents. Consumers reference this instead of re-declaring a
+// local map, so a palette change lands everywhere at once.
+export const AXIS_COLOR: Record<AxisId, string> = {
+  1: "var(--gen)",
+  2: "var(--gen-accent)",
+  3: "var(--ai-signal)",
+  4: "var(--star)",
+  5: "var(--amber-accent)",
+  6: "var(--ai)",
+  7: "var(--amber)",
+};
 
 export const AXIS_BY_ID: Record<AxisId, Axis> = AXES.reduce(
   (acc, a) => ((acc[a.id] = a), acc),
