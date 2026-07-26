@@ -209,6 +209,7 @@ export const MESSAGES = {
   "flash.done":         { en: "Done recalling", es: "Repaso hecho" },
   "flash.tapToFlip":    { en: "Tap to reveal", es: "Toca para revelar" },
   "flash.recalled":     { en: "recalled", es: "recordadas" },
+  "flash.skip":         { en: "Skip recall", es: "Saltar el repaso" },
 
   // ── Cheat sheet / quick reference ─────────────────────────────────────
   "cheat.title":        { en: "Quick reference", es: "Referencia rápida" },

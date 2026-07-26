@@ -2,7 +2,14 @@ import { test } from "@playwright/test";
 
 // Captures a full screenshot set for the final product review, including the
 // diagnostic flow driven to a results screen (so reviewers see the radar + gap).
+//
+// This is a capture job, not an assertion: it answers up to 80 diagnostic items
+// and takes eight full-page screenshots, which does not fit the 30s default. It
+// used to fail on that timeout alone (mid-screenshot, after "fonts loaded"), which
+// read like a product defect and was only ever a budget. The work is genuinely
+// slow, so give it a real one rather than trimming the coverage.
 test("capture full journey (en)", async ({ page }) => {
+  test.slow(); // 3× the default timeout
   await page.goto("/en/");
   await page.screenshot({ path: "test-results/review-01-landing.png", fullPage: true });
 

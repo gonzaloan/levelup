@@ -9,18 +9,40 @@ async function settle(page: Page) { await page.waitForTimeout(700); }
 test("formative check renders in the lesson practice stage", async ({ page }) => {
   await page.goto("/en/lesson/technical-depth-l5/");
   await settle(page);
-  // Walk the lesson to the practice stage. Each turn: if a check is showing, stop.
-  // Otherwise advance via the single primary CTA; in the mid-quiz, pick an option
-  // first (options are .card .btn), then the primary CTA appears.
-  for (let i = 0; i < 60 && (await page.locator(".check").count()) === 0; i++) {
-    const cta = page.getByRole("button", { name: /^(Start|Got it.*|Take the.*|Continue|Next|Begin.*)/i }).first();
-    if (await cta.count()) { await cta.click({ timeout: 2000 }).catch(() => {}); }
-    else {
-      const opt = page.locator(".card").last().locator("button").first();
-      if (await opt.count()) await opt.click({ timeout: 2000 }).catch(() => {});
-    }
-    await page.waitForTimeout(120);
+
+  // Walk the real stages explicitly rather than clicking whatever button happens
+  // to be first. The old generic walk looped forever inside the 24-card recall
+  // deck: its CTA is "Flip", which the regex didn't match, so it kept re-clicking
+  // the same card and never reached the practice stage.
+  //   overview → concept panes → recall (optional) → mid-quiz → practice
+  await page.getByRole("button", { name: /^Begin/ }).click();
+  await settle(page);
+
+  // Concept panes: the last one's CTA is "Start the check", not "Got it — continue".
+  for (let i = 0; i < 12; i++) {
+    const next = page.getByRole("button", { name: /Got it — continue|Start the check/ });
+    if (!(await next.count())) break;
+    await next.first().click();
+    await page.waitForTimeout(200);
   }
+
+  // Recall is optional practice; skip past it to reach the graded flow.
+  const skipRecall = page.getByRole("button", { name: /Skip recall/i });
+  if (await skipRecall.count()) {
+    await skipRecall.first().click();
+    await settle(page);
+  }
+
+  // Mid-quiz: pick an option, then advance. 3 items, plus a guard iteration.
+  for (let q = 0; q < 5 && (await page.locator(".check").count()) === 0; q++) {
+    const options = page.locator(".card .btn");
+    if (!(await options.count())) break;
+    await options.nth(0).click().catch(() => {});
+    await page.waitForTimeout(250);
+    const next = page.getByRole("button", { name: /^(Next|Continue)/i }).first();
+    if (await next.count()) { await next.click(); await page.waitForTimeout(300); }
+  }
+
   await expect(page.locator(".check").first()).toBeVisible();
   await page.screenshot({ path: "test-results/check-lesson.png", fullPage: true });
 });

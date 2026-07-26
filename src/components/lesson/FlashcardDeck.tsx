@@ -33,11 +33,18 @@ export function FlashcardDeck({ locale, cards, track, onDone }: {
 
   return (
     <div className="stack" style={{ gap: "var(--s-4)", marginTop: "var(--s-6)" }}>
-      <div>
-        <p className="eyebrow" style={{ color: "var(--track-accent)" }}>
-          {m("flash.title", locale)} · {i + 1}/{cards.length}
-        </p>
-        <p className="dim text-sm" style={{ marginTop: 4, color: "var(--text-3)" }}>{m("flash.intro", locale)}</p>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "var(--s-4)", flexWrap: "wrap" }}>
+        <div>
+          <p className="eyebrow" style={{ color: "var(--track-accent)" }}>
+            {m("flash.title", locale)} · {i + 1}/{cards.length}
+          </p>
+          <p className="dim text-sm" style={{ marginTop: 4, color: "var(--text-3)" }}>{m("flash.intro", locale)}</p>
+        </div>
+        {/* The deck is OPTIONAL recall practice, but it had no exit: a lesson with
+            24 cards meant 24 taps before the graded check was reachable, with no
+            way to say "not now". Recall is worth offering, not worth trapping
+            someone in. */}
+        <button className="btn btn-sm" onClick={onDone}>{m("flash.skip", locale)}</button>
       </div>
 
       <button
