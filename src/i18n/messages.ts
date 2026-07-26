@@ -12,6 +12,7 @@ export const MESSAGES = {
   "nav.tracks":      { en: "Tracks",       es: "Rutas" },
   "nav.me":          { en: "Progress",     es: "Progreso" },
   "nav.start":       { en: "Start",        es: "Empezar" },
+  "nav.primary":     { en: "Primary navigation", es: "Navegación principal" },
   "theme.pixel":     { en: "16-bit mode",   es: "Modo 16-bit" },
   "theme.studio":    { en: "Studio mode",   es: "Modo estudio" },
   "a11y.skip":       { en: "Skip to content", es: "Saltar al contenido" },
@@ -145,6 +146,13 @@ export const MESSAGES = {
   "lesson.concepts":    { en: "Concepts", es: "Conceptos" },
   "lesson.readMore":    { en: "Go deeper", es: "Profundizar" },
   "lesson.readLess":    { en: "Show less", es: "Mostrar menos" },
+  // Progressive disclosure on the concept pane. The words are all still there —
+  // these controls decide how much arrives at once.
+  "lesson.readFull":    { en: "Read the full explanation", es: "Leer la explicación completa" },
+  "lesson.showExample": { en: "See a worked example", es: "Ver un ejemplo resuelto" },
+  "lesson.hideExample": { en: "Hide the example", es: "Ocultar el ejemplo" },
+  "lesson.showDiagram": { en: "Show the diagram", es: "Ver el diagrama" },
+  "lesson.showCode":    { en: "Show the code", es: "Ver el código" },
   "lesson.pitfalls":    { en: "Common pitfalls", es: "Errores comunes" },
   "lesson.analogy":     { en: "Think of it like", es: "Piénsalo así" },
   "lesson.walkthrough": { en: "Walkthrough", es: "Desarrollo" },

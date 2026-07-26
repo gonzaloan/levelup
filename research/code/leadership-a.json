@@ -1,0 +1,389 @@
+{
+ "patches": [
+  {
+   "lessonId": "systems-architecture-l6",
+   "slug": "observability-for-distributed-systems",
+   "code": {
+    "lang": "yaml",
+    "snippet": "# checkout-api.slo.yml — the artifact that turns \"is it healthy?\" into a decision.\nslo:\n  name: checkout-availability\n  objective: 99.9        # over a rolling 30 days\n  window: 30d\n  # The SLI must be measured where the USER is, not inside the service.\n  indicator:\n    good: 'sum(rate(http_requests_total{route=\"/checkout\",code!~\"5..\"}[5m]))'\n    total: 'sum(rate(http_requests_total{route=\"/checkout\"}[5m]))'\n  # 0.1% of 30 days = 43 minutes of error budget for the month.\n\n# Burn-rate alerts: two windows, because one can't be both fast and quiet.\nalerts:\n  - name: checkout-budget-burning-fast\n    burn_rate: 14.4      # exhausts the month's budget in ~2 days\n    windows: [5m, 1h]    # long window fires, short window confirms still-happening\n    action: page         # a bad deploy returning 5xx trips this in minutes\n  - name: checkout-budget-burning-slow\n    burn_rate: 3\n    windows: [6h, 3d]\n    action: ticket       # real, not urgent — nobody wakes up for this\n\n# NOT alerts. These are causes, and they page you for things users never noticed.\nnot_alerts: [cpu_high, memory_high, pod_restarted, queue_depth]\n\n# The decision the budget makes for you, agreed in advance so it isn't an argument\n# at 2am:\npolicy:\n  budget_remaining: \"ship\"\n  budget_exhausted: \"freeze feature deploys; reliability work only until it recovers\"\n\n# Resilience you can't see isn't resilience — instrument the mechanisms too, or\n# working-as-designed is indistinguishable from quietly-broken.\nresilience_telemetry:\n  - circuit_breaker_state{dependency}     # open breaker + healthy SLO = degraded, silently\n  - retry_attempts_total{dependency}      # retries hiding a failing dependency\n  - fallback_served_total{path}           # how often users got the cached answer",
+    "caption": {
+     "en": "The 99.9%/30-day checkout SLO as configuration: what pages, what freezes, and what stays a dashboard.",
+     "es": "El SLO de 99.9%/30 días de checkout como configuración: qué pagina, qué congela y qué queda en un panel."
+    },
+    "annotations": [
+     {
+      "line": 6,
+      "note": {
+       "en": "An SLI computed from internal success counters can read 100% while every user sees a timeout.",
+       "es": "Un SLI calculado con contadores internos puede marcar 100% mientras cada usuario ve un timeout."
+      }
+     },
+     {
+      "line": 15,
+      "note": {
+       "en": "Burn rate, not raw error rate: it answers \"will this cost us the month?\" instead of \"is something wrong?\".",
+       "es": "Tasa de consumo, no tasa de error: responde \"¿esto nos costará el mes?\" en vez de \"¿algo va mal?\"."
+      }
+     },
+     {
+      "line": 24,
+      "note": {
+       "en": "Alert on user-facing symptoms and burn rate. Cause-based pages train the team to ignore the pager.",
+       "es": "Alerta sobre síntomas que ve el usuario y sobre el consumo. Las páginas por causa enseñan a ignorar el pager."
+      }
+     },
+     {
+      "line": 30,
+      "note": {
+       "en": "Written before the incident, so the freeze is a pre-agreed policy rather than a fight about judgement.",
+       "es": "Escrito antes del incidente, así el congelamiento es política acordada y no una pelea de criterios."
+      }
+     },
+     {
+      "line": 35,
+      "note": {
+       "en": "The failure mode teams miss: the fallback works, so nothing alerts, and the dependency stays broken for weeks.",
+       "es": "La falla que los equipos pasan por alto: el fallback funciona, nada alerta, y la dependencia sigue rota semanas."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "systems-architecture-l6",
+   "slug": "leading-architecture-review",
+   "code": {
+    "lang": "markdown",
+    "snippet": "# Review: RFC-114 \"Order totals service\" (author: mid-level engineer)\n\nTwo problems, very different severity. The review has to treat them differently\nor the author learns only one thing: guess what the Staff reviewer wants.\n\n## ✗ The version that wins the argument\n> Money must be integer minor units, not floats. Also replace the nightly batch\n> with an event stream. I've pushed a revised design doc — take a look.\n\nBoth points are correct. The author now owns nothing, and next time they will\nwrite half a design and wait for me to finish it.\n\n## ✓ The version I actually posted\n\n**Blocking — floats for money.** This one I am going to insist on, and I want to\nbe explicit that I'm using a block rather than a preference. `0.1 + 0.2` is\n`0.30000000000000004`, so a total can disagree with the sum of its lines, and\nthe corruption is silent, in stored data, discovered by a customer at month end.\nIt is a one-way door: unwinding it later means a migration plus a reconciliation\nof everything written in between. Integer minor units (`amount_cents`), or a\ndecimal type if you'd rather — your call which.\n\n**Not blocking — the nightly batch.** Genuine question rather than a redirect:\nwhat does a user see between an order being placed and the 02:00 sync? And if\nthe job fails at 02:00, who finds out, and when? If the answer is \"the totals\nare stale until tomorrow and support hears about it first\", that may still be\nfine for v1 — but I'd want it written down as a known limitation with the\ntrigger for revisiting it. If it's not fine, an event on order-committed is one\noption; a 5-minute poll is a cheaper one worth pricing first.\n\n**Not my call.** Naming, module layout, and the choice of HTTP framework are\nyours. I have opinions and they aren't load-bearing.\n\n---\nReserve blocks for load-bearing, hard-to-reverse risk: data loss, security,\none-way doors. Everything reversible belongs to the author, or you own their\ndesign and they own the pager.",
+    "caption": {
+     "en": "The same RFC, reviewed two ways: the version that wins the argument, and the version that leaves the author owning it.",
+     "es": "El mismo RFC revisado de dos formas: la que gana la discusión y la que deja al autor siendo dueño."
+    },
+    "annotations": [
+     {
+      "line": 4,
+      "note": {
+       "en": "The real cost of winning: the team stops designing and starts predicting you.",
+       "es": "El costo real de ganar: el equipo deja de diseñar y empieza a predecirte."
+      }
+     },
+     {
+      "line": 16,
+      "note": {
+       "en": "Naming the severity out loud is what makes the non-blocking comments safe to disagree with.",
+       "es": "Nombrar la severidad en voz alta es lo que hace seguro discrepar de los comentarios no bloqueantes."
+      }
+     },
+     {
+      "line": 19,
+      "note": {
+       "en": "The block is justified by reversibility and blast radius, not by seniority.",
+       "es": "El bloqueo se justifica por reversibilidad y radio de impacto, no por jerarquía."
+      }
+     },
+     {
+      "line": 24,
+      "note": {
+       "en": "Surface risk as a question. The author reaches the conclusion and therefore keeps owning it.",
+       "es": "Plantea el riesgo como pregunta. El autor llega a la conclusión y por eso sigue siendo dueño."
+      }
+     },
+     {
+      "line": 32,
+      "note": {
+       "en": "Saying this explicitly is how a review stops expanding to fill every file it touches.",
+       "es": "Decir esto explícitamente es cómo una revisión deja de expandirse a todo lo que toca."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "systems-architecture-l7",
+   "slug": "architecture-as-engineering-strategy",
+   "code": {
+    "lang": "markdown",
+    "snippet": "# Data storage strategy — FY26\n\n## Diagnosis\n40 services run on 6 database technologies (Postgres, MySQL, Mongo, Cassandra,\nDynamoDB, one Redis-as-primary). The problem is not that six is more than one.\nIt is that **on-call for any service requires tribal knowledge of that team's\nstack, so nobody can cover a sister team's page.** Every stack multiplies four\nfixed costs: a backup/restore runbook that must be tested, an upgrade path, a\nperformance-debugging skill, and an on-call population of exactly one team.\n\nThat is the challenge this strategy addresses. Everything below follows from it,\nand if you disagree with the diagnosis, argue there — not with the actions.\n\n## Guiding policy\n**Postgres is the default. A second store requires a written access pattern that\nPostgres provably cannot serve, reviewed by the architecture group.**\n\nChosen because it is the only store already covering both transactional and\ndocument-shaped workloads here, and the one with the deepest existing bench.\n\n## Coherent actions\n1. Postgres becomes the paved road: managed provisioning, tested restore,\n   shared on-call runbook, upgrade automation. Ships before any migration is asked for.\n2. Redis-as-primary is the one **mandatory** migration. It has no durability\n   story, which makes it a data-loss risk rather than a consistency preference.\n3. Cassandra stays for the events pipeline. It serves a write pattern Postgres\n   does not, and it is well-operated. Documented as a sanctioned exception.\n4. Mongo and MySQL services migrate opportunistically — when a service is\n   already being substantially changed, never as standalone migration projects.\n5. New services on anything but Postgres need the written exception. Zero today.\n\n## What this costs, and what we are NOT doing\n- **Locally suboptimal, on purpose.** Two teams would each pick something better\n  for their own workload. The org-wide gain — anyone can take any page — is worth\n  more than either local optimum, and I'd rather say that than pretend it's free.\n- **Not** a big-bang migration of 40 services. Actions 3-4 mean this strategy\n  is partly a decision to *stop* re-litigating storage choices, not to relocate data.\n- **Not** touching analytics stores. Different problem, different diagnosis.",
+    "caption": {
+     "en": "Six databases across 40 services: the strategy, in diagnosis → policy → actions, with the constraint stated out loud.",
+     "es": "Seis bases de datos en 40 servicios: la estrategia como diagnóstico → política → acciones, con la restricción dicha en voz alta."
+    },
+    "annotations": [
+     {
+      "line": 5,
+      "note": {
+       "en": "A diagnosis names a mechanism, not a count. \"Too many databases\" isn't a diagnosis, it's a complaint.",
+       "es": "Un diagnóstico nombra un mecanismo, no un conteo. \"Demasiadas bases de datos\" es una queja, no un diagnóstico."
+      }
+     },
+     {
+      "line": 12,
+      "note": {
+       "en": "Inviting disagreement at the diagnosis is what prevents the actions being fought one by one forever.",
+       "es": "Invitar el desacuerdo en el diagnóstico es lo que evita pelear las acciones una por una para siempre."
+      }
+     },
+     {
+      "line": 23,
+      "note": {
+       "en": "The policy has to be cheaper to follow than to evade, before it is asked of anyone.",
+       "es": "La política debe ser más barata de seguir que de evadir, antes de pedírsela a nadie."
+      }
+     },
+     {
+      "line": 33,
+      "note": {
+       "en": "Pick constraints that let many teams move. Saying it out loud is what lets people disagree instead of routing around you.",
+       "es": "Elige restricciones que permitan avanzar a muchos equipos. Decirlo permite discrepar en vez de rodearte."
+      }
+     },
+     {
+      "line": 36,
+      "note": {
+       "en": "A strategy that never says what you're not doing is a list of projects with dates.",
+       "es": "Una estrategia que nunca dice qué no vas a hacer es una lista de proyectos con fechas."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "systems-architecture-l7",
+   "slug": "conways-law-sociotechnical-design",
+   "code": {
+    "lang": "markdown",
+    "snippet": "# Checkout change-throughput — proposal\n\n## The symptom leadership sees\nCatalog, pricing and promotions all ship features that require checkout changes.\nEvery launch = a cross-team PR into checkout, a shared standup, a two-week queue.\nThe obvious proposal is \"split checkout into microservices.\"\n\n## Why splitting the service alone won't work\nCommunication structure, not the codebase, is producing the queue:\n\n    3 upstream teams  ──►  1 owning team  ──►  1 review queue\n\nSplit checkout into four services owned by the SAME team and you get four repos\nfeeding one review queue. The boundary that binds is ownership, and the system\nwill drift back to match it — you ship your org chart whether or not you drew it.\n\n## Inverse Conway: shape the teams, let the architecture follow\nThe change teams keep asking for is *promotion rules* — the logic, not the\ncheckout flow. So make that a boundary with an owner:\n\n| Before | After |\n|---|---|\n| checkout (1 team) contains promotion rules | checkout owns the flow + a rules interface |\n| 3 teams queue for changes | promotions team owns rules end-to-end, deploys independently |\n| coordination per launch | coordination once, at the interface |\n\nThe extraction is real work. It is also the only version where the queue\ndisappears rather than moving, because after it the promotions team can ship\nwithout asking anyone.\n\n## What this actually is\n**A reorg is an architecture decision.** This proposal changes who owns what,\nwhich is why it goes to the same review an architecture change would — and why\nan architect should be in the room the next time the org chart moves, before the\nboundaries are set by a headcount spreadsheet.\n\n## Cost, stated\nTwo boundaries where there was one: a versioned rules interface, an integration\ntest suite that is now load-bearing, and one more on-call rotation.",
+    "caption": {
+     "en": "The two-week checkout queue: why the fix is the team boundary, not the service boundary.",
+     "es": "La cola de dos semanas en checkout: por qué el arreglo es el límite del equipo, no el del servicio."
+    },
+    "annotations": [
+     {
+      "line": 6,
+      "note": {
+       "en": "The reflexive fix. It addresses the artifact and leaves the mechanism producing the queue untouched.",
+       "es": "El arreglo reflejo. Ataca el artefacto y deja intacto el mecanismo que produce la cola."
+      }
+     },
+     {
+      "line": 14,
+      "note": {
+       "en": "Worth drawing before any split: does the change actually remove a coordination point, or relocate it?",
+       "es": "Vale dibujarlo antes de cualquier división: ¿el cambio elimina un punto de coordinación o lo reubica?"
+      }
+     },
+     {
+      "line": 18,
+      "note": {
+       "en": "The right boundary is the one the change requests keep tracing — listen to the PRs, not the diagram.",
+       "es": "El límite correcto es el que trazan las solicitudes de cambio: escucha los PRs, no el diagrama."
+      }
+     },
+     {
+      "line": 32,
+      "note": {
+       "en": "The line to take away. Org changes set system boundaries whether or not an architect was consulted.",
+       "es": "La línea que hay que llevarse. Los cambios de organización fijan límites del sistema, con o sin arquitecto."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "execution-delivery-l6",
+   "slug": "toil-reduction-program",
+   "code": {
+    "lang": "python",
+    "snippet": "# 6-engineer SRE team owning a data platform. Nobody has measured where the time\n# goes, so every conversation is anecdote vs anecdote. Two weeks of tagging first.\n\nTEAM_SIZE, HOURS_PER_WEEK = 6, 40\ncapacity = TEAM_SIZE * HOURS_PER_WEEK          # 240 engineer-hours/week\n\n# Toil has a definition, and it is narrow ON PURPOSE: manual, repetitive,\n# automatable, no lasting value. Interrupt work that produces a fix is not toil.\ntoil = [\n    # task,                       per_week, minutes, risk_if_wrong (1-3)\n    (\"access-approval tickets\",        38,       12, 1),\n    (\"manual partition rebalance\",      3,       95, 3),\n    (\"failed-pipeline restarts\",       22,       18, 2),\n    (\"quarterly cert rotation\",      0.08,      240, 3),   # ~1x/quarter\n]\n\nhours = {t: n * m / 60 for t, n, m, _ in toil}\ntotal = sum(hours.values())\nprint(f\"toil: {total:.0f} h/wk of {capacity} = {total/capacity:.0%} of the team\")\n# toil: 17 h/wk of 240 = 7% of the team\n#\n# 7% is not a crisis. Measuring FIRST is what stops a program being sized by\n# whoever complained loudest — and it's the number to defend the cap with.\n\n# Prioritize by frequency x cost x risk, not by how annoying it feels.\nfor t, n, m, risk in toil:\n    print(f\"{t:28} {n*m/60:5.1f} h/wk  score {n*m/60*risk:5.1f}\")\n# access-approval tickets        7.6 h/wk  score   7.6\n# failed-pipeline restarts       6.6 h/wk  score  13.2\n# manual partition rebalance     4.8 h/wk  score  14.3\n# quarterly cert rotation        0.3 h/wk  score   1.0   <- a 2-week script would\n#                                                           never pay this back\n\n# The two worth automating are ALSO design smells: pipelines shouldn't need\n# manual restarts, and partitions shouldn't need a human to rebalance. Recurring\n# toil is usually a defect wearing an operations costume.\n\n# The cap, agreed with the team's manager and written down:\nCAP = 0.20\n# Crossing it does exactly one of two things — never \"absorb it as heroics\":\n#   1. funds automation from the next sprint, or\n#   2. hands load back to the requesting team until it's automated.",
+    "caption": {
+     "en": "Six SRE engineers, unmeasured toil: the ledger that turns \"we're drowning\" into a cap and a prioritized queue.",
+     "es": "Seis ingenieros SRE con trabajo repetitivo sin medir: el registro que convierte \"nos ahogamos\" en un tope y una cola priorizada."
+    },
+    "annotations": [
+     {
+      "line": 7,
+      "note": {
+       "en": "Without a definition, \"toil\" expands to mean all work someone dislikes, and the number becomes unusable.",
+       "es": "Sin definición, \"toil\" se expande a todo trabajo que alguien detesta y el número deja de servir."
+      }
+     },
+     {
+      "line": 22,
+      "note": {
+       "en": "Measuring first often deflates the program — and that's a result, not a failure.",
+       "es": "Medir primero a menudo desinfla el programa, y eso es un resultado, no un fracaso."
+      }
+     },
+     {
+      "line": 31,
+      "note": {
+       "en": "A rare five-minute task isn't worth a two-week script, however irritating it is.",
+       "es": "Una tarea rara de cinco minutos no vale un script de dos semanas, por irritante que sea."
+      }
+     },
+     {
+      "line": 36,
+      "note": {
+       "en": "Ask what design makes this necessary before you automate it. Often the automation is the wrong fix.",
+       "es": "Pregunta qué diseño hace esto necesario antes de automatizarlo. A menudo automatizar es el arreglo equivocado."
+      }
+     },
+     {
+      "line": 40,
+      "note": {
+       "en": "A cap with no consequence is a wish. The two branches are what make it a real line.",
+       "es": "Un tope sin consecuencia es un deseo. Las dos ramas son lo que lo vuelve una línea real."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "direction-influence-l4",
+   "slug": "alternatives-and-tradeoffs",
+   "code": {
+    "lang": "diff",
+    "snippet": "  ## Alternatives considered\n\n- ### Kafka\n- Too complex for our needs. Requires operating a cluster.\n-\n- ### RabbitMQ\n- Also too complex for our needs. Another component to run.\n+ ### Kafka\n+ **What it buys:** durable, replayable log — reprocess a week of jobs after a\n+ bug fix, which Postgres cannot do. Handles ~100k msg/s; we need ~50/s today,\n+ but it removes throughput from the conversation permanently. Consumer groups\n+ give independent scaling per job type.\n+ **What it costs:** a cluster to operate (or a managed bill), partition/consumer\n+ concepts every on-call engineer must learn, and it is a second datastore, so we\n+ lose transactional enqueue — \"insert row and enqueue job\" stops being atomic.\n+ **Why not now:** replay is the one capability we'd genuinely want, and we have\n+ no case for it yet. Revisit when we do, or at ~5k jobs/s.\n+\n+ ### RabbitMQ\n+ **What it buys:** real broker semantics we'd otherwise hand-roll — per-message\n+ ack, dead-letter queues, priority, delayed delivery. Mature client libraries.\n+ **What it costs:** a component to run and monitor, plus the same loss of\n+ transactional enqueue.\n+ **Why not now:** we need three of those semantics, and all three are ~200 lines\n+ on Postgres. If we needed priority AND delayed delivery AND fanout, this wins.\n+\n+ ### Postgres queue (recommended)\n+ **What it buys:** transactional enqueue with the business write, zero new\n+ operational surface, one backup story, a queue any engineer can debug with SQL.\n+ **What it costs:** we hand-roll retries and dead-lettering; `SELECT … FOR UPDATE\n+ SKIP LOCKED` becomes contended somewhere around a few thousand jobs/s; no replay.\n+ **Exit:** the consumer interface stays broker-agnostic, so switching later is a\n+ rewrite of one module, not of every producer.",
+    "caption": {
+     "en": "The two dismissive sentences, rewritten so a Kafka advocate would recognize their own argument.",
+     "es": "Las dos frases despectivas, reescritas para que un defensor de Kafka reconozca su propio argumento."
+    },
+    "annotations": [
+     {
+      "line": 4,
+      "note": {
+       "en": "\"Too complex for our needs\" is what a reviewer reads as \"I decided first and wrote this after\".",
+       "es": "\"Demasiado complejo para lo que necesitamos\" se lee como \"decidí primero y escribí esto después\"."
+      }
+     },
+     {
+      "line": 9,
+      "note": {
+       "en": "Write the rejected option in its strongest form. If it has no upside, it was never an alternative.",
+       "es": "Escribe la opción rechazada en su forma más fuerte. Si no tiene ventaja, nunca fue una alternativa."
+      }
+     },
+     {
+      "line": 15,
+      "note": {
+       "en": "The cost that decides this and appears in neither original sentence. Stating it is the whole value of the section.",
+       "es": "El costo que decide esto y no aparece en ninguna frase original. Nombrarlo es todo el valor de la sección."
+      }
+     },
+     {
+      "line": 16,
+      "note": {
+       "en": "\"Not now, and here's the trigger\" survives review. \"Never\" invites someone to relitigate it in six months.",
+       "es": "\"No ahora, y este es el disparador\" sobrevive la revisión. \"Nunca\" invita a relitigarlo en seis meses."
+      }
+     },
+     {
+      "line": 30,
+      "note": {
+       "en": "State the recommendation's costs too. A recommendation with no downside reads as advocacy, not analysis.",
+       "es": "Nombra también los costos de tu recomendación. Una recomendación sin desventajas se lee como propaganda."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "direction-influence-l4",
+   "slug": "structured-writing-scqa",
+   "code": {
+    "lang": "diff",
+    "snippet": "  Subject: Billing pipeline\n+ Subject: Approve 2 engineers / 1 quarter — billing batch → streaming\n\n- Today billing runs as a nightly batch. It was built in 2019 when we had\n- 40k invoices a month, and it works by exporting to S3, then a Spark job\n- aggregates usage, then a second job writes invoices, then reconciliation\n- runs at 04:00. Over the last two quarters we investigated latency in the\n- pipeline. We looked at Spark tuning, then at the export step, then at\n- database contention during the aggregate window. What we found was…\n-\n- [12 minutes later]\n-\n- So the recommendation is to move to streaming.\n+ **Situation.** Billing runs as a nightly batch; invoices are up to 26 hours\n+ stale.\n+ **Complication.** Support handles ~340 \"my usage looks wrong\" tickets a month\n+ that are just staleness, and the two enterprise deals in the pipeline both\n+ require same-day usage visibility in their contracts.\n+ **Question.** Do we fix the batch or move billing to streaming?\n+ **Answer — what I'm asking you to approve.** Streaming, 2 engineers for 1\n+ quarter. Batch tuning gets staleness to ~6 hours at best, which still fails\n+ the contract requirement, so it spends the quarter without solving it.\n+\n+ Detail below: architecture, migration plan, what we tried, risks. Happy to go\n+ wherever you want with the remaining time.",
+    "caption": {
+     "en": "Fifteen VP minutes: the walkthrough that runs out of time, and the SCQA opening that doesn't.",
+     "es": "Quince minutos con el VP: el recorrido que se queda sin tiempo y la apertura SCQA que no."
+    },
+    "annotations": [
+     {
+      "line": 2,
+      "note": {
+       "en": "The subject line already contains the ask. A VP triaging 60 emails decides here.",
+       "es": "El asunto ya contiene la petición. Un VP que tría 60 correos decide aquí."
+      }
+     },
+     {
+      "line": 4,
+      "note": {
+       "en": "Chronological order serves your memory of the investigation, not the reader's decision.",
+       "es": "El orden cronológico sirve a tu memoria de la investigación, no a la decisión del lector."
+      }
+     },
+     {
+      "line": 11,
+      "note": {
+       "en": "Build-up spends the scarce resource — attention — before reaching the point.",
+       "es": "La introducción gasta el recurso escaso —la atención— antes de llegar al punto."
+      }
+     },
+     {
+      "line": 16,
+      "note": {
+       "en": "The complication is why the situation is a problem NOW. Without it, there's nothing to decide.",
+       "es": "La complicación es por qué la situación es un problema AHORA. Sin ella, no hay nada que decidir."
+      }
+     },
+     {
+      "line": 24,
+      "note": {
+       "en": "Nothing is omitted — it's reordered. The first paragraph alone conveys the ask and why.",
+       "es": "Nada se omite, se reordena. El primer párrafo solo ya transmite la petición y el por qué."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "direction-influence-l4",
+   "slug": "team-alignment",
+   "code": {
+    "lang": "markdown",
+    "snippet": "# Streaming rewrite — socialization log (before wide review)\n\nPriya owns the billing service this replaces. In the last two reviews she went\nquiet, then reopened the debate in Slack the next day. That is not obstruction —\nit is the signal that the review is not where she'll actually say the thing.\nSo the doc goes to her before it goes to the room.\n\n## 1:1 with Priya — before wide review\nOpened with the question, not the pitch: *\"You've run this service for three\nyears. Where does this design break?\"*\n\nThree concerns, all real, none of which I had:\n1. **The 03:00 reconciliation job** consumes batch output and is what finance\n   signs off on quarterly. My design had no answer for it. → **Doc changed:**\n   reconciliation keeps reading a materialized batch view built from the stream.\n2. **Ownership during migration.** She'd be on call for a system she no longer\n   controls. → **Doc changed:** named a dual-ownership window with an end date.\n3. **Prior rewrite was abandoned at 60%** and she absorbed the mess. → I can't\n   design that away. **Written into the doc as a risk**, with the incremental\n   rollout and the kill criteria that make stopping cheap.\n\nConcern 1 alone would have surfaced mid-build, in a quarter, at ten times the cost.\n\n## Wide review — the part that has to be deliberate\nPriya's concerns are in the doc, credited to her. Then, in the room, on the\nagenda: *\"Priya, you've raised the reconciliation dependency — is the\nmaterialized view enough, or is there something else it touches?\"*\n\nNamed directly, because silence is not agreement. The quiet person in an\narchitecture review is usually the one holding the constraint you don't know\nabout, and false alignment is more expensive than open disagreement: it commits\nthe org while the objection keeps its full force, unaddressed, for later.\n\n## Still unresolved (in the doc, not hidden)\nMarcus prefers a different partitioning scheme. Not blocking, genuinely his\ncall to disagree with — recorded so it doesn't resurface as a surprise.",
+    "caption": {
+     "en": "Priya goes silent in review, then reopens it in Slack: the pre-wire log that surfaces the objection first.",
+     "es": "Priya se queda callada en la revisión y luego lo reabre en Slack: el registro de pre-alineación que saca la objeción antes."
+    },
+    "annotations": [
+     {
+      "line": 5,
+      "note": {
+       "en": "Read the pattern as information about the forum, not a verdict on the person.",
+       "es": "Lee el patrón como información sobre el foro, no como veredicto sobre la persona."
+      }
+     },
+     {
+      "line": 9,
+      "note": {
+       "en": "Open by asking where it breaks. Presenting the design invites a yes; asking invites the constraint.",
+       "es": "Abre preguntando dónde se rompe. Presentar el diseño invita un sí; preguntar invita la restricción."
+      }
+     },
+     {
+      "line": 22,
+      "note": {
+       "en": "This is the whole economic case for pre-wiring: a gap in the room is cheap, a gap mid-build isn't.",
+       "es": "Este es todo el caso económico de pre-alinear: una brecha en la sala es barata, a mitad de construcción no."
+      }
+     },
+     {
+      "line": 25,
+      "note": {
+       "en": "Attribution converts an objector into a co-author. Absorbing the concern silently wastes the alignment.",
+       "es": "Atribuir convierte a quien objeta en coautor. Absorber la preocupación en silencio desperdicia la alineación."
+      }
+     },
+     {
+      "line": 29,
+      "note": {
+       "en": "Drawing the quiet dissenter out by name is the move. It has to be on the agenda, not improvised.",
+       "es": "Sacar por nombre a quien disiente en silencio es la clave. Debe estar en la agenda, no improvisarse."
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

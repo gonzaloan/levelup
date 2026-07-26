@@ -118,19 +118,57 @@ function Stack({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
   );
 }
 
-// compare: two labeled columns of points (a contrast).
+// compare: two sides of a tradeoff, set against each other.
+//
+// This is the most common diagram kind in the corpus (76 concepts), and as two
+// plain bullet lists it was the single biggest contributor to the wall-of-text
+// feeling — a "diagram" that was really more prose. It now reads as a comparison:
+// the two sides face each other across a labelled divider, each row is paired
+// with its counterpart on the other side, and the side headers carry opposing
+// accents so the eye can tell them apart before reading a word.
+//
+// Pairing matters: authors write left.points[i] and right.points[i] as the same
+// question answered two ways, so rendering them as ROWS makes that structure
+// visible instead of leaving the reader to align two lists themselves.
 function Compare({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
-  const cols = [spec.left, spec.right].filter(Boolean) as NonNullable<SchematicSpec["left"]>[];
-  return (
-    <div className="schematic-compare">
-      {cols.map((c, i) => (
-        <div key={i} className="schematic-col">
-          <div className="schematic-col-title mono">{t(c.title, locale)}</div>
+  const left = spec.left;
+  const right = spec.right;
+  if (!left || !right) {
+    // A one-sided compare is malformed content; render what exists rather than
+    // dropping it, and don't pretend to a comparison.
+    const only = left ?? right;
+    if (!only) return null;
+    return (
+      <div className="schematic-compare schematic-compare--single">
+        <div className="schematic-col">
+          <div className="schematic-col-title mono">{t(only.title, locale)}</div>
           <ul className="schematic-col-list">
-            {c.points.map((p, j) => (
-              <li key={j}>{t(p, locale)}</li>
-            ))}
+            {only.points.map((p, j) => <li key={j}>{t(p, locale)}</li>)}
           </ul>
+        </div>
+      </div>
+    );
+  }
+
+  const rows = Math.max(left.points.length, right.points.length);
+  return (
+    <div className="schematic-vs" role="table" aria-label={spec.caption ? t(spec.caption, locale) : undefined}>
+      <div className="schematic-vs-head" role="row">
+        <div className="schematic-vs-h schematic-vs-h--a" role="columnheader">{t(left.title, locale)}</div>
+        <div className="schematic-vs-mid" aria-hidden="true">vs</div>
+        <div className="schematic-vs-h schematic-vs-h--b" role="columnheader">{t(right.title, locale)}</div>
+      </div>
+      {Array.from({ length: rows }, (_, i) => (
+        <div className="schematic-vs-row" role="row" key={i} style={{ ["--i" as string]: String(i) }}>
+          {/* data-side-* feeds the stacked mobile layout, where the paired
+              headers collapse and each cell has to name its own side. */}
+          <div className="schematic-vs-cell schematic-vs-cell--a" role="cell" data-side-a={t(left.title, locale)}>
+            {left.points[i] ? t(left.points[i], locale) : ""}
+          </div>
+          <div className="schematic-vs-spine" aria-hidden="true" />
+          <div className="schematic-vs-cell schematic-vs-cell--b" role="cell" data-side-b={t(right.title, locale)}>
+            {right.points[i] ? t(right.points[i], locale) : ""}
+          </div>
         </div>
       ))}
     </div>

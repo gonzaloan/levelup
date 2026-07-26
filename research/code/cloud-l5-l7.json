@@ -1,0 +1,536 @@
+{
+ "patches": [
+  {
+   "lessonId": "cloud-platform-l5",
+   "slug": "cell-based-architecture",
+   "code": {
+    "lang": "typescript",
+    "snippet": "// The three incidents were: a bulk import saturating shared workers, a\n// pathological query exhausting the pool, a retry storm from a bad client.\n// Cells don't make any of those less likely — they bound who else notices.\n\n// Deliverable 1: the router. Tenant -> cell, and it must be a LOOKUP, not a hash.\n// A hash is a one-line implementation you can never rebalance.\nasync function routeTenant(tenantId: string): Promise<CellId> {\n  const assignment = await cellDirectory.get(tenantId);   // authoritative, mutable\n  if (!assignment) throw new UnassignedTenant(tenantId);  // fail closed\n  return assignment.cell;\n}\n\n// Deliverable 2: no-downtime migration. Without this you have static shards.\ntype Phase = \"steady\" | \"dual-write\" | \"verifying\" | \"cutover\" | \"draining\";\n\nasync function migrateTenant(tenantId: string, to: CellId) {\n  await setPhase(tenantId, \"dual-write\");   // writes to both, reads from source\n  await backfill(tenantId, to);\n  await setPhase(tenantId, \"verifying\");    // compare; a mismatch aborts, no cutover\n  if (!(await consistent(tenantId, to))) return abort(tenantId);\n  await setPhase(tenantId, \"cutover\");      // reads follow writes\n  await setPhase(tenantId, \"draining\");     // source retained for rollback\n}\n\n// The bill for all of this, stated up front so nobody is surprised:\n//   - headroom per cell means lower utilization than one big pool\n//   - N cells = N x operational surface (deploys, dashboards, on-call)\n//   - anything needing a global view (search, leaderboards, \"all tenants\" admin)\n//     becomes a scatter-gather you now own\n//\n// Try these FIRST — they cover all three incidents at a fraction of the cost:\n//   per-tenant concurrency limits | fair queueing | load shedding\n// Cells are for when isolation must be structural, not merely enforced.",
+    "caption": {
+     "en": "The router and the migration — the two deliverables that separate real cells from static shards.",
+     "es": "El router y la migración: los dos entregables que separan celdas reales de shards estáticos."
+    },
+    "annotations": [
+     {
+      "line": 5,
+      "note": {
+       "en": "A hash-based router is unrebalanceable. This one line decides whether you have cells or shards.",
+       "es": "Un router por hash no se puede rebalancear. Esta línea decide si tienes celdas o shards."
+      }
+     },
+     {
+      "line": 19,
+      "note": {
+       "en": "Verify before cutover, and let a mismatch abort. A migration you can't abort isn't a migration path.",
+       "es": "Verifica antes del corte y deja que una discrepancia aborte. Una migración que no puedes abortar no es un camino de migración."
+      }
+     },
+     {
+      "line": 29,
+      "note": {
+       "en": "The cost teams discover last: every global-view feature gets harder forever.",
+       "es": "El costo que los equipos descubren al final: cada función con vista global se vuelve más difícil para siempre."
+      }
+     },
+     {
+      "line": 31,
+      "note": {
+       "en": "Cells bound reach; they don't reduce probability. Cheaper controls often buy enough isolation.",
+       "es": "Las celdas acotan el alcance; no reducen la probabilidad. Controles más baratos suelen dar aislamiento suficiente."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l5",
+   "slug": "static-stability-and-control-plane-dependence",
+   "code": {
+    "lang": "hcl",
+    "snippet": "# BEFORE — the runbook says: on AZ loss the ASG launches replacements in the\n# surviving zones, recovery 4-6 minutes. Sized for exactly the load it serves.\nresource \"aws_autoscaling_group\" \"api\" {\n  min_size         = 6\n  desired_capacity = 6          # 2 per zone, 100% utilized\n  availability_zones = [\"us-east-1a\", \"us-east-1b\", \"us-east-1c\"]\n}\n# Ask the one diagnostic question: does recovery require CREATING anything?\n# Yes — it requires launching instances. That is a control-plane call, made at\n# the moment the control plane is most likely to be degraded, and every other\n# team in the region is making the same call.\n\n# AFTER — statically stable: recovery requires nothing to be created.\nresource \"aws_autoscaling_group\" \"api\" {\n  min_size         = 9\n  desired_capacity = 9          # 3 per zone; any 2 zones can carry all traffic\n  availability_zones = [\"us-east-1a\", \"us-east-1b\", \"us-east-1c\"]\n}\n# Losing a zone now removes capacity we were not depending on. The data plane\n# (load balancer health checks, DNS) stops sending traffic to it, and serving\n# continues through what already exists.\n\n# The price, stated honestly:\n#   9 instances to serve the load of 6 -> ~67% steady-state utilization ON PURPOSE.\n#   That idle third IS the availability. It is not waste to be optimized away.\n#\n# Note what does NOT help: automating the failover. A script that calls the same\n# degraded control plane hits the same wall a human would, just faster.",
+    "caption": {
+     "en": "The \"4-6 minute recovery\" runbook, and the version that doesn't need a control plane to survive.",
+     "es": "El runbook de \"recuperación en 4-6 minutos\" y la versión que no necesita un control plane para sobrevivir."
+    },
+    "annotations": [
+     {
+      "line": 8,
+      "note": {
+       "en": "The whole test in one question. Control planes create and change; data planes serve what exists.",
+       "es": "La prueba completa en una pregunta. Los control planes crean y cambian; los data planes sirven lo que existe."
+      }
+     },
+     {
+      "line": 11,
+      "note": {
+       "en": "Correlated demand is why control-plane calls fail exactly when you need them most.",
+       "es": "La demanda correlacionada es por qué las llamadas al control plane fallan justo cuando más las necesitas."
+      }
+     },
+     {
+      "line": 25,
+      "note": {
+       "en": "Static stability is bought with idle capacity. If you can't afford it, say so — don't claim you have it.",
+       "es": "La estabilidad estática se compra con capacidad ociosa. Si no puedes pagarla, dilo; no afirmes que la tienes."
+      }
+     },
+     {
+      "line": 27,
+      "note": {
+       "en": "Automation changes who makes the call, not whether the call can succeed.",
+       "es": "La automatización cambia quién hace la llamada, no si la llamada puede tener éxito."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l5",
+   "slug": "managed-data-platform-choices",
+   "code": {
+    "lang": "sql",
+    "snippet": "-- Team A: load nightly into the proprietary warehouse the team already knows.\n-- Team B: managed tables in an open format on object storage, any engine.\n-- Do NOT argue this on query performance. Argue it on what year three costs.\n\n-- ── Team B, adding a second consumer with a different engine ──────────────\n-- The catalog is separable, so this is configuration, not migration:\nCREATE EXTERNAL TABLE orders\n  USING iceberg\n  LOCATION 's3://lake/warehouse/orders';       -- same files, same snapshots\n-- Spark, Trino, DuckDB and the warehouse can all read this. Nothing is copied.\n\n-- ── Team A, the same request ──────────────────────────────────────────────\n-- The storage format is the engine's internal format, so the second consumer\n-- needs its own copy:\nCREATE TABLE orders_export AS SELECT * FROM orders;   -- export\n-- + a scheduled unload, + a second storage bill, + a freshness gap, + drift\n--   between two copies that will diverge and be reconciled by someone.\n\n-- ── The asymmetry that should dominate the decision ───────────────────────\n--   engine:  weeks to change      (a query dialect and some tuning)\n--   storage: quarters to change   (rewrite every byte, dual-run, re-verify)\n-- Data has gravity. Choose the layer you can't cheaply change, first.\n\n-- What open formats used to cost, and no longer do — managed table services\n-- run these for you, which is what removed the old objection:\n--   compaction (small-file problem) | snapshot expiry | orphan file cleanup\n\n-- State the price of the optionality out loud, or the argument isn't honest:\n-- Team B pays a query-latency premium today and a catalog to operate.",
+    "caption": {
+     "en": "Team A vs Team B, priced as reversibility: what it costs to change your mind in year three.",
+     "es": "Equipo A vs Equipo B, valuado como reversibilidad: qué cuesta cambiar de opinión en el año tres."
+    },
+    "annotations": [
+     {
+      "line": 3,
+      "note": {
+       "en": "Performance arguments are winnable and irrelevant here; both options are fast enough.",
+       "es": "Los argumentos de rendimiento son ganables e irrelevantes aquí: ambas opciones son suficientemente rápidas."
+      }
+     },
+     {
+      "line": 10,
+      "note": {
+       "en": "An open format plus a separable catalog turns \"replace the engine\" into a config change.",
+       "es": "Un formato abierto más un catálogo separable convierte \"reemplazar el motor\" en un cambio de configuración."
+      }
+     },
+     {
+      "line": 17,
+      "note": {
+       "en": "Every copy is a future reconciliation ticket with no owner yet.",
+       "es": "Cada copia es un ticket de reconciliación futuro que todavía no tiene dueño."
+      }
+     },
+     {
+      "line": 21,
+      "note": {
+       "en": "The engine is cheap to change, the storage format isn't. Let that asymmetry decide.",
+       "es": "El motor es barato de cambiar, el formato de almacenamiento no. Deja que esa asimetría decida."
+      }
+     },
+     {
+      "line": 28,
+      "note": {
+       "en": "Optionality isn't free. Naming its cost is what makes the recommendation trustworthy.",
+       "es": "La opcionalidad no es gratis. Nombrar su costo es lo que hace confiable la recomendación."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l5",
+   "slug": "landing-zone-and-account-boundaries",
+   "code": {
+    "lang": "json",
+    "snippet": "// The objection: \"we can get the same isolation with tags and IAM conditions.\"\n// Here is the tag-based version, and why it isn't the same.\n{\n  \"Effect\": \"Deny\",\n  \"Action\": \"s3:*\",\n  \"Resource\": \"*\",\n  \"Condition\": {\n    \"StringNotEquals\": { \"aws:ResourceTag/team\": \"${aws:PrincipalTag/team}\" }\n  }\n}\n// This holds only where BOTH tags exist and are correct. An untagged resource,\n// a service that creates resources without propagating tags, or a principal\n// missing the tag all fall outside it. The rule is enforced by whoever\n// remembered the condition.\n\n// ── The three things that are account-scoped and cannot be reproduced ─────\n// 1. Service quotas. Quotas are per account: one team's runaway Lambda\n//    concurrency consumes the quota every other team shares. No tag fixes this.\n// 2. A clean billing seam. Cost allocation by tag is best-effort and always\n//    partial; an account boundary is exact and needs no discipline.\n// 3. Credential blast radius. A leaked key is bounded by what the ACCOUNT can\n//    reach, not by what someone intended it to reach.\n\n// The account-boundary version, enforced by the provider regardless of tags:\n{\n  \"Effect\": \"Deny\",\n  \"Action\": \"s3:PutBucketPolicy\",\n  \"Resource\": \"*\",\n  \"Condition\": { \"StringNotEquals\": { \"aws:PrincipalOrgID\": \"o-example\" } }\n}\n\n// And the cost, which is real and should be named in the same review:\n//   cross-account access paths | shared services | an account-provisioning\n//   pipeline that someone owns and maintains\n// Managed landing zone vs your own automation is a genuine choice: your own\n// gives more control and is a product you are now on the hook for.",
+    "caption": {
+     "en": "The senior engineer's objection, answered with the three things tags provably cannot do.",
+     "es": "La objeción del ingeniero senior, respondida con las tres cosas que las etiquetas demostrablemente no pueden hacer."
+    },
+    "annotations": [
+     {
+      "line": 14,
+      "note": {
+       "en": "That's the difference in one line: a tag is a convention, a boundary is a mechanism.",
+       "es": "Esa es la diferencia en una línea: una etiqueta es una convención, un límite es un mecanismo."
+      }
+     },
+     {
+      "line": 17,
+      "note": {
+       "en": "The argument that usually ends the debate, because it's concrete and nobody can tag their way out.",
+       "es": "El argumento que suele cerrar el debate, porque es concreto y nadie puede resolverlo con etiquetas."
+      }
+     },
+     {
+      "line": 21,
+      "note": {
+       "en": "Blast radius is decided by the boundary, not by intent expressed in a policy.",
+       "es": "El radio de impacto lo decide el límite, no la intención expresada en una política."
+      }
+     },
+     {
+      "line": 36,
+      "note": {
+       "en": "The honest cost of a landing zone isn't the accounts — it's the factory and its owner.",
+       "es": "El costo honesto de una landing zone no son las cuentas: es la fábrica y su dueño."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l6",
+   "slug": "guardrails-over-gatekeeping",
+   "code": {
+    "lang": "json",
+    "snippet": "// Proposal 1: a review checklist.  Enforced by memory. Holds until someone is busy.\n// Proposal 2: a nightly scanner.   Enforced after the fact. A night of public\n//             data is not something a ticket can undo.\n// Proposal 3: an org control that denies the action. Enforced by construction.\n//\n// For an IRREVERSIBLE outcome, only the third one is a control.\n\n// A first attempt — and the subtle hole in it:\n{\n  \"Effect\": \"Deny\",\n  \"Action\": [\"s3:PutBucketPolicy\", \"s3:PutBucketAcl\"],\n  \"Resource\": \"*\",\n  \"Condition\": { \"StringNotEquals\": { \"aws:PrincipalOrgID\": \"o-example\" } }\n}\n// This is PRINCIPAL-scoped: it constrains who acts. A permissive resource\n// policy still lets a principal from outside the org read the data, because\n// that path never involves one of our principals at all.\n\n// The control that actually states the invariant — resource-scoped:\n{\n  \"Effect\": \"Deny\",\n  \"NotAction\": [\"s3:GetObject\"],\n  \"Resource\": \"arn:aws:s3:::reports-*/*\",\n  \"Condition\": {\n    \"StringNotEqualsIfExists\": { \"aws:PrincipalOrgID\": \"o-example\" },\n    \"BoolIfExists\": { \"aws:PrincipalIsAWSService\": \"false\" }\n  }\n}\n// \"Nothing outside this organization, ever\" — regardless of which principal,\n// which account, or who forgot.\n\n// Ship the exception path IN THE SAME CHANGE, or the platform becomes a ticket\n// queue and teams route around it:\n//   documented owner | named approver | time-boxed | logged and reviewed\n// A guardrail with no exception path is a gate wearing a guardrail's name.",
+    "caption": {
+     "en": "Three proposals for \"no public data stores\" — only one is enforced by construction.",
+     "es": "Tres propuestas para \"ningún almacén de datos público\": solo una se hace cumplir por construcción."
+    },
+    "annotations": [
+     {
+      "line": 6,
+      "note": {
+       "en": "Prevention beats detection when the outcome can't be undone. Detection is fine for the rest.",
+       "es": "La prevención le gana a la detección cuando el resultado no se puede revertir. Para el resto, detectar basta."
+      }
+     },
+     {
+      "line": 15,
+      "note": {
+       "en": "The most common real-world gap: a principal-scoped policy circumvented by a permissive resource policy.",
+       "es": "El hueco más común en la práctica: una política sobre el principal, esquivada por una política de recurso permisiva."
+      }
+     },
+     {
+      "line": 19,
+      "note": {
+       "en": "Only a resource-scoped control can state \"nothing outside this org, ever\".",
+       "es": "Solo un control sobre el recurso puede afirmar \"nada fuera de esta organización, nunca\"."
+      }
+     },
+     {
+      "line": 32,
+      "note": {
+       "en": "The guardrail and its exception path ship together, or teams route around the platform.",
+       "es": "El guardrail y su vía de excepción se entregan juntos, o los equipos rodean la plataforma."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l6",
+   "slug": "platform-as-product-paved-roads",
+   "code": {
+    "lang": "markdown",
+    "snippet": "# Paved road: deployment pipeline — adoption review\n\n**Adoption: 30% after 12 months.** Teams say it's slower than their own scripts.\nLeadership has offered an org-wide mandate. Declining that offer is the decision.\n\n## Why we are not taking the mandate\nA mandate would move adoption to 100% next quarter and destroy the only honest\nsignal we have. Today, \"teams don't use it\" is a bug report. After a mandate,\nit becomes \"teams comply\", and we will never again learn that it is slow.\n\n## The bug report, with a location\n| Friction | Ours | Their script | Status |\n|---|---|---|---|\n| p50 deploy time | 14 min | 4 min | root cause: serialized integration stage |\n| Rollback | ticket to platform | one command | fixing: self-serve rollback |\n| Local dry-run | none | trivial | fixing: `road deploy --plan` |\n| Custom build step | not supported | trivial | by design — see escape hatch |\n\nThree of four are our defects. Not a discipline problem.\n\n## Escape hatch (kept fast, on purpose)\nAny team can leave with one config flag and no approval. Making it cheap to\nleave is what makes it safe to trust the road — a road you can't leave is a\ngate, and teams pre-emptively avoid gates.\n\n## What we measure\n- adoption trend, by team, monthly (the outcome)\n- p50 deploy time vs. the best hand-rolled script (the reason they left)\n- escape-hatch usage, WITHOUT penalty — it's our best backlog\n\n## What we do NOT measure\nNumber of teams onboarded under mandate. That's compliance, not adoption.",
+    "caption": {
+     "en": "30% adoption after a year: the review that treats it as a product signal instead of accepting the mandate.",
+     "es": "30% de adopción tras un año: la revisión que lo trata como señal de producto en vez de aceptar el mandato."
+    },
+    "annotations": [
+     {
+      "line": 4,
+      "note": {
+       "en": "Politically easy to accept, which is exactly why it needs a written decision.",
+       "es": "Es políticamente fácil aceptarlo, y justo por eso necesita una decisión escrita."
+      }
+     },
+     {
+      "line": 9,
+      "note": {
+       "en": "A mandate converts a product problem into a compliance problem and burns your only feedback channel.",
+       "es": "Un mandato convierte un problema de producto en uno de cumplimiento y quema tu único canal de retroalimentación."
+      }
+     },
+     {
+      "line": 19,
+      "note": {
+       "en": "Low adoption is a product signal. Treat friction as a bug report with a location.",
+       "es": "La baja adopción es una señal de producto. Trata la fricción como un reporte de bug con ubicación."
+      }
+     },
+     {
+      "line": 22,
+      "note": {
+       "en": "Counter-intuitive and load-bearing: the fast escape hatch is why people stay.",
+       "es": "Contraintuitivo y esencial: la vía de salida rápida es la razón por la que la gente se queda."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l6",
+   "slug": "verified-resilience-gamedays",
+   "code": {
+    "lang": "yaml",
+    "snippet": "# experiment-001-checkout-az-loss.yml\n# The claim: checkout tolerates the loss of one availability zone.\n# Until injected, that claim is a hypothesis written in the present tense.\n\nhypothesis:\n  # Falsifiable: states the metric, the threshold and the window. \"It stays up\"\n  # is not a hypothesis, it's a hope.\n  statement: >\n    With us-east-1b removed from service, checkout p99 latency stays under\n    900 ms and the success rate stays above 99.5% for the full 10 minutes.\n\nblast_radius:\n  environment: production        # staging can rehearse mechanics, not answer this\n  scope: 1 of 3 zones, checkout service only\n  traffic: 100%                  # a partial-traffic run answers a smaller question\n  duration: 10m\n\nstop_condition:\n  # AUTOMATIC, and tied to the falsifying metric — not to a person's judgement.\n  - metric: checkout_success_rate\n    below: 99.5\n    for: 60s\n    action: halt_and_rollback\n  - metric: checkout_p99_ms\n    above: 900\n    for: 120s\n    action: halt_and_rollback\n  # A human watching a dashboard is NOT a stop condition.\n\npre_agreed_reaction:\n  # Decided before we learn the answer, so the result can't be renegotiated.\n  if_falsified: >\n    Finding goes to the reliability backlog at the severity the data implies,\n    the availability claim is retracted from the service tier doc the same day,\n    and nobody is blamed — the design predated two dependency changes.\n  if_confirmed: >\n    Recorded as evidence with a date and a re-run cadence of one quarter.\n    Evidence expires; the system keeps drifting.\n\nrollback: remove the fault injection; no other action should be required\n          (if recovery needs a control-plane call, that is a separate finding)",
+    "caption": {
+     "en": "\"We know it works, we designed it that way\" — turned into a falsifiable experiment with an automatic abort.",
+     "es": "\"Sabemos que funciona, lo diseñamos así\" convertido en un experimento falsable con aborto automático."
+    },
+    "annotations": [
+     {
+      "line": 3,
+      "note": {
+       "en": "The senior engineer's confidence is the reason to run it, not a reason to skip it.",
+       "es": "La confianza del ingeniero senior es la razón para ejecutarlo, no para omitirlo."
+      }
+     },
+     {
+      "line": 13,
+      "note": {
+       "en": "Staging lacks production's traffic mix, dependency behaviour and accumulated drift.",
+       "es": "Staging no tiene la mezcla de tráfico, el comportamiento de dependencias ni la deriva acumulada de producción."
+      }
+     },
+     {
+      "line": 19,
+      "note": {
+       "en": "The abort must fire on the metric that would disprove the hypothesis, within seconds.",
+       "es": "El aborto debe dispararse con la métrica que refutaría la hipótesis, en segundos."
+      }
+     },
+     {
+      "line": 31,
+      "note": {
+       "en": "Agreeing the reaction in advance is what stops a falsified result from being explained away.",
+       "es": "Acordar la reacción por adelantado es lo que evita que un resultado refutado se explique convenientemente."
+      }
+     },
+     {
+      "line": 38,
+      "note": {
+       "en": "A passed gameday is evidence with a date on it, not a permanent property.",
+       "es": "Un gameday superado es evidencia con fecha, no una propiedad permanente."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l6",
+   "slug": "cloud-security-program-at-scale",
+   "code": {
+    "lang": "python",
+    "snippet": "OPEN = 4_000          # across 200 accounts\nWEEKLY_CAPACITY = 30  # what the team can actually action\n\n# The plan already on the table: sort by severity, hire two more analysts.\nprint(f\"weeks to drain: {OPEN / WEEKLY_CAPACITY:.0f}\")          # 133 weeks\nprint(f\"with 3x staff:  {OPEN / (WEEKLY_CAPACITY * 3):.0f}\")    # 44 weeks\n# Both numbers assume the queue is static. It isn't: the same misconfigurations\n# regenerate every time a team creates a resource the same way.\n\n# Two design problems hide behind one number.\n# ── 1. No exposure-based prioritization ──────────────────────────────────\n# Severity is a property of the FINDING. Exposure is a property of your system.\ndef exposure(f):\n    return (f.internet_reachable and f.holds_customer_data and f.credential_path)\n# A correlated attack SEQUENCE - public entry point -> over-permissive role ->\n# data store - is the signal that reflects real risk. Three \"medium\" findings\n# in a chain outrank a hundred isolated \"highs\".\n\n# ── 2. No prevention retiring the classes that regenerate ────────────────\nfrom collections import Counter\nby_class = Counter(f.rule_id for f in findings)\nprint(by_class.most_common(3))\n# [('s3-public-acl', 812), ('unencrypted-ebs', 640), ('overbroad-iam', 590)]\n# 2,042 of 4,000 findings are THREE classes. Closing them one by one is 68 weeks\n# of work that regenerates. An org-level guardrail retires each class once.\n\n# Closing an instance is work. Retiring a class is progress.\n\n# ── Change the scoreboard ───────────────────────────────────────────────\n# report:     finding classes retired; median time-to-triage for correlated\n#             sequences; honest detection coverage (what we do NOT see)\n# do not report: number of open findings — it rewards closing the easy ones",
+    "caption": {
+     "en": "4,000 findings and 30 actions a week: why \"sort by severity and hire two analysts\" never closes the gap.",
+     "es": "4,000 hallazgos y 30 acciones por semana: por qué \"ordenar por severidad y contratar dos analistas\" nunca cierra la brecha."
+    },
+    "annotations": [
+     {
+      "line": 7,
+      "note": {
+       "en": "The staffing plan fails on arithmetic before you argue about priorities.",
+       "es": "El plan de contratación falla por aritmética antes de discutir prioridades."
+      }
+     },
+     {
+      "line": 12,
+      "note": {
+       "en": "Vendor severity can't know your topology. Three chained mediums beat a hundred isolated highs.",
+       "es": "La severidad del proveedor no conoce tu topología. Tres medios encadenados superan cien altos aislados."
+      }
+     },
+     {
+      "line": 24,
+      "note": {
+       "en": "Aggregate by rule before you triage. The distribution tells you where prevention pays.",
+       "es": "Agrupa por regla antes de triar. La distribución te dice dónde paga la prevención."
+      }
+     },
+     {
+      "line": 27,
+      "note": {
+       "en": "The one line to keep. It reframes the whole program.",
+       "es": "La línea que hay que recordar. Replantea el programa completo."
+      }
+     },
+     {
+      "line": 32,
+      "note": {
+       "en": "Any metric you report becomes the work. Open-finding count buys the cheapest closures.",
+       "es": "Cualquier métrica que reportas se vuelve el trabajo. Contar hallazgos abiertos compra los cierres más baratos."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l7",
+   "slug": "cloud-strategy-and-lock-in-math",
+   "code": {
+    "lang": "python",
+    "snippet": "# Proposed today: \"only provider-agnostic services, so we're never locked in.\"\n# Nobody wants to argue for lock-in, so this passes unless someone prices it.\n# Lock-in is a price, not a sin. Price it per component, over the term you\n# expect to hold it.\n\ncomponents = [\n  # name,               switching cost, P(switch in 5y), agnostic premium/yr\n  (\"managed queue\",         120_000,        0.05,           90_000),\n  (\"managed relational DB\", 900_000,        0.10,          140_000),\n  (\"object storage\",         40_000,        0.02,           30_000),\n  (\"identity provider\",     600_000,        0.25,          180_000),\n]\n\ntotal_premium = expected_avoided = 0\nfor name, switch_cost, p, premium in components:\n    premium_5y = premium * 5\n    avoided    = switch_cost * p        # expected cost the rule saves us\n    total_premium   += premium_5y\n    expected_avoided += avoided\n    verdict = \"worth it\" if avoided > premium_5y else \"pays, never collects\"\n    print(f\"{name:24} premium ${premium_5y:>9,}  avoided ${avoided:>9,}  {verdict}\")\n\nprint(f\"\\ntotal premium  ${total_premium:,}\")\nprint(f\"expected saving ${expected_avoided:,}\")\n# managed queue            premium $  450,000  avoided $    6,000  pays, never collects\n# managed relational DB    premium $  700,000  avoided $   90,000  pays, never collects\n# object storage           premium $  150,000  avoided $      800  pays, never collects\n# identity provider        premium $  900,000  avoided $  150,000  pays, never collects\n#\n# total premium  $2,200,000\n# expected saving $246,700\n#\n# The components you actually migrate are few and predictable. A blanket rule\n# pays everywhere and collects almost nowhere.\n\n# And the premium is usually understated, because \"provider-agnostic\" in\n# practice means an internal abstraction over every managed service. That IS\n# real engineering, and it usually leaks the exact semantics that made the\n# service worth using.\n#\n# Worse: the expensive dependencies are the DATA FORMAT and the OPERATIONAL\n# MODEL. Avoiding a proprietary API addresses neither.",
+    "caption": {
+     "en": "The blanket portability rule, priced per component — the premium is paid everywhere and collected almost nowhere.",
+     "es": "La regla general de portabilidad, valuada por componente: la prima se paga en todas partes y se cobra casi en ninguna."
+    },
+    "annotations": [
+     {
+      "line": 2,
+      "note": {
+       "en": "The room is sympathetic. Numbers are the only way to argue against a virtuous-sounding rule.",
+       "es": "La sala simpatiza con la idea. Los números son la única forma de discutir una regla que suena virtuosa."
+      }
+     },
+     {
+      "line": 17,
+      "note": {
+       "en": "Name the switching cost AND the probability. A rule that ignores probability buys insurance at any price.",
+       "es": "Nombra el costo de cambio Y la probabilidad. Una regla que ignora la probabilidad compra seguro a cualquier precio."
+      }
+     },
+     {
+      "line": 38,
+      "note": {
+       "en": "The abstraction layer isn't free portability — it's the premium, plus a leak.",
+       "es": "La capa de abstracción no es portabilidad gratis: es la prima, más una fuga."
+      }
+     },
+     {
+      "line": 42,
+      "note": {
+       "en": "The rule targets the cheap dependency and leaves both expensive ones untouched.",
+       "es": "La regla apunta a la dependencia barata y deja intactas las dos caras."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l7",
+   "slug": "capability-vs-cost-portfolio",
+   "code": {
+    "lang": "markdown",
+    "snippet": "# Cloud spend: response to the 20% reduction request\n\nA 20% cut on the undifferentiated total lands on the capability bets, because\nthey are the only line with no incident history defending them. So we don't\npresent one number. We present three buckets with different owners and horizons.\n\n| Bucket | Share | What it is | If cut |\n|---|---|---|---|\n| Keep-the-lights-on | 61% | Production capacity for current traffic | Availability loss, immediately |\n| Recoverable waste | 12% | Idle resources, orphaned storage, over-provisioning | Nothing. This is free money. |\n| Capability bets | 27% | Data platform migration, observability rebuild | Deferred capability — see below |\n\n## What we commit to\n**12%**, all of it from recoverable waste, with named work items and dates.\nWe do not commit to 20%. We have identified 12%; committing to an unidentified\n8% would make our credibility the buffer, and we'd spend the year explaining\na miss instead of delivering the saving.\n\n## The remaining 8%, priced out loud\nIt comes out of the two capability bets. That is a legitimate business choice —\nit is simply not a free one, so here is what it costs:\n\n- **Data platform migration (5%)** — deferring 12 months keeps the nightly\n  export in place. Analytics stays a day stale; the three teams waiting on it\n  keep their own pipelines, which is duplicated cost we're already paying.\n- **Observability rebuild (3%)** — deferring keeps median incident diagnosis\n  where it is. Last year that was the largest contributor to time-to-recover.\n\nWe are not trying to win the meeting. We are trying to make sure the business\nmakes the decision it is actually making, with the price attached.",
+    "caption": {
+     "en": "The CFO's 20%, answered with three buckets instead of one number — and 12% committed, not 20%.",
+     "es": "El 20% del CFO, respondido con tres cubos en vez de un número: y 12% comprometido, no 20%."
+    },
+    "annotations": [
+     {
+      "line": 4,
+      "note": {
+       "en": "Why a flat percentage always lands on the future: only the present has an incident record.",
+       "es": "Por qué un porcentaje plano siempre cae sobre el futuro: solo el presente tiene historial de incidentes."
+      }
+     },
+     {
+      "line": 10,
+      "note": {
+       "en": "Separating waste from capacity is what makes part of the cut genuinely free.",
+       "es": "Separar el desperdicio de la capacidad es lo que hace que parte del recorte sea realmente gratis."
+      }
+     },
+     {
+      "line": 16,
+      "note": {
+       "en": "Commit only to savings you've identified. An unidentified target is borrowed against your name.",
+       "es": "Compromete solo ahorros que ya identificaste. Una meta sin identificar se toma prestada contra tu nombre."
+      }
+     },
+     {
+      "line": 29,
+      "note": {
+       "en": "The goal is an informed decision, not a defended budget. That distinction is the L7 move.",
+       "es": "El objetivo es una decisión informada, no un presupuesto defendido. Esa distinción es el movimiento de L7."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l7",
+   "slug": "org-wide-reliability-as-risk",
+   "code": {
+    "lang": "python",
+    "snippet": "# Two previous proposals both got a nod and no budget:\n#   - an availability benchmark comparison  -> invites \"what does that cost us?\"\n#   - an architecture risk review           -> describes mechanism, not exposure\n# Neither competes with a feature, because neither is denominated in money.\n\n# Every input below is a number someone else can challenge. That is the point:\n# a challenged estimate everyone can inspect beats a confident assertion nobody\n# can check.\nREVENUE_PER_HOUR      = 210_000   # finance, FY plan / operating hours\nDEGRADED_CONVERSION   = 0.35      # measured during the March incident\nINCIDENT_RESPONSE_COST=  18_000   # per incident: eng hours + support + credits\n\n# From our own incident record, last 8 quarters:\nINCIDENTS_PER_YEAR = 4.5\nMEAN_HOURS         = 2.3\n\nrevenue_loss = INCIDENTS_PER_YEAR * MEAN_HOURS * REVENUE_PER_HOUR * DEGRADED_CONVERSION\nresponse     = INCIDENTS_PER_YEAR * INCIDENT_RESPONSE_COST\nexpected_annual_loss = revenue_loss + response\nprint(f\"expected annual loss: ${expected_annual_loss:,.0f}\")\n# expected annual loss: $841,725\n\n# The ask, in the same units:\nPROGRAM_COST = 2 * 2 * 95_000 / 4 * 2   # 2 engineers, 2 quarters, loaded cost\nTARGET_REDUCTION = 0.40                 # what the program is scoped to remove\nprint(f\"program cost: ${PROGRAM_COST:,.0f}\")\nprint(f\"expected reduction: ${expected_annual_loss * TARGET_REDUCTION:,.0f}/yr\")\n# program cost: $190,000\n# expected reduction: $336,690/yr\n\n# Now reliability is on the same axis as a feature, and the exec team can\n# compare it to anything else competing for those two engineers.\n#\n# Note what we did NOT do: wait for the next outage to make the argument for us.\n# That works, and it is an abdication — we would have chosen to let it happen.",
+    "caption": {
+     "en": "The two proposals that got a nod and no budget, replaced by expected annual loss with inspectable inputs.",
+     "es": "Las dos propuestas que recibieron un asentimiento y ningún presupuesto, reemplazadas por pérdida anual esperada con insumos inspeccionables."
+    },
+    "annotations": [
+     {
+      "line": 4,
+      "note": {
+       "en": "Both previous proposals were true and unfundable. Truth isn't the missing ingredient; a shared axis is.",
+       "es": "Ambas propuestas anteriores eran ciertas e imposibles de financiar. Lo que falta no es verdad, es un eje común."
+      }
+     },
+     {
+      "line": 10,
+      "note": {
+       "en": "The input most likely to be challenged, so it comes from a measured incident, not an assumption.",
+       "es": "El insumo con más probabilidad de ser cuestionado, así que viene de un incidente medido, no de un supuesto."
+      }
+     },
+     {
+      "line": 21,
+      "note": {
+       "en": "Frequency × duration × revenue-per-hour. Crude, transparent, and comparable to a feature's upside.",
+       "es": "Frecuencia × duración × ingreso por hora. Tosco, transparente y comparable con el beneficio de una función."
+      }
+     },
+     {
+      "line": 35,
+      "note": {
+       "en": "Waiting for the outage is an accurate read of the org and an abdication at the same time.",
+       "es": "Esperar la caída es una lectura acertada de la organización y a la vez una abdicación."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l7",
+   "slug": "migration-as-a-multi-year-program",
+   "code": {
+    "lang": "markdown",
+    "snippet": "# Platform migration — endgame register\n\nAt 70%, unmoved for two quarters. Remaining: **40 low-traffic services across\n12 teams.** Leadership has offered a mandate with a hard deadline.\n\nMigrations don't stall in the middle; they stall here. The tail is small,\nlow-traffic services whose owners gain nothing from moving. A deadline doesn't\nchange that arithmetic — it just moves the cost onto teams who were right that\nmigrating was a poor use of their quarter.\n\nSo every remaining service gets ONE of three decisions, with an owner and a date.\n\"We'll get to it\" is not on the list: it's a cost with no owner and no date.\n\n| Services | Decision | Owner | Date | Note |\n|---|---|---|---|---|\n| 14 | **Migrate** | owning team | Q3-Q4 | Real ongoing value; platform pairs 1 week each |\n| 19 | **Retire** | owning team | Q3 | Zero or near-zero traffic. Cheaper to delete than to move. |\n| 7 | **Stay, permanently** | platform | — | Costed below. A legitimate outcome, not a failure. |\n\n## The 7 that stay\nOld platform, indefinitely, **owned and paid for**: $14k/mo of infrastructure\nplus a named maintainer. This is written into the platform budget for FY+1 and\nFY+2 so it is a decision, not a leak.\n\nDeciding this explicitly is what lets us shut down the migration PROGRAM —\nits reporting, its steering meeting, its dashboard — and hand the remaining 33\nservices to their teams as ordinary work.\n\n## What we'd do differently\nEach increment should have been independently valuable and reversible. Ours\nfront-loaded the platform build and back-loaded the value, which is why 70% felt\nlike nothing shipped when priorities changed. They always change.",
+    "caption": {
+     "en": "Stalled at 70% for two quarters: the per-service endgame register instead of the mandate.",
+     "es": "Estancada en 70% por dos trimestres: el registro de cierre por servicio en vez del mandato."
+    },
+    "annotations": [
+     {
+      "line": 6,
+      "note": {
+       "en": "Predictable enough to plan for: the tail is where incentives run out, not where difficulty peaks.",
+       "es": "Predecible: la cola es donde se agotan los incentivos, no donde la dificultad es mayor."
+      }
+     },
+     {
+      "line": 17,
+      "note": {
+       "en": "Usually the largest bucket, and the one nobody proposes because it isn't migration work.",
+       "es": "Suele ser el grupo más grande, y el que nadie propone porque no es trabajo de migración."
+      }
+     },
+     {
+      "line": 21,
+      "note": {
+       "en": "\"Permanently on the old platform, owned and paid for\" is a real outcome. \"We'll get to it\" isn't.",
+       "es": "\"Permanentemente en la plataforma vieja, con dueño y pagada\" es un resultado real. \"Ya lo haremos\" no."
+      }
+     },
+     {
+      "line": 25,
+      "note": {
+       "en": "Ending the program is the deliverable. A program with no end date outlives its own value.",
+       "es": "Terminar el programa es el entregable. Un programa sin fecha de término sobrevive a su propio valor."
+      }
+     },
+     {
+      "line": 30,
+      "note": {
+       "en": "The structural fix. Front-loaded platform work is why the 70% mark felt like nothing shipped.",
+       "es": "El arreglo estructural. Cargar el trabajo de plataforma al inicio es por qué el 70% se sintió como nada entregado."
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

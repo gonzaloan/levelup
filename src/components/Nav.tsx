@@ -149,11 +149,17 @@ export function Nav({ locale }: { locale: Locale }) {
               cursor: "pointer",
             }}
           >
-            <svg width="18" height="14" viewBox="0 0 18 14" aria-hidden="true">
+            {/* The glyph sat edge-to-edge in its 18px box at 1.6 stroke, which read
+                as the heaviest element in a header of thin, precise instrument
+                marks. Inset to a 16px field with rounded 1.4 strokes and a
+                shorter middle bar: same affordance, same weight class as the
+                switch and the locale chip beside it. */}
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="none"
+              stroke="var(--text-2)" strokeWidth="1.4" strokeLinecap="round">
               {open ? (
-                <path d="M2,2 L16,12 M16,2 L2,12" stroke="var(--text)" strokeWidth="1.6" />
+                <path d="M3.5,3.5 L12.5,12.5 M12.5,3.5 L3.5,12.5" />
               ) : (
-                <path d="M1,2 H17 M1,7 H17 M1,12 H17" stroke="var(--text)" strokeWidth="1.6" />
+                <path d="M2.5,5 H13.5 M2.5,8 H13.5 M2.5,11 H10.5" />
               )}
             </svg>
           </button>

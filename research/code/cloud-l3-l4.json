@@ -1,0 +1,256 @@
+{
+ "patches": [
+  {
+   "lessonId": "cloud-platform-l3",
+   "slug": "shared-responsibility-in-practice",
+   "code": {
+    "lang": "yaml",
+    "snippet": "# ecs-managed-instances.responsibility.yml\n# Written BEFORE the migration, reviewed by security and finance.\nservice: ECS Managed Instances\nreplaces: ECS on self-managed EC2 + AMI pipeline\n\nprovider_absorbs:\n  - patching the host OS and container agent\n  - AMI build and rollout (the work we are buying our way out of)\n\nwe_still_own:\n  - the container image and everything in it\n  - task-level IAM, secrets, network policy\n\nchanged_and_must_be_re-verified:   # ← the part teams miss\n  - debug_access:\n      before: SSH to the instance during an incident\n      after:  no host access; reproduce from logs and exec into the task\n  - instance_lifecycle:\n      after: nodes are replaced on a provider cadence, not ours\n      action: drain-safe shutdown handling is now load-bearing\n  - runtime_monitoring:\n      question: does our agent still see host-level events?\n      status: UNVERIFIED -> blocks the migration until answered\n  - discount_coverage:\n      question: does the Compute Savings Plan offset this charge?\n      status: UNVERIFIED -> finance sized it for 80% of steady-state compute",
+    "caption": {
+     "en": "The per-service responsibility line, written down. This is the artifact the two-box diagram can't give you.",
+     "es": "La línea de responsabilidad por servicio, escrita. Este es el artefacto que el diagrama de dos cajas no te da."
+    },
+    "annotations": [
+     {
+      "line": 14,
+      "note": {
+       "en": "This section is the whole point. Every responsibility the provider takes moves something you were relying on.",
+       "es": "Esta sección es todo el punto. Cada responsabilidad que toma el proveedor mueve algo en lo que te apoyabas."
+      }
+     },
+     {
+      "line": 17,
+      "note": {
+       "en": "Not a security note — an incident-response note. Your runbook's first step may no longer exist.",
+       "es": "No es una nota de seguridad, es de respuesta a incidentes. El primer paso de tu runbook puede ya no existir."
+      }
+     },
+     {
+      "line": 23,
+      "note": {
+       "en": "Detection scope and discount coverage are the two blind spots. UNVERIFIED is a valid state; assuming is not.",
+       "es": "El alcance de detección y la cobertura del descuento son los dos puntos ciegos. UNVERIFIED es un estado válido; suponer no."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l3",
+   "slug": "managed-service-tax",
+   "code": {
+    "lang": "python",
+    "snippet": "# The engineer's comparison: managed $1,400/mo vs self-hosted $560/mo -> \"60% saving\".\n# Both numbers are correct. The comparison is not, because only one side is complete.\n\nMANAGED_MONTHLY = 1_400\nSELF_HOSTED_INFRA_MONTHLY = 560     # 3 instances, measured, real\n\n# The work the premium was buying. Hours are the team's own estimates, and the\n# blended cost of an engineer-hour here is $95.\nENGINEER_HOUR = 95\nrecurring_ops = {\n    \"patching + version upgrades\": 6,   # hours/month\n    \"capacity changes\":            2,\n    \"backup restore verification\": 3,   # the one everyone skips until it matters\n    \"on-call for the broker itself\": 4,\n}\nops_monthly = sum(recurring_ops.values()) * ENGINEER_HOUR\n\nself_hosted_true = SELF_HOSTED_INFRA_MONTHLY + ops_monthly\nprint(f\"managed:            ${MANAGED_MONTHLY:,}/mo\")\nprint(f\"self-hosted infra:  ${SELF_HOSTED_INFRA_MONTHLY:,}/mo\")\nprint(f\"+ ops ({sum(recurring_ops.values())} h/mo): ${ops_monthly:,}/mo\")\nprint(f\"self-hosted total:  ${self_hosted_true:,}/mo\")\n# managed:            $1,400/mo\n# self-hosted infra:  $560/mo\n# + ops (15 h/mo):    $1,425/mo\n# self-hosted total:  $1,985/mo   <- the 60% saving is a 42% increase\n\n# And this ignores the one-time migration entirely, plus the fact that 15 h/mo\n# does not shrink when the team is 12 engineers instead of 120.",
+    "caption": {
+     "en": "The comparison the $560-vs-$1,400 benchmark left out — same numbers, complete accounting.",
+     "es": "La comparación que el benchmark de $560 vs $1,400 dejó fuera: los mismos números, contabilidad completa."
+    },
+    "annotations": [
+     {
+      "line": 2,
+      "note": {
+       "en": "The tax is easy to measure, which is exactly why it dominates the conversation and the ops cost doesn't.",
+       "es": "El impuesto es fácil de medir, y justo por eso domina la conversación y el costo operativo no."
+      }
+     },
+     {
+      "line": 13,
+      "note": {
+       "en": "Untested backups are the line item that reads as free right up until the restore fails.",
+       "es": "Los respaldos sin probar son la línea que parece gratis hasta que la restauración falla."
+      }
+     },
+     {
+      "line": 26,
+      "note": {
+       "en": "Same two real numbers, opposite conclusion. Compare total cost of ownership, never price against price.",
+       "es": "Los mismos dos números reales, conclusión opuesta. Compara costo total de propiedad, nunca precio contra precio."
+      }
+     },
+     {
+      "line": 29,
+      "note": {
+       "en": "Operational work has a floor. That's why the premium is usually cheapest at small scale.",
+       "es": "El trabajo operativo tiene un piso. Por eso el sobreprecio suele ser más barato a escala pequeña."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l3",
+   "slug": "cloud-cost-as-a-design-signal",
+   "code": {
+    "lang": "sql",
+    "snippet": "-- Cost and Usage Report, queried as telemetry rather than read as a statement.\n-- Symptom: spend +18% month over month, request volume flat.\n\n-- 1. WHAT grew? Group by usage type, not by service: \"EC2 +$4k\" is not actionable,\n--    \"EC2:PublicIPv4 +$4k\" is.\nSELECT line_item_usage_type,\n       SUM(CASE WHEN month = 'current'  THEN unblended_cost END) AS now_cost,\n       SUM(CASE WHEN month = 'previous' THEN unblended_cost END) AS was_cost\nFROM cur\nGROUP BY line_item_usage_type\nORDER BY (now_cost - was_cost) DESC\nLIMIT 10;\n-- PublicIPv4:InUseAddress   +40%   <- inventory finding: how many are unattached?\n-- EBS:SnapshotUsage         +25%   <- accumulation: a create path with no delete\n-- DataTransfer-Regional     +12%   <- topology: chatty cross-AZ traffic\n\n-- 2. Is it price or quantity? Flat traffic + rising cost means quantity.\nSELECT line_item_usage_type,\n       SUM(usage_amount)                        AS units,\n       SUM(unblended_cost) / SUM(usage_amount)  AS unit_cost\nFROM cur\nWHERE line_item_usage_type = 'EBS:SnapshotUsage'\nGROUP BY 1, month;\n-- unit_cost unchanged, units +25% -> nobody raised a price. We are keeping more.\n\n-- 3. Undeniable waste first: idle resources billed at the full rate.\nSELECT resource_id, SUM(unblended_cost) AS cost, MAX(usage_amount) AS peak_usage\nFROM cur\nWHERE line_item_usage_type LIKE '%PublicIPv4%'\nGROUP BY resource_id\nHAVING MAX(usage_amount) = 0        -- billed, never used\nORDER BY cost DESC;",
+    "caption": {
+     "en": "Reading the 18%-with-flat-traffic bill as telemetry: three queries, three engineering findings.",
+     "es": "Leer la factura que subió 18% con tráfico plano como telemetría: tres consultas, tres hallazgos de ingeniería."
+    },
+    "annotations": [
+     {
+      "line": 1,
+      "note": {
+       "en": "The bill is the only complete inventory of what you own, including what nobody remembers creating.",
+       "es": "La factura es el único inventario completo de lo que tienes, incluido lo que nadie recuerda haber creado."
+      }
+     },
+     {
+      "line": 14,
+      "note": {
+       "en": "Cost rising while traffic is flat is accumulation, not pricing. Look for a create path with no matching delete.",
+       "es": "Costo que sube con tráfico plano es acumulación, no precio. Busca un camino que crea y nunca borra."
+      }
+     },
+     {
+      "line": 24,
+      "note": {
+       "en": "Splitting cost into price × quantity is what turns a finance question into an engineering one.",
+       "es": "Separar el costo en precio × cantidad es lo que convierte una pregunta financiera en una de ingeniería."
+      }
+     },
+     {
+      "line": 31,
+      "note": {
+       "en": "Triage order: undeniable waste, then analysed efficiency, then procurement. Never commit before diagnosing.",
+       "es": "Orden de triaje: desperdicio innegable, luego eficiencia analizada, luego compras. Nunca comprometerse antes de diagnosticar."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l4",
+   "slug": "cold-start-and-warm-path-economics",
+   "code": {
+    "lang": "javascript",
+    "snippet": "// BEFORE — p50 90 ms, p99 2.4 s. Init is 1.9 s of that:\n//   1.1 s importing the SDK bundle, 600 ms fetching config.\nconst AWS = require('aws-sdk');                 // whole SDK: ~1.1 s to load\nconst config = await getParameters('/app/*');   // 600 ms, on EVERY cold start\n\nexports.handler = async (event) => { /* 90 ms of actual work */ };\n\n\n// AFTER — step 1: trim initialization. Costs nothing.\n// Import only the client you use, and let the config fetch happen ONCE per\n// environment rather than once per request path.\nconst { SSMClient, GetParametersByPathCommand } = require('@aws-sdk/client-ssm');\n\nlet configPromise;                              // module scope = survives warm invokes\nconst loadConfig = () => (configPromise ??= fetchConfig());\n\nexports.handler = async (event) => {\n  const config = await loadConfig();            // cold: 600 ms. warm: 0 ms.\n  // ...\n};\n\n// step 2: raise memory. Cheap, real, NOT a cure — more memory means\n// proportionally more CPU during init, so a CPU-bound 1.1 s import gets faster.\n// Measure it; don't assume a multiple.\n\n// step 3: pay for warm capacity. Only now, and know what you're undoing:\n//   provisioned concurrency removes the cold start AND the idle-time saving\n//   that made the serverless choice attractive.\n// Snapshot-restore init (SnapStart) is the other lever — but it does NOT\n// support Node.js, so it is not available to this function.",
+    "caption": {
+     "en": "The 2.4 s p99, fixed in the order the mitigations actually cost: free, then cheap, then paid.",
+     "es": "El p99 de 2.4 s, arreglado en el orden en que las mitigaciones cuestan: gratis, luego barato, luego pagado."
+    },
+    "annotations": [
+     {
+      "line": 4,
+      "note": {
+       "en": "Cold starts hit on scale-out and after idleness, not just after a deploy — that's why they live in p99.",
+       "es": "Los arranques en frío ocurren al escalar y tras inactividad, no solo tras un deploy: por eso viven en el p99."
+      }
+     },
+     {
+      "line": 15,
+      "note": {
+       "en": "Cache the promise, not the value: two concurrent first invocations would otherwise both fetch.",
+       "es": "Cachea la promesa, no el valor: si no, dos primeras invocaciones concurrentes harían dos fetch."
+      }
+     },
+     {
+      "line": 22,
+      "note": {
+       "en": "Memory buys CPU. It helps a CPU-bound import and does nothing for a slow network call.",
+       "es": "La memoria compra CPU. Ayuda a un import limitado por CPU y no hace nada por una llamada de red lenta."
+      }
+     },
+     {
+      "line": 26,
+      "note": {
+       "en": "Last, because it reverses the economics you chose serverless for. Order the mitigations by cost.",
+       "es": "Al final, porque revierte la economía por la que elegiste serverless. Ordena las mitigaciones por costo."
+      }
+     },
+     {
+      "line": 30,
+      "note": {
+       "en": "Runtime-restricted. Check applicability before you plan a quarter around it.",
+       "es": "Restringido por runtime. Verifica que aplique antes de planear un trimestre alrededor."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l4",
+   "slug": "private-network-paths-and-egress",
+   "code": {
+    "lang": "hcl",
+    "snippet": "# Month 0 — \"peering is free, it's just a line between two boxes.\"\nresource \"aws_vpc_peering_connection\" \"checkout_to_payments\" {\n  vpc_id      = aws_vpc.checkout.id     # account B\n  peer_vpc_id = var.payments_vpc_id     # account A\n}\n# Plus a route in EVERY route table on both sides, and non-overlapping CIDRs.\n\n# Month 3 — fulfilment (C), mobile BFF (D), reporting (E) need the same service.\n# Peering does not transit: B cannot reach A \"through\" C. So it's not 4 links,\n# it's one per PAIR that must talk — and each is a cross-account change request.\n#\n#   consumers | peering links | who must act to add the next one\n#   ----------+---------------+----------------------------------\n#       2     |       1       | both account owners\n#       5     |      10       | both account owners, every time\n#\n# That last column is the whole decision, and no two-box diagram shows it.\n\n# The alternative, priced by the same question:\nresource \"aws_vpc_endpoint_service\" \"payments\" {   # provider publishes ONCE\n  network_load_balancer_arns = [aws_lb.payments.arn]\n  acceptance_required        = true\n}\n\nresource \"aws_vpc_endpoint\" \"payments_from_e\" {    # consumer self-serves\n  vpc_id            = aws_vpc.reporting.id\n  service_name      = var.payments_service_name\n  vpc_endpoint_type = \"Interface\"\n}\n# Now adding consumer #6 is one change in account F. The payments team does\n# nothing. It costs more per hour than peering and less per new consumer.",
+    "caption": {
+     "en": "Why peering for accounts A→B became the wrong answer at account E: the diff nobody drew on the whiteboard.",
+     "es": "Por qué el peering de A→B fue la respuesta equivocada al llegar la cuenta E: el diff que nadie dibujó en la pizarra."
+    },
+    "annotations": [
+     {
+      "line": 9,
+      "note": {
+       "en": "The single most expensive property to discover late: peering is pairwise, so links grow quadratically.",
+       "es": "La propiedad más cara de descubrir tarde: el peering es por pares, así que los enlaces crecen cuadráticamente."
+      }
+     },
+     {
+      "line": 12,
+      "note": {
+       "en": "Ask this question first. It predicts the model's real cost in two years better than any price sheet.",
+       "es": "Haz esta pregunta primero. Predice el costo real del modelo en dos años mejor que cualquier lista de precios."
+      }
+     },
+     {
+      "line": 20,
+      "note": {
+       "en": "Endpoints scale per service, not per pair — the provider publishes once and consumers arrive on their own.",
+       "es": "Los endpoints escalan por servicio, no por par: el proveedor publica una vez y los consumidores llegan solos."
+      }
+     },
+     {
+      "line": 31,
+      "note": {
+       "en": "Choose by growth path and ownership. The hourly rate is the number that misleads here.",
+       "es": "Elige por trayectoria de crecimiento y propiedad. La tarifa por hora es el número que engaña aquí."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l4",
+   "slug": "commitment-based-discounts",
+   "code": {
+    "lang": "python",
+    "snippet": "# Finance's proposal: commit $34k of a $40k/month compute spend, 3 years.\n# Engineering knows two things that aren't on the spreadsheet.\n\nTOTAL_MONTHLY   = 40_000\nPROPOSED_COMMIT = 34_000\n\ndecommissioning  = 6_000   # legacy service, gone in ~9 months of a 36-month term\nmoving_off_model = 8_000    # shifting to managed instances, whose MANAGEMENT FEE\n                           # sits OUTSIDE the compute commitment\n\n# What is actually steady for the full term?\nsteady = TOTAL_MONTHLY - decommissioning - moving_off_model\nprint(f\"steady footprint: ${steady:,}/mo, proposed commit: ${PROPOSED_COMMIT:,}/mo\")\n# steady footprint: $26,000/mo, proposed commit: $34,000/mo\n\novercommit = PROPOSED_COMMIT - steady\nprint(f\"overcommitted by ${overcommit:,}/mo -> ${overcommit * 36:,} over the term\")\n# overcommitted by $8,000/mo -> $288,000 over the term\n#\n# Overcommitment is not a smaller discount. It is spend on capacity you no\n# longer run: you pay the commitment whether or not the usage exists.\n\n# Coverage is the metric that hides this, because it looks great either way.\ndef coverage(commit, spend):  return commit / spend\nprint(f\"coverage at ${PROPOSED_COMMIT:,}: {coverage(PROPOSED_COMMIT, TOTAL_MONTHLY):.0%}\")\n# coverage at $34,000: 85%   <- a good number describing the wrong thing\n\n# Unit cost is the metric that catches it: cost per 1k requests, tracked across\n# the change. High coverage of a wasteful architecture just discounts the waste.",
+    "caption": {
+     "en": "The $34k commitment finance proposed, recomputed with the two facts engineering had.",
+     "es": "El compromiso de $34k que propuso finanzas, recalculado con los dos datos que tenía ingeniería."
+    },
+    "annotations": [
+     {
+      "line": 9,
+      "note": {
+       "en": "Name what the commitment does NOT cover. Blending fees that sit outside it overstates the saving.",
+       "es": "Nombra lo que el compromiso NO cubre. Mezclar cargos que quedan fuera exagera el ahorro."
+      }
+     },
+     {
+      "line": 14,
+      "note": {
+       "en": "You're selling optionality for a rate. Only the part that will still exist in three years is safe to sell.",
+       "es": "Estás vendiendo opcionalidad por una tarifa. Solo la parte que seguirá existiendo en tres años se puede vender."
+      }
+     },
+     {
+      "line": 18,
+      "note": {
+       "en": "Sequence matters: clean up, then commit. Buying first is an efficient purchase of waste.",
+       "es": "El orden importa: primero limpia, luego compromete. Comprar antes es comprar desperdicio con eficiencia."
+      }
+     },
+     {
+      "line": 26,
+      "note": {
+       "en": "Coverage rewards committing to anything. Unit cost is the metric that survives an architecture change.",
+       "es": "La cobertura premia comprometerse con cualquier cosa. El costo unitario es la métrica que sobrevive un cambio de arquitectura."
+      }
+     }
+    ]
+   }
+  }
+ ]
+}

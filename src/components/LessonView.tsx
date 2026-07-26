@@ -23,10 +23,14 @@ import { Practice } from "./lesson/Practice";
 import { FlashcardDeck } from "./lesson/FlashcardDeck";
 import { CheatSheet } from "./lesson/CheatSheet";
 import { ExamRunner } from "./lesson/ExamRunner";
-import { para, lessonLevel, lessonAxisId } from "./lesson/util";
+import { para, leadAndRest, lessonLevel, lessonAxisId } from "./lesson/util";
 import type { Lesson, Concept } from "@/lib/types";
 
 type Stage = "learn" | "recall" | "check" | "practice" | "done";
+
+// The overview fold's label. Inline {en,es} per the build contract for new
+// chrome — the shared catalog is for strings the whole fleet uses.
+const MORE_CONTEXT = { en: "More on why this band matters", es: "Más sobre por qué importa este nivel" } as const;
 
 export function LessonView({
   locale, lesson, concepts, checkpointId, nextLesson,
@@ -41,6 +45,12 @@ export function LessonView({
   const level = lessonLevel(lesson.lessonId);
   const track = lesson.lessonId.startsWith("ai-engineering") ? "ai" : "general";
   const conceptMeta = new Map(concepts.map((c) => [c.slug, c]));
+  // A short lead up front, the remaining framing behind a fold. The first
+  // paragraph is itself split at a sentence boundary, because several of them
+  // open with a single 50-90 word sentence.
+  const overviewParas = para(t(lesson.overview, locale));
+  const [overviewLead, leadTail] = leadAndRest(overviewParas[0] ?? "");
+  const overviewRest = [leadTail, ...overviewParas.slice(1)].filter(Boolean);
 
   const [stage, setStage] = useState<Stage>("learn");
   // -1 = overview pane, then 0..n-1 concept panes
@@ -120,9 +130,12 @@ export function LessonView({
         <div className="stack" style={{ gap: "var(--s-6)", marginTop: "var(--s-6)", maxWidth: 780 }}>
           <section className="card lesson-overview">
             <p className="eyebrow" style={{ color: "var(--track-accent)" }}>{m("lesson.overview", locale)}</p>
-            {para(t(lesson.overview, locale)).map((p, i) => (
-              <p key={i} className="prose" style={{ fontSize: "1.0625rem", marginTop: i ? "var(--s-3)" : "var(--s-3)" }}>{p}</p>
-            ))}
+            {/* Overviews run 78-268 words across 2-3 paragraphs. All of that
+                before the table of contents meant a phone reader scrolled two
+                screens of prose before learning what the lesson even contains.
+                The first paragraph frames the band; the contents list is the
+                concrete thing; the rest of the framing waits behind a fold. */}
+            <p className="cp-para" style={{ fontSize: "1.0625rem", marginTop: "var(--s-3)" }}>{overviewLead}</p>
             <div style={{ marginTop: "var(--s-5)", borderTop: "1px solid var(--hairline)", paddingTop: "var(--s-4)" }}>
               <p className="eyebrow" style={{ marginBottom: "var(--s-3)" }}>{m("lesson.whatYouLearn", locale)}</p>
               <ol className="lesson-toc">
@@ -137,6 +150,16 @@ export function LessonView({
             <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""}`} style={{ marginTop: "var(--s-6)" }} onClick={advance}>
               {m("assess.start", locale)} →
             </button>
+            {overviewRest.length > 0 && (
+              <details className="cp-fold" style={{ marginTop: "var(--s-5)", marginBottom: 0 }}>
+                <summary>{t(MORE_CONTEXT, locale)}</summary>
+                <div className="cp-morebody">
+                  {overviewRest.map((p, i) => (
+                    <p key={i} className="cp-para" style={{ fontSize: "1.0625rem" }}>{p}</p>
+                  ))}
+                </div>
+              </details>
+            )}
           </section>
         </div>
       )}

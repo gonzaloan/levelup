@@ -267,4 +267,9 @@ function main() {
   console.log(`✓ wrote lessons.json: ${data.lessons.length} lessons`);
 }
 
-main();
+// Running as a CLI does the merge; being `require`d only exports the validator.
+if (require.main === module) main();
+
+// Reused by tools/merge-code.cjs so the surgical patcher validates against the
+// SAME rules as a full lesson merge — two validators would drift immediately.
+module.exports = { checkConcept, widgetIds, errs, warns };
