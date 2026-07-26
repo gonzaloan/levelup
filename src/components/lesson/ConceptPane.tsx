@@ -12,9 +12,9 @@
 //   2. the analogy — the cheapest handle on a new idea
 //   3. the VISUAL: interactive widget, else code, else the schematic. Within the
 //      first screen on a phone, always.
-//   4. the explanation, chunked, with anything past the first two paragraphs
-//      behind "Read the full explanation" — the same words, not fewer, just not
-//      all at once
+//   4. the explanation, chunked to a word budget rather than a paragraph count,
+//      with the remainder behind "Read the full explanation" — the same words,
+//      not fewer, just not all at once
 //   5. the worked example, collapsed (concrete, but long)
 //   6. pitfalls, sub-cards, mnemonic, source
 //
@@ -30,8 +30,31 @@ import { CodeView } from "./CodeView";
 import { para } from "./util";
 import type { Concept, ConceptLesson } from "@/lib/types";
 
-/** How many paragraphs of the main explanation show before the fold. */
-const LEAD_PARAGRAPHS = 2;
+/**
+ * Word budget for the visible lead of the explanation.
+ *
+ * This was "the first 2 paragraphs", which is the wrong unit: measuring the
+ * corpus showed 96 of 178 concepts have a single paragraph over 100 words (the
+ * longest is 165), so a two-paragraph lead was itself a wall on 96 concepts. A
+ * budget adapts — a concept written in short paragraphs shows three, one written
+ * in long ones shows one — and the fold lands in the same place for the reader
+ * either way. 110 words is roughly one phone screen of prose at this measure.
+ *
+ * Always at least one paragraph: a fold with nothing above it reads as broken.
+ */
+const LEAD_WORD_BUDGET = 110;
+
+function splitLead(paragraphs: string[]): [string[], string[]] {
+  const lead: string[] = [];
+  let words = 0;
+  for (const p of paragraphs) {
+    const n = p.trim().split(/\s+/).length;
+    if (lead.length > 0 && words + n > LEAD_WORD_BUDGET) break;
+    lead.push(p);
+    words += n;
+  }
+  return [lead, paragraphs.slice(lead.length)];
+}
 
 export function ConceptPane({ locale, lessonConcept, meta, index, total, track, onNext }: {
   locale: Locale; lessonConcept: ConceptLesson; meta?: Concept; index: number; total: number; track: string; onNext: () => void;
@@ -41,8 +64,7 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
   const Widget = lessonConcept.visual ? getWidget(lessonConcept.visual.widgetId) : null;
 
   const paragraphs = para(t(lessonConcept.explanation, locale));
-  const lead = paragraphs.slice(0, LEAD_PARAGRAPHS);
-  const rest = paragraphs.slice(LEAD_PARAGRAPHS);
+  const [lead, rest] = splitLead(paragraphs);
   const depthParas = lessonConcept.depth ? para(t(lessonConcept.depth, locale)) : [];
   // One control reveals both the rest of the explanation and the deeper read —
   // two separate "read more" buttons on one pane is noise.
