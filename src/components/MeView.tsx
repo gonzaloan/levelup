@@ -11,6 +11,7 @@ import { AXIS_BY_ID, BAND_RANGE } from "@/lib/axes";
 import { CountUp } from "./Motion";
 import { BadgeShelf } from "./BadgeShelf";
 import { RankLadder } from "./RankLadder";
+import { BackupPanel } from "./BackupPanel";
 
 export function MeView({ locale }: { locale: Locale }) {
   const [p, setP] = useState<Progress | null>(null);
@@ -93,6 +94,10 @@ export function MeView({ locale }: { locale: Locale }) {
           })}
         </div>
       )}
+
+      {/* Progress lives only in this browser, and this is the page that says so —
+          the honest place to offer a copy of it. */}
+      <BackupPanel locale={locale} />
 
       {/* A quiet next-step nudge — no fake "streak", no backend reminders we
           can't deliver from a static export. Just points at the work. */}

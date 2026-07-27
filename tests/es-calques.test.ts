@@ -26,10 +26,18 @@ const CORPUS = readFileSync(path.join(ROOT, "src/content/data/lessons.json"), "u
 const CALQUES: { pattern: RegExp; why: string; instead: string }[] = [
   {
     // English "X is why Y" carried over literally. In Spanish a copula plus a
-    // bare interrogative reads as an unfinished indirect question. Only the
-    // calque SHAPE is banned: "es por qué" followed by an article. The corpus has
-    // 12 legitimate predicative uses ("el arreglo es por qué sigue muriendo").
-    pattern: /\b(?:complicación|demanda\s+correlacionada|razón)\s+es por qu[ée]\b/gi,
+    // bare interrogative reads as an unfinished indirect question.
+    //
+    // Keyed on what FOLLOWS, not on the subject. The first version listed the
+    // three subject nouns already found ("complicación|demanda correlacionada|
+    // razón"), so it could only catch those three — and my own regression came
+    // from rewriting an artifact, which is exactly when the subject changes. Four
+    // plausible rephrasings all slipped past it. An article after "es por qué" is
+    // the calque shape; the corpus's legitimate predicative uses are all followed
+    // by a verb ("el arreglo es por qué sigue muriendo", "es por qué ganan"), so
+    // this form excludes every one of them — and it immediately found a real
+    // calque the subject-keyed version had missed.
+    pattern: /\bes por qu[ée]\s+(?:el|la|los|las|un|una|esto|eso)\b/gi,
     why: 'English "is why" carried over literally',
     instead: '"es la razón por la que" / "explica por qué"',
   },

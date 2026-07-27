@@ -115,6 +115,18 @@ const LITERAL_CONTEXT = [
   /\/[\w-]*\/\d+/g,                       // path segments: /orders/12345
   /\b\d{4}-\d{2}-\d{2}\b/g,               // ISO dates
   /\b(?:max_tokens|top_k|top_p|seed|temperature|port|timeout_ms|limit)\s*=\s*[\d.]+/g,
+  // A keyword ARGUMENT — `f(n=200)`, `g(size=64, retries=3)`. Restricted to a
+  // no-space `=` inside a call, because the general assignment form swallowed
+  // `revenue_per_hour = 47_500`, which is precisely the invented premise the
+  // claim-vocabulary filter exists to catch.
+  /\b[a-z_][\w.]*=\d[\d_.]*(?=\s*[,)])/g,
+  // Error codes and identifiers that happen to be numeric: a Postgres SQLSTATE
+  // (`40001`), an HTTP status in prose, an RFC number.
+  /\bSQLSTATE\s+\d+|\b(?:SQLSTATE|RFC|CVE|ISO)[- ]?\d+/gi,
+  /\(\s*SQLSTATE\s+\d+\s*\)/gi,
+  // A rolling window or period in a query/comment: "last 30 days", "over 7 days",
+  // "trailing 12 months". The window is how the metric is computed, not a claim.
+  /\b(?:last|past|previous|trailing|over|rolling|per)\s+\d+\s+(?:days?|weeks?|months?|quarters?|years?|hours?|minutes?)\b/gi,
   /\b(?:HTTP\/)?\d{3}\s+(?:OK|No Content|Not Found|Created|Bad Request|Forbidden|Conflict|Too Many)/g,
   // NOT a duration strip. This used to be /\b\d+\s*(?:h|min|ms|s|d)\b/, which
   // deleted "800 ms" and "2.4 s" before salience ever saw them — cancelling out
@@ -382,7 +394,12 @@ function main() {
   // from the list — so the number can only go down.
   const baseline = new Set(
     fs.existsSync(BASELINE_FILE)
-      ? fs.readFileSync(BASELINE_FILE, "utf8").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+      // `#` comments skipped: the file carries the explanation of what an entry
+      // means and why it is allowed, which is the part a future author needs.
+      ? fs.readFileSync(BASELINE_FILE, "utf8")
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith("#"))
       : [],
   );
   const audit = process.argv.includes("--audit");
@@ -403,7 +420,9 @@ function main() {
   };
 
   if (known.length) {
-    console.log(`\n${known.length} known artifact(s) predating this gate (tools/trace-baseline.txt):`);
+    // Not "predating this gate": about half were written during the artifact pass
+    // itself. What they share is a computed intermediate the gate can't trace.
+    console.log(`\n${known.length} known untraced figure(s), reviewed and accepted (tools/trace-baseline.txt):`);
     if (audit) show(known);
     else console.log("  run with --audit to list them");
   }

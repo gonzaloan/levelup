@@ -403,3 +403,26 @@ shared pool, separate table, event-replayed reviews, derived signal.
 **Verdict: DO IT LATER.** Ship export/import now (half a day, no accounts, keeps the
 no-login promise). Build sync when two-device friction is real, and when it is, share the
 pool, not the table.
+
+---
+
+## Status (2026-07-27)
+
+**Export/import: DONE.** `src/lib/backup.ts` + `src/components/BackupPanel.tsx`, offered on
+`/me` — the page that already tells the learner their progress is device-local. Validation is
+the whole job: an import overwrites the only copy, so the file is parsed, every field coerced
+to its real shape, and nothing is written until the learner confirms against a summary of what
+they'd be replacing. Review entries missing their ladder position are dropped rather than reset
+(a reset would tell the learner to re-review something they know), `ease` is clamped to the
+authored 1.3-2.8, and non-day-key streak entries are filtered — each with a visible warning.
+16 unit tests, including a prototype-pollution file. Verified end to end in a browser:
+export → wipe → restore keeps signal, concept count, review step and streak days; three
+malformed files are refused by name with the stored progress untouched.
+
+**Sync: still not started, and still the right call.** Nothing in this document changed.
+
+**The two live get-certified bugs (double-nested `state.state`, missing CORS allow-origin for
+`levelup.skillrealm.dev`) are NOT fixed.** They live in the get-certified repo, whose standing
+rule is that its owner runs the deploys — fixing the template here without deploying would
+leave that repo divergent from production, which is worse than the bug. They are prerequisites
+for sync, not for anything shipping today.
