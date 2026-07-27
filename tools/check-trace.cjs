@@ -47,8 +47,25 @@ const LESSONS = path.join(__dirname, "..", "src/content/data/lessons.json");
 const BASELINE_FILE = path.join(__dirname, "trace-baseline.txt");
 
 /** Collect every number a string mentions, as normalized values. */
+/**
+ * Small numbers authored as WORDS.
+ *
+ * Examples are written for humans, so a headcount is "two engineers for two
+ * quarters", not "2". The gate flagged the artifact's correct `# 2 engineers, 2
+ * quarters` as untraced because its example spelled the number out — a false
+ * positive on content that agrees perfectly with its source.
+ */
+const WORD_NUMBERS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, dozen: 12, twenty: 20, thirty: 30,
+  forty: 40, fifty: 50, sixty: 60, half: 0.5, quarter: 0.25,
+};
+
 function numbersIn(text) {
   const out = new Set();
+  for (const [word, value] of Object.entries(WORD_NUMBERS)) {
+    if (new RegExp(`\\b${word}\\b`, "i").test(text)) out.add(value);
+  }
   // 1_000 / 1,000 / 1000 / 12.5 / $0.037 — and k/m suffixes ($34k, 2.1M).
   // The lookahead rejects a following letter (so "15 minutes" isn't 15 million)
   // but must NOT reject a sentence-final period. `(?![\w.])` did, so "$110,000."
@@ -64,15 +81,22 @@ function numbersIn(text) {
     if (!Number.isFinite(v)) continue;
     const suffix = (mt[2] || "").toLowerCase();
     if (suffix === "k") v *= 1_000;
-    if (suffix === "m") v *= 1_000_000;
+    // Uppercase M only. Lowercase `m` is MINUTES in this corpus's YAML
+    // (`duration: 10m`, `windows: [5m, 1h]`), and reading it as millions
+    // manufactured a 10,000,000 that appears in no artifact — the gate reporting
+    // a figure the author never wrote is the fastest way to lose their trust.
+    if (mt[2] === "M") v *= 1_000_000;
     out.add(v);
     // A "$34k" in prose is often written "34,000" in code, and vice versa.
     if (suffix) out.add(Number(raw));
     // Percentages cross between prose and code as a ratio: an example saying
     // "58% toil" is the same claim as `MEASURED_TOIL = 0.58`, and "99.9%" is
-    // `0.999`. Register both forms so the gate doesn't flag the conversion.
-    out.add(v / 100);
-    out.add(v * 100);
+    // `0.999`. Register both forms so the gate doesn't flag the conversion —
+    // but ONLY for plausible percentages. Registering v*100 for every number
+    // put values like 20000 and 300 (from "200" and "3") into the operand set,
+    // and their coincidental product absolved an invented $6,000,000.
+    if (v <= 100) out.add(v / 100);
+    if (v <= 1) out.add(v * 100);
   }
   return out;
 }
@@ -105,8 +129,15 @@ const LITERAL_CONTEXT = [
   // a claim: `n_nodes // 2 + 1`, `x - 1`. Anchored to an IDENTIFIER on one side,
   // so it strips `foo // 2 + 1` but leaves prose like "12% is available" and
   // "cut 20%" alone — an unanchored version also swallowed a real 61% claim.
+  //
+  // The `(?!…UNITS)` guard is load-bearing. A `/` in a UNIT SUFFIX matched the
+  // operator alternation, so `$40,000/mo` was consumed down to `$40` — reducing
+  // every money-per-period figure in the corpus to its leading digits, and
+  // letting an invented `$6,000,000/yr` pass in the expected-annual-loss
+  // artifact ($6M became 6, which traces to "six incidents"). Per-period money
+  // is the dominant unit across the whole cloud-cost family.
   /\b[a-z_][\w.]*\s*[-+*/%]{1,2}\s*\d[\d_.]*/gi,
-  /\d[\d_.]*\s*[-+*/%]{1,2}\s*[a-z_][\w.]*/gi,
+  /\d[\d_.]*\s*[-+*/%]{1,2}\s*(?!(?:mo|month|yr|year|hr|hour|wk|week|day|min|sec|s|req|GB|TB|MB|kb|core|user|tenant|invocation)\b)[a-z_][\w.]*/gi,
   // "0 rows", "1 node": a count in a code comment describing control flow.
   /(?:^|[\s(])[01]\s+(?:rows?|nodes?|item|items|result|results)\b/g,
   // Zero is never a claim about the world — "warm: 0 ms", "idle saving: ~0".
@@ -122,13 +153,28 @@ const LITERAL_CONTEXT = [
   // `==`, `>=`, `<`, `>` — but NOT a bare `=`, which is an ASSIGNMENT. Matching
   // assignment here deleted `revenue_per_hour = 47_500`, the exact invented
   // premise this vocabulary was extended to catch.
-  /\b[a-z_][\w.]*\s*(?:[<>!]=?|==)\s*\d[\d_.]*/gi,
 ];
+
+/**
+ * A comparison threshold is a computation in CODE and a claim in a COMMENT.
+ *
+ * `s >= 0.8` inside an expression is part of the arithmetic. But
+ * `# abort when checkout_p99_ms > 1750` states a threshold the reader is asked to
+ * believe — and an identifier-anchored strip cannot tell the two apart, because
+ * the comment has an identifier on its left too. That let invented abort
+ * thresholds pass in the gameday artifact whose original defect WAS its
+ * thresholds. So this one is applied per line, and only to non-comment lines.
+ */
+const CODE_COMPARISON = /\b[a-z_][\w.]*\s*(?:[<>!]=?|==)\s*\d[\d_.]*/gi;
+const COMMENT_LINE = /(^|\s)(#|\/\/|--)/;
 
 function stripLiterals(text) {
   let out = text;
   for (const re of LITERAL_CONTEXT) out = out.replace(re, " ");
-  return out;
+  return out
+    .split("\n")
+    .map((line) => (COMMENT_LINE.test(line) ? line : line.replace(CODE_COMPARISON, " ")))
+    .join("\n");
 }
 
 /**
@@ -169,7 +215,7 @@ function salient(text) {
     if (!Number.isFinite(v)) continue;
     const s = (suffix || "").toLowerCase();
     if (s === "k") v *= 1_000;
-    if (s === "m") v *= 1_000_000;
+    if (suffix === "M") v *= 1_000_000;   // uppercase only — see numbersIn
     const hadSeparator = /[,_]/.test(digits);
     // Salient = a claim: money, a percentage, a separated/large number, or a
     // small integer counting something the reader is asked to believe.
@@ -264,7 +310,13 @@ function main() {
       // So operands come from `traced` only, and a derivation must be real work:
       // no identity (a === 1, b === 1, a === v), no free division, and scaling
       // only by a factor the concept itself mentions or a calendar term.
-      const CALENDAR = [7, 12, 24, 30, 36, 52, 60, 365];
+      // Calendar factors, but ONLY the ones this concept actually talks about.
+      // An unconditional list meant any traced figure could be scaled by 30 or
+      // 365 into a value the concept never mentions: an invented $6,000,000/yr
+      // "derived" as $200,000 x 30 in the expected-annual-loss artifact. A
+      // monthly-to-annual conversion is only credible when the concept is
+      // discussing months and years in the first place.
+      const CALENDAR = [7, 12, 24, 30, 36, 52, 60, 365].filter((k) => traced.has(k));
       const operands = [...traced].filter((n) => n !== 0 && n !== 1);
       const eq = (x, y) => Math.abs(x - y) < 1e-9 || (Math.abs(y) > 1 && Math.abs(x - y) / Math.abs(y) < 1e-9);
 
