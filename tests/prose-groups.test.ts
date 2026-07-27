@@ -46,3 +46,36 @@ describe("paragraphGroups", () => {
     expect(paragraphGroups([])).toEqual([]);
   });
 });
+
+// Round-2 finding: a list item hard-wrapped at 80 columns had its continuation
+// rendered as a dangling fragment on its own line — 27 places in the corpus.
+describe("paragraphGroups: wrapped list items", () => {
+  it("absorbs a continuation line into its list item", () => {
+    const lines = [
+      "1. Postgres becomes the paved road: managed provisioning, tested restore,",
+      "   shared on-call runbook, upgrade automation.",
+      "2. Redis-as-primary is the one mandatory migration.",
+    ];
+    const groups = paragraphGroups(lines);
+    expect(groups).toEqual([[0, 1], [2]]);
+  });
+
+  it("does NOT merge two consecutive list items", () => {
+    const lines = ["- first item", "- second item", "- third item"];
+    expect(paragraphGroups(lines)).toEqual([[0], [1], [2]]);
+  });
+
+  it("keeps headings and table rows standalone even when text follows", () => {
+    const lines = ["## A heading", "Body text that follows it.", "| a | b |", "| c | d |"];
+    // The heading stands alone; the body starts its own paragraph.
+    expect(paragraphGroups(lines)).toEqual([[0], [1], [2], [3]]);
+  });
+
+  it("still loses and reorders nothing", () => {
+    const lines = [
+      "# H", "", "- item one wrapping",
+      "  onto a second line", "plain para", "more para", "| row |",
+    ];
+    expect(paragraphGroups(lines).flat()).toEqual(lines.map((_, i) => i));
+  });
+});

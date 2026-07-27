@@ -75,6 +75,9 @@ const PRE_LANGS = new Set(["text", "txt"]);
  */
 export const STRUCTURAL = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|\||>|```|\[|!\[|\s*$)/;
 
+/** A line that starts a list item or numbered item — it can be CONTINUED. */
+const LIST_ITEM = /^\s*([-*+]\s|\d+[.)]\s)/;
+
 export function paragraphGroups(rawLines: string[]): number[][] {
   const groups: number[][] = [];
   let current: number[] = [];
@@ -82,7 +85,14 @@ export function paragraphGroups(rawLines: string[]): number[][] {
   rawLines.forEach((line, i) => {
     if (STRUCTURAL.test(line)) {
       flush();
-      groups.push([i]);        // structural lines and blanks stand alone
+      // A list item is structural but WRAPPABLE: a bullet hard-wrapped at 80
+      // columns continues on the next non-structural line, and grouping the item
+      // alone left 27 dangling fragments in the corpus ("shared on-call runbook,
+      // upgrade automation." rendering as its own line under its bullet). Start a
+      // group the item can absorb its continuation into; a heading or table row
+      // still stands alone, because those never wrap semantically.
+      if (LIST_ITEM.test(line)) current.push(i);
+      else groups.push([i]);
       return;
     }
     current.push(i);

@@ -33,6 +33,19 @@ const path = require("node:path");
 
 const LESSONS = path.join(__dirname, "..", "src/content/data/lessons.json");
 
+/**
+ * Artifacts that predate this gate and still carry an untraced figure.
+ *
+ * Ratcheting, not amnesty: the gate FAILS on any artifact not in this list, so
+ * new work is held to the rule; and a listed artifact that starts passing must be
+ * removed, so the list can only shrink. Each entry is a real thing to fix — run
+ * `node tools/check-trace.cjs --audit` to see the numbers involved.
+ *
+ * Do not add to this file to make a build pass. Fix the number, or extend the
+ * concept's example so the number is traceable.
+ */
+const BASELINE_FILE = path.join(__dirname, "trace-baseline.txt");
+
 /** Collect every number a string mentions, as normalized values. */
 function numbersIn(text) {
   const out = new Set();
@@ -74,10 +87,18 @@ const LITERAL_CONTEXT = [
   /\/[\w-]*\/\d+/g,                       // path segments: /orders/12345
   /\b\d{4}-\d{2}-\d{2}\b/g,               // ISO dates
   /\b(?:max_tokens|top_k|top_p|seed|temperature|port|timeout_ms|limit)\s*=\s*[\d.]+/g,
-  /\b(?:HTTP\/)?\d{3}\s+(?:OK|Not Found|Created|Bad Request|Forbidden|Conflict|Too Many)/g,
+  /\b(?:HTTP\/)?\d{3}\s+(?:OK|No Content|Not Found|Created|Bad Request|Forbidden|Conflict|Too Many)/g,
   /\b\d+\s*(?:h|min|ms|s|d)\b/g,          // durations in code comments
   /\{[^}]*:[<>^]?\d+[,.]?\d*[fd%,]?\}/g,  // f-string format specs: {v:>9,.0f}
   /:\s*\d+\.\d+[fd]\b/g,                  // .2f precision specs
+  // Arithmetic operands inside a code expression are part of a computation, not
+  // a claim: `n_nodes // 2 + 1`, `x - 1`. Anchored to an IDENTIFIER on one side,
+  // so it strips `foo // 2 + 1` but leaves prose like "12% is available" and
+  // "cut 20%" alone — an unanchored version also swallowed a real 61% claim.
+  /\b[a-z_][\w.]*\s*[-+*/%]{1,2}\s*\d[\d_.]*/gi,
+  /\d[\d_.]*\s*[-+*/%]{1,2}\s*[a-z_][\w.]*/gi,
+  // "0 rows", "1 node": a count in a code comment describing control flow.
+  /(?:^|[\s(])[01]\s+(?:rows?|nodes?|item|items|result|results)\b/g,
 ];
 
 function stripLiterals(text) {
@@ -86,13 +107,34 @@ function stripLiterals(text) {
   return out;
 }
 
-/** The numbers that carry a claim. Small bare integers do not. */
+/**
+ * Nouns that turn a small bare integer into a claim.
+ *
+ * The first version excluded every integer under three digits on the grounds
+ * that small numbers "carry no claim". That was wrong for exactly the artifacts
+ * where the worst defects lived: "3 engineers for 2 quarters" against an example
+ * asking for "one team for a quarter" is a 6x discrepancy in the ask, expressed
+ * entirely in single digits. Three of the twelve historical defects were
+ * invisible to the gate for this reason alone.
+ */
+const CLAIM_NOUNS =
+  "engineers?|teams?|quarters?|halves|half|weeks?|months?|years?|days?|hours?|minutes?|" +
+  "services?|incidents?|accounts?|analysts?|findings?|cells?|zones?|instances?|" +
+  "consumers?|classes|tenants?|nines?|engineer-(?:hours?|days?)";
+
+/** The numbers that carry a claim. */
 function salient(text) {
   const out = new Set();
-  const re = /(\$\s*)?(\d[\d_,]*(?:\.\d+)?)([kKmM])?(?![\w.])(\s*(?:%|percent))?/g;
+  // The noun may follow a space ("3 engineers") OR a hyphen ("90-minute test
+  // suite", "36-month term") — the hyphenated adjectival form is how half the
+  // corpus states a duration, and missing it let two real defects through.
+  const re = new RegExp(
+    String.raw`(\$\s*)?(\d[\d_,]*(?:\.\d+)?)([kKmM])?(?![\w.])(\s*(?:%|percent))?([\s-]*(?:${CLAIM_NOUNS})\b)?`,
+    "gi",
+  );
   let mt;
   while ((mt = re.exec(text)) !== null) {
-    const [, dollar, digits, suffix, pct] = mt;
+    const [, dollar, digits, suffix, pct, noun] = mt;
     const raw = digits.replace(/[_,]/g, "");
     let v = Number(raw);
     if (!Number.isFinite(v)) continue;
@@ -100,10 +142,13 @@ function salient(text) {
     if (s === "k") v *= 1_000;
     if (s === "m") v *= 1_000_000;
     const hadSeparator = /[,_]/.test(digits);
-    const isMoney = !!dollar;
-    const isPct = !!pct;
-    // Salient = a claim: money, a percentage, a separated/large number.
-    if (isMoney || isPct || hadSeparator || suffix || raw.length >= 3) out.add(v);
+    // Salient = a claim: money, a percentage, a separated/large number, or a
+    // small integer counting something the reader is asked to believe.
+    if (dollar || pct || noun || hadSeparator || suffix || raw.length >= 3) out.add(v);
+    // A number sitting alone in a table cell is a claim with its noun in the
+    // column header ("consumers | peering links": the 10 was the whole defect).
+    else if (/^\s*\|?\s*$/.test(text.slice(Math.max(0, mt.index - 4), mt.index))
+             && /^\s*\|/.test(text.slice(mt.index + mt[0].length))) out.add(v);
   }
   return out;
 }
@@ -121,6 +166,9 @@ function main() {
   const data = JSON.parse(fs.readFileSync(LESSONS, "utf8"));
   const findings = [];
   let checked = 0;
+  // Coverage, not just pass/fail: if most numbers pass by DERIVATION rather than
+  // by appearing in the concept, the gate is decorative and should be tightened.
+  let totalSalient = 0, totalDirect = 0, totalDerived = 0;
 
   for (const lesson of data.lessons) {
     for (const c of lesson.concepts) {
@@ -133,35 +181,93 @@ function main() {
       const prose = strings(rest).join(" ") + " " + strings(lesson.overview).join(" ");
       const traced = numbersIn(prose);
 
-      // Captions and annotations are part of the artifact's claim surface too.
-      const claim = [code.snippet, ...strings(code.caption ?? {}), ...strings(code.annotations ?? [])].join("\n");
+      // ── The claim surface: PROSE, not executable code ───────────────────
+      //
+      // A number inside an expression or a fixture is not a claim about the
+      // world — `totalCents: 4200`, `search({maxPriceCents: 9000})`,
+      // `assert price(300) == 242.25` are a made-up order, a made-up query and a
+      // computed assertion. Checking those produced 46 findings, all noise, which
+      // is how a gate gets ignored.
+      //
+      // What DOES make a claim is the artifact's prose: the caption, the
+      // annotations, and the comments — that is where "58% toil", "$9,000/hour"
+      // and "one team for a quarter" live, and where all twelve historical
+      // defects lived. So the claim surface is comment lines plus caption plus
+      // annotations. A constant assignment counts too, because
+      // `MEASURED_TOIL = 0.58` is a claim wearing a variable name.
+      // For a PROSE artifact (markdown, a memo, a diff of a memo) the whole body
+      // is the claim — it has no comment syntax, and restricting to comment lines
+      // silently stopped checking six of the twelve historical defects.
+      const lang = (code.lang || "").toLowerCase();
+      // yaml/json too: a policy or experiment spec states its claims as VALUES
+      // (`below: 99.9`, `traffic: 25%`), not in comments — the gameday artifact's
+      // thresholds were the defect, and comment-only checking missed all of them.
+      const proseArtifact = ["markdown", "md", "text", "txt", "diff", "yaml", "yml", "json"].includes(lang);
+      const commentary = proseArtifact
+        ? code.snippet
+        : code.snippet
+            .split("\n")
+            .filter((line) => /(^|\s)(#|\/\/|--)/.test(line) || /^\s*[A-Z][A-Z0-9_]{2,}\s*=/.test(line))
+            .join("\n");
+      const claim = [commentary, ...strings(code.caption ?? {}), ...strings(code.annotations ?? [])].join("\n");
       // Strip literal contexts first: an order id or a format spec is not a claim.
       const used = salient(stripLiterals(claim));
 
-      // A snippet's own INPUT constants are part of its claim surface, but the
-      // numbers it computes from them are not new claims — they are the point of
-      // the artifact. `2042` is 812+640+590; `43.2` is 0.001*30*24*60. Treating a
-      // printed result as an invented figure would flag every worked calculation,
-      // so derivations from anything already on the page are allowed.
-      const onPage = new Set([...traced, ...numbersIn(stripLiterals(claim))]);
+      // ── Derivation, from the CONCEPT's numbers only ────────────────────
+      //
+      // The first version drew operands from `traced` UNION the snippet's own
+      // numbers, which made it vacuous: `1` appears in 56 of 111 snippets, so
+      // `a * b === v` with `a = 1, b = v` proved every snippet number from
+      // itself. Replaying the twelve historical defects through it, 8 passed —
+      // including 4 of the 5 that reached the opposite conclusion to their
+      // example. An author could launder any figure by writing its factors into
+      // the same snippet: `288,000` was "derived" as `8,000 x 36`, where the 36
+      // existed only because the snippet asserted it.
+      //
+      // So operands come from `traced` only, and a derivation must be real work:
+      // no identity (a === 1, b === 1, a === v), no free division, and scaling
+      // only by a factor the concept itself mentions or a calendar term.
+      const CALENDAR = [7, 12, 24, 30, 36, 52, 60, 365];
+      const operands = [...traced].filter((n) => n !== 0 && n !== 1);
+      const eq = (x, y) => Math.abs(x - y) < 1e-9 || (Math.abs(y) > 1 && Math.abs(x - y) / Math.abs(y) < 1e-9);
 
       const derivable = (v) => {
-        for (const a of onPage) {
-          if (a === v) continue;
-          for (const b of onPage) {
-            if (a * b === v || a + b === v || a - b === v) return true;
-            if (b !== 0 && Math.abs(a / b - v) < 1e-9) return true;
+        for (const a of operands) {
+          if (eq(a, v)) continue;                       // identity is not derivation
+          for (const b of operands) {
+            if (eq(b, v)) continue;
+            // The SAME threshold applies to sums and differences. With ~20 traced
+            // operands, small integers are reachable by accident from almost any
+            // pair: 36 "derived" as 40-4 and 90 as 60+30, absolving a 36-month
+            // term and a 90-minute test suite that neither concept mentions.
+            // Above 1000 a hit is a real calculation; below it, it is arithmetic
+            // noise and the number has to be in the concept.
+            if (v >= 1000 && (eq(a * b, v) || eq(a + b, v) || eq(a - b, v))) return true;
+            // Division only as a percentage/ratio OF a traced total, not as a
+            // free operation: an unrestricted a/b over ~40 values spans a dense
+            // lattice and passed 55% of arbitrary three-digit integers.
+            if (b !== 0 && b > 1 && eq(a / b, v) && v < 1) return true;
           }
-          // A monthly figure over a term, a rate over a window.
-          for (let k = 2; k <= 60; k++) if (a * k === v) return true;
+          // A monthly figure over a term, a rate over a window — but only by a
+          // factor the concept mentions, or a real calendar multiple.
+          //
+          // Products are restricted to results LARGER than any plausible standalone
+          // claim. Two small traced integers multiply to a huge number of small
+          // values by coincidence: 36 = 4 x 9 and 90 = 3 x 30 both "derived"
+          // cleanly, absolving a 36-month term and a 90-minute suite that neither
+          // concept mentions. A derivation is only credible when the result is a
+          // computed magnitude, not another small integer someone could have typed.
+          for (const k of [...operands, ...CALENDAR]) {
+            if (Number.isInteger(k) && k >= 2 && k <= 365 && eq(a * k, v) && v >= 1000) return true;
+          }
         }
-        // Three-term sums (a distribution that adds to a total) and simple
-        // percentages of a traced total.
-        const vals = [...onPage];
-        for (let i = 0; i < vals.length; i++) {
-          for (let j = i + 1; j < vals.length; j++) {
-            for (let k = j + 1; k < vals.length; k++) {
-              if (vals[i] + vals[j] + vals[k] === v) return true;
+        // A distribution that sums to a traced total — same threshold, same reason.
+        if (v >= 1000) {
+          for (let i = 0; i < operands.length; i++) {
+            for (let j = i + 1; j < operands.length; j++) {
+              for (let k = j + 1; k < operands.length; k++) {
+                if (eq(operands[i] + operands[j] + operands[k], v)) return true;
+              }
             }
           }
         }
@@ -169,6 +275,9 @@ function main() {
       };
 
       const untraced = [...used].filter((v) => !traced.has(v) && !derivable(v));
+      totalSalient += used.size;
+      totalDirect += [...used].filter((v) => traced.has(v)).length;
+      totalDerived += [...used].filter((v) => !traced.has(v) && derivable(v)).length;
 
       if (untraced.length) {
         findings.push({ where, untraced: untraced.sort((x, y) => y - x).slice(0, 8), total: untraced.length });
@@ -178,19 +287,52 @@ function main() {
     }
   }
 
-  console.log(`\nchecked ${checked} code artifacts`);
-  if (!findings.length) { console.log("✓ every salient number traces to its concept's own prose"); return; }
-
-  findings.sort((a, b) => b.total - a.total);
-  console.log(`\n${findings.length} artifact(s) introduce numbers their concept never mentions:`);
-  for (const f of findings) {
-    console.log(`  ✗ ${f.where}: ${f.untraced.join(", ")}${f.total > 8 ? ` … +${f.total - 8}` : ""}`);
-  }
-  console.log(
-    "\nAn artifact must not invent a figure. Take it from the concept's example,\n" +
-    "or extend the example first — the two are read side by side on one pane.",
+  // Ratchet, not amnesty: artifacts written before this gate existed are listed
+  // in tools/trace-baseline.txt and reported as known. Anything NOT in that list
+  // fails the build, and a listed artifact that starts passing must be removed
+  // from the list — so the number can only go down.
+  const baseline = new Set(
+    fs.existsSync(BASELINE_FILE)
+      ? fs.readFileSync(BASELINE_FILE, "utf8").split(/\r?\n/).map((l) => l.trim()).filter(Boolean)
+      : [],
   );
-  process.exit(1);
+  const audit = process.argv.includes("--audit");
+  const fresh = findings.filter((f) => !baseline.has(f.where));
+  const known = findings.filter((f) => baseline.has(f.where));
+  const stale = [...baseline].filter((w) => !findings.some((f) => f.where === w));
+
+  const pct = (n) => (totalSalient ? `${Math.round((n / totalSalient) * 100)}%` : "—");
+  console.log(`\nchecked ${checked} code artifacts, ${totalSalient} salient number(s)`);
+  console.log(`  ${totalDirect} (${pct(totalDirect)}) appear in the concept's own prose`);
+  console.log(`  ${totalDerived} (${pct(totalDerived)}) allowed as a derivation from it`);
+
+  const show = (list) => {
+    list.sort((a, b) => b.total - a.total);
+    for (const f of list) {
+      console.log(`  ✗ ${f.where}: ${f.untraced.join(", ")}${f.total > 8 ? ` … +${f.total - 8}` : ""}`);
+    }
+  };
+
+  if (known.length) {
+    console.log(`\n${known.length} known artifact(s) predating this gate (tools/trace-baseline.txt):`);
+    if (audit) show(known);
+    else console.log("  run with --audit to list them");
+  }
+  if (stale.length) {
+    console.error(`\n${stale.length} baseline entry(ies) no longer fail — delete them from tools/trace-baseline.txt:`);
+    for (const w of stale) console.error(`  · ${w}`);
+    process.exit(1);
+  }
+  if (fresh.length) {
+    console.error(`\n${fresh.length} artifact(s) introduce numbers their concept never mentions:`);
+    show(fresh);
+    console.error(
+      "\nAn artifact must not invent a figure. Take it from the concept's example,\n" +
+      "or extend the example first — the two are read side by side on one pane.",
+    );
+    process.exit(1);
+  }
+  console.log("\n✓ no new artifact introduces an untraced figure");
 }
 
 main();
