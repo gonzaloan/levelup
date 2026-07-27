@@ -335,3 +335,138 @@ test("the lesson concept strip has accessible names and real tap targets", async
     expect(h).toBeGreaterThanOrEqual(40);
   }
 });
+
+// ── Round-3 review findings ─────────────────────────────────────────────────
+
+test("the Enlarge control never covers the compare header", async ({ page }) => {
+  // Measured at 97px of the left side label and the whole 33px "vs" pill, on 135
+  // renders. The label says which side of the comparison you are reading, so
+  // losing it loses the diagram. A previous version of this spec asserted only
+  // toBeVisible(), which passes while 97px is painted over.
+  for (const [w, id] of [[390, "cloud-platform-l3"], [360, "technical-depth-l3"]] as const) {
+    await page.setViewportSize({ width: w, height: 844 });
+    await openLesson(page, id);
+    await enterConcept(page, 0);
+    for (let i = 0; i < 5; i++) {
+      const fold = page.locator(".lesson-content .cp-fold summary").first();
+      if (await fold.count()) await fold.click().catch(() => {});
+      await page.waitForTimeout(200);
+      const r = await page.evaluate(() => {
+        const vs = document.querySelector(".schematic-vs");
+        const trg = document.querySelector(".figzoom-trigger");
+        if (!vs || !trg) return null;
+        const T = trg.getBoundingClientRect();
+        const A = vs.querySelector(".schematic-vs-h--a")!.getBoundingClientRect();
+        const M = vs.querySelector(".schematic-vs-mid")?.getBoundingClientRect();
+        // TRUE 2-D intersection — an x-axis-only check reported a false overlap.
+        const box = (x: DOMRect, y: DOMRect) => {
+          const dw = Math.min(x.right, y.right) - Math.max(x.left, y.left);
+          const dh = Math.min(x.bottom, y.bottom) - Math.max(x.top, y.top);
+          return dw > 0 && dh > 0 ? Math.round(dw) : 0;
+        };
+        return { head: box(T, A), mid: M ? box(T, M) : 0 };
+      });
+      if (r) {
+        expect(r.head, `${id}@${w}: trigger covers the side label`).toBe(0);
+        expect(r.mid, `${id}@${w}: trigger covers the "vs" pill`).toBe(0);
+        break;
+      }
+      const next = page.getByRole("button", { name: /→/ }).last();
+      if (!(await next.count())) break;
+      await next.click().catch(() => {});
+      await page.waitForTimeout(200);
+    }
+  }
+});
+
+test("a diff carries emphasis across a wrapped line", async ({ page }) => {
+  // The diff path called tokenizeLine() per line, resetting state, so a `**…**`
+  // or `` `…` `` span wrapped across a source line rendered the wrong half — one
+  // closing backtick opened a code span that swallowed 60 characters of prose.
+  for (const [id, n] of [["direction-influence-l4", 1], ["direction-influence-l6", 0]] as const) {
+    await openLesson(page, id);
+    await enterConcept(page, n);
+    for (let i = 0; i < 6; i++) {
+      const r = await page.evaluate(() => {
+        const cv = document.querySelector('.cv[data-lang="diff"]');
+        if (!cv) return null;
+        const rev = cv.querySelector<HTMLElement>(".cv-reveal");
+        if (rev && rev.getAttribute("aria-expanded") === "false") rev.click();
+        const proseAsCode = [...cv.querySelectorAll(".cv-inline-code")]
+          .map((c) => c.textContent ?? "")
+          .filter((t) => t.length > 40 && /\s/.test(t) && !/[_(){};=]/.test(t));
+        return {
+          markers: ((cv.querySelector(".cv-body") as HTMLElement).innerText.match(/\*\*/g) ?? []).length,
+          proseAsCode,
+          strongs: cv.querySelectorAll("strong").length,
+        };
+      });
+      if (r) {
+        expect(r.markers, `${id}: literal ** left on screen`).toBe(0);
+        expect(r.proseAsCode, `${id}: prose styled as inline code`).toEqual([]);
+        expect(r.strongs).toBeGreaterThan(0);
+        break;
+      }
+      const next = page.getByRole("button", { name: /→/ }).last();
+      if (!(await next.count())) break;
+      await next.click().catch(() => {});
+      await page.waitForTimeout(200);
+    }
+  }
+});
+
+test("the concept strip does not widen the lesson pane past the viewport", async ({ page }) => {
+  // Adding a 40px tap target to the strip made N x 46px items the grid track's
+  // intrinsic width — `grid-template-columns: 478px` in a 312px container — so
+  // every grid child, including the prose, was 478px wide at 360px and truncated
+  // mid-word. `body { overflow-x: clip }` hid it from a document-overflow sweep.
+  for (const id of ["technical-depth-l5", "execution-delivery-l4"]) {
+    await page.setViewportSize({ width: 360, height: 844 });
+    await openLesson(page, id);
+    await enterConcept(page, 0);
+    const r = await page.evaluate(() => {
+      const content = document.querySelector(".lesson-content")!.getBoundingClientRect();
+      const list = document.querySelector(".concept-nav-list")!;
+      return {
+        contentW: Math.round(content.width),
+        vw: document.documentElement.clientWidth,
+        // The strip must be a working scroller, not an overflowing block.
+        scrollable: list.scrollWidth > list.clientWidth,
+      };
+    });
+    expect(r.contentW, `${id}: pane is wider than the viewport`).toBeLessThanOrEqual(r.vw);
+    expect(r.scrollable, `${id}: concept strip is not scrollable`).toBe(true);
+  }
+});
+
+test("tabbing into a capped artifact reveals it instead of hijacking the scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLesson(page, "direction-influence-l7");
+  await enterConcept(page, 4);
+  const cv = page.locator(".lesson-content .cv").first();
+  await expect(cv).toHaveAttribute("data-capped", "");
+  // `overflow-y: hidden` still scrolls programmatically, so focusing an
+  // annotation below the fold left the artifact stuck mid-way with no wheel,
+  // touch or Home key able to recover it.
+  const anno = cv.locator(".cv-anno").last();
+  await anno.focus();
+  await expect(cv).not.toHaveAttribute("data-capped", "");
+  const scrollTop = await cv.locator(".cv-scroll").evaluate((e) => e.scrollTop);
+  expect(scrollTop, "hidden container was scrolled").toBe(0);
+});
+
+test("every interactive target on a lesson pane clears 40px", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 844 });
+  await openLesson(page, "ai-engineering-l5");
+  await enterConcept(page, 0);
+  const small = await page.evaluate(() =>
+    [...document.querySelectorAll("a,button,summary,[role=button]")]
+      .filter((el) => {
+        const b = el.getBoundingClientRect();
+        return b.width > 0 && b.height > 0 && b.height < 40;
+      })
+      .map((el) => `${(el.className + "").split(" ")[0]}:${Math.round(el.getBoundingClientRect().height)}`),
+  );
+  // `.rail-tab` was the one class the first sweep missed, at 32px.
+  expect(small).toEqual([]);
+});

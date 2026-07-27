@@ -251,6 +251,24 @@ export function CodeView({
   const isProse = PROSE_LANGS.has(langLower);
   const isPre = PRE_LANGS.has(langLower);
   const isDiff = (lang || "").toLowerCase() === "diff";
+  /**
+   * Diff lines, tokenized once with emphasis state carried across lines.
+   *
+   * A diff is two interleaved documents, so the state is per SIDE: a `**` opened
+   * on a `+` line is closed on the next `+` line, and the `-` lines in between
+   * must not see it. Keeping one state per marker is what makes a wrapped bold
+   * span render as bold on both halves instead of showing literal asterisks on
+   * one and swallowing the other.
+   */
+  const diffTokens = useMemo(() => {
+    if (!isDiff) return [];
+    const byside: Record<string, MdState> = { "+": freshState(), "-": freshState(), " ": freshState() };
+    return snippet.split("\n").map((raw) => {
+      const marker = /^[+\- ]/.test(raw) ? raw[0] : "";
+      const state = byside[marker] ?? byside[" "];
+      return { marker, tokens: tokenizeInline(raw.slice(marker.length), state) };
+    });
+  }, [isDiff, snippet]);
   const rawLines = useMemo(() => snippet.split("\n"), [snippet]);
   // Prose only: rejoin hard-wrapped continuation lines into paragraphs so a memo
   // reads as a document on a phone instead of breaking mid-sentence every 80 cols.
@@ -413,7 +431,11 @@ export function CodeView({
                           aria-expanded={isOpen}
                           onMouseEnter={() => setOpenLine(idx + 1)}
                           onMouseLeave={() => { if (focusedLine.current !== idx + 1) closeTip(); }}
-                          onFocus={() => { focusedLine.current = idx + 1; setOpenLine(idx + 1); }}
+                          onFocus={() => {
+                            focusedLine.current = idx + 1;
+                            setOpenLine(idx + 1);
+                            if (capped) setUncapped(true);   // same reason as below
+                          }}
                           onBlur={() => { focusedLine.current = null; closeTip(); }}
                           onClick={() => setOpenLine(idx + 1)}
                           onKeyDown={(e) => {
@@ -459,9 +481,13 @@ export function CodeView({
               const raw = rawLines[idx] ?? "";
               content = renderMd(tokenizeLine(hLevel ? raw.trim().slice(hLevel + 1) : raw), `s${idx}`);
             } else if (isDiff) {
-              const raw = rawLines[idx] ?? "";
-              const marker = /^[+\- ]/.test(raw) ? raw[0] : "";
-              content = [marker, ...renderMd(tokenizeLine(raw.slice(marker.length)), `d${idx}`)];
+              // Pre-tokenized with state carried BETWEEN lines of the same side.
+              // Calling tokenizeLine() per line reset the state, so a `**…**` or a
+              // `` `…` `` span wrapped across a source line rendered the wrong half
+              // — one closing backtick opened a new code span that swallowed 60
+              // characters of prose, and two diagnosis sentences lost their bold on
+              // the concept whose lesson is that those sentences are load-bearing.
+              content = [diffTokens[idx].marker, ...renderMd(diffTokens[idx].tokens, `d${idx}`)];
             } else {
               content = renderSegs(line);
             }
@@ -483,7 +509,16 @@ export function CodeView({
                   aria-expanded={isOpen}
                   onMouseEnter={() => setOpenLine(lineNo)}
                   onMouseLeave={() => { if (focusedLine.current !== lineNo) closeTip(); }}
-                  onFocus={() => { focusedLine.current = lineNo; setOpenLine(lineNo); }}
+                  onFocus={() => {
+                    focusedLine.current = lineNo;
+                    setOpenLine(lineNo);
+                    // Tabbing to a line below the cap made the browser scroll a
+                    // container with `overflow-y: hidden` — no scrollbar, so no
+                    // wheel, touch or Home key could bring it back, and the
+                    // artifact stayed stuck mid-way. Uncapping on focus means the
+                    // keyboard path reveals what it navigates to instead.
+                    if (capped) setUncapped(true);
+                  }}
                   onBlur={() => { focusedLine.current = null; closeTip(); }}
                   onClick={() => setOpenLine(lineNo)}
                 >

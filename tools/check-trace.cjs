@@ -50,9 +50,13 @@ const BASELINE_FILE = path.join(__dirname, "trace-baseline.txt");
 function numbersIn(text) {
   const out = new Set();
   // 1_000 / 1,000 / 1000 / 12.5 / $0.037 — and k/m suffixes ($34k, 2.1M).
-  // The `(?![\w.])` matters: without it "15 minutes" parsed as 15 million and
-  // "40 months" as 40 million, which made the gate report nonsense.
-  const re = /(\d[\d_,]*(?:\.\d+)?)([kKmM])?(?![\w.])/g;
+  // The lookahead rejects a following letter (so "15 minutes" isn't 15 million)
+  // but must NOT reject a sentence-final period. `(?![\w.])` did, so "$110,000."
+  // backtracked and parsed as 110 — putting a correct, traced artifact into the
+  // baseline for a defect it did not have, and injecting bogus operands (110,
+  // 1.1, 11000) that could absolve real inventions. `(?!\.?\d)` allows a decimal
+  // point only when a digit follows it, which is the actual distinction.
+  const re = /(\d[\d_,]*(?:\.\d+)?)([kKmM])?(?![\w]|\.\d)/g;
   let mt;
   while ((mt = re.exec(text)) !== null) {
     const raw = mt[1].replace(/[_,]/g, "");
@@ -88,7 +92,13 @@ const LITERAL_CONTEXT = [
   /\b\d{4}-\d{2}-\d{2}\b/g,               // ISO dates
   /\b(?:max_tokens|top_k|top_p|seed|temperature|port|timeout_ms|limit)\s*=\s*[\d.]+/g,
   /\b(?:HTTP\/)?\d{3}\s+(?:OK|No Content|Not Found|Created|Bad Request|Forbidden|Conflict|Too Many)/g,
-  /\b\d+\s*(?:h|min|ms|s|d)\b/g,          // durations in code comments
+  // NOT a duration strip. This used to be /\b\d+\s*(?:h|min|ms|s|d)\b/, which
+  // deleted "800 ms" and "2.4 s" before salience ever saw them — cancelling out
+  // the hyphenated-duration rule added to `salient()` for exactly these claims,
+  // and letting an invented "p99 drops to 470 ms" pass in a LATENCY concept.
+  // Latency and duration figures are the load-bearing numbers in a third of this
+  // corpus, so `ms`/`s`/`min`/`h` are claim nouns (see CLAIM_NOUNS) rather than
+  // literals to discard.
   /\{[^}]*:[<>^]?\d+[,.]?\d*[fd%,]?\}/g,  // f-string format specs: {v:>9,.0f}
   /:\s*\d+\.\d+[fd]\b/g,                  // .2f precision specs
   // Arithmetic operands inside a code expression are part of a computation, not
@@ -99,6 +109,20 @@ const LITERAL_CONTEXT = [
   /\d[\d_.]*\s*[-+*/%]{1,2}\s*[a-z_][\w.]*/gi,
   // "0 rows", "1 node": a count in a code comment describing control flow.
   /(?:^|[\s(])[01]\s+(?:rows?|nodes?|item|items|result|results)\b/g,
+  // Zero is never a claim about the world — "warm: 0 ms", "idle saving: ~0".
+  // The leading `(?<![\d.,])` is load-bearing: without the comma this ate the
+  // "000" out of "$847,000" and the figure parsed as 847.
+  // A trailing comma is punctuation ("if 0, read and return") unless a digit
+  // follows it, which would make it a thousands separator ("$847,000").
+  /(?<![\d.,])0+(?![.\d]|,\d)\s*(?:ms|s|h|min|rows?|items?|results?)?/g,
+  // A comparison threshold in an EXPRESSION is part of the computation:
+  // `s >= 0.8`, `if p99 > 800`. Anchored to an identifier on the left, because an
+  // unanchored version also swallowed prose thresholds ("stays under 800 ms",
+  // "p99 to 470 ms") and let two injected latency inventions pass.
+  // `==`, `>=`, `<`, `>` — but NOT a bare `=`, which is an ASSIGNMENT. Matching
+  // assignment here deleted `revenue_per_hour = 47_500`, the exact invented
+  // premise this vocabulary was extended to catch.
+  /\b[a-z_][\w.]*\s*(?:[<>!]=?|==)\s*\d[\d_.]*/gi,
 ];
 
 function stripLiterals(text) {
@@ -120,7 +144,10 @@ function stripLiterals(text) {
 const CLAIM_NOUNS =
   "engineers?|teams?|quarters?|halves|half|weeks?|months?|years?|days?|hours?|minutes?|" +
   "services?|incidents?|accounts?|analysts?|findings?|cells?|zones?|instances?|" +
-  "consumers?|classes|tenants?|nines?|engineer-(?:hours?|days?)";
+  "consumers?|classes|tenants?|nines?|engineer-(?:hours?|days?)|" +
+  // Time units: a latency or duration figure is a claim, and in a third of this
+  // corpus it is THE claim ("p99 under 800 ms", "a 90-minute test suite").
+  "ms|s|h|min|sec|secs|seconds?";
 
 /** The numbers that carry a claim. */
 function salient(text) {
@@ -129,7 +156,9 @@ function salient(text) {
   // suite", "36-month term") — the hyphenated adjectival form is how half the
   // corpus states a duration, and missing it let two real defects through.
   const re = new RegExp(
-    String.raw`(\$\s*)?(\d[\d_,]*(?:\.\d+)?)([kKmM])?(?![\w.])(\s*(?:%|percent))?([\s-]*(?:${CLAIM_NOUNS})\b)?`,
+    // Same sentence-final-period fix as numbersIn: `(?![\w.])` truncated
+    // "$110,000." to 110, so a figure ending a sentence was never seen whole.
+    String.raw`(\$\s*)?(\d[\d_,]*(?:\.\d+)?)([kKmM])?(?![\w]|\.\d)(\s*(?:%|percent))?([\s-]*(?:${CLAIM_NOUNS})\b)?`,
     "gi",
   );
   let mt;
@@ -207,7 +236,15 @@ function main() {
         ? code.snippet
         : code.snippet
             .split("\n")
-            .filter((line) => /(^|\s)(#|\/\/|--)/.test(line) || /^\s*[A-Z][A-Z0-9_]{2,}\s*=/.test(line))
+            // A constant assignment is a claim wearing a variable name — but
+            // keying on ALLCAPS discriminated by naming convention rather than by
+            // meaning, so `revenue_per_hour = 47_500` (lowercase, no comment) got
+            // through in the artifact whose whole subject is a money calculation.
+            // Match the identifier's VOCABULARY instead, at any case.
+            .filter((line) =>
+              /(^|\s)(#|\/\/|--)/.test(line) ||
+              /^\s*[A-Z][A-Z0-9_]{2,}\s*=/.test(line) ||
+              /^\s*(?:const |let |var )?[\w.]*(?:cost|price|revenue|spend|rate|hours?|days?|count|budget|fee|saving|premium|capacity|latency|toil|traffic|p\d\d|monthly|annual|total)[\w.]*\s*[:=]/i.test(line))
             .join("\n");
       const claim = [commentary, ...strings(code.caption ?? {}), ...strings(code.annotations ?? [])].join("\n");
       // Strip literal contexts first: an order id or a format spec is not a claim.
@@ -318,11 +355,10 @@ function main() {
     if (audit) show(known);
     else console.log("  run with --audit to list them");
   }
-  if (stale.length) {
-    console.error(`\n${stale.length} baseline entry(ies) no longer fail — delete them from tools/trace-baseline.txt:`);
-    for (const w of stale) console.error(`  · ${w}`);
-    process.exit(1);
-  }
+  // Report BOTH before exiting. An early `process.exit` on the stale check hid
+  // the fresh findings entirely, so an injected defect looked like it had passed
+  // whenever the baseline also happened to be out of date — a gate that reports
+  // the wrong reason for failing is nearly as bad as one that doesn't fail.
   if (fresh.length) {
     console.error(`\n${fresh.length} artifact(s) introduce numbers their concept never mentions:`);
     show(fresh);
@@ -330,8 +366,12 @@ function main() {
       "\nAn artifact must not invent a figure. Take it from the concept's example,\n" +
       "or extend the example first — the two are read side by side on one pane.",
     );
-    process.exit(1);
   }
+  if (stale.length) {
+    console.error(`\n${stale.length} baseline entry(ies) no longer fail — delete them from tools/trace-baseline.txt:`);
+    for (const w of stale) console.error(`  · ${w}`);
+  }
+  if (fresh.length || stale.length) process.exit(1);
   console.log("\n✓ no new artifact introduces an untraced figure");
 }
 
