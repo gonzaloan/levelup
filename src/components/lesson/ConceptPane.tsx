@@ -9,9 +9,12 @@
 // The order now front-loads what makes a concept click and defers what only some
 // readers want:
 //   1. the ONE judgment this trains (the concept's `why`, one line, unmissable)
-//   2. the analogy — the cheapest handle on a new idea
-//   3. the VISUAL: interactive widget, else code, else the schematic. Within the
-//      first screen on a phone, always.
+//   2. the VISUAL: interactive widget, else code, else the schematic. Within the
+//      first screen on a phone, always — verified by measurement, not by intent.
+//      A long code artifact opens with a capped height rather than collapsing,
+//      because a button reading "show 37 lines" is not a visual.
+//   3. the analogy, AFTER the figure: it lands as "oh, like X" once there is
+//      something to compare, and above the figure it cost 173px of first screen
 //   4. the explanation, chunked to a word budget rather than a paragraph count,
 //      with the remainder behind "Read the full explanation" — the same words,
 //      not fewer, just not all at once
@@ -82,16 +85,16 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
              the pane, so it leads instead of being buried in the spine. */}
       {meta?.why && <p className="cp-why">{t(meta.why, locale)}</p>}
 
-      {/* 2. The analogy — a handle before the detail. */}
-      {lessonConcept.analogy && (
-        <p className="lesson-analogy">
-          <span className="eyebrow">{m("lesson.analogy", locale)}</span> {t(lessonConcept.analogy, locale)}
-        </p>
-      )}
+      {/* 2. The visual, as early as the pane can put it. Widget > code >
+             schematic: a thing you can manipulate teaches more than a thing you
+             read, and real code more than a boxes-and-labels drawing.
 
-      {/* 3. The visual, above the prose. Widget > code > schematic: a thing you can
-             manipulate teaches more than a thing you read, and real code more than
-             a boxes-and-labels drawing. */}
+             The analogy used to sit here, above the figure. Measured on a 390px
+             phone, `why` (124px) plus the analogy (173px) pushed the figure to
+             829px — past the fold, so the artifact this whole pass exists to
+             show was still invisible on arrival. The analogy also reads better
+             AFTER the concrete thing: it lands as "oh, like X" rather than as a
+             metaphor for something you haven't seen yet. */}
       {Widget ? (
         <div className="cp-figure">
           <FigureZoom locale={locale} label={meta ? meta.title : undefined}>
@@ -100,7 +103,9 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
         </div>
       ) : lessonConcept.code ? (
         <div className="cp-figure">
-          <CodeView code={lessonConcept.code} locale={locale} track={track as "general" | "ai"} />
+          {/* lead: this snippet is the pane's figure, so it opens with a capped
+              height instead of collapsing behind a "show N lines" button. */}
+          <CodeView code={lessonConcept.code} locale={locale} track={track as "general" | "ai"} lead />
         </div>
       ) : hasDiagram ? (
         <div className="cp-figure">
@@ -110,7 +115,14 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
         </div>
       ) : null}
 
-      {/* 4. The explanation: two paragraphs, then the rest on request. */}
+      {/* 3. The analogy, now that there is something for it to be an analogy TO. */}
+      {lessonConcept.analogy && (
+        <p className="lesson-analogy">
+          <span className="eyebrow">{m("lesson.analogy", locale)}</span> {t(lessonConcept.analogy, locale)}
+        </p>
+      )}
+
+      {/* 4. The explanation: a word-budgeted lead, then the rest on request. */}
       {lead.map((p, i) => (
         <p key={i} className="prose cp-para">{p}</p>
       ))}

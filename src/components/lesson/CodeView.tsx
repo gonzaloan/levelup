@@ -17,8 +17,19 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { t, type Locale, type I18nText } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import type { ConceptCode } from "@/lib/types";
+import { tokenizeInline, tokenizeLine, headingLevel, freshState, type MdState, type MdToken } from "./inline-md";
 
 const REVEAL_LINES = 12; // snippets with <= this many lines render open
+
+/** Render inline-markdown tokens. The tokenizer lives in ./inline-md (unit-tested). */
+function renderMd(tokens: MdToken[], keyBase: string): React.ReactNode[] {
+  return tokens.map((tk, i) => {
+    const key = `${keyBase}s${i}`;
+    if (tk.kind === "code") return <code key={key} className="cv-inline-code">{tk.value}</code>;
+    if (tk.kind === "bold") return <strong key={key}>{tk.value}</strong>;
+    return <span key={key}>{tk.value}</span>;
+  });
+}
 
 // ── rainbow-brace tokenizer ────────────────────────────────────────────────
 // Walks the source char-by-char tracking string / comment state so we only
@@ -67,42 +78,6 @@ export function paragraphGroups(rawLines: string[]): number[][] {
   });
   flush();
   return groups;
-}
-
-/**
- * Minimal inline markdown for prose artifacts: **bold** and `code`.
- *
- * Deliberately tiny. These artifacts are shown because their SHAPE is the
- * lesson, and a memo whose emphasis markers are still visible as `**` reads as
- * unrendered source — noise between the reader and the argument. A full markdown
- * parser would be the wrong dependency for two constructs, and anything it got
- * wrong would corrupt authored content silently.
- *
- * Everything else (headings, lists, tables) is handled at the line level, so it
- * stays visible as structure rather than being reinterpreted.
- */
-function inlineMd(text: string, keyBase: string): React.ReactNode[] {
-  const out: React.ReactNode[] = [];
-  // One pass, alternating: **bold** | `code` | plain run.
-  const re = /\*\*([^*]+)\*\*|`([^`]+)`/g;
-  let last = 0;
-  let mt: RegExpExecArray | null;
-  let n = 0;
-  while ((mt = re.exec(text)) !== null) {
-    if (mt.index > last) out.push(text.slice(last, mt.index));
-    if (mt[1] !== undefined) out.push(<strong key={`${keyBase}b${n}`}>{mt[1]}</strong>);
-    else out.push(<code key={`${keyBase}c${n}`} className="cv-inline-code">{mt[2]}</code>);
-    last = mt.index + mt[0].length;
-    n++;
-  }
-  if (last < text.length) out.push(text.slice(last));
-  return out;
-}
-
-/** Heading level of a prose line, or 0. Used to style, not to reinterpret. */
-function headingLevel(line: string): number {
-  const mt = /^(#{1,6})\s/.exec(line.trim());
-  return mt ? mt[1].length : 0;
 }
 
 /**
@@ -222,11 +197,22 @@ function fallbackCopy(text: string): boolean {
 }
 
 export function CodeView({
-  code, locale, track,
+  code, locale, track, lead = false,
 }: {
   code: ConceptCode;
   locale: Locale;
   track: "general" | "ai";
+  /**
+   * True when this snippet IS the concept's primary figure.
+   *
+   * The collapse-over-12-lines default is right for a snippet that supports
+   * prose further down the pane. It is wrong when the code is the visual the
+   * pane leads with: 76 of 111 artifacts are longer than 12 lines, so the
+   * "visual within the first screen" promise was being met by a button that
+   * said "show 37 lines". A lead artifact opens, and gets a capped height with
+   * a fade so it still can't run away down the page.
+   */
+  lead?: boolean;
 }) {
   const { lang, snippet, caption, annotations } = code;
 
@@ -253,8 +239,13 @@ export function CodeView({
   }, [annotations]);
   const hasAnnotations = annoMap.size > 0;
 
-  const collapsible = lineCount > REVEAL_LINES;
+  // A lead artifact is never collapsed: it is the figure the pane promised.
+  const collapsible = !lead && lineCount > REVEAL_LINES;
   const [open, setOpen] = useState(!collapsible); // deterministic on SSR + client
+  // A long lead artifact gets a capped viewport instead of a collapse, so the
+  // reader sees real code immediately without the pane growing without bound.
+  const capped = lead && lineCount > REVEAL_LINES;
+  const [uncapped, setUncapped] = useState(false);
   const [copied, setCopied] = useState(false);
   const [openLine, setOpenLine] = useState<number | null>(null);
 
@@ -331,6 +322,7 @@ export function CodeView({
       data-prose={isProse ? "" : undefined}
       data-lang={(lang || "").toLowerCase() || undefined}
       data-collapsed={collapsible && !open ? "" : undefined}
+      data-capped={capped && !uncapped ? "" : undefined}
       ref={rootRef}
       onKeyDown={onRootKeyDown}
     >
@@ -356,7 +348,6 @@ export function CodeView({
           {m(copied ? "code.copied" : "code.copy", locale)}
         </button>
       </div>
-
       <div className="cv-scroll" id={`${baseId}-body`} hidden={collapsible && !open}>
         <pre className="cv-body mono"><code>
           {(proseGroups ?? lines.map((_, i) => [i])).map((group, gi) => {
@@ -365,12 +356,15 @@ export function CodeView({
             // paths keep per-source-line annotations, so the fold, the copy
             // button and the annotation indices are unaffected by the grouping.
             if (group.length > 1) {
+              // ONE state object for the whole paragraph: emphasis that opens on
+              // one source line and closes on the next has to survive the join.
+              const mdState: MdState = freshState();
               return (
                 <span key={`g${gi}`} className="cv-ln cv-para">
                   {group.map((idx, k) => {
                     const note = annoMap.get(idx + 1);
                     const text = (k ? " " : "") + rawLines[idx].trim();
-                    const body = isProse ? inlineMd(text, `g${gi}l${idx}`) : text;
+                    const body = isProse ? renderMd(tokenizeInline(text, mdState), `g${gi}l${idx}`) : text;
                     if (!note) return <span key={idx}>{body}</span>;
                     const tipId = `${baseId}-tip-${idx + 1}`;
                     const isOpen = openLine === idx + 1;
@@ -426,7 +420,7 @@ export function CodeView({
             // redundant decoration, so they come off. List and table markers stay:
             // they carry meaning we are not re-rendering (a bullet, a column).
             const content = isProse
-              ? inlineMd(hLevel ? (rawLines[idx] ?? "").trim().slice(hLevel + 1) : (rawLines[idx] ?? ""), `s${idx}`)
+              ? renderMd(tokenizeLine(hLevel ? (rawLines[idx] ?? "").trim().slice(hLevel + 1) : (rawLines[idx] ?? "")), `s${idx}`)
               : renderSegs(line);
             if (!note) {
               return (
@@ -462,6 +456,22 @@ export function CodeView({
           })}
         </code></pre>
       </div>
+
+      {capped && (
+        /* Below the body, not in the head: this control belongs next to the fade
+           it removes, and the head already carries language, caption and copy. */
+        <button
+          type="button"
+          className="cv-expand"
+          aria-expanded={uncapped}
+          aria-controls={`${baseId}-body`}
+          onClick={() => setUncapped((v) => !v)}
+        >
+          <span className="cv-expand-ico" aria-hidden="true">{uncapped ? "▴" : "▾"}</span>
+          <span>{m(uncapped ? "code.collapseHeight" : "code.expandHeight", locale)}</span>
+          <span className="cv-reveal-meta mono">{lineCount} {m("code.lines", locale)}</span>
+        </button>
+      )}
 
       {hasAnnotations && (
         <p className="cv-anno-hint dim">{m("code.annotationsHint", locale)}</p>

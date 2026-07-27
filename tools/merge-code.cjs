@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Surgical merge: attach a `code` block (and only that) to existing concepts.
+ * Surgical merge: replace ONE named field on an existing concept.
  *
  * Why this exists separately from merge-lessons.cjs: that script takes whole
  * lessons and replaces them wholesale, which is right when authoring a band
@@ -13,11 +13,13 @@
  * rules (bilingual captions, annotation line numbers in range, no calques) as
  * anything that arrives through the front door.
  *
- * Input shape:
- *   { "patches": [ { "lessonId": "...", "slug": "...", "code": {...} } ] }
+ * Input shape — `field` defaults to "code", for the patches written before it
+ * was configurable:
+ *   { "patches": [ { "lessonId": "...", "slug": "...", "field": "architecture",
+ *                    "architecture": {...} } ] }
  *
- * Refuses to overwrite an existing `code` unless --force, because silently
- * replacing an authored snippet is exactly the kind of loss this avoids.
+ * Refuses to overwrite an existing value unless --force, because silently
+ * replacing authored content is exactly the kind of loss this avoids.
  *
  * Usage: node tools/merge-code.cjs research/code-patch-cloud.json [--force]
  *        node tools/merge-code.cjs --dry-run <file>
@@ -28,6 +30,9 @@ const { checkConcept, widgetIds, errs, warns } = require("./merge-lessons.cjs");
 
 const ROOT = path.join(__dirname, "..");
 const LESSONS = path.join(ROOT, "src/content/data/lessons.json");
+
+/** Fields checkConcept validates, and therefore the only ones we will write. */
+const PATCHABLE = new Set(["code", "architecture", "diagram", "example"]);
 
 function main() {
   const args = process.argv.slice(2);
@@ -56,20 +61,30 @@ function main() {
       if (!lesson) { errs.push(`${where}: no such lesson`); continue; }
       const concept = lesson.concepts.find((c) => c.slug === patch.slug);
       if (!concept) { errs.push(`${where}: no such concept in that lesson`); continue; }
-      if (!patch.code) { errs.push(`${where}: patch has no code block`); continue; }
-      if (concept.code && !force) {
-        errs.push(`${where}: already has code (pass --force to replace)`);
+      // Only fields the validator knows how to check may be patched; anything
+      // else would land unvalidated, which is the failure mode this tool exists
+      // to prevent.
+      const field = patch.field ?? "code";
+      if (!PATCHABLE.has(field)) { errs.push(`${where}: field "${field}" is not patchable`); continue; }
+      const value = patch[field];
+      if (!value) { errs.push(`${where}: patch has no ${field} block`); continue; }
+      if (concept[field] && !force) {
+        errs.push(`${where}: already has ${field} (pass --force to replace)`);
         continue;
       }
       // Validate the concept AS IT WOULD BE, not the patch in isolation: the
-      // annotation line numbers are only checkable against the merged snippet.
-      const merged = { ...concept, code: patch.code };
+      // annotation line numbers are only checkable against the merged snippet,
+      // and `architecture` is only checkable against its sibling `diagram`.
+      const merged = { ...concept, [field]: value };
       const before = errs.length;
       checkConcept(merged, where, ids);
       if (errs.length > before) continue;   // rejected — leave the concept alone
-      concept.code = patch.code;
+      concept[field] = value;
       applied++;
-      console.log(`  + code on ${where} (${patch.code.lang}, ${patch.code.snippet.split("\n").length} lines)`);
+      const detail = field === "code"
+        ? `${value.lang}, ${value.snippet.split("\n").length} lines`
+        : value.kind;
+      console.log(`  + ${field} on ${where} (${detail})`);
     }
   }
 
@@ -82,7 +97,7 @@ function main() {
   }
   if (dry) { console.log(`\n✓ dry run: ${applied} patch(es) would apply.`); return; }
   fs.writeFileSync(LESSONS, JSON.stringify(data), "utf8");
-  console.log(`\n✓ wrote lessons.json: ${applied} code block(s) added`);
+  console.log(`\n✓ wrote lessons.json: ${applied} field(s) patched`);
 }
 
 main();

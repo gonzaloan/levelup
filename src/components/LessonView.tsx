@@ -94,7 +94,13 @@ export function LessonView({
   }
 
   return (
-    <div className="wrap lesson-wrap" data-track={track} style={{ paddingTop: "var(--s-10)", paddingBottom: "var(--s-16)" }}>
+    /* Top padding is a clamp rather than a fixed --s-10: on a 390px phone the
+       lesson's chrome (hero + read rail + concept strip) spent ~380px before the
+       concept pane started, which pushed the pane's figure past the fold. These
+       are inline styles, so no stylesheet rule can compress them — the responsive
+       value has to live here. */
+    <div className="wrap lesson-wrap" data-track={track}
+      style={{ paddingTop: "clamp(var(--s-5), 4vw, var(--s-10))", paddingBottom: "var(--s-16)" }}>
       <SceneryBackground track={track as "general" | "ai"} />
       {/* header — the domain's world splash (public/worlds/<axis.key>.webp) rides
           behind the title as a masked, aria-hidden decorative layer, exactly like
@@ -113,11 +119,17 @@ export function LessonView({
           WebkitMaskImage: "linear-gradient(90deg, transparent 0, #000 42%, #000 82%, transparent 100%)",
         }} />
         <div style={{ position: "relative", zIndex: 1 }}>
-          <div style={{ display: "flex", gap: "var(--s-3)", alignItems: "center", marginBottom: "var(--s-3)", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: "var(--s-3)", alignItems: "center", marginBottom: "var(--s-2)", flexWrap: "wrap" }}>
             <span className="level-tag">{level}</span>
-            <span className="eyebrow">{t(axis.name, locale)}</span>
+            {/* The domain name is in the h1 directly below, so on a phone this
+                eyebrow is the same words twice — hidden there, kept on wider
+                screens where it reads as a category label rather than a repeat. */}
+            <span className="eyebrow lesson-eyebrow">{t(axis.name, locale)}</span>
           </div>
-          <h1 className="display" style={{ fontSize: "var(--t-h1)" }}>
+          {/* Its own clamp, not --t-h1: that token floors at 2rem, which wraps
+              "Cloud & Platform Engineering · L7" onto two lines and costs 70px of
+              a phone's first screen. */}
+          <h1 className="display" style={{ fontSize: "clamp(1.5rem, 1rem + 2.6vw, 3.25rem)" }}>
             {t(axis.name, locale)} · {level}
           </h1>
         </div>

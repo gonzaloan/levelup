@@ -185,6 +185,10 @@ export const MESSAGES = {
   "code.show":          { en: "Show the code", es: "Mostrar el código" },
   "code.hide":          { en: "Hide the code", es: "Ocultar el código" },
   "code.lines":         { en: "lines", es: "líneas" },
+  // A lead artifact opens with a capped height rather than collapsed, so the
+  // control offers MORE room instead of offering to reveal anything.
+  "code.expandHeight":  { en: "See the whole artifact", es: "Ver el artefacto completo" },
+  "code.collapseHeight":{ en: "Shrink back", es: "Reducir de nuevo" },
   "code.copy":          { en: "Copy", es: "Copiar" },
   "code.copied":        { en: "Copied", es: "Copiado" },
   "code.annotationsHint": { en: "Hover or focus the underlined tokens for an explanation.",

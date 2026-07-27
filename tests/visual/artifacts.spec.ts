@@ -70,6 +70,59 @@ test("a concept pane puts a visual near the top, not after a wall of text", asyn
   expect(pxToFirstVisual).toBeLessThan(900);
 });
 
+test("a code artifact shows real code on the first screen, not a 'show N lines' button", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // The first version of this suite asserted the POSITION of .cp-figure, which
+  // exists whether or not the artifact is open — so it passed while every
+  // artifact over 12 lines rendered collapsed and the learner saw a button. This
+  // counts lines actually inside the viewport, which is the thing that matters.
+  for (const id of ["cloud-platform-l7", "direction-influence-l6"]) {
+    await openLesson(page, id);
+    await enterConcept(page, 0);
+    const seen = await page.evaluate(() => {
+      const cv = document.querySelector(".lesson-content .cv");
+      if (!cv) return { err: "no artifact" as const };
+      const body = cv.querySelector<HTMLElement>(".cv-scroll");
+      const lines = [...cv.querySelectorAll(".cv-ln")].filter((l) => {
+        const b = l.getBoundingClientRect();
+        return b.top >= 0 && b.bottom <= window.innerHeight;
+      });
+      return {
+        collapsed: cv.hasAttribute("data-collapsed"),
+        hidden: !!body?.hidden,
+        visibleLines: lines.length,
+      };
+    });
+    expect(seen, `${id}: no artifact found`).not.toHaveProperty("err");
+    if ("err" in seen) continue;
+    // A lead artifact is never collapsed — that's the point of the `lead` prop.
+    expect(seen.collapsed, `${id} lead artifact is collapsed`).toBe(false);
+    expect(seen.hidden, `${id} lead artifact body is hidden`).toBe(false);
+    expect(seen.visibleLines, `${id}: no code visible on the first screen`).toBeGreaterThanOrEqual(3);
+  }
+});
+
+test("a capped lead artifact can be expanded to its full height, by keyboard too", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLesson(page, "cloud-platform-l7");
+  await enterConcept(page, 0);
+  const cv = page.locator(".lesson-content .cv").first();
+  await expect(cv).toHaveAttribute("data-capped", "");
+  const expand = cv.locator(".cv-expand");
+  await expect(expand).toBeVisible();
+  await expect(expand).toHaveAttribute("aria-expanded", "false");
+  // Capped height must not clip the artifact permanently.
+  const cappedHeight = await cv.locator(".cv-scroll").evaluate((e) => e.getBoundingClientRect().height);
+  await expand.press("Enter");
+  await expect(cv).not.toHaveAttribute("data-capped", "");
+  await expect(expand).toHaveAttribute("aria-expanded", "true");
+  const fullHeight = await cv.locator(".cv-scroll").evaluate((e) => e.getBoundingClientRect().height);
+  expect(fullHeight).toBeGreaterThan(cappedHeight);
+  // And it is reversible, so the pane can be made short again.
+  await expand.press("Enter");
+  await expect(cv).toHaveAttribute("data-capped", "");
+});
+
 test("markdown artifacts read as documents: no raw markers, no mid-sentence breaks", async ({ page }) => {
   await openLesson(page, "direction-influence-l7");
   await enterConcept(page, 4);

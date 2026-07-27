@@ -44,7 +44,26 @@ const BANNED = new RegExp([
   // "in time". The lookahead exempts "eventualmente consistente", which IS the
   // correct Spanish term for eventual consistency.
   "\\beventualmente\\b(?!\\s+consistente)",
-].join("|"), "i");
+  // "X es por qué Y" / "X es cómo Y" are English "is why"/"is how" carried over
+  // literally; in Spanish a copula plus a bare interrogative reads as an
+  // unfinished indirect question. Correct forms: "es la razón por la que",
+  // "es lo que", "por eso". Only the calque shape is banned — the negative
+  // lookbehinds keep the legitimate predicative uses the corpus already has
+  // ("sabes por qué está cada línea", "la escalabilidad es cómo se sostiene…",
+  // "el arreglo es por qué sigue muriendo").
+  "(?<!sab\\w{1,3} )(?<!arreglo )\\bes por qu[ée]\\b(?= (?:la|el|los|las|publicar|un|una)\\b)",
+  // NOT banned, deliberately, after checking every occurrence in the corpus:
+  //   • "triar" / "interruptor de aborto" — flagged by review as calques, but
+  //     both are already this corpus's own established vocabulary (8 places,
+  //     written before this pass) and both are used in Spanish engineering
+  //     writing. Banning them would fail the build on legitimate content and
+  //     force a rewrite of text nobody complained about. The one case that WAS
+  //     wrong — "aborto automático" describing a chaos experiment's stop
+  //     condition, where "interrupción" is clearer — was fixed in place.
+  //   • "abortos" for transaction aborts — the standard term.
+  // The lesson: a banned-word list is only useful when every hit is a defect.
+  // A rule that fires on correct content trains people to bypass the validator.
+].join("|"), "iu");
 
 const errs = [];
 const warns = [];

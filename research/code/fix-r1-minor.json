@@ -1,0 +1,193 @@
+{
+ "patches": [
+  {
+   "lessonId": "cloud-platform-l7",
+   "slug": "cloud-strategy-and-lock-in-math",
+   "code": {
+    "lang": "python",
+    "snippet": "# Proposed today: \"only provider-agnostic services, so we're never locked in.\"\n# Nobody wants to argue for lock-in, so this passes unless someone prices it.\n# Lock-in is a price, not a sin. Price it per component, over the term you\n# expect to hold it.\n\ncomponents = [\n  # name,               switching cost, P(switch in 5y), agnostic premium/yr\n  (\"managed queue\",         120_000,        0.05,           90_000),\n  (\"managed relational DB\", 900_000,        0.10,          140_000),\n  (\"object storage\",         40_000,        0.02,           30_000),\n  (\"identity provider\",     600_000,        0.25,          180_000),\n]\n\ntotal_premium = expected_avoided = 0\nfor name, switch_cost, p, premium in components:\n    premium_5y = premium * 5\n    avoided    = switch_cost * p        # expected cost the rule saves us\n    total_premium    += premium_5y\n    expected_avoided += avoided\n    verdict = \"worth it\" if avoided > premium_5y else \"pays, never collects\"\n    print(f\"{name:24} premium ${premium_5y:>9,}  avoided ${avoided:>9,}  {verdict}\")\n\nprint(f\"\\ntotal premium   ${total_premium:,}\")\nprint(f\"expected saving ${expected_avoided:,.0f}\")\n# managed queue            premium $  450,000  avoided $    6,000  pays, never collects\n# managed relational DB    premium $  700,000  avoided $   90,000  pays, never collects\n# object storage           premium $  150,000  avoided $      800  pays, never collects\n# identity provider        premium $  900,000  avoided $  150,000  pays, never collects\n#\n# total premium   $2,200,000\n# expected saving $246,800\n#\n# The components you actually migrate are few and predictable. A blanket rule\n# pays everywhere and collects almost nowhere.\n\n# Two things this table still understates:\n#   1. \"Provider-agnostic\" in practice means an internal abstraction over every\n#      managed service. That IS real engineering, and it usually leaks the exact\n#      semantics that made the service worth using.\n#   2. The expensive dependencies are the DATA FORMAT and the OPERATIONAL MODEL.\n#      Avoiding a proprietary API addresses neither of them.",
+    "caption": {
+     "en": "The blanket portability rule, priced per component — the premium is paid everywhere and collected almost nowhere.",
+     "es": "La regla general de portabilidad, valuada por componente: la prima se paga en todas partes y se cobra casi en ninguna."
+    },
+    "annotations": [
+     {
+      "line": 2,
+      "note": {
+       "en": "The room is sympathetic. Numbers are the only way to argue against a virtuous-sounding rule.",
+       "es": "La sala simpatiza con la idea. Los números son la única forma de discutir una regla que suena virtuosa."
+      }
+     },
+     {
+      "line": 17,
+      "note": {
+       "en": "Name the switching cost AND the probability. A rule that ignores probability buys insurance at any price.",
+       "es": "Nombra el costo de cambio Y la probabilidad. Una regla que ignora la probabilidad compra seguro a cualquier precio."
+      }
+     },
+     {
+      "line": 38,
+      "note": {
+       "en": "The abstraction layer isn't free portability — it's the premium, plus a leak.",
+       "es": "La capa de abstracción no es portabilidad gratis: es la prima, más una fuga."
+      }
+     },
+     {
+      "line": 41,
+      "note": {
+       "en": "The rule targets the cheap dependency and leaves both expensive ones untouched.",
+       "es": "La regla apunta a la dependencia barata y deja intactas las dos costosas."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l5",
+   "slug": "static-stability-and-control-plane-dependence",
+   "code": {
+    "lang": "hcl",
+    "snippet": "# BEFORE — the runbook says: on AZ loss the ASG launches replacements in the\n# surviving zones, recovery 4-6 minutes. Sized for exactly the load it serves.\nresource \"aws_autoscaling_group\" \"api\" {\n  min_size           = 6\n  max_size           = 12\n  desired_capacity   = 6          # 2 per zone, 100% utilized\n  availability_zones = [\"us-east-1a\", \"us-east-1b\", \"us-east-1c\"]\n}\n# Ask the one diagnostic question: does recovery require CREATING anything?\n# Yes — it requires launching instances. That is a control-plane call, made at\n# the moment the control plane is most likely to be degraded, and every other\n# team in the region is making the same call.\n\n# AFTER — statically stable: recovery requires nothing to be created.\nresource \"aws_autoscaling_group\" \"api\" {\n  min_size           = 9\n  max_size           = 18\n  desired_capacity   = 9          # 3 per zone; any 2 zones carry all traffic\n  availability_zones = [\"us-east-1a\", \"us-east-1b\", \"us-east-1c\"]\n}\n# Losing a zone now removes capacity we were not depending on. The data plane\n# (load balancer health checks, DNS) stops sending traffic to it, and serving\n# continues through what already exists.\n\n# The price, stated honestly:\n#   9 instances to serve the load of 6 -> ~67% steady-state utilization ON PURPOSE.\n#   That idle third IS the availability. It is not waste to be optimized away.\n#\n# Note what does NOT help: automating the failover. A script that calls the same\n# degraded control plane hits the same wall a human would, just faster.",
+    "caption": {
+     "en": "The \"4-6 minute recovery\" runbook, and the version that doesn't need a control plane to survive.",
+     "es": "El runbook de \"recuperación en 4-6 minutos\" y la versión que no necesita un control plane para sobrevivir."
+    },
+    "annotations": [
+     {
+      "line": 9,
+      "note": {
+       "en": "The whole test in one question. Control planes create and change; data planes serve what exists.",
+       "es": "La prueba completa en una pregunta. Los control planes crean y cambian; los data planes sirven lo que existe."
+      }
+     },
+     {
+      "line": 12,
+      "note": {
+       "en": "Correlated demand is why control-plane calls fail exactly when you need them most.",
+       "es": "La demanda correlacionada es la razón por la que las llamadas al control plane fallan justo cuando más las necesitas."
+      }
+     },
+     {
+      "line": 27,
+      "note": {
+       "en": "Static stability is bought with idle capacity. If you can't afford it, say so — don't claim you have it.",
+       "es": "La estabilidad estática se compra con capacidad ociosa. Si no puedes pagarla, dilo; no afirmes que la tienes."
+      }
+     },
+     {
+      "line": 29,
+      "note": {
+       "en": "Automation changes who makes the call, not whether the call can succeed.",
+       "es": "La automatización cambia quién hace la llamada, no si la llamada puede tener éxito."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "cloud-platform-l4",
+   "slug": "cold-start-and-warm-path-economics",
+   "code": {
+    "lang": "javascript",
+    "snippet": "// BEFORE — p50 90 ms, p99 2.4 s. Init is 1.9 s of that:\n//   1.1 s importing the SDK bundle, 600 ms fetching config.\nconst AWS = require('aws-sdk');                 // whole SDK: ~1.1 s to load\n\nexports.handler = async (event) => {\n  const config = await getParameters('/app/*'); // 600 ms, on EVERY invocation\n  // ...90 ms of actual work\n};\n\n\n// AFTER — step 1: trim initialization. Costs nothing.\n// Import only the client you use, and fetch config ONCE per execution\n// environment rather than once per request.\nconst { SSMClient, GetParametersByPathCommand } = require('@aws-sdk/client-ssm');\n\nlet configPromise;                              // module scope = survives warm invokes\nconst loadConfig = () => (configPromise ??= fetchConfig());\n\nexports.handler = async (event) => {\n  const config = await loadConfig();            // cold: 600 ms. warm: 0 ms.\n  // ...\n};\n\n// step 2: raise memory. Cheap, real, NOT a cure — more memory means\n// proportionally more CPU during init, so a CPU-bound 1.1 s import gets faster.\n// It does nothing for a slow network call. Measure it; don't assume a multiple.\n\n// step 3: pay for warm capacity. Only now, and know what you're undoing:\n//   provisioned concurrency removes the cold start AND the idle-time saving\n//   that made the serverless choice attractive in the first place.\n// Snapshot-restore init (SnapStart) is the other lever — but it does not\n// support Node.js, so it is not available to this function.",
+    "caption": {
+     "en": "The 2.4 s p99, fixed in the order the mitigations actually cost: free, then cheap, then paid.",
+     "es": "El p99 de 2.4 s, arreglado en el orden en que las mitigaciones cuestan: gratis, luego barato, luego pagado."
+    },
+    "annotations": [
+     {
+      "line": 6,
+      "note": {
+       "en": "Config fetched inside the handler is paid on every request, not just cold ones — the cheapest bug here.",
+       "es": "La configuración leída dentro del handler se paga en cada petición, no solo en las frías: el bug más barato de aquí."
+      }
+     },
+     {
+      "line": 17,
+      "note": {
+       "en": "Cache the promise, not the value: two concurrent first invocations would otherwise both fetch.",
+       "es": "Cachea la promesa, no el valor: si no, dos primeras invocaciones concurrentes harían dos fetch."
+      }
+     },
+     {
+      "line": 24,
+      "note": {
+       "en": "Memory buys CPU. It helps a CPU-bound import and does nothing for a slow network call.",
+       "es": "La memoria compra CPU. Ayuda a un import limitado por CPU y no hace nada por una llamada de red lenta."
+      }
+     },
+     {
+      "line": 28,
+      "note": {
+       "en": "Last, because it reverses the economics you chose serverless for. Order the mitigations by cost.",
+       "es": "Al final, porque revierte la economía por la que elegiste serverless. Ordena las mitigaciones por costo."
+      }
+     },
+     {
+      "line": 32,
+      "note": {
+       "en": "Runtime-restricted. Check applicability before you plan a quarter around it.",
+       "es": "Restringido por runtime. Verifica que aplique antes de planear un trimestre alrededor."
+      }
+     }
+    ]
+   }
+  },
+  {
+   "lessonId": "systems-architecture-l6",
+   "slug": "observability-for-distributed-systems",
+   "code": {
+    "lang": "yaml",
+    "snippet": "# checkout-api.slo.yml — the artifact that turns \"is it healthy?\" into a decision.\nslo:\n  name: checkout-availability\n  objective: 99.9        # over a rolling 30 days\n  window: 30d\n  # The SLI must be measured where the USER is, not inside the service.\n  indicator:\n    good:  'sum(rate(http_requests_total{route=\"/checkout\",code!~\"5..\"}[5m]))'\n    total: 'sum(rate(http_requests_total{route=\"/checkout\"}[5m]))'\n  # This is a REQUEST-RATIO SLI, so the budget is denominated in requests, not\n  # minutes: 0.1% of ~10,000,000 monthly requests = 10,000 failed requests.\n  # Mixing the two units (\"43 minutes of downtime\") is the classic error — a\n  # ratio SLI cannot tell you about time, and 10,000 failures spread thin looks\n  # nothing like 43 minutes of hard outage.\n  budget: 10_000 failed requests / 30d\n\n# Burn-rate alerts: two windows, because one can't be both fast and quiet.\nalerts:\n  - name: checkout-budget-burning-fast\n    burn_rate: 14.4      # exhausts the month's budget in ~2 days\n    windows: [5m, 1h]    # long window fires, short window confirms still-happening\n    action: page         # a bad deploy returning 5xx trips this in minutes\n  - name: checkout-budget-burning-slow\n    burn_rate: 3\n    windows: [6h, 3d]\n    action: ticket       # real, not urgent — nobody wakes up for this\n\n# NOT alerts. These are causes, and they wake you for things users never noticed.\nnot_alerts: [cpu_high, memory_high, pod_restarted, queue_depth]\n\n# The decision the budget makes for you, agreed in advance so it isn't an\n# argument at 2am:\npolicy:\n  budget_remaining: \"ship\"\n  budget_exhausted: \"freeze feature deploys; reliability work only until it recovers\"\n\n# Resilience you can't see isn't resilience — instrument the mechanisms too, or\n# working-as-designed is indistinguishable from quietly-broken.\nresilience_telemetry:\n  - circuit_breaker_state{dependency}     # open breaker + healthy SLO = degraded, silently\n  - retry_attempts_total{dependency}      # retries hiding a failing dependency\n  - fallback_served_total{path}           # how often users got the cached answer",
+    "caption": {
+     "en": "The 99.9%/30-day checkout SLO as configuration: what pages, what freezes, and what stays a dashboard.",
+     "es": "El SLO de 99.9%/30 días de checkout como configuración: qué alerta, qué congela y qué queda en un panel."
+    },
+    "annotations": [
+     {
+      "line": 6,
+      "note": {
+       "en": "An SLI computed from internal success counters can read 100% while every user sees a timeout.",
+       "es": "Un SLI calculado con contadores internos puede marcar 100% mientras cada usuario ve un timeout."
+      }
+     },
+     {
+      "line": 12,
+      "note": {
+       "en": "Pick request-ratio or time-based and stay in that unit. Converting between them invents precision you don't have.",
+       "es": "Elige razón de peticiones o tiempo y quédate en esa unidad. Convertir entre ellas inventa una precisión que no tienes."
+      }
+     },
+     {
+      "line": 20,
+      "note": {
+       "en": "Burn rate, not raw error rate: it answers \"will this cost us the month?\" instead of \"is something wrong?\".",
+       "es": "Tasa de consumo, no tasa de error: responde \"¿esto nos costará el mes?\" en vez de \"¿algo va mal?\"."
+      }
+     },
+     {
+      "line": 29,
+      "note": {
+       "en": "Alert on user-facing symptoms and burn rate. Cause-based pages train the team to ignore the pager.",
+       "es": "Alerta sobre síntomas que ve el usuario y sobre el consumo. Las alertas por causa enseñan a ignorar el pager."
+      }
+     },
+     {
+      "line": 35,
+      "note": {
+       "en": "Written before the incident, so the freeze is a pre-agreed policy rather than a fight about judgement.",
+       "es": "Escrito antes del incidente, así el congelamiento es política acordada y no una pelea de criterios."
+      }
+     },
+     {
+      "line": 40,
+      "note": {
+       "en": "The failure mode teams miss: the fallback works, so nothing alerts, and the dependency stays broken for weeks.",
+       "es": "La falla que los equipos pasan por alto: el fallback funciona, nada alerta, y la dependencia sigue rota semanas."
+      }
+     }
+    ]
+   }
+  }
+ ]
+}
