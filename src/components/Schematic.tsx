@@ -169,7 +169,10 @@ function Compare({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
         <div className="schematic-vs-h schematic-vs-h--b" role="columnheader">{t(right.title, locale)}</div>
       </div>
       {Array.from({ length: paired }, (_, i) => (
-        <div className="schematic-vs-row" role="row" key={i}>
+        // data-first, not a CSS :first-* selector: the row is not the
+        // container's first child (the header is), so both :first-child and
+        // :first-of-type silently match nothing.
+        <div className="schematic-vs-row" role="row" key={i} data-first={i === 0 ? "" : undefined}>
           {/* data-side-* feeds the stacked mobile layout, where the paired
               headers collapse and each cell has to name its own side. */}
           <div className="schematic-vs-cell schematic-vs-cell--a" role="cell" data-side-a={t(left.title, locale)}>
@@ -200,32 +203,73 @@ function Compare({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
   );
 }
 
-// axes: a 2-axis quadrant with labeled axes and any plotted nodes as points.
+/**
+ * axes: a 2-axis quadrant, with the plotted items listed BESIDE the chart.
+ *
+ * The labels used to be `<text>` inside the SVG. An SVG has a fixed viewBox and
+ * cannot wrap text, so a label longer than the box was simply clipped — measured
+ * up to 301px cut off across 20 concepts, with quadrant labels truncated
+ * mid-word ("High impact, low visibility: quiet real⌐") and a y-axis title
+ * losing its first three letters. A quadrant diagram whose quadrant labels are
+ * unreadable teaches nothing.
+ *
+ * So the SVG keeps only what is geometric — the axes and the plotted points, each
+ * numbered — and the labels move out into an HTML legend that wraps. The number
+ * ties the two together, which also makes the diagram work for a screen reader.
+ */
 function Axes({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
   const nodes = spec.nodes ?? [];
   // Deterministic placement: spread nodes along the diagonal; the point is the
   // labeled axes and the items sitting in the space, not precise coordinates.
   return (
-    <svg viewBox="0 0 320 220" className="schematic-axes" role="img"
-      aria-label={spec.caption ? t(spec.caption, locale) : "diagram"}>
-      {/* axes */}
-      <line x1="40" y1="180" x2="300" y2="180" stroke="var(--track, var(--gen))" strokeWidth="1" opacity="0.7" />
-      <line x1="40" y1="180" x2="40" y2="20" stroke="var(--track, var(--gen))" strokeWidth="1" opacity="0.7" />
-      <polygon points="300,180 293,176 293,184" fill="var(--track, var(--gen))" opacity="0.7" />
-      <polygon points="40,20 36,27 44,27" fill="var(--track, var(--gen))" opacity="0.7" />
-      {spec.xAxis && <text x="170" y="205" textAnchor="middle" className="schematic-axis-label">{t(spec.xAxis, locale)}</text>}
-      {spec.yAxis && <text x="16" y="100" textAnchor="middle" className="schematic-axis-label" transform="rotate(-90 16 100)">{t(spec.yAxis, locale)}</text>}
-      {nodes.map((n, i) => {
-        const frac = nodes.length > 1 ? i / (nodes.length - 1) : 0.5;
-        const x = 70 + frac * 200;
-        const y = 160 - frac * 130;
-        return (
-          <g key={i}>
-            <circle cx={x} cy={y} r="4" fill="var(--track, var(--gen))" />
-            <text x={x + 8} y={y + 4} className="schematic-axis-label" style={{ fontSize: 10 }}>{t(n.label, locale)}</text>
-          </g>
-        );
-      })}
-    </svg>
+    <div className="schematic-quad">
+      <svg viewBox="0 0 320 220" className="schematic-axes" role="img"
+        aria-label={spec.caption ? t(spec.caption, locale) : "diagram"}>
+        {/* axes */}
+        <line x1="40" y1="180" x2="300" y2="180" stroke="var(--track, var(--gen))" strokeWidth="1" opacity="0.7" />
+        <line x1="40" y1="180" x2="40" y2="20" stroke="var(--track, var(--gen))" strokeWidth="1" opacity="0.7" />
+        <polygon points="300,180 293,176 293,184" fill="var(--track, var(--gen))" opacity="0.7" />
+        <polygon points="40,20 36,27 44,27" fill="var(--track, var(--gen))" opacity="0.7" />
+        {nodes.map((n, i) => {
+          // Diagonal placement, and the numbered legend is what makes it honest.
+          //
+          // I tried inferring each node's quadrant from its label, because the
+          // diagonal put "Pushover (low dissent, high support)" at bottom-left,
+          // contradicting its own text. But the corpus's axes specs are mostly
+          // ORDERED SCALES, not quadrants — "Isolation: none → read committed →
+          // snapshot → serializable", "Tier C → Tier B → Tier A" — where a
+          // monotonic diagonal is exactly right, and a high/low parse resolved 0
+          // of 176 nodes. So the diagonal stays for what it models correctly, and
+          // the numbers tie each point to its full label in the legend rather than
+          // asking the position to carry a meaning it can't.
+          const frac = nodes.length > 1 ? i / (nodes.length - 1) : 0.5;
+          const x = 70 + frac * 200;
+          const y = 160 - frac * 130;
+          return (
+            <g key={i}>
+              <circle cx={x} cy={y} r="7" fill="var(--track, var(--gen))" opacity="0.25" />
+              <circle cx={x} cy={y} r="4" fill="var(--track, var(--gen))" />
+              <text x={x} y={y + 3.5} textAnchor="middle" className="schematic-quad-n">{i + 1}</text>
+            </g>
+          );
+        })}
+      </svg>
+      {/* Axis names and item labels as HTML, so they wrap instead of clipping. */}
+      <div className="schematic-quad-legend">
+        {spec.xAxis && (
+          <p className="schematic-quad-axis"><span className="mono">→</span> {t(spec.xAxis, locale)}</p>
+        )}
+        {spec.yAxis && (
+          <p className="schematic-quad-axis"><span className="mono">↑</span> {t(spec.yAxis, locale)}</p>
+        )}
+        {nodes.length > 0 && (
+          <ol className="schematic-quad-items">
+            {nodes.map((n, i) => (
+              <li key={i}><span className="schematic-quad-badge mono">{i + 1}</span> {t(n.label, locale)}</li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
   );
 }

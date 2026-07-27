@@ -334,6 +334,25 @@ export function CodeView({
     }
   }, [snippet]);
 
+  /**
+   * Uncap the artifact and bring the newly-focused line back into view.
+   *
+   * Uncapping alone was not enough: it grows the container by 213-1043px in one
+   * frame, and the browser had already computed its scroll-into-view against the
+   * capped height — so 26 of 60 Tab stops ended up focused on something outside
+   * the viewport, with the page having jumped for no visible reason. Re-scrolling
+   * after the layout settles is what makes the keyboard path coherent.
+   */
+  const revealForFocus = useCallback((el: HTMLElement) => {
+    setUncapped(true);
+    requestAnimationFrame(() => {
+      const r = el.getBoundingClientRect();
+      if (r.top < 0 || r.bottom > window.innerHeight) {
+        el.scrollIntoView({ block: "center", behavior: "auto" });
+      }
+    });
+  }, []);
+
   const toggleReveal = () => {
     setOpen((v) => {
       if (v) closeTip(); // collapsing hides the anchor — dismiss any popover
@@ -431,10 +450,10 @@ export function CodeView({
                           aria-expanded={isOpen}
                           onMouseEnter={() => setOpenLine(idx + 1)}
                           onMouseLeave={() => { if (focusedLine.current !== idx + 1) closeTip(); }}
-                          onFocus={() => {
+                          onFocus={(e) => {
                             focusedLine.current = idx + 1;
                             setOpenLine(idx + 1);
-                            if (capped) setUncapped(true);   // same reason as below
+                            if (capped) revealForFocus(e.currentTarget);   // see below
                           }}
                           onBlur={() => { focusedLine.current = null; closeTip(); }}
                           onClick={() => setOpenLine(idx + 1)}
@@ -509,15 +528,15 @@ export function CodeView({
                   aria-expanded={isOpen}
                   onMouseEnter={() => setOpenLine(lineNo)}
                   onMouseLeave={() => { if (focusedLine.current !== lineNo) closeTip(); }}
-                  onFocus={() => {
+                  onFocus={(e) => {
                     focusedLine.current = lineNo;
                     setOpenLine(lineNo);
                     // Tabbing to a line below the cap made the browser scroll a
                     // container with `overflow-y: hidden` — no scrollbar, so no
                     // wheel, touch or Home key could bring it back, and the
-                    // artifact stayed stuck mid-way. Uncapping on focus means the
-                    // keyboard path reveals what it navigates to instead.
-                    if (capped) setUncapped(true);
+                    // artifact stayed stuck mid-way. Uncapping on focus reveals
+                    // what the keyboard navigates to instead.
+                    if (capped) revealForFocus(e.currentTarget);
                   }}
                   onBlur={() => { focusedLine.current = null; closeTip(); }}
                   onClick={() => setOpenLine(lineNo)}

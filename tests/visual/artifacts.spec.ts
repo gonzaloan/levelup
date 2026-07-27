@@ -470,3 +470,124 @@ test("every interactive target on a lesson pane clears 40px", async ({ page }) =
   // `.rail-tab` was the one class the first sweep missed, at 32px.
   expect(small).toEqual([]);
 });
+
+// ── Round-4 review findings ─────────────────────────────────────────────────
+
+test("both sides of a stacked compare are named on a phone", async ({ page }) => {
+  // `:first-of-type` is scoped by element TYPE, and the container's first div is
+  // the header — so no row ever matched and side B had NO name anywhere (the
+  // header label is display:none below 560px). The reader could not tell which
+  // stripe was which, on 76 compare concepts.
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const id of ["technical-depth-l5", "cloud-platform-l3"]) {
+    await openLesson(page, id);
+    await enterConcept(page, 0);
+    for (let i = 0; i < 6; i++) {
+      const fold = page.locator(".lesson-content .cp-fold summary").first();
+      if (await fold.count()) await fold.click().catch(() => {});
+      await page.waitForTimeout(200);
+      const r = await page.evaluate(() => {
+        const vs = document.querySelector(".schematic-vs");
+        if (!vs) return null;
+        const cellA = vs.querySelector(".schematic-vs-cell--a");
+        const cellB = vs.querySelector(".schematic-vs-cell--b");
+        const before = (el: Element | null) =>
+          el ? getComputedStyle(el, "::before").content : "none";
+        return { a: before(cellA), b: before(cellB) };
+      });
+      if (r) {
+        // Both poles must be named somewhere the reader can see.
+        expect(r.a, `${id}: side A unnamed`).not.toBe("none");
+        expect(r.b, `${id}: side B unnamed`).not.toBe("none");
+        break;
+      }
+      const next = page.getByRole("button", { name: /→/ }).last();
+      if (!(await next.count())) break;
+      await next.click().catch(() => {});
+      await page.waitForTimeout(200);
+    }
+  }
+});
+
+test("the Enlarge control covers no figure's text, at any width or figure kind", async ({ page }) => {
+  test.slow();   // 3 widths x 3 lessons x 5 concepts is past the default budget
+  // Reserving space in the compare stylesheet fixed one instance of a shared
+  // layout bug: the same trigger covered decision-flow questions, spectrum poles
+  // and viz titles (1071 covered text rects across 1420 renders). And the
+  // >=900px exemption was wrong because the figure sits in a fixed-width grid
+  // COLUMN, not the viewport — it overlapped at every desktop width.
+  const SEL = ".schematic-vs-h,.schematic-vs-mid,.spectrum-pole,.dflow-question," +
+    ".viz-title,.schematic-box-label,.schematic-axes text";
+  // 900 is the width the old exemption started at, and 1280 is where it was
+  // claimed safe; one lesson per width keeps this inside a sane budget while
+  // still covering the boundary the previous fix got wrong.
+  for (const [w, id] of [[390, "technical-depth-l5"], [900, "cloud-platform-l3"], [1280, "cloud-platform-l3"]] as const) {
+    await page.setViewportSize({ width: w, height: 900 });
+    {
+      await openLesson(page, id);
+      await enterConcept(page, 0);
+      for (let i = 0; i < 4; i++) {
+        const fold = page.locator(".lesson-content .cp-fold summary").first();
+        if (await fold.count()) await fold.click().catch(() => {});
+        await page.waitForTimeout(180);
+        const covered = await page.evaluate((sel) => {
+          const trg = document.querySelector(".figzoom-trigger");
+          if (!trg) return 0;
+          const T = trg.getBoundingClientRect();
+          let hits = 0;
+          for (const e of document.querySelectorAll(sel)) {
+            const R = e.getBoundingClientRect();
+            if (R.width === 0) continue;
+            const dw = Math.min(T.right, R.right) - Math.max(T.left, R.left);
+            const dh = Math.min(T.bottom, R.bottom) - Math.max(T.top, R.top);
+            if (dw > 0 && dh > 0) hits++;
+          }
+          return hits;
+        }, SEL);
+        expect(covered, `${id}@${w}: trigger covers figure text`).toBe(0);
+        const next = page.getByRole("button", { name: /→/ }).last();
+        if (!(await next.count())) break;
+        await next.click().catch(() => {});
+        await page.waitForTimeout(180);
+      }
+    }
+  }
+});
+
+test("quadrant labels are readable, not clipped by the SVG box", async ({ page }) => {
+  test.slow();
+  // An SVG cannot wrap text and has a fixed viewBox, so labels longer than the
+  // box were clipped — up to 301px cut off, truncated mid-word, on 20 concepts.
+  // The labels now live in an HTML legend keyed by number.
+  for (const w of [390, 1280]) {
+    await page.setViewportSize({ width: w, height: 900 });
+    await openLesson(page, "direction-influence-l4");
+    await enterConcept(page, 0);
+    for (let i = 0; i < 6; i++) {
+      const fold = page.locator(".lesson-content .cp-fold summary").first();
+      if (await fold.count()) await fold.click().catch(() => {});
+      await page.waitForTimeout(200);
+      const quad = page.locator(".schematic-quad").first();
+      if ((await quad.count()) && (await quad.isVisible())) {
+        const r = await page.evaluate(() => {
+          const svg = document.querySelector("svg.schematic-axes")!;
+          const S = svg.getBoundingClientRect();
+          const vw = document.documentElement.clientWidth;
+          const clipped = [...svg.querySelectorAll("text")].filter((t) => {
+            const R = t.getBoundingClientRect();
+            return R.right > S.right + 1 || R.right > vw + 1;
+          }).length;
+          return { clipped, legendItems: document.querySelectorAll(".schematic-quad-items li").length };
+        });
+        expect(r.clipped, `clipped SVG text at ${w}px`).toBe(0);
+        // Every plotted point has a full label beside the chart.
+        expect(r.legendItems).toBeGreaterThan(0);
+        break;
+      }
+      const next = page.getByRole("button", { name: /→/ }).last();
+      if (!(await next.count())) break;
+      await next.click().catch(() => {});
+      await page.waitForTimeout(180);
+    }
+  }
+});
