@@ -204,3 +204,134 @@ test("every concept has a real artifact, and none overflows on a phone", async (
     }
   }
 });
+
+// ── Round-2 review findings, each locked so it cannot silently return ────────
+
+test("an inline annotation's popover is readable, not a sliver", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLesson(page, "direction-influence-l7");
+  await enterConcept(page, 4);
+  const cv = page.locator(".cv[data-prose]").first();
+  const reveal = cv.locator(".cv-reveal");
+  if ((await reveal.count()) && (await reveal.getAttribute("aria-expanded")) === "false") await reveal.click();
+  const anno = cv.locator(".cv-para .cv-inline-anno .cv-anno").first();
+  await anno.focus();
+  const tip = page.locator(".cv-tip.is-open").first();
+  await expect(tip).toBeVisible();
+  const box = await tip.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return { w: Math.round(r.width), h: Math.round(r.height), z: Number(getComputedStyle(el).zIndex) };
+  });
+  // Measured 84-104px wide and up to 252px tall when the inline wrapper was
+  // `position: relative` — the popover shrink-wrapped to an inline fragment and
+  // rendered one or two words per line, over the paragraph.
+  expect(box.w, "popover shrink-wrapped to an inline fragment").toBeGreaterThan(200);
+  expect(box.h).toBeLessThan(200);
+  // And it must paint above the fixed mobile tab bar (z-index 60).
+  expect(box.z).toBeGreaterThan(60);
+});
+
+test("a plain-text artifact keeps its column alignment", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLesson(page, "cloud-platform-l4");
+  await enterConcept(page, 0);
+  // Walk to the `text` artifact; it is the aligned option table.
+  let found = false;
+  for (let i = 0; i < 8 && !found; i++) {
+    found = await page.evaluate(() => !!document.querySelector(".cv[data-pre]"));
+    if (found) break;
+    const next = page.getByRole("button", { name: /→/ }).last();
+    if (!(await next.count())) break;
+    await next.click();
+    await page.waitForTimeout(200);
+  }
+  expect(found, "no data-pre artifact found in cloud-platform-l4").toBe(true);
+  const info = await page.evaluate(() => {
+    const cv = document.querySelector(".cv[data-pre]")!;
+    const code = cv.querySelector("code")!;
+    const text = (cv.querySelector(".cv-body") as HTMLElement).innerText;
+    return { ws: getComputedStyle(code).whiteSpace, rows: (text.match(/(billed|idle saving|risk):/g) ?? []).length };
+  });
+  // The prose rejoin collapsed three labelled rows into one run-on sentence and
+  // deleted the alignment that WAS the artifact.
+  expect(info.ws).toBe("pre");
+  expect(info.rows).toBeGreaterThanOrEqual(6);
+});
+
+test("a ragged compare never renders an empty labelled cell", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  // cell-based-architecture is 4 points vs 5 — one of five ragged compares.
+  await openLesson(page, "cloud-platform-l5");
+  await enterConcept(page, 0);
+  let checked = false;
+  for (let i = 0; i < 6 && !checked; i++) {
+    const fold = page.locator(".lesson-content .cp-fold summary").first();
+    if (await fold.count()) await fold.click().catch(() => {});
+    await page.waitForTimeout(200);
+    const r = await page.evaluate(() => {
+      const vs = document.querySelector(".schematic-vs");
+      if (!vs) return null;
+      const empty = [...vs.querySelectorAll(".schematic-vs-cell")].filter((c) => !c.textContent?.trim());
+      return { empty: empty.length, single: vs.querySelectorAll(".schematic-vs-row--single").length };
+    });
+    if (r) {
+      // An empty cell still printed its side label via ::before, so it read as a
+      // heading with nothing under it.
+      expect(r.empty, "empty cell in a ragged compare").toBe(0);
+      checked = true;
+    }
+    const next = page.getByRole("button", { name: /→/ }).last();
+    if (!(await next.count())) break;
+    if (!checked) { await next.click(); await page.waitForTimeout(200); }
+  }
+  expect(checked, "no compare schematic found").toBe(true);
+});
+
+test("the footer link is reachable above the mobile tab bar", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const route of ["/en/", "/en/learn/", "/es/practice/"]) {
+    await page.goto(route);
+    await page.waitForTimeout(400);
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(300);
+    // `main` had the bar's clearance but `footer` is its SIBLING, so the footer's
+    // own link sat under the bar and click() timed out.
+    const link = page.locator("footer a").first();
+    await expect(link).toBeVisible();
+    await link.click({ timeout: 3000 });
+  }
+});
+
+test("the hamburger glyph is centred in its button", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/en/");
+  await page.waitForTimeout(400);
+  const insets = await page.evaluate(() => {
+    const btn = document.querySelector(".nav-burger")!;
+    const svg = btn.querySelector("svg")!;
+    const B = btn.getBoundingClientRect(), S = svg.getBoundingClientRect();
+    return { left: Math.round(S.left - B.left), right: Math.round(B.right - S.right) };
+  });
+  // A `display: inline-flex` override restored align-items but not
+  // justify-content, leaving the glyph jammed left at 1px / 23px — the
+  // "se ve medio raro" the owner reported.
+  expect(Math.abs(insets.left - insets.right)).toBeLessThanOrEqual(2);
+});
+
+test("the lesson concept strip has accessible names and real tap targets", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await openLesson(page, "cloud-platform-l5");
+  await enterConcept(page, 0);
+  const items = page.locator(".concept-nav-item");
+  const n = await items.count();
+  expect(n).toBeGreaterThan(1);
+  for (let i = 0; i < n; i++) {
+    const item = items.nth(i);
+    // Below 1050px the label is display:none and the number is aria-hidden, which
+    // left the button with no accessible name (axe wcag2a button-name, critical).
+    const name = await item.getAttribute("aria-label");
+    expect(name?.trim()).toBeTruthy();
+    const h = await item.evaluate((el) => el.getBoundingClientRect().height);
+    expect(h).toBeGreaterThanOrEqual(40);
+  }
+});

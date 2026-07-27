@@ -37,17 +37,18 @@ module.exports = {
 // configurations that are technically private but effectively exposed.
 
 // ── An SCP constrains OUR PRINCIPALS ───────────────────────────────────────
-// This stops our own roles from opening a bucket up:
+// Unconditional, on purpose: "no principal in this organization may open a
+// bucket up." A condition here would be a way for the action to succeed.
 {
   "Effect": "Deny",
   "Action": ["s3:PutBucketPolicy", "s3:PutBucketAcl", "s3:PutAccountPublicAccessBlock"],
-  "Resource": "*",
-  "Condition": { "StringNotEquals": { "aws:RequestedRegion": "us-east-1" } }
+  "Resource": "*"
 }
-// …but an SCP cannot express "nobody outside the org may READ this", because an
-// SCP is only ever evaluated for principals that are already IN the org. A
+// …but an SCP cannot express "nobody OUTSIDE the org may READ this", because an
+// SCP is only ever evaluated for principals that are already IN the org. So a
 // condition on aws:PrincipalOrgID inside an SCP is inert: the key always equals
-// your own org id, so the deny never fires. That is the trap.
+// your own org id, the deny never fires, and the policy reviews and deploys
+// cleanly while doing nothing. That is the trap.
 
 // ── An RCP constrains THE RESOURCE ─────────────────────────────────────────
 // Deny-only, attached in Organizations, evaluated for EVERY caller including

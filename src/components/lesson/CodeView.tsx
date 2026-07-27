@@ -27,6 +27,7 @@ function renderMd(tokens: MdToken[], keyBase: string): React.ReactNode[] {
     const key = `${keyBase}s${i}`;
     if (tk.kind === "code") return <code key={key} className="cv-inline-code">{tk.value}</code>;
     if (tk.kind === "bold") return <strong key={key}>{tk.value}</strong>;
+    if (tk.kind === "italic") return <em key={key}>{tk.value}</em>;
     return <span key={key}>{tk.value}</span>;
   });
 }
@@ -47,7 +48,17 @@ type CodeLine = Seg[];
  * paints every parenthesis in a sentence like a nested expression, which reads
  * as noise. Prose gets line semantics and nothing else.
  */
-const PROSE_LANGS = new Set(["markdown", "md", "text", "txt"]);
+const PROSE_LANGS = new Set(["markdown", "md"]);
+
+/**
+ * Prose langs get their hard wraps rejoined into paragraphs. `text` deliberately
+ * does NOT: a plain-text artifact in this corpus is a hand-aligned table
+ * (`billed:` / `idle saving:` / `risk:` in columns), and rejoining collapsed
+ * three labelled rows into one run-on sentence — the artifact's shape WAS the
+ * lesson, and the reflow deleted it. `text` keeps `white-space: pre` and its own
+ * alignment, which is the whole reason an author chose it over markdown.
+ */
+const PRE_LANGS = new Set(["text", "txt"]);
 
 /**
  * Group a prose artifact's hard-wrapped lines back into paragraphs.
@@ -95,7 +106,7 @@ function diffClass(line: string): string | undefined {
 
 function tokenizeLines(src: string, lang: string): CodeLine[] {
   const l = (lang || "").toLowerCase();
-  if (PROSE_LANGS.has(l) || l === "diff") {
+  if (PROSE_LANGS.has(l) || PRE_LANGS.has(l) || l === "diff") {
     // No tokenizing: split on newlines and let the line-level classes carry it.
     return src.split("\n").map((line) => (line ? [{ kind: "text" as const, value: line }] : []));
   }
@@ -224,7 +235,12 @@ export function CodeView({
     () => ((lang || "").toLowerCase() === "diff" ? snippet.split("\n").map(diffClass) : null),
     [snippet, lang],
   );
-  const isProse = PROSE_LANGS.has((lang || "").toLowerCase());
+  const langLower = (lang || "").toLowerCase();
+  // isProse drives BOTH the reading typography and the paragraph rejoin. `text`
+  // wants the first and must not get the second, so it is tracked separately.
+  const isProse = PROSE_LANGS.has(langLower);
+  const isPre = PRE_LANGS.has(langLower);
+  const isDiff = (lang || "").toLowerCase() === "diff";
   const rawLines = useMemo(() => snippet.split("\n"), [snippet]);
   // Prose only: rejoin hard-wrapped continuation lines into paragraphs so a memo
   // reads as a document on a phone instead of breaking mid-sentence every 80 cols.
@@ -320,6 +336,9 @@ export function CodeView({
       /* Prose artifacts (a memo, a decision register) get a reading measure and
          no monospace-code framing — they are documents, not programs. */
       data-prose={isProse ? "" : undefined}
+      /* `text` gets the reading typography but keeps its own alignment: these are
+         hand-aligned tables, so reflowing them destroys the artifact. */
+      data-pre={isPre ? "" : undefined}
       data-lang={(lang || "").toLowerCase() || undefined}
       data-collapsed={collapsible && !open ? "" : undefined}
       data-capped={capped && !uncapped ? "" : undefined}
@@ -419,9 +438,23 @@ export function CodeView({
             // With the heading STYLED as a heading, the leading `#` markers are
             // redundant decoration, so they come off. List and table markers stay:
             // they carry meaning we are not re-rendering (a bullet, a column).
-            const content = isProse
-              ? renderMd(tokenizeLine(hLevel ? (rawLines[idx] ?? "").trim().slice(hLevel + 1) : (rawLines[idx] ?? "")), `s${idx}`)
-              : renderSegs(line);
+            //
+            // A diff of prose gets the same inline markdown: these hunks are memos
+            // and RFC comments, so they carry **bold** exactly like the markdown
+            // artifacts do, and leaving it raw showed literal asterisks on 13
+            // lines. The leading +/- is sliced off, rendered, and put back — it is
+            // the diff's meaning and must not go through the tokenizer.
+            let content: React.ReactNode[] | React.ReactNode;
+            if (isProse) {
+              const raw = rawLines[idx] ?? "";
+              content = renderMd(tokenizeLine(hLevel ? raw.trim().slice(hLevel + 1) : raw), `s${idx}`);
+            } else if (isDiff) {
+              const raw = rawLines[idx] ?? "";
+              const marker = /^[+\- ]/.test(raw) ? raw[0] : "";
+              content = [marker, ...renderMd(tokenizeLine(raw.slice(marker.length)), `d${idx}`)];
+            } else {
+              content = renderSegs(line);
+            }
             if (!note) {
               return (
                 <span key={idx} className={lnClass}>

@@ -5,7 +5,7 @@
    "slug": "guardrails-over-gatekeeping",
    "code": {
     "lang": "json",
-    "snippet": "// Proposal 1: a review checklist.  Enforced by memory. Documentation, not control.\n// Proposal 2: a nightly scanner.   Enforced after the fact — and a night of\n//             publicly readable customer data is not a finding you can close,\n//             it is an incident that already happened.\n// Proposal 3: deny the action outright. Enforced by construction.\n//\n// For an IRREVERSIBLE outcome, only the third is a control. Choose the deny AND\n// KEEP THE SCANNER: it catches resource types the policy doesn't cover, and\n// configurations that are technically private but effectively exposed.\n\n// ── An SCP constrains OUR PRINCIPALS ───────────────────────────────────────\n// This stops our own roles from opening a bucket up:\n{\n  \"Effect\": \"Deny\",\n  \"Action\": [\"s3:PutBucketPolicy\", \"s3:PutBucketAcl\", \"s3:PutAccountPublicAccessBlock\"],\n  \"Resource\": \"*\",\n  \"Condition\": { \"StringNotEquals\": { \"aws:RequestedRegion\": \"us-east-1\" } }\n}\n// …but an SCP cannot express \"nobody outside the org may READ this\", because an\n// SCP is only ever evaluated for principals that are already IN the org. A\n// condition on aws:PrincipalOrgID inside an SCP is inert: the key always equals\n// your own org id, so the deny never fires. That is the trap.\n\n// ── An RCP constrains THE RESOURCE ─────────────────────────────────────────\n// Deny-only, attached in Organizations, evaluated for EVERY caller including\n// principals from outside the organization entirely:\n{\n  \"Effect\": \"Deny\",\n  \"Principal\": \"*\",\n  \"Action\": \"s3:*\",\n  \"Resource\": \"*\",\n  \"Condition\": {\n    \"StringNotEqualsIfExists\": { \"aws:PrincipalOrgID\": \"o-example\" },\n    \"BoolIfExists\": { \"aws:PrincipalIsAWSService\": \"false\" }\n  }\n}\n// \"Nothing outside this organization, ever\" — regardless of which principal,\n// which account, or who forgot. Note Action is s3:*, not NotAction: inverting\n// it here would deny everything EXCEPT reads, which is the one thing we are\n// trying to prevent.\n\n// Ship these TWO things in the same change, or the platform becomes a queue:\n//   1. an exception path — documented, time-boxed, named approver — so a\n//      legitimate public dataset doesn't become a standoff\n//   2. instrumentation counting BLOCKED ATTEMPTS on the guardrail. Otherwise the\n//      scanner's shrinking dashboard looks like the effective mechanism at the\n//      next budget review, and the thing actually preventing the incident looks\n//      like it does nothing.",
+    "snippet": "// Proposal 1: a review checklist.  Enforced by memory. Documentation, not control.\n// Proposal 2: a nightly scanner.   Enforced after the fact — and a night of\n//             publicly readable customer data is not a finding you can close,\n//             it is an incident that already happened.\n// Proposal 3: deny the action outright. Enforced by construction.\n//\n// For an IRREVERSIBLE outcome, only the third is a control. Choose the deny AND\n// KEEP THE SCANNER: it catches resource types the policy doesn't cover, and\n// configurations that are technically private but effectively exposed.\n\n// ── An SCP constrains OUR PRINCIPALS ───────────────────────────────────────\n// Unconditional, on purpose: \"no principal in this organization may open a\n// bucket up.\" A condition here would be a way for the action to succeed.\n{\n  \"Effect\": \"Deny\",\n  \"Action\": [\"s3:PutBucketPolicy\", \"s3:PutBucketAcl\", \"s3:PutAccountPublicAccessBlock\"],\n  \"Resource\": \"*\"\n}\n// …but an SCP cannot express \"nobody OUTSIDE the org may READ this\", because an\n// SCP is only ever evaluated for principals that are already IN the org. So a\n// condition on aws:PrincipalOrgID inside an SCP is inert: the key always equals\n// your own org id, the deny never fires, and the policy reviews and deploys\n// cleanly while doing nothing. That is the trap.\n\n// ── An RCP constrains THE RESOURCE ─────────────────────────────────────────\n// Deny-only, attached in Organizations, evaluated for EVERY caller including\n// principals from outside the organization entirely:\n{\n  \"Effect\": \"Deny\",\n  \"Principal\": \"*\",\n  \"Action\": \"s3:*\",\n  \"Resource\": \"*\",\n  \"Condition\": {\n    \"StringNotEqualsIfExists\": { \"aws:PrincipalOrgID\": \"o-example\" },\n    \"BoolIfExists\": { \"aws:PrincipalIsAWSService\": \"false\" }\n  }\n}\n// \"Nothing outside this organization, ever\" — regardless of which principal,\n// which account, or who forgot. Note Action is s3:*, not NotAction: inverting\n// it here would deny everything EXCEPT reads, which is the one thing we are\n// trying to prevent.\n\n// Ship these TWO things in the same change, or the platform becomes a queue:\n//   1. an exception path — documented, time-boxed, named approver — so a\n//      legitimate public dataset doesn't become a standoff\n//   2. instrumentation counting BLOCKED ATTEMPTS on the guardrail. Otherwise the\n//      scanner's shrinking dashboard looks like the effective mechanism at the\n//      next budget review, and the thing actually preventing the incident looks\n//      like it does nothing.",
     "caption": {
      "en": "Three proposals for \"no public data stores\" — and why only a resource control states the invariant.",
      "es": "Tres propuestas para \"ningún almacén de datos público\", y por qué solo un control sobre el recurso expresa la invariante."
@@ -33,21 +33,21 @@
       }
      },
      {
-      "line": 29,
+      "line": 30,
       "note": {
        "en": "An RCP is a resource-side policy, so it names a principal — that's how it reaches callers outside the org.",
        "es": "Un RCP es una política del lado del recurso, así que nombra un principal: así alcanza a quien llama desde fuera de la organización."
       }
      },
      {
-      "line": 39,
+      "line": 40,
       "note": {
        "en": "Deny + NotAction is a classic inversion bug. Read it out loud before shipping it.",
        "es": "Deny + NotAction es un error clásico de inversión. Léelo en voz alta antes de desplegarlo."
       }
      },
      {
-      "line": 45,
+      "line": 46,
       "note": {
        "en": "Prevention is invisible by design, so it loses budget reviews to detection unless you instrument it.",
        "es": "La prevención es invisible por diseño, así que pierde revisiones de presupuesto ante la detección si no la instrumentas."

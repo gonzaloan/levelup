@@ -20,9 +20,12 @@ export function ConceptNav({
       <p className="eyebrow concept-nav-head">{m("lesson.concepts", locale)}</p>
       <ol className="concept-nav-list">
         <li>
-          <button className="concept-nav-item" data-state={idx === -1 ? "current" : "done"} onClick={() => onJump(-1)}>
+          {/* Same reason as below: the dot is aria-hidden and the label is
+              display:none on mobile, so without this the button is nameless. */}
+          <button className="concept-nav-item" data-state={idx === -1 ? "current" : "done"}
+            aria-label={m("lesson.overview", locale)} onClick={() => onJump(-1)}>
             <span className="concept-nav-dot" aria-hidden="true" />
-            <span className="concept-nav-label">{m("lesson.overview", locale)}</span>
+            <span className="concept-nav-label" aria-hidden="true">{m("lesson.overview", locale)}</span>
           </button>
         </li>
         {concepts.map((c, i) => {
@@ -30,10 +33,16 @@ export function ConceptNav({
           const title = meta.get(c.slug) ? t(meta.get(c.slug)!.title, locale) : c.slug;
           return (
             <li key={c.slug}>
+              {/* aria-label because below 1050px `.concept-nav-label` is hidden
+                  and the number is the only remaining child — leaving the button
+                  with no accessible name at all (axe wcag2a `button-name`,
+                  critical, mobile-only). The label carries the number too, so a
+                  screen-reader user hears position AND destination. */}
               <button className="concept-nav-item" data-state={state}
+                aria-label={`${i + 1}. ${title}`}
                 aria-current={i === idx ? "step" : undefined} onClick={() => onJump(i)}>
-                <span className="concept-nav-n mono">{i + 1}</span>
-                <span className="concept-nav-label">{title}</span>
+                <span className="concept-nav-n mono" aria-hidden="true">{i + 1}</span>
+                <span className="concept-nav-label" aria-hidden="true">{title}</span>
               </button>
             </li>
           );

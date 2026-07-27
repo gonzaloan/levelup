@@ -150,7 +150,17 @@ function Compare({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
     );
   }
 
-  const rows = Math.max(left.points.length, right.points.length);
+  // Rows are PAIRS, so a ragged compare (3 points vs 4) must not emit a row with
+  // one empty cell: on mobile each cell prints its own side label via a ::before,
+  // so an empty cell rendered as a heading with nothing under it. Five concepts
+  // have ragged sides. Paired rows first, then any leftovers as single-sided rows
+  // that say which side they belong to.
+  const paired = Math.min(left.points.length, right.points.length);
+  const extraSide: "a" | "b" | null =
+    left.points.length > paired ? "a" : right.points.length > paired ? "b" : null;
+  const extras = extraSide === "a"
+    ? left.points.slice(paired)
+    : extraSide === "b" ? right.points.slice(paired) : [];
   return (
     <div className="schematic-vs" role="table" aria-label={spec.caption ? t(spec.caption, locale) : undefined}>
       <div className="schematic-vs-head" role="row">
@@ -158,16 +168,31 @@ function Compare({ spec, locale }: { spec: SchematicSpec; locale: Locale }) {
         <div className="schematic-vs-mid" aria-hidden="true">vs</div>
         <div className="schematic-vs-h schematic-vs-h--b" role="columnheader">{t(right.title, locale)}</div>
       </div>
-      {Array.from({ length: rows }, (_, i) => (
-        <div className="schematic-vs-row" role="row" key={i} style={{ ["--i" as string]: String(i) }}>
+      {Array.from({ length: paired }, (_, i) => (
+        <div className="schematic-vs-row" role="row" key={i}>
           {/* data-side-* feeds the stacked mobile layout, where the paired
               headers collapse and each cell has to name its own side. */}
           <div className="schematic-vs-cell schematic-vs-cell--a" role="cell" data-side-a={t(left.title, locale)}>
-            {left.points[i] ? t(left.points[i], locale) : ""}
+            {t(left.points[i], locale)}
           </div>
           <div className="schematic-vs-spine" aria-hidden="true" />
           <div className="schematic-vs-cell schematic-vs-cell--b" role="cell" data-side-b={t(right.title, locale)}>
-            {right.points[i] ? t(right.points[i], locale) : ""}
+            {t(right.points[i], locale)}
+          </div>
+        </div>
+      ))}
+      {/* Leftovers from the longer side: a point with no counterpart is still
+          worth showing, but as a single-sided row rather than as half of a pair
+          with an empty, labelled cell opposite it. */}
+      {extras.map((p, i) => (
+        <div className="schematic-vs-row schematic-vs-row--single" role="row" key={`x${i}`} data-side={extraSide!}>
+          <div
+            className={`schematic-vs-cell schematic-vs-cell--${extraSide}`}
+            role="cell"
+            data-side-a={extraSide === "a" ? t(left.title, locale) : undefined}
+            data-side-b={extraSide === "b" ? t(right.title, locale) : undefined}
+          >
+            {t(p, locale)}
           </div>
         </div>
       ))}

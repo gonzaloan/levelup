@@ -172,7 +172,7 @@
 /* An annotated diff line wraps its content in a <button>, which would otherwise
    sit inside the tinted row as an untinted island and break the block of colour.
    Hand the button the row's own background and the tint stays continuous. */
-.cv-ln[class*="cv-d-"] .cv-anno { background: none; min-height: 0; padding-block: 2px; }
+.cv-ln[class*="cv-d-"] .cv-anno { background: none; }
 
 /* Diff of PROSE (a memo, a subject line) is the common case in this corpus, and
    prose does not fit a code column. Wrap it, and hang the +/- in the gutter so
@@ -187,19 +187,24 @@
    makes it unreadable, and it is the artifact itself that teaches here — so it
    gets a reading measure and normal type while keeping the frame, the caption
    and the annotation affordance. */
-.cv[data-prose] .cv-body {
+.cv[data-prose] .cv-body,
+.cv[data-pre] .cv-body {
   font-family: var(--font-body);
   font-size: 0.875rem;
   line-height: 1.65;
   padding: var(--s-4) var(--s-5);
 }
+/* `text` artifacts are hand-aligned tables, so they keep `white-space: pre` and
+   a monospace face — the alignment IS the artifact. They get the reading size
+   and the frame, not the reflow. */
+.cv[data-pre] .cv-body { font-family: var(--font-mono); font-size: var(--t-xs); }
 .cv[data-prose] .cv-body code { white-space: pre-wrap; }   /* wrap, don't scroll */
 .cv[data-prose] .cv-scroll { overflow-x: visible; }
 /* Same reason as the diff case: the 40px tap floor is for clickable CODE lines.
    In a wrapped document it inserts a blank line's worth of gap after every
    annotated paragraph, which reads as a broken layout. The wrapped line is
    already well over 40px tall. */
-.cv[data-prose] .cv-anno { min-height: 0; padding-block: 2px; }
+
 /* Markdown headings and bold markers are the document's structure. We don't
    parse them (the artifact is shown as authored, markers included — that IS what
    a memo looks like in a PR), but the leading # lines get to look like headings. */
@@ -208,9 +213,30 @@
    source's hard wraps come back and the grouping was pointless. */
 .cv-para { white-space: normal; margin-bottom: 0.35em; }
 /* An annotated sentence inside a paragraph is inline, so the affordance sits in
-   the text rather than claiming its own row. */
-.cv-inline-anno { display: inline; position: relative; }
-.cv-inline-anno .cv-anno { display: inline; width: auto; min-height: 0; padding-block: 0; }
+   the text rather than claiming its own row.
+
+   `position: static` on the inline wrapper is deliberate and load-bearing. When
+   it was `relative`, the popover's containing block became an INLINE box, so
+   `position:absolute` + `max-width` shrink-to-fit against that box's last
+   fragment — measured 84–104px wide and up to 252px tall, one or two words per
+   line, overlapping the paragraph. Leaving it static hands the popover to the
+   paragraph's own block box, which has a real width. */
+/* Both classes, because `.cv-ln-anno { position: relative }` is declared later in
+   this file and would otherwise win on source order — which is what kept the
+   popover anchored to a 26px inline fragment. */
+.cv-ln-anno.cv-inline-anno { display: inline; position: static; }
+.cv-inline-anno .cv-anno { display: inline; width: auto; padding-block: 0; }
+/* The paragraph is the positioning context for any tip inside it. */
+.cv-para { position: relative; }
+/* Inside prose the tip spans the paragraph rather than shrink-wrapping, and it
+   sits above the mobile tab bar (z-index 60) instead of under it. */
+.cv-para .cv-tip {
+  left: 0;
+  right: 0;
+  width: auto;
+  max-width: none;
+  z-index: 70;
+}
 
 /* Markdown structure, styled rather than reinterpreted: the `##` and `-` markers
    stay in the text (that IS what the artifact looks like in a PR), but a heading
@@ -242,6 +268,15 @@
 .cv-b3 { color: var(--star); }            /* sand  */
 .cv-b4 { color: var(--ai-accent); }       /* clay  */
 .cv-b5 { color: var(--gen); }             /* azure */
+
+/* The 40px tap floor below applies to clickable CODE lines, which are single
+   rows in a monospace column. It is wrong for WRAPPED text — a diff of prose, a
+   memo paragraph, an inline span — where the line is already taller than 40px
+   and the floor inserts a blank line's worth of gap after every annotation.
+   Stated once here rather than patched per context, which is how it started. */
+.cv[data-lang="diff"] .cv-anno,
+.cv[data-prose] .cv-anno,
+.cv-inline-anno .cv-anno { min-height: 0; padding-block: 2px; }
 
 /* ── Hover-to-explain: annotated line + popover ────────────────────────── */
 .cv-ln-anno { position: relative; }
@@ -285,7 +320,9 @@
   position: absolute;
   left: 0;
   top: calc(100% + 6px);
-  z-index: 30;
+  /* Above the mobile tab bar (09-study-kit.css sets 60). At 30 the bottom of a
+     popover near the foot of the screen was painted over by the bar. */
+  z-index: 70;
   max-width: min(320px, 88vw);
   padding: var(--s-2) var(--s-3);
   font-family: var(--font-body);

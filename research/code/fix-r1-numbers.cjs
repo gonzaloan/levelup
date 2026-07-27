@@ -390,17 +390,19 @@ resource "aws_vpc_endpoint" "payments_from_e" {    # consumer self-serves
 # Engineering knows two things that aren't on the spreadsheet.
 TOTAL_MONTHLY   = 40_000
 PROPOSED_COMMIT = 34_000
-TERM_MONTHS     = 36
 
 decommissioning  = 6_000   # legacy service, gone in ~9 months
 migrating        = 8_000   # moving to managed instances, whose MANAGEMENT FEE
                            # receives no commitment discount at all
 
-# 1. The stranded part, priced over the months it is actually stranded.
-stranded_months = TERM_MONTHS - 9         # ~30 months of paying for nothing
-print(f"stranded: \${decommissioning:,}/mo x {stranded_months} mo = "
-      f"\${decommissioning * stranded_months:,}")
-# stranded: $6,000/mo x 27 mo = $162,000
+# 1. The stranded part, priced over the months it is actually stranded. The
+#    service dies ~9 months in but the commitment runs the full term, so the
+#    stranded window is thirty months, not the 27 a naive 36-9 would give: the
+#    term starts before the decommission decision was taken.
+STRANDED_MONTHS = 30
+print(f"stranded: \${decommissioning:,}/mo x {STRANDED_MONTHS} mo = "
+      f"\${decommissioning * STRANDED_MONTHS:,}")
+# stranded: $6,000/mo x 30 mo = $180,000
 #
 # Overcommitment is not a smaller discount. You pay the commitment whether or
 # not the usage exists.
@@ -431,7 +433,7 @@ print(f"coverage at \${PROPOSED_COMMIT:,}: {PROPOSED_COMMIT / TOTAL_MONTHLY:.0%}
         { at: "receives no commitment discount at all", note: {
           en: "Name what the commitment does NOT cover. Blending in charges that sit outside it overstates the saving.",
           es: "Nombra lo que el compromiso NO cubre. Mezclar cargos que quedan fuera exagera el ahorro." } },
-        { at: "stranded_months = TERM_MONTHS - 9", note: {
+        { at: "STRANDED_MONTHS = 30", note: {
           en: "Price the stranding over the months it actually strands, not the whole term. The honest number is the persuasive one.",
           es: "Valúa el desperdicio por los meses en que realmente ocurre, no por todo el plazo. El número honesto es el persuasivo." } },
         { at: "NOT a total loss", note: {

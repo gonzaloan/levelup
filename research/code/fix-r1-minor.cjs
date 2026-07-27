@@ -46,7 +46,9 @@ for name, switch_cost, p, premium in components:
     total_premium    += premium_5y
     expected_avoided += avoided
     verdict = "worth it" if avoided > premium_5y else "pays, never collects"
-    print(f"{name:24} premium \${premium_5y:>9,}  avoided \${avoided:>9,}  {verdict}")
+    # .0f on both: switch_cost * p is a float, so without it these print as
+    # "$6,000.0" and the commented output below would be a lie.
+    print(f"{name:24} premium \${premium_5y:>9,.0f}  avoided \${avoided:>9,.0f}  {verdict}")
 
 print(f"\\ntotal premium   \${total_premium:,}")
 print(f"expected saving \${expected_avoided:,.0f}")

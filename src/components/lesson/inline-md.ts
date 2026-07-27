@@ -16,11 +16,11 @@
  */
 
 /** Emphasis carried across lines. Mutated in place by `tokenizeInline`. */
-export type MdState = { bold: boolean; code: boolean };
+export type MdState = { bold: boolean; italic: boolean; code: boolean };
 
-export type MdToken = { kind: "text" | "bold" | "code"; value: string };
+export type MdToken = { kind: "text" | "bold" | "italic" | "code"; value: string };
 
-export const freshState = (): MdState => ({ bold: false, code: false });
+export const freshState = (): MdState => ({ bold: false, italic: false, code: false });
 
 /**
  * Tokenize one line, carrying emphasis state in and out.
@@ -39,7 +39,8 @@ export function tokenizeInline(text: string, state: MdState): MdToken[] {
   let buf = "";
   const flush = () => {
     if (!buf) return;
-    out.push({ kind: state.code ? "code" : state.bold ? "bold" : "text", value: buf });
+    const kind = state.code ? "code" : state.bold ? "bold" : state.italic ? "italic" : "text";
+    out.push({ kind, value: buf });
     buf = "";
   };
   for (let i = 0; i < text.length; i++) {
@@ -52,6 +53,10 @@ export function tokenizeInline(text: string, state: MdState): MdToken[] {
     }
     if (text[i] === "`") { flush(); state.code = true; continue; }
     if (text[i] === "*" && text[i + 1] === "*") { flush(); state.bold = !state.bold; i++; continue; }
+    // Single `*` is italic. Checked AFTER `**` so bold wins the longer match, and
+    // the corpus uses it for quoted speech in memos (*"You've run this…"*), which
+    // showed as literal asterisks while only bold was handled.
+    if (text[i] === "*") { flush(); state.italic = !state.italic; continue; }
     buf += text[i];
   }
   flush();
