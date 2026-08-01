@@ -87,6 +87,10 @@ export function Nav({ locale }: { locale: Locale }) {
     { href: `/${locale}/today`, label: m("nav.today", locale) },
     { href: `/${locale}/learn`, label: m("nav.learn", locale) },
     { href: `/${locale}/build`, label: t({ en: "Build Lab", es: "Diseñar" }, locale) },
+    // The Codex sits beside Reading because both are things you CONSULT, as
+    // opposed to Today/Learn which are things you WORK THROUGH. Grouping by verb
+    // is what keeps a six-item nav legible.
+    { href: `/${locale}/codex`, label: t({ en: "Codex", es: "Códice" }, locale) },
     { href: `/${locale}/resources`, label: t({ en: "Reading", es: "Lecturas" }, locale) },
     { href: `/${locale}/practice`, label: m("nav.practice", locale) },
     { href: `/${locale}/me`, label: m("nav.me", locale) },

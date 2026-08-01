@@ -128,8 +128,14 @@ export function LessonView({
           </div>
           {/* Its own clamp, not --t-h1: that token floors at 2rem, which wraps
               "Cloud & Platform Engineering · L7" onto two lines and costs 70px of
-              a phone's first screen. */}
-          <h1 className="display" style={{ fontSize: "clamp(1.5rem, 1rem + 2.6vw, 3.25rem)" }}>
+              a phone's first screen.
+
+              The clamp lives in a CSS class now, not an inline style. As an inline
+              style it beat every stylesheet rule, so the phone rule that shrinks
+              this heading once the reader is inside a concept pane could not take
+              effect — the heading stayed at 26px and the code artifact stayed
+              below the fold. See `.lesson-h1` in 24-concept-pane.css. */}
+          <h1 className="display lesson-h1">
             {t(axis.name, locale)} · {level}
           </h1>
         </div>

@@ -202,6 +202,10 @@ export function parseBackup(text: string): ImportResult {
       completedAt: num(x.completedAt),
     })),
     skipped: strArray(p.skipped),
+    // Codex entries marked read. Additive: a backup written before the Codex
+    // existed has no such key, and strArray yields [] rather than failing the
+    // import — an older export must always still restore.
+    codexRead: strArray(p.codexRead),
   };
 
   const droppedStreak = (isObj(p.streak) ? strArray(p.streak.days).length : 0) - progress.streak.days.length;

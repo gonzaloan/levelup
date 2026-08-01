@@ -32,7 +32,19 @@ const ROOT = path.join(__dirname, "..");
 const LESSONS = path.join(ROOT, "src/content/data/lessons.json");
 
 /** Fields checkConcept validates, and therefore the only ones we will write. */
-const PATCHABLE = new Set(["code", "architecture", "diagram", "example"]);
+const PATCHABLE = new Set([
+  "code", "architecture", "diagram", "example",
+  // The rewrite pass needs these: `explanation` and `keyPoints` are what a concept
+  // actually teaches, and checkConcept validates both (bilingual, min length,
+  // no calques), so patching them is as safe as patching a snippet.
+  "explanation", "keyPoints", "analogy", "pitfalls", "children",
+  // `depth` is where material cut from an over-long explanation goes. The rewrite
+  // capped explanations at ~230 words (the corpus clustered at 268 because it was
+  // written to a quota), so the longest concepts needed somewhere to put the
+  // surplus. checkConcept already validates it — bilingual, min 100 chars, no
+  // calques — so patching it is as safe as patching the explanation itself.
+  "depth",
+]);
 
 function main() {
   const args = process.argv.slice(2);
@@ -66,6 +78,19 @@ function main() {
       // to prevent.
       const field = patch.field ?? "code";
       if (!PATCHABLE.has(field)) { errs.push(`${where}: field "${field}" is not patchable`); continue; }
+      // `null` means REMOVE — the rewrite pass cuts code from concepts where a
+      // snippet was decoration rather than teaching, and deleting has to be as
+      // auditable as adding.
+      if (patch[field] === null) {
+        if (concept[field] === undefined) { errs.push(`${where}: has no ${field} to remove`); continue; }
+        delete concept[field];
+        const before = errs.length;
+        checkConcept(concept, where, ids);
+        if (errs.length > before) continue;
+        applied++;
+        console.log(`  - ${field} removed from ${where}`);
+        continue;
+      }
       const value = patch[field];
       if (!value) { errs.push(`${where}: patch has no ${field} block`); continue; }
       if (concept[field] && !force) {
@@ -81,9 +106,15 @@ function main() {
       if (errs.length > before) continue;   // rejected — leave the concept alone
       concept[field] = value;
       applied++;
-      const detail = field === "code"
-        ? `${value.lang}, ${value.snippet.split("\n").length} lines`
-        : value.kind;
+      // Not every patchable field is a schematic, so the summary branches on
+      // shape: a snippet reports lines, a diagram its kind, a list its length,
+      // and an {en,es} field its word count.
+      const detail =
+        field === "code" ? `${value.lang}, ${value.snippet.split(/\r?\n/).length} lines`
+        : value.kind ? value.kind
+        : Array.isArray(value) ? `${value.length} item(s)`
+        : value.en ? `${value.en.trim().split(/\s+/).length} words`
+        : "replaced";
       console.log(`  + ${field} on ${where} (${detail})`);
     }
   }

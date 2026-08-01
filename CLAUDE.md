@@ -25,9 +25,18 @@ before making changes.
   - `merge-lessons.cjs` — lessons (diagram shape must match its `kind` or it renders empty;
     `architecture` must not restate `diagram`; widgetId must exist in the viz registry).
   - `merge-resources.cjs` + `apply-resource-map.cjs` — the reading list and its concept mapping.
+  - `merge-codex.cjs` — the Codex reference (`codex.json`). Assembles authored micro-batches into
+    clusters via the `BATCH_CLUSTER` map (which is the reference's table of contents — an editorial
+    decision, deliberately not left to whichever agent wrote the batch), validates the entry DAG is
+    acyclic, that `relatedConcepts` name real spine slugs, and that every `cost` is a bound or a
+    figure rather than an adjective. Skips files starting with `_`.
+  - `patch-codex.cjs` — surgical field patcher for authored Codex batch files. Fills a hole at an
+    exact dotted path; refuses to invent structure.
   - `assemble-lesson.cjs` — stitches per-batch authored partials into one lesson.
   - `check-links.mjs` — link liveness. A 200 is NOT enough: it also fails a redirect that lands off
     the article (a "working" link that delivers nothing).
+  - `check-prose.cjs` — the prose gate (below). `--audit` for the full report, `--baseline` to reset
+    the ratchet.
   Each takes `--check` to validate what is already shipped.
 - `src/i18n/` — locales + the UI message catalog (`messages.ts`).
 - `docs/specs/`, `docs/superpowers/plans/` — design specs and implementation plans.
@@ -52,6 +61,27 @@ before making changes.
   random): the authored JSON puts the correct answer first in ~97% of items, which made every quiz
   clickable without reading. Any new quiz surface MUST shuffle, and must key state/grading off the
   ORIGINAL index — never the display position.
+- **Teaching content has a written contract, and the contract is a GATE.**
+  `docs/curriculum/REWRITE-CONTRACT.md` is the five-section template every concept follows
+  (definition first in plain words → a labelled `## What you buy, and what you pay` triple → the
+  trigger with a cheaper option ruled out first → the non-negotiables → analogy last). Authors have
+  exactly four marks in `explanation`: `**bold**`, `` `code` ``, `- bullet`, `## label`.
+  **Why it is a gate and not a style note:** the contract shipped as prose in a doc and was adopted in
+  **1 of 178 concepts**. 177 had zero bold, zero bullets, zero labels; 159 were exactly three
+  paragraphs; 79 contained no digit at all; 171 `why` lines opened "Trains the judgment of…".
+  `tools/check-prose.cjs` now enforces 19 rules over a shrinking baseline (`tools/prose-baseline.txt`),
+  the same ratchet shape as `check-trace.cjs`. Do not add a baseline line to make a build pass.
+  Twice during that pass the gate fired on CORRECT content and the RULE was fixed, not the content —
+  "leverage" as a noun is this domain's core vocabulary (102 correct uses, 0 corporate-verb uses), and
+  `numbers` is a figures list where semicolons are the right separator. A gate that fires on correct
+  content trains people to bypass the gate.
+- **The Codex is a REFERENCE, not a second curriculum.** `/[locale]/codex` answers "what is X, when do
+  I reach for it, what does it cost me" for AI-architecture vocabulary; the 178-concept spine teaches
+  the judgment. They cross-link BOTH ways (`codexEntriesForConcept` on a lesson pane,
+  `relatedConcepts` → lesson on an entry) and must not duplicate each other. Every entry states a
+  `cost` as a bound and a `cheaperFirst` with its winning condition — an entry that cannot is one we
+  do not understand well enough to ship. The reading path is a topological order DERIVED from the
+  entry DAG (`codexPath()`, longest-chain depth), never hand-ordered.
 - **Derive counts and maps from the spine, never hardcode them.** Adding the 7th domain broke five
   places that had literal `"six domains"`, a hardcoded domain→axis map with a silent `?? 1` fallback
   (every Cloud lesson rendered as "Technical Depth"), a `DOMAIN_ORDER.indexOf` sort that put the

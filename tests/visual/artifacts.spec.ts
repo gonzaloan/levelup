@@ -102,6 +102,41 @@ test("a code artifact shows real code on the first screen, not a 'show N lines' 
   }
 });
 
+test("the phone reorder keeps a coherent DOM reading order", async ({ page }) => {
+  // The pane reorders on phones so the figure precedes `why` (24-concept-pane.css),
+  // which is what got the code artifact back above the fold. `order` changes the
+  // VISUAL sequence only, so the thing to protect is that the DOM sequence — what a
+  // screen reader and a no-CSS render get — is still one a reader can follow.
+  //
+  // The authored DOM order is title → why → definition → figure: the framing
+  // question, then what the thing is, then the picture of it. That is the sequence
+  // the owner approved before the reorder existed, so the assertion is that the
+  // reorder did NOT disturb it.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/en/lesson/cloud-platform-l7/");
+  await page.waitForTimeout(700);
+  await page.getByRole("button", { name: /→/ }).first().click();
+  await page.waitForTimeout(400);
+
+  const seq = await page.evaluate(() => {
+    const card = document.querySelector(".lesson-content")!;
+    return [...card.children].map((el) => ({
+      why: el.classList.contains("cp-why"),
+      def: el.classList.contains("cp-def"),
+      fig: el.classList.contains("cp-figure"),
+      y: Math.round(el.getBoundingClientRect().top),
+    }));
+  });
+  const domIdx = (k: "why" | "def" | "fig") => seq.findIndex((s) => s[k]);
+  // DOM: why before definition before figure.
+  expect(domIdx("why"), "why must precede the definition in the DOM").toBeLessThan(domIdx("def"));
+  expect(domIdx("def"), "definition must precede the figure in the DOM").toBeLessThan(domIdx("fig"));
+  // VISUAL: definition, then figure, then why.
+  const y = (k: "why" | "def" | "fig") => seq[domIdx(k)].y;
+  expect(y("def"), "definition renders above the figure").toBeLessThan(y("fig"));
+  expect(y("fig"), "figure renders above why on a phone").toBeLessThan(y("why"));
+});
+
 test("a capped lead artifact can be expanded to its full height, by keyboard too", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await openLesson(page, "cloud-platform-l7");

@@ -28,6 +28,8 @@ export interface Progress {
   streak: StreakState;                    // day keys on which a brief was completed
   dailyLog: Record<string, DailyRecord>;  // day key -> what happened that day
   skipped: string[];                      // concept slugs the learner set aside
+  // ── Codex layer (additive; absent in older saves, defaulted below) ────────
+  codexRead: string[];                    // Codex entry slugs the learner marked read
 }
 
 /** What a learner did on one day — the shareable record of a brief. */
@@ -56,6 +58,7 @@ const EMPTY: Progress = {
   streak: { days: [] },
   dailyLog: {},
   skipped: [],
+  codexRead: [],
 };
 
 export function load(): Progress {
@@ -127,6 +130,22 @@ export function isUnlocked(moduleId: string, prerequisites: string[], p: Progres
 export function markConceptRead(slug: string): Progress {
   return update((p) =>
     p.conceptsRead.includes(slug) ? p : { ...p, conceptsRead: [...p.conceptsRead, slug] }
+  );
+}
+
+/**
+ * Mark a Codex entry read.
+ *
+ * Deliberately separate from `conceptsRead`. The Codex is a reference and the
+ * spine is a curriculum: reading a reference entry is not progress up the ladder,
+ * and folding the two together would inflate every domain's completion ring with
+ * lookups. It also means the Codex cannot award Signal — nothing here
+ * demonstrates judgment, and attaching a reward to consumption reliably produces
+ * learners who consume.
+ */
+export function markCodexRead(slug: string): Progress {
+  return update((p) =>
+    p.codexRead.includes(slug) ? p : { ...p, codexRead: [...p.codexRead, slug] }
   );
 }
 

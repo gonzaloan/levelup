@@ -37,6 +37,48 @@
   margin: 0 0 var(--s-4);
 }
 
+/* ── Structure inside an explanation ──────────────────────────────────────
+   Authors can now write bullets, bold and a short section label. Before this the
+   explanation rendered as flat paragraphs, which left no way to say "here are the
+   three costs" except in prose — and prose hides the shape. */
+.cp-list {
+  margin: 0 0 var(--s-4);
+  padding-left: 1.35em;
+  max-width: 68ch;
+  line-height: 1.65;
+  display: grid;
+  gap: var(--s-2);
+}
+.cp-list li { padding-left: 0.15em; }
+/* The marker takes the track accent so a list reads as part of the concept
+   rather than as a generic document list. */
+.cp-list li::marker { color: var(--track-accent, var(--gen-accent)); }
+.cp-list--num { list-style: decimal; }
+.cp-list--num li::marker { font-family: var(--font-mono); font-size: 0.85em; }
+
+/* A short label inside a concept ("What you buy"). Quieter than the pane title —
+   it groups a few lines, it does not announce a new topic. */
+.cp-sublabel {
+  margin: var(--s-5) 0 var(--s-2);
+  color: var(--text-2);
+}
+
+/* An inline identifier in prose. Distinct from the code slab: no frame, just a
+   change of voice, so a term like `PutBucketPolicy` reads as a literal. */
+.prose-code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 1px 4px;
+  border-radius: var(--r-xs);
+  background: var(--film-2);
+  color: var(--text);
+}
+[data-theme="pixel"] .prose-code { border-radius: 0; }
+
+/* Bold in an explanation is the retention channel, so it gets full contrast
+   against the body colour rather than just extra weight. */
+.cp-para strong, .cp-list strong { color: var(--text); font-weight: 700; }
+
 /* The figure gets air on both sides so it separates the prose above from below. */
 .cp-figure { margin: var(--s-6) 0; }
 
@@ -151,8 +193,11 @@
 /* On a phone two facing columns become unreadable, so the pair stacks — but the
    accent borders and the side labels keep which-is-which obvious. */
 @media (max-width: 560px) {
-  .schematic-vs-head { grid-template-columns: 1fr auto; }
-  .schematic-vs-h--b { display: none; }
+  /* The header row goes entirely. Once each cell names its own side (the
+     `::before` labels below), keeping the header printed side A's title twice —
+     once as a column header and again on the first cell, three lines apart. The
+     stacked layout has no columns to head, so the header has nothing to do. */
+  .schematic-vs-head { display: none; }
   .schematic-vs-row { grid-template-columns: 1fr; gap: var(--s-2); }
   .schematic-vs-spine { display: none; }
   .schematic-vs-cell--b { border-right: 0; padding-right: 0; text-align: left;
@@ -214,3 +259,73 @@
 [data-theme="pixel"] .cp-scenario,
 [data-theme="pixel"] .cp-fold > summary { border-radius: 0; border-width: 2px; }
 [data-theme="pixel"] .cp-fold > summary { font-family: var(--font-pixel, var(--font-mono)); font-size: 0.6rem; }
+
+/* ── Phone: the artifact comes before the framing question ────────────────
+   Measured at 390x844 on cloud-platform-l7 and direction-influence-l6: the pane
+   spends 19px of step counter, 50px of title, 124px of `why` and 132px of
+   definition before the figure, which put a 43-line code artifact at 723px in an
+   844px viewport — 0 lines fully visible. `tests/visual/artifacts.spec.ts` asserts
+   at least 3, and it was right to.
+
+   Cutting more prose would cost the definition, which is the one thing that must
+   precede the visual. So on a phone the figure moves ABOVE the `why`. That is safe
+   in a way that moving the definition would not be: `why` is a framing question
+   the h2 already answers roughly, while the definition tells you what you are
+   looking AT.
+
+   `order` on a flex container, so the DOM sequence — and therefore the reading
+   order for a screen reader and the no-CSS order — stays exactly as authored.
+   Measured: DOM order stays title → why → definition → figure, which is the
+   original owner-approved sequence and reads correctly on its own; the visual order
+   becomes title → definition → figure → why. Both are coherent, which is the test
+   for whether an `order` reorder is legitimate. Focus order is unaffected — the one
+   backward jump when tabbing the pane comes from the code artifact putting its
+   annotated lines before its expand button, and it measures identically at 1280px,
+   so it predates this and is not caused by the reorder.
+   Named classes rather than positional selectors: `.cp-para:first-of-type` matches
+   nothing here, because `.cp-why` is the card's first `<p>`. */
+@media (max-width: 640px) {
+  .lesson-content { display: flex; flex-direction: column; }
+  /* The catch-all goes FIRST. It has the same specificity as the named rules
+     below, so placing it last would override every one of them. */
+  .lesson-content > *          { order: 6; }
+  .lesson-content > .cp-head   { order: 1; }
+  .lesson-content > .cp-title  { order: 2; }
+  .lesson-content > .cp-def    { order: 3; }
+  .lesson-content > .cp-figure { order: 4; }
+  /* `why` follows the figure it frames. A DISTINCT value from the figure's: tied
+     values fall back to source position, which would put `why` first again — the
+     exact thing this block exists to prevent. */
+  .lesson-content > .cp-why    { order: 5; margin-top: var(--s-2); }
+}
+
+/* ── Phone: the lesson hero shrinks once you are inside a concept ──────────
+   Reordering the pane got the figure from 723px to 431px WITHIN the card, and the
+   code artifact still started at 595px, because 329px is spent before the card
+   even begins: the domain hero (h1 + world splash), the progress rail, and the
+   concept strip. A 45vh-capped code slab starting at 595px in an 844px viewport
+   leaves one line.
+
+   Inside a concept the hero is the least useful of the three. The h1 repeats the
+   domain name that the concept strip above the pane and the level tag already
+   carry, and the reader chose this lesson two taps ago — they know where they are.
+   So on a phone it drops to a single line of type. The rail and the strip stay:
+   both answer "where am I in this lesson", which the hero does not.
+
+   `:has()` scopes this to a pane view — the overview screen keeps its full hero,
+   because that IS the arrival screen and the splash is doing work there. */
+/* The lesson heading's own clamp. `--t-h1` floors at 2rem, which wraps
+   "Cloud & Platform Engineering · L7" onto two lines and costs 70px of a phone's
+   first screen. This was an inline style on the element, which meant it outranked
+   every stylesheet rule — including the phone rule below. */
+.lesson-h1 { font-size: clamp(1.5rem, 1rem + 2.6vw, 3.25rem); }
+
+@media (max-width: 640px) {
+  .lesson-wrap:has(.lesson-grid) .lesson-h1 {
+    font-size: 1.05rem;
+    line-height: 1.2;
+    color: var(--text-2);
+    font-family: var(--font-head);
+    letter-spacing: 0;
+  }
+}

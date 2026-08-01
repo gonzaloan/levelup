@@ -306,6 +306,81 @@ export interface PathStep {
   moduleId?: string;          // if a deep module backs this concept
 }
 
+// ── The Codex (AI-Architect reference) ──────────────────────────────────
+// A REFERENCE, deliberately not a lesson. The spine teaches judgment over 178
+// concepts on a prerequisite DAG; the Codex answers "what is X, when do I reach
+// for it, and what does it cost me" for the vocabulary an AI architect is
+// expected to already have — chunking strategies, index families, agent
+// patterns, serving mechanics.
+//
+// Every entry carries the same six-part anatomy, because a reference whose
+// entries have different shapes cannot be scanned. `cost` is a bound or a
+// number, never an adjective; `cheaperFirst` names the option to rule out first.
+// Those two fields ARE the editorial position — an entry that cannot state them
+// is an entry we do not understand well enough to ship.
+export interface CodexEntry {
+  slug: string;
+  term: I18nText;
+  definition: I18nText;        // what it IS, plain words, ≤30 words
+  howItWorks: I18nText;        // the mechanism, concrete
+  whenToUse: I18nText;         // the trigger, as a condition you could check
+  cost: I18nText;              // a bound or a figure — never "more reliable"
+  cheaperFirst: I18nText;      // the cheaper option, and what would make it win
+  failureMode: I18nText;       // how this breaks in practice
+  numbers?: I18nText;          // verified figures with units
+  source: string;              // the URL that was actually fetched
+  diagram?: Schematic;         // authored SVG via the existing Schematic renderer
+  /** Entries that must be understood first — the Codex's own DAG. */
+  prerequisites: string[];
+  /** Cross-links INTO the 178-concept spine, so the two surfaces reinforce. */
+  relatedConcepts: string[];
+  /** Optional interactive widget from the viz kit. */
+  visual?: ConceptVisual;
+}
+
+export interface CodexCluster {
+  slug: string;
+  title: I18nText;
+  tagline: I18nText;           // one line: what this cluster lets you decide
+  entries: CodexEntry[];
+}
+
+// A real reference architecture, redrawn from vendor documentation. Never
+// invented and never idealized: `source` is the doc that was fetched, and the
+// tradeoffs are the ones the doc states.
+export interface CodexArchitecture {
+  slug: string;
+  name: I18nText;
+  problem: I18nText;
+  whenThisShape: I18nText;
+  components: { label: I18nText; role: I18nText }[];
+  flow: I18nText[];            // ordered steps
+  tradeoffs: I18nText[];
+  failureModes: I18nText[];
+  source: string;
+  vendor: string;              // aws | gcp | azure | anthropic | other
+  diagram: Schematic;
+}
+
+export interface Codex {
+  clusters: CodexCluster[];
+  architectures: CodexArchitecture[];
+}
+
+/**
+ * A step on a reading path through the Codex.
+ *
+ * The path exists because a reference with 90 entries and no route through it is
+ * a glossary, and the owner asked for a way to LEARN it, not just look things up.
+ * Derived from the entry DAG at build time — never hand-ordered, so it cannot
+ * drift from the prerequisites.
+ */
+export interface CodexPathStep {
+  entrySlug: string;
+  clusterSlug: string;
+  depth: number;               // longest prerequisite chain reaching it
+}
+
 // ── Assessment run/result shapes ────────────────────────────────────────
 export interface Response {
   itemId: string;

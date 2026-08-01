@@ -84,7 +84,6 @@
 }
 
 /* ── Body: the code slab ───────────────────────────────────────────────── */
-.cv-scroll { overflow-x: auto; }
 .cv-body {
   margin: 0;
   padding: var(--s-3) var(--s-4);
@@ -93,8 +92,31 @@
   color: var(--text);
   tab-size: 2;
 }
-.cv-body code { font: inherit; white-space: pre; }
-.cv-ln { display: block; }
+/*
+ * Code WRAPS. It does not scroll sideways.
+ *
+ * `white-space: pre` + `overflow-x: auto` is the conventional choice and it was
+ * wrong here. Measured on the live site: the primary artifact of
+ * cloud-platform-l5 concept 1 ran 315px past the viewport on a phone and 105px
+ * on desktop, and what got cut was the COMMENTS — "// The three incidents were: a
+ * bulk import saturating shared workers, a…". The comments are the teaching; the
+ * code is the evidence. Truncating the teaching to preserve a line-for-line
+ * facsimile of a file gets the priority backwards, and nobody drag-scrolls a code
+ * block on a phone to find the end of a sentence.
+ *
+ * 41 of 111 artifacts have a line past 80 characters, so this is not an outlier.
+ *
+ * `text-indent` hangs the continuation so a wrapped line still reads as one
+ * logical line rather than as a new statement — the thing a reader loses when
+ * code wraps naively.
+ */
+.cv-scroll { overflow-x: visible; }
+.cv-body code { font: inherit; white-space: pre-wrap; overflow-wrap: break-word; }
+.cv-ln {
+  display: block;
+  padding-left: 2.2ch;
+  text-indent: -2.2ch;
+}
 
 /* ── Phone: keep the head to one row ────────────────────────────────────
    `flex-wrap` plus a full-width caption pushed Copy onto a row of its own, so
@@ -103,7 +125,35 @@
    whole row (it's a sentence), and the controls share the row above it. */
 @media (max-width: 640px) {
   .cv-head { padding: var(--s-2); gap: var(--s-2); row-gap: 4px; }
-  .cv-caption { order: 3; flex: 1 0 100%; }
+  /*
+   * The caption is capped at two lines on a phone.
+   *
+   * Measured on cloud-platform-l7 concept 1: a 113-character caption on its own
+   * full-width row wrapped to three lines and made `.cv-head` 119px tall — more
+   * vertical space than six lines of the code it introduces. With the artifact
+   * starting at 562px in an 844px viewport, that head was the difference between
+   * two visible lines of code and the five the pane needs
+   * (`tests/visual/artifacts.spec.ts`).
+   *
+   * Clamped, not truncated with a tooltip: the full string stays in the DOM, so a
+   * screen reader and a `find in page` still get all of it, and the visual clip is
+   * only the phone's compromise. Desktop shows it whole.
+   *
+   * ONE line, not two. Two still left the head at 93px, and the artifact starts at
+   * 563px on this concept — a 281px budget of which the head was taking a third.
+   * A caption is the label on a figure the reader is about to look at; one line of
+   * it is enough to know what the figure is, and the figure itself is the thing
+   * the pane exists to show.
+   */
+  .cv-caption {
+    order: 3;
+    flex: 1 0 100%;
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.35;
+  }
   .cv-head-spacer { order: 2; }
   .cv-copy, .cv-reveal { order: 2; }
   /* The label is redundant next to the icon at this size. */
@@ -204,8 +254,22 @@
 }
 /* `text` artifacts are hand-aligned tables, so they keep `white-space: pre` and
    a monospace face — the alignment IS the artifact. They get the reading size
-   and the frame, not the reflow. */
+   and the frame, not the reflow.
+
+   This comment was true and the rule was not. When `.cv-body code` moved to
+   `pre-wrap` (so long code comments wrap instead of scrolling off a phone), the
+   `[data-pre]` case inherited it and the aligned columns collapsed. It needs the
+   override written out, plus the sideways scroll back: a table is the one artifact
+   where scrolling to see column 90 is correct, because wrapping it destroys the
+   only thing it is communicating. `tests/visual/artifacts.spec.ts` asserts the
+   computed value is exactly `pre`. */
 .cv[data-pre] .cv-body { font-family: var(--font-mono); font-size: var(--t-xs); }
+.cv[data-pre] .cv-body code { white-space: pre; overflow-wrap: normal; }
+.cv[data-pre] .cv-scroll { overflow-x: auto; }
+/* The hanging indent exists to keep a WRAPPED code line reading as one logical
+   line. Nothing wraps here, so it would just shift every row 2.2ch left of its
+   own column guide. */
+.cv[data-pre] .cv-ln { padding-left: 0; text-indent: 0; }
 .cv[data-prose] .cv-body code { white-space: pre-wrap; }   /* wrap, don't scroll */
 .cv[data-prose] .cv-scroll { overflow-x: visible; }
 /* Same reason as the diff case: the 40px tap floor is for clickable CODE lines.

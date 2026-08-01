@@ -40,24 +40,38 @@ describe("artifact numbers trace to their concept", () => {
     const original = readFileSync(LESSONS, "utf8");
     try {
       const data = JSON.parse(original);
-      let injected = false;
+      // The victim is DERIVED, not named. This test used to hardcode
+      // `cell-based-architecture`, and then that concept's snippet was
+      // deliberately cut (a router implementation does not explain what a cell
+      // is — docs/curriculum/cloud-platform-l5.txt rule 6). The fixture silently
+      // stopped injecting anything, so the only test that proves the gate has
+      // teeth was passing on an empty premise. Pick the first annotated artifact
+      // that is not in the baseline, so the failure stays attributable and the
+      // fixture survives any content edit.
+      const baseline = new Set(
+        readFileSync(path.join(ROOT, "tools/trace-baseline.txt"), "utf8")
+          .split(/\r?\n/)
+          .map((l) => l.trim())
+          .filter((l) => l && !l.startsWith("#"))
+      );
+      let victim = "";
       for (const lesson of data.lessons) {
         for (const c of lesson.concepts) {
-          // An artifact NOT in the baseline, so the failure is attributable.
-          if (c.slug === "cell-based-architecture" && c.code) {
+          if (victim) continue;
+          if (c.code?.annotations && !baseline.has(`${lesson.lessonId}/${c.slug}`)) {
             c.code.annotations.push({
               line: 2,
               note: { en: "This costs $847,000 a year.", es: "Esto cuesta $847,000 al año." },
             });
-            injected = true;
+            victim = c.slug;
           }
         }
       }
-      expect(injected, "test fixture concept not found").toBe(true);
+      expect(victim, "no annotated non-baselined artifact to inject into").not.toBe("");
       writeFileSync(LESSONS, JSON.stringify(data), "utf8");
       const { ok, out } = runGate();
       expect(ok, "gate passed an invented $847,000").toBe(false);
-      expect(out).toContain("cell-based-architecture");
+      expect(out).toContain(victim);
       expect(out).toContain("847000");
     } finally {
       writeFileSync(LESSONS, original, "utf8");
