@@ -2,8 +2,17 @@
 // Complete-the-sentence. Text segments with blanks between them; a word bank
 // below. Tap a blank to select it, then tap a bank word to fill it (tap a
 // filled blank to clear it). Fully keyboard/mouse/touch — no drag needed.
-import { useState } from "react";
+//
+// The bank is rendered in a SHUFFLED order (`displayForCloze`). 58 of the 61
+// authored cloze checks answer [0,1,2,…], and `place()` auto-advances to the next
+// empty blank — so with the bank in authored order, tapping tokens left to right
+// filled every blank correctly without reading a word. See `checkDisplay.ts`.
+//
+// `fill` and every emitted value stay in AUTHORED bank indices; only the render
+// order changes. Grading must never see a display position.
+import { useMemo, useState } from "react";
 import { t, type Locale } from "@/i18n/config";
+import { displayForCloze } from "@/lib/checkDisplay";
 import type { ClozeCheck } from "@/lib/types";
 
 export function ClozePlayer({
@@ -14,6 +23,8 @@ export function ClozePlayer({
   const nBlanks = item.answers.length;
   const [fill, setFill] = useState<(number | null)[]>(Array(nBlanks).fill(null));
   const [active, setActive] = useState(0);   // which blank is selected
+  // Deterministic in item.id, so server and client agree (no Math.random).
+  const { bankOrder } = useMemo(() => displayForCloze(item), [item]);
 
   function emit(next: (number | null)[]) {
     setFill(next);
@@ -56,10 +67,10 @@ export function ClozePlayer({
         ))}
       </p>
       <div className="cloze-bank" role="group" aria-label="word bank">
-        {item.bank.map((w, bi) => (
+        {bankOrder.map((bi) => (
           <button key={bi} type="button" className="cloze-token" disabled={revealed || used.has(bi)}
             onClick={() => place(bi)}>
-            {t(w, locale)}
+            {t(item.bank[bi], locale)}
           </button>
         ))}
       </div>

@@ -1,9 +1,20 @@
 "use client";
 // Sort items into buckets. Tap an item to select it, then tap a bucket to drop
 // it there (or use the per-item bucket buttons). Emits the chosen bucket index
-// per item, in item order (-1 for unplaced).
-import { useState } from "react";
+// per item, in AUTHORED item order (-1 for unplaced).
+//
+// Both the tray and the buckets render in a shuffled order
+// (`displayForCategorize`). 62 of the 81 authored categorize checks list their
+// items already grouped by bucket, so with the tray in authored order a learner
+// could sweep it and drop the first half in the first bucket without reading. A
+// fixed bucket order is its own tell too — authors tend to write the "good"
+// bucket first. See `checkDisplay.ts`.
+//
+// `placed` and the emitted array stay indexed by AUTHORED item position, because
+// `gradeCheck` compares against `item.items.map(it => it.bucket)`.
+import { useMemo, useState } from "react";
 import { t, type Locale } from "@/i18n/config";
+import { displayForCategorize } from "@/lib/checkDisplay";
 import type { CategorizeCheck } from "@/lib/types";
 
 export function CategorizePlayer({
@@ -13,12 +24,15 @@ export function CategorizePlayer({
 }) {
   const [placed, setPlaced] = useState<number[]>(Array(item.items.length).fill(-1));
   const [sel, setSel] = useState<number | null>(null);
+  // Deterministic in item.id, so server and client agree (no Math.random).
+  const { itemOrder, bucketOrder } = useMemo(() => displayForCategorize(item), [item]);
 
   function assign(itemIdx: number, bucket: number) {
     if (revealed) return;
     const next = [...placed]; next[itemIdx] = bucket; setPlaced(next); setSel(null); onChange(next);
   }
-  const unplaced = item.items.map((_, i) => i).filter((i) => placed[i] < 0);
+  // Tray in DISPLAY order, holding authored indices.
+  const unplaced = itemOrder.filter((i) => placed[i] < 0);
 
   return (
     <div className="categorize">
@@ -34,14 +48,15 @@ export function CategorizePlayer({
       </div>
       {/* buckets */}
       <div className="cat-buckets">
-        {item.buckets.map((b, bi) => (
+        {bucketOrder.map((bi) => (
           <div key={bi} className="cat-bucket">
             <button type="button" className="cat-bucket-head" disabled={revealed || sel == null}
               onClick={() => sel != null && assign(sel, bi)}>
-              {t(b, locale)}
+              {t(item.buckets[bi], locale)}
             </button>
             <ul className="cat-bucket-items">
-              {item.items.map((it, i) => {
+              {itemOrder.map((i) => {
+                const it = item.items[i];
                 if (placed[i] !== bi) return null;
                 const ok = revealed && it.bucket === bi;
                 return (
