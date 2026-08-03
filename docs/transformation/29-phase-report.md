@@ -3,6 +3,33 @@
 > The section 29 reporting format, for the work done on branch `transformation-v2`
 > on 2026-08-02. Seven commits.
 
+## The review round, first
+
+Two adversarial reviewers were run against this work with instructions to assume I
+had been careless. Both returned **FAIL**: three assessment blockers and six content
+blockers. Every one was reproduced with a number before being fixed, and every one
+was **my fix being incomplete rather than wrong**:
+
+| What I built | What it missed |
+|---|---|
+| A disjoint practice/graded pool split | Correct — and `/today` used the raw accessor and served all 70 held-out items |
+| A withheld answer key on the mastery gate | Correct for MCQ — and the four check mechanics still marked every element ok/bad, against a frozen layout, which is a solvable oracle |
+| An `unsafe` predicate per mechanic | Rejected one exploit from a family of m+1; 28 of 93 match checks stayed open |
+| A partial retraction of the RAG ceiling claim | 3 of 11 fields; seven siblings still taught it, one ContextRail tab away |
+| Nodes authored as ordered scales | Against axis labels I left running the other way, on three diagrams |
+
+And the attack that turned out to **dominate** I had not measured at all: options are
+identified by TEXT, so shuffling positions does not stop elimination across retries.
+23 of 35 checkpoints exceeded a 5% zero-knowledge clear rate, worst 30.6%. Bounded by
+capping attempts and by honouring the 0.85 threshold `store.ts` already documented —
+`(n-1)/n` is 0.75 at four steps, and 9 checkpoints cleared below the project's own bar.
+
+Two of my tests also passed after the defect they guard was fully restored.
+
+The lesson generalises past this codebase: **a fix verified only by its author
+converges on the author's model of the defect.** Everything above was found by
+someone told to assume I was careless.
+
 ## Summary
 
 I ran phases 0–2 of the transformation prompt (recon, inventory, audit) and part
@@ -28,14 +55,17 @@ Every count is reproducible. The command is named beside each.
 | Checks before / after | 290 → 368 | `node tools/check-coverage.cjs --report` |
 | `cloud-platform` concepts with a check | 0/26 → 26/26 | same |
 | Checks passable by positional play | ~164/290 → 0/368 | `tests/check-integrity.test.ts` |
+| Checks passable by ANY blind pattern in the family | 28+/368 → 0/368, attempts 0-3 | `tests/exploit-family.test.ts` |
+| Graded checks reachable from `/today` | 70/70 → 0/70 | same |
+| Worst checkpoint, zero-knowledge clear | 30.6% → 6.3% | same |
 | Graded checks identical to practice checks | 66/70 (94.3%) → 0 | same |
 | Authored checks reachable by any learner | 74/368 (20%) → 209/368 (57%) | same |
 | `axes` diagrams rendering nothing | 7 → 0 | `tests/visual/axes-figures.spec.ts` |
 | Dead diagram references | 16 → 0 | `node tools/check-refs.cjs` |
 | Missing OG share card | 1 → 0 | same |
 | Lesson overviews using the banned template | 12 reported / 17 real → 12 baselined, 5 rewritten | `node tools/check-prose.cjs` |
-| Tests | 207 → 232 | `npm test` |
-| Content validators in `verify` | 4 → 7, plus 2 self-tests | `npm run verify` |
+| Tests | 207 → 246 | `npm test` |
+| Content validators in `verify` | 4 → 8, plus 2 self-tests | `npm run verify` |
 
 ### The three blockers, in order of severity
 
