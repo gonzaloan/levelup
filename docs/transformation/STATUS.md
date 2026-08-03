@@ -26,6 +26,14 @@ passed without reading would have been building on sand.
 | **`cloud-platform` check bank** | 0 → 26 of 26 concepts. 78 checks, 7 validated batches. 368 total |
 | **Practice/graded pool split** | 94.3% → 0% overlap; reachable content 20% → 57% |
 | **Answer key withheld on a miss** | A wrong pick marks only the pick; attempt counter reshuffles |
+| **The /today bypass** | `poolFor` was disjoint and the property still failed: `TodayView` used the raw accessor and served all 70 held-out graded checks. 70/70 → 0/70 |
+| **The Mastermind oracle** | Graded checks froze in one order AND marked every element ok/bad. A solver cleared all 35 checkpoints by attempt 4. Attempt threaded through `checkDisplay`; `showDetail` false in graded mode |
+| **The build printed its own answer** | `gradeBuild`'s criterion labels state the topology in words and rendered on every commit, in graded mode too |
+| **The exploit FAMILY, not one member** | Rejecting only the straight diagonal left 28/93 match checks open to some rotation. All four mechanics now reject the family, verified across attempts 0-3 |
+| **Text-elimination, the dominant attack** | Not positional, so the shuffle cannot touch it. 23/35 checkpoints exceeded 5%, worst 30.6%. Bounded by `MAX_ATTEMPTS = 2` + the 0.85 floor |
+| **The partial retraction** | The RAG ceiling fix landed on 3 of 11 fields; 7 siblings still taught it, one ContextRail tab away. Propagated |
+| **3 inverted axes diagrams** | Nodes ordered against unedited axis labels. `check-axes.cjs` catches the class, and found a 4th in untouched content |
+| **6 fabricated figures + 3 cross-check contradictions** | Numbers a concept's prose does not contain, and two checks teaching opposite handling of the same $6k |
 | **Predict stage** | The 5th of 8 target stages, on the RAG slice. 5 browser tests |
 | **7 empty `axes` diagrams** | Authored + the validator hole that let them ship |
 | **16 dead diagram references** | Removed; `tools/check-refs.cjs` resolves every reference now |
@@ -37,7 +45,16 @@ passed without reading would have been building on sand.
 
 ## In review
 
-Nothing. Every item above has passing tests and a commit.
+Two adversarial reviewers returned **FAIL** on the first round, with 3 assessment
+blockers and 6 content blockers between them. Every one was reproduced, fixed, and
+covered by a test. A round-2 assessment review is running against the fixes.
+
+**What the first round proved about my own work:** every blocker was my fix being
+INCOMPLETE rather than wrong. The pool split was correct and failed at a third call
+site. The withheld key was correct and did not reach the four check mechanics. The
+per-mechanic guard was correct for one exploit out of a family of m+1. And I had not
+measured the attack that turned out to dominate. Two of my tests also passed after
+the defect they guard was fully restored.
 
 ## Blocked
 
@@ -59,15 +76,17 @@ Nothing is blocked on a decision. The items below are unstarted, not stuck.
 ### Content
 - 470 learner-facing units: 178 spine concepts, 107 Codex entries, 14 reference
   architectures, 35 checkpoints, 116 reading resources, 6 builds, 14 legacy modules
-- **368 checks** across all 7 domains (was 290 across 6)
+- **368 checks** across all 7 domains (was 290 across 6), 209 of them reachable by a
+  learner (was 74)
 - Audit means over the 178 teaching concepts, and no concept scores 0 on any
   dimension: A 2.22 · C 3.48 · D 3.72 · E 3.03 · F 3.15 · G 3.27 · H_en 3.84 ·
   H_es 3.92 · I 3.62
 
 ### Verification
-- 229 vitest across 25 files
-- 5 content validators: `merge-lessons`, `merge-codex`, `check-trace`,
-  `check-prose`, `merge-checks` — plus `check-coverage` and `check-refs`
+- 244 vitest across 26 files
+- 8 content validators in `npm run verify`: `merge-lessons`, `merge-codex`,
+  `merge-checks`, `check-refs`, `check-coverage`, `check-axes`, `check-trace`,
+  `check-prose`
 - 2 gate self-tests: 25 + 16 assertions, each replaying real defects AND real
   correct content
 - 238-page static export

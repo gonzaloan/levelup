@@ -95,7 +95,24 @@ before making changes.
   **Practice and graded checks come from disjoint pools** (`poolFor` in `checks.ts`). They used to be
   the same items: 66 of 70 graded checkpoint checks were what the learner had just solved
   formatively with free retry and the answer printed. Also, both selectors took only the first two,
-  so 294 of 368 authored checks were unreachable by anyone.
+  so 294 of 368 authored checks were unreachable by anyone. **The split is a GLOBAL property and a
+  private helper cannot enforce it** — it was correct and still failed, because `TodayView` called
+  the raw `checksForConcept` and handed back all 70 held-out items. Any surface serving checks must
+  use a practice-pool accessor, and `tests/exploit-family.test.ts` greps the call sites rather than
+  trusting a remembered list.
+  **In GRADED mode the players must not mark elements individually.** A per-element ok/bad vector
+  against a re-enterable layout is a Mastermind board: a consistency-filter solver cleared categorize
+  in 2-3 attempts and cloze in 3-7. `showDetail` on `CheckHost` answers "may they see WHICH elements
+  were wrong", which is a different question from `mode`'s "is this scored" — the Daily Brief scores
+  and still shows detail, because it never re-offers the same item.
+  **A guard must cover the exploit FAMILY, not one member.** Rejecting only the straight diagonal left
+  28 of 93 match checks (14 of the 24 3x3s) open to some rotation. All four mechanics now reject
+  rotations, reversals and alternations, verified across attempts 0-3.
+  **The dominant attack is not positional and the shuffle cannot touch it.** Options are identified by
+  TEXT, so a learner remembers what they ruled out even when it moves. On attempt J they choose among
+  n-(J-1) texts. Measured: 23 of 35 checkpoints exceeded a 5% zero-knowledge clear rate somewhere in
+  attempts 1-6, worst 30.6%. Bounded by `MAX_ATTEMPTS = 2` plus honouring the 0.85 floor that
+  `store.ts` documents — `(n-1)/n` is 0.75 at four steps, and 9 checkpoints cleared below it.
   **A failed checkpoint does not reveal the key.** It used to paint the correct option green on every
   reveal while `retry()` replayed an identical order, so two passes cleared any gate. A wrong pick
   now marks only the pick, and an attempt counter feeds the shuffle key.
