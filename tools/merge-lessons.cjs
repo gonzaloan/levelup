@@ -133,6 +133,15 @@ function checkSchematic(s, where, ids) {
   } else if (s.kind === "axes") {
     checkI18n(s.xAxis, `${where}.xAxis`, TERMISH);
     checkI18n(s.yAxis, `${where}.yAxis`, TERMISH);
+    // An `axes` schematic with no nodes renders two axis lines and NOTHING on
+    // them: Schematic.tsx reads `spec.nodes ?? []` and gates its legend on
+    // `nodes.length > 0`. This file's header has always promised that a shape
+    // mismatch is caught here — and for `axes` it was not checked at all, which
+    // is how 7 empty figures shipped. Verified in the built HTML: the caption is
+    // present and no `schematic-axes` element exists.
+    if (!Array.isArray(s.nodes) || s.nodes.length < 2) {
+      bad(`${where}: kind axes needs ≥2 nodes to plot, or it renders an empty pair of axis lines (set kind "none" if no figure is intended)`);
+    }
   }
 }
 
@@ -186,8 +195,13 @@ function checkConcept(c, where, ids) {
   if (c.visual) {
     if (!ids.has(c.visual.widgetId)) bad(`${where}.visual: unknown widgetId "${c.visual.widgetId}"`);
   }
-  if (c.source !== undefined && (typeof c.source !== "string" || c.source.trim().length < 8)) {
-    bad(`${where}.source: too short to be checkable`);
+  // `source` was validated ONLY when present, so a concept could ship asserting
+  // specific multipliers with no citation at all and nothing noticed —
+  // `unit-economics-at-scale` did exactly that. All 178 concepts now carry one, so
+  // the field is required rather than optional: an enriched concept that makes a
+  // quantitative claim without a source cannot be maintained (section 14).
+  if (c.source === undefined || typeof c.source !== "string" || c.source.trim().length < 8) {
+    bad(`${where}.source: missing or too short to be checkable`);
   }
 }
 

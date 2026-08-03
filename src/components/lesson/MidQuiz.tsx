@@ -48,7 +48,10 @@ export function MidQuiz({
           })}
         </div>
         {revealed && (
-          <div style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: item.options[picked!].correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
+          // role="status" so the verdict is announced when it appears, matching
+          // CheckpointPlayer and ModuleView. The glyph was already here; the
+          // announcement was not.
+          <div role="status" style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: item.options[picked!].correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
             <p className="eyebrow" style={{ color: item.options[picked!].correct ? "var(--ok)" : "var(--bad)", marginBottom: 6 }}>
               {item.options[picked!].correct ? `✓ ${m("lesson.correct", locale)}` : `✗ ${m("lesson.notQuite", locale)}`}
             </p>

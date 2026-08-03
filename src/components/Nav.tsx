@@ -33,7 +33,13 @@ function Mark() {
         boxShadow: "var(--edge-hi)",
       }}
     >
-      <svg width="18" height="18" viewBox="-11 -11 22 22" style={{ display: "block", opacity: hasEmblem ? 0 : 1 }}>
+      {/* The sextant fallback is decorative — the wordmark beside it carries the
+          name. It is hidden with opacity when the WebP emblem loads, and opacity
+          does NOT remove a node from the accessibility tree, so without
+          aria-hidden a screen reader announces an unnamed graphic in the nav on
+          every page. Every other decorative glyph in this codebase is hidden by
+          an aria-hidden parent; this one had none. */}
+      <svg aria-hidden="true" focusable="false" width="18" height="18" viewBox="-11 -11 22 22" style={{ display: "block", opacity: hasEmblem ? 0 : 1 }}>
         <circle r="9.5" fill="none" stroke="var(--hairline-2)" strokeWidth="1" />
         <path d="M0,-10 L0,10 M-10,0 L10,0" stroke="var(--hairline-2)" strokeWidth="0.6" opacity="0.7" />
         <path d="M0,-6 L0,6 M-6,0 L6,0" stroke="var(--gen)" strokeWidth="0.75" opacity="0.5" />
@@ -129,14 +135,14 @@ export function Nav({ locale }: { locale: Locale }) {
           <ThemeToggle labelStudio={m("theme.studio", locale)} labelPixel={m("theme.pixel", locale)} />
           <Link href={otherHref} className="eyebrow" aria-label={t(A11Y.switchLang, locale)}
             style={{
-              display: "inline-flex", alignItems: "center", height: 40,
+              display: "inline-flex", alignItems: "center", height: 44,
               border: "1px solid var(--hairline-2)", borderRadius: "var(--r-sm)",
               padding: "0 10px", color: "var(--text-2)",
               transition: "color var(--base) var(--eout), border-color var(--base) var(--eout)",
             }}>
             {LOCALE_LABEL[OTHER_LOCALE[locale]]}
           </Link>
-          <Link href={`/${locale}/learn`} className="btn btn-primary nav-cta-desktop" style={{ height: 40, padding: "0 var(--s-4)" }}>
+          <Link href={`/${locale}/learn`} className="btn btn-primary nav-cta-desktop" style={{ height: 44, padding: "0 var(--s-4)" }}>
             {m("nav.start", locale)}
           </Link>
           {/* Mobile hamburger */}
@@ -148,8 +154,11 @@ export function Nav({ locale }: { locale: Locale }) {
             aria-controls="nav-sheet"
             onClick={() => setOpen((o) => !o)}
             style={{
+              // 44x44 is the WCAG 2.5.8 minimum, and this is the ONLY way to reach
+              // the nav on a phone. It shipped at 40. The glyph inside stays 16px;
+              // only the hit area grows, so the visual weight is unchanged.
               display: "none", background: "none", border: "1px solid var(--hairline-2)",
-              borderRadius: "var(--r-sm)", width: 40, height: 40, placeItems: "center",
+              borderRadius: "var(--r-sm)", width: 44, height: 44, placeItems: "center",
               cursor: "pointer",
             }}
           >

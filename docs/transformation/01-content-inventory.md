@@ -39,8 +39,8 @@
 |---|---|---|
 | Units with no verifiable source | 0 | §14 — a claim without a source cannot be maintained. |
 | Spine concepts with no lesson pane | 0 | Unreachable content: in the spine, never rendered. |
-| Spine concepts that never ask for a decision | 18 | §2.3 — reading is not progress. |
-| Spine concepts with no interactive element | 17 | §2.7 — decorative art cannot stand in for a diagram. |
+| Spine concepts that never ask for a decision | 0 | §2.3 — reading is not progress. |
+| Spine concepts with no interactive element | 0 | §2.7 — decorative art cannot stand in for a diagram. |
 | Near-duplicate unit pairs (Jaccard ≥ 0.42) | 1 | §7 — duplicates get archived with a record. |
 
 Machine-readable: `content-inventory.json`, `content-inventory.csv`.

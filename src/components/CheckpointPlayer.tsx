@@ -179,16 +179,42 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
                   const border = revealed
                     ? (o.correct ? "var(--ok)" : isPicked ? "var(--bad)" : "var(--hairline)")
                     : "var(--hairline)";
+                  // Correctness must not be carried by colour alone. This is the
+                  // mastery gate — the highest-stakes surface in the product — and
+                  // it shipped with a green or red border and nothing else, so a
+                  // learner who cannot distinguish those two hues could not tell a
+                  // cleared answer from a failed one. `MidQuiz` already solved
+                  // this; the glyph and the label below are that same pattern.
+                  const mark = !revealed ? null : o.correct ? "✓" : isPicked ? "✗" : null;
                   return (
                     <button key={oi} className="btn" disabled={revealed} onClick={() => choose(oi)}
                       style={{ textAlign: "left", justifyContent: "flex-start", borderColor: border, background: "var(--surface-2)", alignItems: "flex-start", lineHeight: 1.45 }}>
+                      {mark && (
+                        <span aria-hidden="true" className="mono"
+                          style={{ color: o.correct ? "var(--ok)" : "var(--bad)", marginRight: "var(--s-2)", fontWeight: 700 }}>
+                          {mark}
+                        </span>
+                      )}
                       {t(o.text, locale)}
+                      {mark && (
+                        <span className="sr-only">
+                          {` — ${o.correct ? m("lesson.correct", locale) : m("lesson.notQuite", locale)}`}
+                        </span>
+                      )}
                     </button>
                   );
                 })}
               </div>
               {picked !== null && (
-                <div style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: item.options[picked].correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
+                // role="status" so the verdict is announced when it appears —
+                // otherwise a screen-reader learner has to go hunting for what
+                // changed after every answer.
+                <div role="status" style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: item.options[picked].correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
+                  <p className="eyebrow" style={{ color: item.options[picked].correct ? "var(--ok)" : "var(--bad)", marginBottom: 6 }}>
+                    {item.options[picked].correct
+                      ? `✓ ${m("lesson.correct", locale)}`
+                      : `✗ ${m("lesson.notQuite", locale)}`}
+                  </p>
                   <p style={{ fontSize: "var(--t-sm)", color: "var(--text)" }}>{t(item.options[picked].rationale, locale)}</p>
                 </div>
               )}

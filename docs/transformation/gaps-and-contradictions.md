@@ -18,53 +18,10 @@ gaps, because it bounds where the work is:
 
 ## Gaps, in order of how much they cost the learner
 
-### 1. 18 of 178 concepts never ask the learner to decide, and all 18 are in one domain
+### 1. 0 of 178 concepts never ask the learner to decide
 
-**Every one of them is `cloud-platform`, and that is all 26 of its concepts.**
-This is not scattered rot; it is one domain that was never given a check bank.
-
-| Domain | Checks authored |
-|---|---|
-| `technical-depth` | 56 |
-| `systems-architecture` | 46 |
-| `execution-delivery` | 52 |
-| `direction-influence` | 48 |
-| `leveling-scope` | 40 |
-| `ai-engineering` | 48 |
-| `cloud-platform` | 24 |
-
-`cloud-platform` was the 7th domain, added last. The 290 checks were authored when there
-were six. The project's own `CLAUDE.md` records that adding this domain broke five
-places that had hardcoded the number six — a literal "six domains" in copy, a
-domain-to-axis map with a silent fallback, a sort that put the unlisted domain
-first, a validator allowlist, and a test. **This is the sixth such place, and the
-only one still open:** nothing derived the check bank from the domain list, so the
-gap is invisible to every existing validator.
-
-Section 2.3 is explicit that opening a page, scrolling and reading a definition
-are not learning. These 18 concepts ship prose, a diagram and
-flashcards, but no check, no build and therefore no graded decision. A learner can
-finish all of `cloud-platform` and the platform learns nothing about whether they
-understood any of it.
-
-- `private-network-paths-and-egress` (L4)
-- `infrastructure-as-code-as-a-contract` (L4)
-- `commitment-based-discounts` (L4)
-- `cell-based-architecture` (L5)
-- `shuffle-sharding-and-poison-tenants` (L5)
-- `static-stability-and-control-plane-dependence` (L5)
-- `multi-region-honesty` (L5)
-- `managed-data-platform-choices` (L5)
-- `landing-zone-and-account-boundaries` (L5)
-- `guardrails-over-gatekeeping` (L6)
-- `platform-as-product-paved-roads` (L6)
-- `finops-as-engineering` (L6)
-- `verified-resilience-gamedays` (L6)
-- `cloud-security-program-at-scale` (L6)
-- `cloud-strategy-and-lock-in-math` (L7)
-- `capability-vs-cost-portfolio` (L7)
-- `org-wide-reliability-as-risk` (L7)
-- `migration-as-a-multi-year-program` (L7)
+Section 2.3 is explicit: opening a page, scrolling and reading a definition are
+not learning. Spread across 0 domains: .
 
 ### 2. 0 concepts score 0 on visual usefulness
 

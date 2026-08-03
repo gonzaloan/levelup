@@ -97,8 +97,25 @@ const BANNED_SHAPES = [
   { re: /\bheroics?\b/i, why: "retired stock metaphor (used 8x)" },
 ];
 
-/** The lesson-overview opener that is identical on 19 of 35 lessons. */
-const OVERVIEW_TEMPLATE = /^At (this level|L[3-7])\b[^.]{0,120}\byou stop\b/i;
+/**
+ * The lesson-overview tic: "you stop being X and become Y".
+ *
+ * The first version of this rule required the literal opener `At L#`/`At this
+ * level` and the literal `you stop` inside the same clause. That caught 12 of 35
+ * overviews — and an audit measuring the SHAPE rather than the wording found 17.
+ * The five it missed are the same sentence with a different subject or verb:
+ *
+ *   "At L7 in Technical Depth your job stops being 'make this system correct'…"
+ *   "At L4, your influence stops being about the code you personally write and starts…"
+ *   "L5 is where you stop being judged by the tickets you close and start…"
+ *
+ * A gate that under-reports its own headline defect by a third teaches people the
+ * defect is smaller than it is. So the rule now matches the construction — some
+ * subject stops doing one thing and starts/becomes another — with no dependence
+ * on how the sentence opens.
+ */
+const OVERVIEW_TEMPLATE =
+  /\b(you|your \w+(?: \w+)?)\s+(?:stops?|stopped)\s+(?:being\s+|to\s+be\s+)?[^.]{0,150}?\b(?:and|then|,)\s*(?:you\s+)?(?:start|starts|begin|begins|become|becomes)\b/i;
 
 /** A digit with a unit, or a bare figure — the "does this concept cost anything" test. */
 const HAS_NUMBER = /\d/;
@@ -285,7 +302,7 @@ function main() {
   for (const l of lessons) {
     // The lesson overview's own tic: 19 of 35 open identically.
     if (OVERVIEW_TEMPLATE.test(l.overview?.en ?? "")) {
-      flag(`${l.lessonId}/overview`, "overview-template", "opens \"At L# … you stop X and start Y\" (19 of 35 lessons did)");
+      flag(`${l.lessonId}/overview`, "overview-template", "uses the \"X stops being A and becomes B\" template (17 of 35 lessons do)");
     }
     for (const [p, text] of walkEn(l.overview, `${l.lessonId}/overview`, [])) checkAnyProse(p, text);
     for (const c of l.concepts) checkConceptProse(l.lessonId, c);

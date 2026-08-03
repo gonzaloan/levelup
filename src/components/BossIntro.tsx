@@ -60,7 +60,11 @@ export function BossIntro({
   return (
     <div className="boss-card" data-track={track} style={{ ["--boss-accent" as string]: boss.accent }}>
       <div className="boss-head">
-        <span className="boss-sprite">
+        {/* Decorative: boss.name and boss.title render as text right beside this,
+            so the art adds atmosphere rather than information. Declared the same
+            way PageHeroArt declares its band, because alt="" alone on the <img>
+            left an unnamed graphic in the tree. */}
+        <span className="boss-sprite" aria-hidden="true">
           {boss.file
             // Static export (no next/image server): a small local WebP via plain <img> is correct.
             // eslint-disable-next-line @next/next/no-img-element

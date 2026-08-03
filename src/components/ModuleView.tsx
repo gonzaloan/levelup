@@ -194,10 +194,24 @@ function Retrieval({ locale, items, mod, onDone }: { locale: Locale; items: Item
           {shuffleOptions(item.options, `retrieval:${item.id}`).map(({ option: o }) => {
             const isChosen = picked === o.id;
             const border = revealed ? (o.correct ? "var(--ok)" : isChosen ? "var(--bad)" : "var(--hairline)") : (isChosen ? "var(--gen)" : "var(--hairline)");
+            // Correctness must never be colour-only (WCAG 1.4.1). Same fix as
+            // CheckpointPlayer and the same pattern MidQuiz already used.
+            const mark = !revealed ? null : o.correct ? "✓" : isChosen ? "✗" : null;
             return (
               <button key={o.id} className="btn" disabled={revealed} onClick={() => !revealed && setPicked(o.id)}
                 style={{ textAlign: "left", justifyContent: "flex-start", borderColor: border, background: "var(--surface-2)" }}>
+                {mark && (
+                  <span aria-hidden="true" className="mono"
+                    style={{ color: o.correct ? "var(--ok)" : "var(--bad)", marginRight: "var(--s-2)", fontWeight: 700 }}>
+                    {mark}
+                  </span>
+                )}
                 {t(o.text, locale)}
+                {mark && (
+                  <span className="sr-only">
+                    {` — ${o.correct ? m("lesson.correct", locale) : m("lesson.notQuite", locale)}`}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -219,7 +233,10 @@ function Retrieval({ locale, items, mod, onDone }: { locale: Locale; items: Item
         )}
 
         {revealed && chosen && (
-          <div style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: chosen.correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
+          <div role="status" style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", background: chosen.correct ? "var(--ok-bg)" : "var(--bad-bg)", borderRadius: "var(--r-sm)" }}>
+            <p className="eyebrow" style={{ color: chosen.correct ? "var(--ok)" : "var(--bad)", marginBottom: 6 }}>
+              {chosen.correct ? `✓ ${m("lesson.correct", locale)}` : `✗ ${m("lesson.notQuite", locale)}`}
+            </p>
             <p style={{ fontSize: "var(--t-sm)", color: "var(--text)" }}>{t(chosen.rationale, locale)}</p>
           </div>
         )}
