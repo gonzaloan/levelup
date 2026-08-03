@@ -43,7 +43,7 @@ effort: free-text grading needs a server, and this is a static export with
 
 ## Bilingual
 
-19881 English and 19881 Spanish strings — equal, with
+19882 English and 19882 Spanish strings — equal, with
 **0 empty prose fields**. The 7 empty strings
 are positional slots, not missing translations.
 

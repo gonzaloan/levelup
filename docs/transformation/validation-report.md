@@ -43,7 +43,7 @@ line to make a build pass is forbidden — it converts a defect into a permissio
 
 ## Bilingual integrity
 
-19881 English and 19881 Spanish strings: exactly equal, and
+19882 English and 19882 Spanish strings: exactly equal, and
 **0 empty prose fields**. The 7 empty strings
 that do exist are positional slots — a cloze sentence that opens with a blank, and one
 deliberate `kind: "none"` figure opt-out — not missing translations. The naive count

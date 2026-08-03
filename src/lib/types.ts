@@ -327,6 +327,18 @@ export interface BuildPaletteItem {
   label: I18nText;             // display name
   glyph?: string;              // optional short symbol/emoji-free tag for the node
   hint?: I18nText;             // what this component is for
+  /**
+   * A deliberate distractor: no criterion mentions it, and placing it costs nothing.
+   *
+   * Declared rather than inferred, because merge-builds.cjs warns about any palette type
+   * in no criterion and cannot tell an intended distractor from a wiring mistake. With
+   * three deliberate ones the warning was noise, which is how a real orphan gets missed.
+   *
+   * A decoy MUST carry a `hint` saying what it does not buy — a distractor a learner
+   * cannot reason about before grading is a trap, not a decision. And no criterion may
+   * require it, or reading the hint costs marks.
+   */
+  decoy?: boolean;
 }
 export interface BuildRequiredNode {
   type: string;                // palette type that must appear

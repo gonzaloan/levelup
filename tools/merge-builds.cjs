@@ -191,8 +191,25 @@ function checkChallenge(b, where, spineSlugs, seenIds) {
   if (!b.forbiddenEdges?.length) {
     warns.push(`${where}: no forbidden edge — the challenge rewards assembly, not judgment`);
   }
-  for (const t of types) {
-    if (!referenced.has(t)) warns.push(`${where}: palette type "${t}" appears in no criterion (decoy)`);
+  // A palette type in no criterion is either a declared distractor or a wiring mistake,
+  // and an unconditional warning cannot tell them apart. Three are deliberate here, so the
+  // warning had become noise — which is how the fourth, a real bug, would get scrolled
+  // past. `decoy: true` makes the author say so.
+  for (const [i, entry] of b.palette.entries()) {
+    const orphan = !referenced.has(entry.type);
+    if (orphan && !entry.decoy) {
+      warns.push(`${where}: palette type "${entry.type}" appears in no criterion — ` +
+                 `mark it \`decoy: true\` if that is deliberate`);
+    }
+    if (!orphan && entry.decoy) {
+      // Contradiction, and worth an error: a criterion depends on it, so a learner who
+      // treats the hint as "do not use this" is penalised for reading it.
+      bad(`${where}.palette[${i}]: "${entry.type}" is marked decoy but a criterion requires it`);
+    }
+    if (entry.decoy && !entry.hint) {
+      // A distractor a learner cannot reason about before grading is a trap.
+      bad(`${where}.palette[${i}]: decoy "${entry.type}" needs a hint saying what it does not buy`);
+    }
   }
 
   checkTerminology(b, where);
