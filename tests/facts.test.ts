@@ -9,12 +9,13 @@
 // the loop twice: facts.json must agree with the source it claims to measure, and the
 // generated docs must agree with facts.json.
 import { describe, it, expect } from "vitest";
-import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, statSync } from "node:fs";
 import { CHECKS } from "@/lib/checks";
 import { CHECKPOINTS, CONCEPTS, ORDERED_DOMAINS } from "@/lib/curriculum";
 import { LESSONS } from "@/lib/lessons";
 import { BUILDS } from "@/lib/build";
 import { ROUTES, STAGES } from "@/lib/routes";
+import { CLUSTERS, ARCHITECTURES, ENTRIES } from "@/lib/codex";
 
 const DOCS = "docs/transformation";
 const facts = JSON.parse(readFileSync(`${DOCS}/facts.json`, "utf8"));
@@ -140,10 +141,58 @@ describe("facts.json agrees with the source it measures", () => {
     // sentence opens with a blank, and one deliberate `kind: "none"` figure opt-out.
     // Reporting "7 empty strings" would describe a translation gap that does not exist.
     expect(facts.i18n.emptyProse, "a real translation gap has appeared").toBe(0);
-    expect(facts.i18n.emptyStructural).toBe(facts.i18n.structuralPaths.length);
-    for (const p of facts.i18n.structuralPaths as string[]) {
-      expect(p, `${p} is neither a cloze segment nor a none-diagram caption`)
-        .toMatch(/(\.segments\.\d+\.|caption)/);
+
+    // `emptyStructural === structuralPaths.length` was a tautology: the generator
+    // increments the counter and pushes the path in the same statement, so they cannot
+    // diverge. And matching the paths against `/(\.segments\.\d+\.|caption)/` reused the
+    // generator's own classifier, loosened — bare `caption` instead of `kind: "none"` —
+    // so it accepted a superset of what the generator emits.
+    //
+    // Verified against the CONTENT instead: every path the generator called structural is
+    // resolved in the shipped JSON and confirmed to be a positional slot. A caption is
+    // only exempt when its diagram is the deliberate `kind: "none"` opt-out.
+    const data: Record<string, unknown> = {};
+    for (const f of ["lessons.json", "checks.json", "curriculum.json", "codex.json", "builds.json", "resources.json"]) {
+      data[f] = JSON.parse(readFileSync(`src/content/data/${f}`, "utf8"));
+    }
+    // The generator emits `lessons.json.lessons.27.concepts.3.diagram.caption.en`, so the
+    // filename's own dot has to be split off FIRST. Splitting the whole path on "." turned
+    // `json` into a key and every lookup resolved to undefined — the test then reported
+    // "does not resolve in the shipped content" for a path that resolves fine.
+    const split = (path: string) => {
+      const file = Object.keys(data).find((f) => path.startsWith(`${f}.`));
+      return { file, keys: file ? path.slice(file.length + 1).split(".") : [] };
+    };
+    const at = (path: string) => {
+      const { file, keys } = split(path);
+      let node: unknown = file ? data[file] : undefined;
+      for (const k of keys) {
+        if (node === undefined || node === null) return { node: undefined };
+        node = (node as Record<string, unknown>)[k];
+      }
+      return { node };
+    };
+    /** The object two levels up — for `…diagram.caption.en` that is the diagram itself. */
+    const parentOf = (path: string) => {
+      const { file, keys } = split(path);
+      if (!file) return undefined;
+      return at(`${file}.${keys.slice(0, -2).join(".")}`).node as Record<string, unknown> | undefined;
+    };
+
+    expect((facts.i18n.structuralPaths as string[]).length, "no structural slots — did the classifier break?")
+      .toBeGreaterThan(0);
+    for (const path of facts.i18n.structuralPaths as string[]) {
+      const { node } = at(path);
+      expect(node, `${path} does not resolve in the shipped content`).toBeDefined();
+      expect(String(node).trim(), `${path} is not actually empty`).toBe("");
+
+      const isSegment = /\.segments\.\d+\./.test(path);
+      const parent = parentOf(path);
+      const isNoneDiagram = !isSegment && parent?.kind === "none";
+      expect(
+        isSegment || isNoneDiagram,
+        `${path} is empty but is neither a cloze segment nor a kind:"none" caption — it is a missing translation`,
+      ).toBe(true);
     }
   });
 
@@ -195,6 +244,164 @@ describe("facts.json agrees with the source it measures", () => {
       .toBeGreaterThan(0);
     expect(facts.validation.selfTests).toBe(steps("gates:selftest").length);
     expect(facts.validation.verifySteps).toBe(steps("verify").length);
+  });
+});
+
+describe("every countable fact is re-derived, not just carried", () => {
+  // The backstop. 64 of 125 leaves were referenced by no assertion at all, and one of them
+  // (`visual.axesFigures`) had shipped under a name that misdescribed what it counted.
+  const CL = LESSONS.flatMap((l) => l.concepts);
+
+  it("re-derives every content count from the modules the app loads", () => {
+    // A table rather than 20 separate its: adding a content fact to the generator without a
+    // derivation here shows up in the ratio test below.
+    const derived: Record<string, number> = {
+      midQuizItems: LESSONS.reduce((a, l) => a + (l.midQuiz?.length ?? 0), 0),
+      codexEntries: ENTRIES.length,
+      codexClusters: CLUSTERS.length,
+      codexArchitectures: ARCHITECTURES.length,
+      conceptsWithCode: CL.filter((c) => c.code).length,
+      conceptsWithExample: CL.filter((c) => c.example).length,
+      conceptsWithPitfalls: CL.filter((c) => c.pitfalls?.length).length,
+      conceptsWithFlashcards: CL.filter((c) => c.flashcards?.length).length,
+      conceptsWithPredict: CL.filter((c) => c.predict).length,
+      leansOnEdges: CONCEPTS.reduce((a, c) => a + (c.concept.leansOn?.length ?? 0), 0),
+      prerequisiteEdges: CONCEPTS.reduce((a, c) => a + (c.concept.prerequisites?.length ?? 0), 0),
+    };
+    for (const [k, v] of Object.entries(derived)) {
+      expect(facts.content[k], `content.${k} disagrees with the content`).toBe(v);
+    }
+  });
+
+  it("re-derives the figure counts, including the field that once misnamed itself", () => {
+    // `axesFigures` was called `emptyAxes` and counted EVERY axes figure. The name asserted
+    // something the expression did not compute, and nothing checked it.
+    const figures: { kind: string; caption?: { en?: string } }[] = [];
+    for (const c of CL) {
+      if (c.diagram) figures.push(c.diagram as never);
+      if (c.architecture) figures.push(c.architecture as never);
+    }
+    for (const e of ENTRIES) if (e.diagram) figures.push(e.diagram as never);
+    for (const a of ARCHITECTURES) if (a.diagram) figures.push(a.diagram as never);
+
+    expect(facts.visual.figures, "the figure total disagrees with the content").toBe(figures.length);
+    expect(facts.visual.axesFigures, "axesFigures should count axes figures, nothing else")
+      .toBe(figures.filter((f) => f.kind === "axes").length);
+    expect(facts.visual.withoutCaption, "withoutCaption disagrees with the content")
+      .toBe(figures.filter((f) => !f.caption?.en?.trim()).length);
+    expect(facts.visual.conceptsUsingWidget).toBe(CL.filter((c) => c.visual).length);
+
+    const byKind: Record<string, number> = {};
+    for (const f of figures) byKind[f.kind] = (byKind[f.kind] ?? 0) + 1;
+    expect(facts.visual.byKind, "the per-kind figure counts disagree").toEqual(byKind);
+  });
+
+  it("re-derives the asset and file counts from disk", () => {
+    const walk = (dir: string, acc: string[] = []): string[] => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(`${dir}/${e.name}`, acc);
+        else acc.push(`${dir}/${e.name}`);
+      }
+      return acc;
+    };
+    const assets = walk("public");
+    expect(facts.visual.publicAssets).toBe(assets.length);
+    expect(facts.visual.publicBytes).toBe(assets.reduce((a, f) => a + statSync(f).size, 0));
+    expect(facts.visual.interactiveWidgets)
+      .toBe(readdirSync("src/components/viz").filter((f) => f.endsWith(".tsx")).length);
+    expect(facts.a11y.cssFiles)
+      .toBe(readdirSync("src/app/styles").filter((f) => f.endsWith(".css")).length);
+    expect(facts.validation.baselineFiles)
+      .toBe(readdirSync("tools").filter((f) => /baseline/.test(f)).length);
+    expect(facts.validation.unitTestFiles)
+      .toBe(walk("tests").filter((f) => /\.test\.ts$/.test(f)).length);
+  });
+
+  it("re-derives the character totals, so the bilingual claim is measured", () => {
+    // `enChars`/`esChars` back the "equivalent editorial versions" claim in
+    // terminology-policy.md and were referenced nowhere.
+    let en = 0, es = 0;
+    const walk = (o: unknown): void => {
+      if (!o || typeof o !== "object") return;
+      for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+        if (typeof v === "string") { if (k === "en") en += v.length; else if (k === "es") es += v.length; }
+        else walk(v);
+      }
+    };
+    for (const f of ["curriculum.json", "lessons.json", "codex.json", "checks.json", "builds.json", "resources.json"]) {
+      walk(JSON.parse(readFileSync(`src/content/data/${f}`, "utf8")));
+    }
+    expect(facts.i18n.enChars).toBe(en);
+    expect(facts.i18n.esChars).toBe(es);
+    // Spanish runs longer than English; a ratio below 1 would mean the es side is a stub.
+    expect(es / en, "the Spanish edition is materially shorter than the English").toBeGreaterThan(0.95);
+  });
+
+  it("re-derives the spaced-review and streak facts from the engine", () => {
+    // `systems.spacedReview` and `systems.streak` back every claim in
+    // retention-engine.md and were referenced by no assertion at all.
+    const review = readFileSync("src/lib/review.ts", "utf8");
+    const daily = readFileSync("src/lib/daily.ts", "utf8");
+
+    const intervals = review.match(/export const INTERVALS = \[([^\]]+)\]/)![1]
+      .split(",").map((x) => x.trim()).filter(Boolean);
+    expect(facts.systems.spacedReview.intervals, "the interval ladder disagrees with review.ts")
+      .toEqual(intervals);
+    expect(facts.systems.spacedReview.grades.length, "the grade set disagrees with review.ts")
+      .toBe(review.match(/export type Grade =([^;]+);/)![1].split("|").length);
+    expect(facts.systems.spacedReview.easeRange)
+      .toEqual([review.match(/EASE_MIN = ([\d.]+)/)![1], review.match(/EASE_MAX = ([\d.]+)/)![1]]);
+    // Purity is load-bearing: Date.now()/Math.random() at runtime break hydration parity
+    // on a static export, so this is a real property and not a comment.
+    expect(facts.systems.spacedReview.pure).toBe(true);
+    expect(review, "review.ts is no longer pure — it reads the clock").not.toMatch(/Date\.now\(\)/);
+    expect(review, "review.ts is no longer pure — it uses randomness").not.toMatch(/Math\.random\(\)/);
+
+    expect(facts.systems.reviewQueue.dailyCap)
+      .toBe(Number(daily.match(/REVIEW_CAP = (\d+)/)![1]));
+    expect(facts.systems.streak.exists).toBe(/export function markDay/.test(daily));
+    // The streak is forgiving on purpose: loss aversion drives short-term engagement and
+    // long-term churn, so a missed day must not zero the counter.
+    expect(facts.systems.streak.forgiving).toBe(true);
+  });
+
+  it("re-derives the glossary facts from the generated files", () => {
+    const g = JSON.parse(readFileSync("content/glossary.en.json", "utf8"));
+    expect(facts.glossary.terms).toBe(g.terms.length);
+    expect(facts.glossary.kept).toBe(g.terms.filter((t: { translate: boolean }) => !t.translate).length);
+    expect(facts.glossary.localized).toBe(g.terms.filter((t: { translate: boolean }) => t.translate).length);
+    expect(facts.glossary.bans).toBe(g.terms.reduce((a: number, t: { avoid: string[] }) => a + t.avoid.length, 0));
+    expect(facts.glossary.withNote).toBe(g.terms.filter((t: { note?: string }) => t.note).length);
+    expect(facts.glossary.kept + facts.glossary.localized, "every term is kept or localized")
+      .toBe(facts.glossary.terms);
+  });
+
+  it("keeps most of facts.json under assertion, so coverage cannot quietly decay", () => {
+    // The meta-test. Adding fields to the generator with no assertions makes this fail,
+    // which is the signal to assert them rather than to raise the threshold.
+    const leaves: string[] = [];
+    const walk = (o: Record<string, unknown>, path: string) => {
+      for (const [k, v] of Object.entries(o)) {
+        const at = path ? `${path}.${k}` : k;
+        if (v !== null && typeof v === "object" && !Array.isArray(v)) walk(v as Record<string, unknown>, at);
+        else leaves.push(at);
+      }
+    };
+    walk(facts, "");
+    const src = readFileSync("tests/facts.test.ts", "utf8");
+    // A leaf is covered if IT or any ANCESTOR is named, because
+    // `expect(facts.visual.byKind).toEqual(byKind)` covers all five of its children
+    // without naming one of them. The first version of this check only looked at the leaf's
+    // own key and reported 60 gaps where 3 existed — measuring the wrong thing, which is
+    // the error this whole file exists to catch.
+    const named = (key: string) => src.includes(`.${key}`) || src.includes(`"${key}"`);
+    const referenced = leaves.filter((l) => {
+      const parts = l.split(".");
+      return parts.some((_, i) => named(parts.slice(0, parts.length - i).pop()!));
+    });
+    const ratio = referenced.length / leaves.length;
+    expect(ratio, `only ${referenced.length}/${leaves.length} facts leaves are referenced by any assertion`)
+      .toBeGreaterThan(0.85);
   });
 });
 
@@ -260,7 +467,28 @@ describe("the section 42 docs report what is NOT built", () => {
 
   it("the retention docs report the real number of queue sources", () => {
     const built = Object.values(sys.reviewQueue.sources).filter(Boolean).length;
+
+    // The count is asserted against the SOURCE, not against the same object the generator
+    // serialized. The previous version recomputed `filter(Boolean).length` over
+    // `sources` — character-for-character the generator's own expression — so it proved
+    // `Array.filter` is deterministic and left all ten predicates unchecked.
+    //
+    // What is checkable here: exactly one source is implemented, it is the interval
+    // ladder, and `daily.ts` really does call `dueConcepts`. Everything else must be
+    // absent from both scheduler modules, which is what makes 1-of-10 a measurement.
+    const daily = readFileSync("src/lib/daily.ts", "utf8");
+    const review = readFileSync("src/lib/review.ts", "utf8");
+    expect(daily, "daily.ts no longer reads the interval ladder").toMatch(/dueConcepts/);
+    expect(sys.reviewQueue.sources["concepts near forgetting"]).toBe(true);
+    expect(built, "a queue source was implemented — update retention-engine.md").toBe(1);
     expect(sys.reviewQueue.sourcesImplemented).toBe(built);
+
+    // And the signals that are reported ABSENT must really be absent, or the honest
+    // number is a coincidence. Confidence is the load-bearing one: it is collected and
+    // used elsewhere, so only the scheduler's silence makes "not read" true.
+    expect(daily + review, "the scheduler now reads confidence — update the docs")
+      .not.toMatch(/confidence/);
+    expect(daily, "the scheduler now reads saved content — update the docs").not.toMatch(/saved/i);
     // The correction that matters: the first detectors reported 3 of 8 by matching
     // /prerequisite/ (a gate on what comes NEXT) and by probing dueConcepts twice.
     expect(read("retention-engine.md"), "the queue source count is stale")

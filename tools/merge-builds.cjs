@@ -49,7 +49,24 @@ const bad = (m) => errs.push(m);
 
 const isI18n = (v) => !!v && typeof v.en === "string" && typeof v.es === "string";
 
-/** A learner-facing string must exist in both languages and be really translated. */
+/**
+ * Function words that separate the two languages.
+ *
+ * Same lists and same threshold as merge-checks.cjs, deliberately: two thresholds for one
+ * property drift apart, and this one is measured — the gap between real English prose and
+ * real Spanish prose ran [-0.061, +0.107], so 0.02 is the midpoint.
+ */
+const EN_FUNCTION = /\b(the|and|with|which|from|that|this|these|those|when|what|your|you|for|are|is|was|were|will|would|should|could|not|but|than|then|because|so|it|its|they|their|there|have|has|had|been|being|of|to|in|on|at|by|as|an|a)\b/gi;
+const ES_FUNCTION = /\b(que|de|la|el|los|las|un|una|con|para|por|se|su|sus|es|son|no|si|como|del|al|en|y|o|lo|le|más|pero|cuando|donde|esta|este|esa|ese|hay|ya|sin|sobre)\b/gi;
+const wordCount = (t) => (t.trim().match(/\S+/g) || []).length;
+
+/**
+ * A learner-facing string must exist in both languages and be really translated.
+ *
+ * Exact equality was the whole test, so `es = en + "."` shipped an untranslated English
+ * prompt. Byte comparison cannot detect translation; it detects copy-paste. The skew below
+ * measures whether the Spanish side READS as Spanish, which is the actual property.
+ */
 function checkI18n(v, where, { min = 1, sameOk = false } = {}) {
   if (!isI18n(v)) return bad(`${where}: not an {en,es} pair`);
   for (const lang of ["en", "es"]) {
@@ -57,9 +74,21 @@ function checkI18n(v, where, { min = 1, sameOk = false } = {}) {
     if (!s) return bad(`${where}.${lang}: empty`);
     if (s.length < min) bad(`${where}.${lang}: shorter than ${min} chars`);
   }
+  if (sameOk) return;
+
   // A short label may legitimately match ("LLM", "429/503"); prose may not.
-  if (!sameOk && v.en.trim() === v.es.trim() && v.en.trim().split(/\s+/).length > 2) {
-    bad(`${where}: identical in both languages — untranslated`);
+  if (v.en.trim() === v.es.trim() && wordCount(v.en) > 2) {
+    return bad(`${where}: identical in both languages — untranslated`);
+  }
+
+  // Prose long enough for the ratio to mean anything. Below ~8 words a single article
+  // swings the skew, and short labels are exactly where an English term is legitimate.
+  const n = wordCount(v.es);
+  if (n < 8) return;
+  const en = (v.es.match(EN_FUNCTION) || []).length / n;
+  const es = (v.es.match(ES_FUNCTION) || []).length / n;
+  if (en - es > 0.02) {
+    bad(`${where}.es reads as English (skew ${(en - es).toFixed(3)}) — not translated`);
   }
 }
 

@@ -55,7 +55,7 @@ note where the decision contradicts its own measurement.
 
 - **11 content validators** in `npm run verify` (12 chain steps; one is a generator, not a gate)
 - **3 gate self-tests** — they attack the validators, which is where four of my own wrong rules were found
-- **346 unit tests** across 30 files
+- **353 unit tests** across 30 files
 - **110 Playwright tests** across 19 spec files
 - 5 ratchet baselines: `coverage-baseline.json`, `glossary-baseline.txt`, `match-spare-baseline.txt`, `prose-baseline.txt`, `trace-baseline.txt` — they may only shrink
 

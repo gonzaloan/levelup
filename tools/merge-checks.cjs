@@ -269,6 +269,17 @@ function validate(c) {
 // ── Run ──────────────────────────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const checkOnly = args.includes("--check");
+/**
+ * Ids this run is allowed to overwrite: `--replace=id1,id2`.
+ *
+ * Deliberately not a blanket `--force`. Replacing an authored check is a decision about
+ * ONE check — a review found it wrong — and a flag that permits every collision in a
+ * batch turns a targeted fix into an accident waiting for the next merge.
+ */
+const replaceIds = new Set(
+  args.filter((a) => a.startsWith("--replace="))
+    .flatMap((a) => a.slice("--replace=".length).split(",").map((x) => x.trim()).filter(Boolean)),
+);
 const dry = args.includes("--dry");
 const files = args.filter((a) => !a.startsWith("--"));
 
@@ -304,7 +315,13 @@ for (const c of incoming) {
   const before = errors.length;
   validate(check);
   if (errors.length > before) { errors.push(`  ↑ from ${_file}`); continue; }
-  if (existingIds.has(check.id)) { err(check.id, `already exists in checks.json — refusing to clobber (from ${_file})`); continue; }
+  // The id collision is checked AFTER validate(), so an explicitly named replacement is
+  // still held to every rule — --replace waives the collision, not the validation.
+  if (existingIds.has(check.id) && !replaceIds.has(check.id)) {
+    err(check.id, `already exists in checks.json — refusing to clobber (from ${_file}). ` +
+                  `Pass --replace=${check.id} if a review found the shipped one wrong.`);
+    continue;
+  }
   if (seen.has(check.id)) { err(check.id, `duplicate id within this merge (from ${_file})`); continue; }
   seen.add(check.id);
   accepted.push(check);
@@ -340,6 +357,20 @@ console.log(`\n${accepted.length} check(s) across ${Object.keys(byConcept).lengt
 
 if (dry) { console.log("\n--dry: nothing written."); process.exit(0); }
 
-shipped.checks.push(...accepted);
+// Replace in place where the id already exists, append otherwise.
+//
+// A bare `push` would leave TWO checks with the same id — the old one still first, so
+// `checksForConcept` would serve it and the replacement would be dead weight that also
+// shifted every later index, moving other checks between the graded and practice pools.
+// The position is preserved for the same reason: `poolFor` splits on authored index, so
+// appending a replacement at the end would silently re-pool its neighbours.
+{
+  const byId = new Map(shipped.checks.map((c, i) => [c.id, i]));
+  for (const c of accepted) {
+    const at = byId.get(c.id);
+    if (at === undefined) shipped.checks.push(c);
+    else shipped.checks[at] = c;
+  }
+}
 fs.writeFileSync(CHECKS, JSON.stringify(shipped, null, 1));
 console.log(`✓ checks.json now holds ${shipped.checks.length} checks`);

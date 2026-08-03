@@ -1,0 +1,53 @@
+{
+  "_note": "Replaces two transfer checks whose scenarios tested a judgment their source concept does not teach. `distributed-failure-modes` teaches clock skew, paused processes and fencing tokens — not metrics-vs-traces. `correctness-under-partial-failure` teaches exactly-once being impossible and effective-once via an idempotency key plus a dedup row in the SAME transaction — not fail-closed guardrails. A transfer item has to carry the concept's OWN judgment into the new domain, or it is a new concept wearing a transfer label.",
+  "checks": [
+    {
+      "id": "chk-distributed-failure-modes-5",
+      "concept": "distributed-failure-modes",
+      "kind": "categorize",
+      "track": "ai",
+      "transferTo": "ai-engineering",
+      "prompt": {
+        "en": "Two replicas of an agent run the same long task. One pauses for 40 seconds mid-run, wakes, and finishes. Sort each claim by whether it holds.",
+        "es": "Dos réplicas de un agente ejecutan la misma tarea larga. Una se pausa 40 segundos a mitad de la ejecución, despierta y termina. Clasifica cada afirmación según si se sostiene."
+      },
+      "buckets": [
+        { "en": "Holds", "es": "Se sostiene" },
+        { "en": "Does not hold", "es": "No se sostiene" }
+      ],
+      "items": [
+        { "label": { "en": "The paused replica may still write after the orchestrator gave its work to another", "es": "La réplica pausada puede escribir aun después de que el orquestador diera su trabajo a otra" }, "bucket": 0 },
+        { "label": { "en": "Only the resource can reject the late write, by refusing a stale token", "es": "Solo el recurso puede rechazar la escritura tardía, negando un token viejo" }, "bucket": 0 },
+        { "label": { "en": "From outside, a paused agent looks exactly like a dead one", "es": "Desde afuera, un agente pausado se ve exactamente igual que uno muerto" }, "bucket": 0 },
+        { "label": { "en": "A longer heartbeat timeout removes the ambiguity", "es": "Un timeout de heartbeat más largo elimina la ambigüedad" }, "bucket": 1 },
+        { "label": { "en": "Keeping the newer result by wall-clock timestamp is safe across the two replicas", "es": "Quedarse con el resultado más nuevo por timestamp de reloj es seguro entre las dos réplicas" }, "bucket": 1 },
+        { "label": { "en": "The paused replica can check its own lease before writing and be trusted", "es": "La réplica pausada puede verificar su propio lease antes de escribir y se le puede confiar" }, "bucket": 1 }
+      ],
+      "explain": {
+        "en": "An agent is a process, so every property transfers unchanged. A paused replica is indistinguishable from a dead one, and it can wake mid-write — which is why enforcement belongs at the resource, as a fencing token, not on the holder's side where a paused process believes no time has passed. And wall clocks are not comparable across machines: picking the 'newer' result by timestamp can discard the genuinely newer one with no error anywhere.",
+        "es": "Un agente es un proceso, así que cada propiedad se transfiere sin cambios. Una réplica pausada es indistinguible de una muerta y puede despertar a mitad de una escritura, y por eso la aplicación va en el recurso, como fencing token, y no del lado del titular, donde un proceso pausado cree que no pasó el tiempo. Y los relojes de pared no son comparables entre máquinas: elegir el resultado 'más nuevo' por timestamp puede descartar el genuinamente más nuevo sin ningún error visible."
+      }
+    },
+    {
+      "id": "chk-correctness-under-partial-failure-5",
+      "concept": "correctness-under-partial-failure",
+      "kind": "order",
+      "track": "ai",
+      "transferTo": "ai-engineering",
+      "prompt": {
+        "en": "An agent's `charge_card` tool may be retried after a timeout. Order the steps that make the effect happen once, most load-bearing first.",
+        "es": "La herramienta `charge_card` de un agente puede reintentarse tras un timeout. Ordena los pasos que hacen que el efecto ocurra una sola vez, del más determinante al menos."
+      },
+      "items": [
+        { "en": "Generate the idempotency key in the agent, before the first attempt, and reuse it on every retry", "es": "Genera la clave de idempotencia en el agente, antes del primer intento, y reúsala en cada reintento" },
+        { "en": "Write the dedup row and the charge in the same database transaction", "es": "Escribe la fila de deduplicación y el cargo en la misma transacción de base de datos" },
+        { "en": "Return the stored result when the key is already present, instead of charging again", "es": "Devuelve el resultado guardado cuando la clave ya existe, en vez de cobrar otra vez" },
+        { "en": "Cap the retries so a stuck loop cannot hammer the tool forever", "es": "Limita los reintentos para que un bucle atascado no golpee la herramienta para siempre" }
+      ],
+      "explain": {
+        "en": "Nothing about the caller being a model changes the argument. Exactly-once delivery does not exist, so a retried tool call is a duplicate you must absorb rather than prevent. The key has to come from the caller before the first attempt — let the tool generate it and a retry produces a new key, bypassing dedup entirely — and the dedup row must be written in the SAME transaction as the effect, because a crash between the check and the charge double-applies. A gateway cannot do this for you: nothing there makes the two atomic.",
+        "es": "Que el llamador sea un modelo no cambia nada del argumento. La entrega exactamente-una-vez no existe, así que una llamada reintentada es un duplicado que hay que absorber, no prevenir. La clave tiene que venir del llamador antes del primer intento —si la genera la herramienta, un reintento produce una clave nueva y se salta la deduplicación por completo— y la fila de deduplicación debe escribirse en la MISMA transacción que el efecto, porque una caída entre la verificación y el cargo aplica dos veces. Un gateway no puede hacerlo por ti: nada ahí vuelve atómicas las dos cosas."
+      }
+    }
+  ]
+}
