@@ -19,12 +19,26 @@ import { CategorizePlayer } from "./CategorizePlayer";
 export type CheckMode = "formative" | "graded";
 
 export function CheckHost({
-  item, locale, mode, onResult,
+  item, locale, mode, onResult, attempt = 0, showDetail,
 }: {
   item: CheckItem;
   locale: Locale;
   mode: CheckMode;
   onResult?: (correct: boolean) => void;   // graded: fired once on commit
+  /** Which attempt this is, folded into the display order so a retry re-lays out. */
+  attempt?: number;
+  /**
+   * Override the per-element ok/bad marking.
+   *
+   * `mode` answers "is this scored"; this answers "may the learner see WHICH
+   * elements were wrong". They are not the same question, and conflating them was
+   * the first version of this fix. The checkpoint must hide the detail, because a
+   * learner can re-enter the same item until the feedback vector solves it. The
+   * Daily Brief also scores its check, but serves a different concept every day and
+   * offers no retry of the same item, so hiding the detail there would remove real
+   * teaching to defend against an attack that does not exist.
+   */
+  showDetail?: boolean;
 }) {
   const [response, setResponse] = useState<CheckResponse | null>(null);
   const [revealed, setRevealed] = useState(false);
@@ -44,7 +58,23 @@ export function CheckHost({
     setResponse(null);
   }
 
-  const common = { item, locale, revealed, onChange: setResponse } as const;
+  // In GRADED mode the players must not mark elements individually.
+  //
+  // A per-element ok/bad vector against a fixed layout is a Mastermind board: an
+  // exact consistency-filter solver clears categorize in 2-3 attempts, order in
+  // 3-4, match in 1-5, cloze in 3-7, and retries are unlimited — so every one of
+  // the 35 checkpoints fell with probability 1.0 by attempt 4. Formative mode keeps
+  // the per-element feedback, because there the whole point is to show your work.
+  //
+  // `showDetail` is what the players key their per-element `data-state` off; the
+  // all-or-nothing verdict still renders in the panel below.
+  const common = {
+    item, locale, revealed, attempt,
+    // Default: formative shows the detail, graded does not. An explicit prop wins,
+    // for surfaces like the Daily Brief that score without offering a retry.
+    showDetail: showDetail ?? mode === "formative",
+    onChange: setResponse,
+  } as const;
 
   return (
     <div className="check" data-track={track} data-kind={item.kind}>

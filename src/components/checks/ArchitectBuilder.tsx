@@ -238,20 +238,42 @@ export function ArchitectBuilder({
               ? `✓ ${t({ en: "Sound architecture", es: "Arquitectura sólida" }, locale)}`
               : `${t({ en: "Not quite", es: "Casi" }, locale)} · ${grade.passed}/${grade.total}`}
           </p>
-          <ul className="arch-crits">
-            {grade.criteria.map((c, i) => (
-              <li key={i} data-ok={c.ok ? "true" : "false"}>
-                <span className="arch-crit-mark" aria-hidden="true">{c.ok ? "✓" : "○"}</span>
-                <span>
-                  <strong>{t(c.label, locale)}</strong>
-                  {c.note && (t(c.note, locale)) ? <span className="arch-crit-note"> — {t(c.note, locale)}</span> : null}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <p style={{ fontSize: "var(--t-sm)", color: "var(--text)", marginTop: "var(--s-3)", borderTop: "1px solid var(--hairline)", paddingTop: "var(--s-3)" }}>
-            {t(challenge.explain, locale)}
-          </p>
+          {/* The criterion labels ARE the answer: gradeBuild builds them as
+              `Include "cache"`, `Connect lb → api`, `Avoid client → db`. They used
+              to render on every commit in both modes, and `canCommit` needs only
+              one node and one edge — so a throwaway 2-node commit printed the whole
+              target topology, and the next commit was certain.
+
+              Graded mode gets the count only. Formative mode keeps the full list,
+              because there the criteria are the teaching. */}
+          {mode === "formative" ? (
+            <ul className="arch-crits">
+              {grade.criteria.map((c, i) => (
+                <li key={i} data-ok={c.ok ? "true" : "false"}>
+                  <span className="arch-crit-mark" aria-hidden="true">{c.ok ? "✓" : "○"}</span>
+                  <span>
+                    <strong>{t(c.label, locale)}</strong>
+                    {c.note && (t(c.note, locale)) ? <span className="arch-crit-note"> — {t(c.note, locale)}</span> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm" style={{ color: "var(--text-2)" }}>
+              {t({
+                en: `${grade.passed} of ${grade.total} criteria met.`,
+                es: `${grade.passed} de ${grade.total} criterios cumplidos.`,
+              }, locale)}
+            </p>
+          )}
+          {/* `explain` is the reference architecture's rationale — it names the
+              components. Shown when formative, or when the learner got it right;
+              withheld on a graded miss, for the same reason the criteria are. */}
+          {(mode === "formative" || grade.correct) && (
+            <p style={{ fontSize: "var(--t-sm)", color: "var(--text)", marginTop: "var(--s-3)", borderTop: "1px solid var(--hairline)", paddingTop: "var(--s-3)" }}>
+              {t(challenge.explain, locale)}
+            </p>
+          )}
           {mode === "formative" && !grade.correct && (
             <button className="btn btn-sm" style={{ marginTop: "var(--s-3)" }} onClick={reset}>
               {m("check.retry", locale)}

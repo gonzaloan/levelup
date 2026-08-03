@@ -16,15 +16,22 @@ import { displayForCloze } from "@/lib/checkDisplay";
 import type { ClozeCheck } from "@/lib/types";
 
 export function ClozePlayer({
-  item, locale, revealed, onChange,
+  item, locale, revealed, onChange, showDetail = true, attempt = 0,
 }: {
   item: ClozeCheck; locale: Locale; revealed: boolean; onChange: (r: number[]) => void;
+  /** Per-element ok/bad marking. FALSE in graded mode: a per-element feedback
+   *  vector against a layout the learner can re-enter is a Mastermind oracle, and
+   *  it cleared every checkpoint by attempt 4. The all-or-nothing verdict still
+   *  shows in the panel. */
+  showDetail?: boolean;
+  /** Folded into the display key, so a retry re-lays the elements out. */
+  attempt?: number;
 }) {
   const nBlanks = item.answers.length;
   const [fill, setFill] = useState<(number | null)[]>(Array(nBlanks).fill(null));
   const [active, setActive] = useState(0);   // which blank is selected
   // Deterministic in item.id, so server and client agree (no Math.random).
-  const { bankOrder } = useMemo(() => displayForCloze(item), [item]);
+  const { bankOrder } = useMemo(() => displayForCloze(item, attempt), [item, attempt]);
 
   function emit(next: (number | null)[]) {
     setFill(next);
@@ -56,7 +63,7 @@ export function ClozePlayer({
               return (
                 <button type="button" className="cloze-blank"
                   data-active={active === i} data-filled={val != null}
-                  data-state={revealed ? (ok ? "ok" : "bad") : undefined}
+                  data-state={revealed && showDetail ? (ok ? "ok" : "bad") : undefined}
                   aria-label={`blank ${i + 1}`}
                   onClick={() => (val != null ? clear(i) : setActive(i))}>
                   {val != null ? t(item.bank[val], locale) : "_____"}

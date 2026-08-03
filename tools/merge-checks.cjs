@@ -44,6 +44,22 @@ const EN_FUNCTION = /\b(the|and|with|which|from|that|this|these|those|when|what|
 const ES_FUNCTION = /\b(que|de|la|el|los|las|un|una|con|para|por|se|su|sus|es|son|no|si|como|del|al|en|y|o|lo|le|más|pero|cuando|donde|esta|este|esa|ese|hay|ya|sin|sobre)\b/gi;
 const words = (s) => String(s || "").trim().split(/\s+/).filter(Boolean).length;
 
+/**
+ * Match checks that ship with no spare right-hand entry.
+ *
+ * A ratchet, in the same shape as tools/prose-baseline.txt and
+ * tools/trace-baseline.txt: an id on this list warns, an id NOT on it fails. The
+ * list can only shrink. Do NOT add a line to make a merge pass — author the spare
+ * entry, which is one plausible distractor.
+ */
+const SPARE_BASELINE = path.join(__dirname, "match-spare-baseline.txt");
+const BASELINED_NO_SPARE = new Set(
+  fs.existsSync(SPARE_BASELINE)
+    ? fs.readFileSync(SPARE_BASELINE, "utf8").split("\n")
+        .map((l) => l.replace(/#.*$/, "").trim()).filter(Boolean)
+    : []
+);
+
 const errors = [];
 const warnings = [];
 const err = (id, msg) => errors.push(`${id}: ${msg}`);
@@ -157,10 +173,26 @@ function validate(c) {
       if (Array.isArray(c.left) && c.left.length < 3) {
         err(id, `only ${c.left.length} pairs — a match under 3 pairs is guessable (1/${c.left.length === 2 ? 2 : 1}); add a real third pair`);
       }
-      // Unmatched RIGHT entries are encouraged: without them, a learner who knows
-      // n-1 pairs gets the last one by elimination.
-      if (Array.isArray(c.right) && Array.isArray(c.left) && c.right.length === c.left.length && c.left.length < 4) {
-        warn(id, `${c.left.length} pairs with no spare right-hand entry — the last pair falls to elimination`);
+      // A spare right-hand entry is REQUIRED for new content, not merely encouraged.
+      //
+      // Measured over the 93 shipped match checks: 78 have right.length ===
+      // left.length, and for those the mean blind-guess clear probability is 8.01%
+      // against 1.06% for the 15 that carry a spare — an 8x difference — because
+      // without a spare the assignment is a permutation rather than an injection.
+      // And a learner who knows n-1 pairs gets the last one with certainty instead
+      // of 50%.
+      //
+      // This was a WARNING, which is exactly why 78 of them shipped: a warning in a
+      // 300-line output is a warning nobody reads. It is now an error for anything
+      // merged from here on. The 78 already in the corpus are recorded in
+      // tools/match-spare-baseline.txt — a ratchet, not an amnesty: the list can
+      // only shrink, and `--check` fails if an id NOT on it lacks a spare.
+      if (Array.isArray(c.right) && Array.isArray(c.left) && c.right.length === c.left.length) {
+        if (BASELINED_NO_SPARE.has(id)) {
+          warn(id, `no spare right-hand entry (baselined; the last pair falls to elimination)`);
+        } else {
+          err(id, `${c.left.length} pairs but only ${c.right.length} right-hand entries — add one unmatched entry, or a learner who knows ${c.left.length - 1} pairs gets the last free (blind-guess clear rises from ~1% to ~8%)`);
+        }
       }
       break;
     }

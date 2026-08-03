@@ -18,7 +18,7 @@ import { reviewForecast } from "@/lib/review";
 import { climbSummary } from "@/lib/climb";
 import type { ConceptCtx } from "@/lib/curriculum";
 import { getLesson } from "@/lib/lessons";
-import { checksForConcept } from "@/lib/checks";
+import { practiceChecksForConcept } from "@/lib/checks";
 import {
   load, todayKey, markConceptRead, enrollReview, recordReview, completeDaily,
   skipConcept, awardSignal, type Progress,
@@ -92,9 +92,13 @@ export function TodayView({ locale }: { locale: Locale }) {
         (c) => c.slug === todayBrief.fresh!.concept.slug
       )
     : undefined;
-  // Today's knowledge checks: the authored checks for the fresh concept. Capped
-  // at two so the brief stays a brief.
-  const checks: CheckItem[] = todayBrief.fresh ? checksForConcept(todayBrief.fresh.concept.slug).slice(0, 2) : [];
+  // Today's knowledge checks: the PRACTICE pool for the fresh concept, capped at
+  // two so the brief stays a brief.
+  //
+  // Must be the practice pool, not the raw array. Serving `checksForConcept(...)`
+  // here handed back every one of the 70 held-out graded checkpoint checks, undoing
+  // the pool split entirely from a surface that had never heard of it.
+  const checks: CheckItem[] = todayBrief.fresh ? practiceChecksForConcept(todayBrief.fresh.concept.slug).slice(0, 2) : [];
   const reviewQueue = todayBrief.reviews;
   const resources = todayBrief.fresh ? resourcesForConcept(todayBrief.fresh.concept.slug) : [];
 
@@ -333,6 +337,11 @@ export function TodayView({ locale }: { locale: Locale }) {
             item={checks[checkIdx]}
             locale={locale}
             mode="graded"
+            // Scored (it awards Signal), but the per-element feedback stays: the
+            // brief serves a different concept every day and never re-offers the
+            // same item, so there is no feedback-vector attack to defend against,
+            // and hiding which blank was wrong would remove real teaching.
+            showDetail
             onResult={onCheckResult}
           />
         </section>

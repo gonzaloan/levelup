@@ -17,15 +17,22 @@ import { displayForMatch } from "@/lib/checkDisplay";
 import type { MatchCheck } from "@/lib/types";
 
 export function MatchPlayer({
-  item, locale, revealed, onChange,
+  item, locale, revealed, onChange, showDetail = true, attempt = 0,
 }: {
   item: MatchCheck; locale: Locale; revealed: boolean; onChange: (r: [number, number][]) => void;
+  /** Per-element ok/bad marking. FALSE in graded mode: a per-element feedback
+   *  vector against a layout the learner can re-enter is a Mastermind oracle, and
+   *  it cleared every checkpoint by attempt 4. The all-or-nothing verdict still
+   *  shows in the panel. */
+  showDetail?: boolean;
+  /** Folded into the display key, so a retry re-lays the elements out. */
+  attempt?: number;
 }) {
   const [links, setLinks] = useState<Map<number, number>>(new Map()); // left -> right (AUTHORED indices)
   const [selL, setSelL] = useState<number | null>(null);
   const wanted = new Map(item.pairs.map(([l, r]) => [l, r]));
   // Deterministic in item.id, so server and client agree (no Math.random).
-  const { leftOrder, rightOrder } = useMemo(() => displayForMatch(item), [item]);
+  const { leftOrder, rightOrder } = useMemo(() => displayForMatch(item, attempt), [item, attempt]);
   // Authored right index -> the badge number the learner sees for it.
   const badgeOf = useMemo(() => {
     const m = new Map<number, number>();
@@ -58,7 +65,7 @@ export function MatchPlayer({
           return (
             <li key={l}>
               <button type="button" className="match-item" data-selected={selL === l} data-linked={leftLinked(l)}
-                data-state={revealed ? (ok ? "ok" : "bad") : undefined}
+                data-state={revealed && showDetail ? (ok ? "ok" : "bad") : undefined}
                 onClick={() => pickLeft(l)}>
                 {t(lx, locale)}
                 {leftLinked(l) && <span className="match-badge mono">{badgeOf.get(rightOf(l)!)}</span>}

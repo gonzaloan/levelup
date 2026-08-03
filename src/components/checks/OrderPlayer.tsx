@@ -16,11 +16,18 @@ import { displayForOrder } from "@/lib/checkDisplay";
 import type { OrderCheck } from "@/lib/types";
 
 export function OrderPlayer({
-  item, locale, revealed, onChange,
+  item, locale, revealed, onChange, showDetail = true, attempt = 0,
 }: {
   item: OrderCheck; locale: Locale; revealed: boolean; onChange: (r: number[]) => void;
+  /** Per-element ok/bad marking. FALSE in graded mode: a per-element feedback
+   *  vector against a layout the learner can re-enter is a Mastermind oracle, and
+   *  it cleared every checkpoint by attempt 4. The all-or-nothing verdict still
+   *  shows in the panel. */
+  showDetail?: boolean;
+  /** Folded into the display key, so a retry re-lays the elements out. */
+  attempt?: number;
 }) {
-  const initial = useMemo(() => displayForOrder(item).itemOrder, [item]);
+  const initial = useMemo(() => displayForOrder(item, attempt).itemOrder, [item, attempt]);
   const [order, setOrder] = useState<number[]>(initial);
 
   function move(pos: number, dir: -1 | 1) {
@@ -38,7 +45,7 @@ export function OrderPlayer({
       {order.map((itemIdx, pos) => {
         const ok = revealed && itemIdx === pos;
         return (
-          <li key={itemIdx} className="order-tile" data-state={revealed ? (ok ? "ok" : "bad") : undefined}
+          <li key={itemIdx} className="order-tile" data-state={revealed && showDetail ? (ok ? "ok" : "bad") : undefined}
             tabIndex={0}
             onKeyDown={(e) => {
               if (e.key === "ArrowUp") { e.preventDefault(); move(pos, -1); }

@@ -36,6 +36,23 @@ import type { CategorizeCheck, ClozeCheck, MatchCheck, OrderCheck } from "./type
 export type DisplayOrder = number[];
 
 /**
+ * Attempt number, folded into every key.
+ *
+ * `CheckpointPlayer` learned this lesson for MCQ options and this module did not:
+ * the display functions keyed on `item.id` alone, so all 70 graded checks presented
+ * an IDENTICAL order on every attempt. Each player also marks every element ok/bad
+ * on reveal, so a learner gets a per-element feedback vector against a fixed
+ * layout — a Mastermind board. An exact consistency-filter solver clears categorize
+ * in 2-3 attempts and cloze in 3-7, and retries are unlimited, so every checkpoint
+ * fell with probability 1.0 by attempt 4.
+ *
+ * Defaults to 0 so a formative caller that does not track attempts is unchanged.
+ */
+export type Attempt = number;
+
+const keyed = (id: string, part: string, attempt: Attempt) => `${id}:${part}:a${attempt}`;
+
+/**
  * A permutation that is not the identity, and that does not leave the check
  * answerable by positional play.
  *
@@ -77,12 +94,22 @@ const perm = (n: number, key: string, unsafe?: (o: DisplayOrder) => boolean): Di
 // move; shuffling them would scramble the sentence.
 export interface ClozeDisplay { bankOrder: DisplayOrder }
 
-export function displayForCloze(item: ClozeCheck): ClozeDisplay {
+export function displayForCloze(item: ClozeCheck, attempt: Attempt = 0): ClozeDisplay {
   // The exploit: tap bank tokens left to right. ClozePlayer auto-advances to the
   // next empty blank, so display token i lands in blank i. Reject any order under
   // which that is the authored key.
-  const unsafe = (o: DisplayOrder) => item.answers.every((a, blank) => o[blank] === a);
-  return { bankOrder: perm(item.bank.length, `${item.id}:bank`, unsafe) };
+  // Left-to-right is the natural exploit; right-to-left cleared 8 of 80 and a
+  // rotated bank 6 of 80, so the guard covers the family the same way match does.
+  const nb = item.answers.length;
+  const unsafe = (o: DisplayOrder) => {
+    const fills: ((blank: number) => number)[] = [
+      (b) => o[b],                       // tap the bank left to right
+      (b) => o[nb - 1 - b],              // fill blanks right to left
+    ];
+    for (let k = 1; k < o.length; k++) fills.push((b) => o[(b + k) % o.length]); // rotated
+    return fills.some((at) => item.answers.every((a, b) => at(b) === a));
+  };
+  return { bankOrder: perm(item.bank.length, keyed(item.id, "bank", attempt), unsafe) };
 }
 
 // ── Match ────────────────────────────────────────────────────────────────────
@@ -91,14 +118,24 @@ export function displayForCloze(item: ClozeCheck): ClozeDisplay {
 // same key would preserve the diagonal exactly.
 export interface MatchDisplay { leftOrder: DisplayOrder; rightOrder: DisplayOrder }
 
-export function displayForMatch(item: MatchCheck): MatchDisplay {
+export function displayForMatch(item: MatchCheck, attempt: Attempt = 0): MatchDisplay {
   const want = new Map(item.pairs.map(([l, r]) => [l, r]));
-  const leftOrder = perm(item.left.length, `${item.id}:left`);
-  // The exploit: link left display row i to right display row i, straight down.
-  // Reject any right-hand order that makes every one of those links correct.
-  const unsafe = (right: DisplayOrder) =>
-    leftOrder.every((authoredLeft, row) => want.get(authoredLeft) === right[row]);
-  return { leftOrder, rightOrder: perm(item.right.length, `${item.id}:right`, unsafe) };
+  const leftOrder = perm(item.left.length, keyed(item.id, "left", attempt));
+  // Reject the whole FAMILY of blind link patterns, not just the straight diagonal.
+  //
+  // Guarding only "row i to row i" left its neighbours open: linking row i to row
+  // (i+1) cleared 11 of 93, and some fixed pattern from the rotations-plus-reverse
+  // family cleared 28 of 93 (30%) — 14 of the 24 3x3 matches. A learner who notices
+  // one guard tries the next offset, so the guard has to cover the family.
+  // Measured: widening it drops that to 0 of 93, and it is satisfiable for every
+  // item (0 fell back to the rotation escape hatch).
+  const unsafe = (right: DisplayOrder) => {
+    const patterns: ((row: number) => number)[] = [];
+    for (let k = 0; k < right.length; k++) patterns.push((row) => right[(row + k) % right.length]);
+    patterns.push((row) => right[right.length - 1 - row]);  // reverse diagonal
+    return patterns.some((at) => leftOrder.every((authoredLeft, row) => want.get(authoredLeft) === at(row)));
+  };
+  return { leftOrder, rightOrder: perm(item.right.length, keyed(item.id, "right", attempt), unsafe) };
 }
 
 // ── Categorize ───────────────────────────────────────────────────────────────
@@ -107,18 +144,24 @@ export function displayForMatch(item: MatchCheck): MatchDisplay {
 // "good" bucket first is its own tell.
 export interface CategorizeDisplay { itemOrder: DisplayOrder; bucketOrder: DisplayOrder }
 
-export function displayForCategorize(item: CategorizeCheck): CategorizeDisplay {
+export function displayForCategorize(item: CategorizeCheck, attempt: Attempt = 0): CategorizeDisplay {
   const n = item.items.length;
   const buckets = item.buckets.length;
   // The exploit: sweep the tray in display order, dropping the first n/buckets
   // chips in the first bucket and so on. Reject any tray order under which that
   // blind split is correct.
+  // The even sweep is the natural exploit. Alternating buckets cleared 8 of 101 and
+  // a reverse sweep 6 of 101, so all three are rejected.
+  const strategies: ((slot: number) => number)[] = [
+    (slot) => Math.min(buckets - 1, Math.floor((slot * buckets) / n)),            // even sweep
+    (slot) => Math.min(buckets - 1, Math.floor(((n - 1 - slot) * buckets) / n)),  // reversed
+    (slot) => slot % buckets,                                                     // alternating
+  ];
   const unsafe = (o: DisplayOrder) =>
-    o.every((authoredIdx, slot) =>
-      item.items[authoredIdx].bucket === Math.min(buckets - 1, Math.floor((slot * buckets) / n)));
+    strategies.some((at) => o.every((authoredIdx, slot) => item.items[authoredIdx].bucket === at(slot)));
   return {
-    itemOrder: perm(n, `${item.id}:items`, unsafe),
-    bucketOrder: perm(buckets, `${item.id}:buckets`),
+    itemOrder: perm(n, keyed(item.id, "items", attempt), unsafe),
+    bucketOrder: perm(buckets, keyed(item.id, "buckets", attempt)),
   };
 }
 
@@ -127,10 +170,20 @@ export function displayForCategorize(item: CategorizeCheck): CategorizeDisplay {
 // be it. This centralizes what `OrderPlayer` did inline.
 export interface OrderDisplay { itemOrder: DisplayOrder }
 
-export function displayForOrder(item: OrderCheck): OrderDisplay {
+export function displayForOrder(item: OrderCheck, attempt: Attempt = 0): OrderDisplay {
   // The correct answer IS the authored order, so "submit as presented" is exactly
   // the identity case `safePerm` already rejects. Stated explicitly so the intent
   // survives a refactor.
-  const unsafe = (o: DisplayOrder) => o.every((v, i) => v === i);
-  return { itemOrder: perm(item.items.length, `${item.id}:tiles`, unsafe) };
+  // Submitting as presented is the identity case. Reversing cleared 4 of 94 and
+  // rotating 7 of 94, so the family is rejected together.
+  const unsafe = (o: DisplayOrder) => {
+    const n = o.length;
+    if (o.every((v, i) => v === i)) return true;                       // as presented
+    if (o.every((v, i) => v === n - 1 - i)) return true;               // reversed
+    for (let k = 1; k < n; k++) {
+      if (o.every((v, i) => v === (i + k) % n)) return true;           // rotated
+    }
+    return false;
+  };
+  return { itemOrder: perm(item.items.length, keyed(item.id, "tiles", attempt), unsafe) };
 }

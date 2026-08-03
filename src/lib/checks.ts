@@ -60,6 +60,25 @@ function poolFor(slug: string, want: "practice" | "graded"): CheckItem[] {
   return all.filter((_, i) => (i % 2 === 0) === (want === "practice"));
 }
 
+/**
+ * Formative checks for ONE concept — the Daily Brief's surface.
+ *
+ * This exists because the split failed at a call site I did not audit. `TodayView`
+ * served `checksForConcept(slug).slice(0, 2)` — the RAW authored array — which for
+ * a concept with 2 or 3 checks always contains authored index 1, i.e. the graded
+ * one. Result: 70 of 70 graded checkpoint checks were reachable at /today, and all
+ * 35 checkpoints had every graded check pre-seeable. `poolFor` was correct; the
+ * property it promises is global, and a private helper cannot enforce a global
+ * property.
+ *
+ * `tests/check-integrity.test.ts` now asserts that no NON-checkpoint surface can
+ * serve a graded item, enumerated by grepping the call sites rather than by naming
+ * the ones I remembered.
+ */
+export function practiceChecksForConcept(slug: string): CheckItem[] {
+  return poolFor(slug, "practice");
+}
+
 /** Formative checks for a lesson — the pool the learner may retry freely. */
 export function practiceChecksForLesson(lessonId: string): CheckItem[] {
   const lesson = LESSONS.find((l) => l.lessonId === lessonId);

@@ -141,10 +141,28 @@ describe("the shuffle is real, deterministic, and lossless", () => {
     }
   });
 
-  it("different items get different orders — the key is not a constant", () => {
+  it("two items of the SAME length get different orders", () => {
     // If every item shared one permutation, a learner would learn it once.
-    const sigs = new Set(match.filter((m) => m.right.length >= 4).map((m) => displayForMatch(m).rightOrder.join(",")));
-    expect(sigs.size).toBeGreaterThan(1);
+    //
+    // The first version of this collected order signatures across ALL match checks
+    // and asserted more than one distinct value. That passes with a hardcoded
+    // constant key: right columns come in lengths 3, 4 and 5, so one shared
+    // permutation still yields three distinct `join(",")` strings. It was testing
+    // that the corpus has mixed column lengths.
+    //
+    // Comparing WITHIN a length class is what the property actually needs.
+    const byLength = new Map<number, string[]>();
+    for (const m of match) {
+      const n = m.right.length;
+      if (!byLength.has(n)) byLength.set(n, []);
+      byLength.get(n)!.push(displayForMatch(m).rightOrder.join(","));
+    }
+    const degenerate: string[] = [];
+    for (const [n, sigs] of byLength) {
+      if (sigs.length < 4) continue;                     // too few to conclude
+      if (new Set(sigs).size < 2) degenerate.push(`n=${n} (${sigs.length} items, 1 order)`);
+    }
+    expect(degenerate, "every item of this length gets the identical order — the key is a constant").toEqual([]);
   });
 });
 
@@ -292,6 +310,13 @@ describe("a retry is a different exam, not a recital", () => {
     // "the first option is never correct" is a rule a learner can exploit in one
     // sitting. What matters is that position carries no information, so the test
     // asserts the distribution is near-uniform in BOTH directions.
+    //
+    // SCOPE, because this reads like it guards the attempt counter and does not:
+    // removing the attempt from the key leaves this passing (the loop just
+    // re-derives one order six times, and the distribution across items is
+    // unchanged). That is fine — the property here is about POSITION, and the
+    // attempt is guarded by the two tests above it. Recorded because a reviewer
+    // reasonably read the `attempt` loop as the thing under test.
     const counts = [0, 0, 0, 0, 0, 0];
     let total = 0;
     for (const cp of SPINE) {

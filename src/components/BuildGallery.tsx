@@ -2,6 +2,17 @@
 // The Build gallery: a showcase of the Architecture Builder challenges. Pick a
 // scenario, assemble the system, get graded. Formative here (free retry, no
 // gating); the same builder appears graded inside checkpoints.
+//
+// ALL SIX builds are also graded steps at a checkpoint, so this page is practice
+// for material the gate later grades. A pool split — the fix used for checks —
+// would empty this page, so instead the disclosure is asymmetric: graded mode shows
+// only "N of M criteria met" and withholds both the criterion labels (which state
+// the target topology in words) and the reference rationale. Practising here builds
+// judgment; it no longer hands over a spec to recite.
+//
+// The honest end state is more builds than gates, so the two can be disjoint. Six
+// challenges over 178 concepts is the real gap, and it is recorded in
+// tools/coverage-baseline.json.
 import { useState } from "react";
 import { t, type Locale } from "@/i18n/config";
 import { BUILDS } from "@/lib/build";

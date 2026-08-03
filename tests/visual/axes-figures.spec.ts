@@ -1,8 +1,18 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "node:fs";
 
-// The 7 `axes` diagrams that shipped with no nodes must now plot points AND list
-// them in the numbered legend.
+// The `axes` diagrams that shipped with no nodes must now plot points AND list them
+// in the numbered legend.
+//
+// Two of the original seven have since changed shape, for reasons worth keeping:
+//   • `toil-reduction-program` became a `flow`. Its four nodes are a programme
+//     TIMELINE, and the axes renderer places nodes on a monotonic diagonal — so it
+//     drew "root cause fixed" as the HIGHEST operational load, inverting the 58% to
+//     ~34% decline the concept asserts. No relabel fixes that: the ordering
+//     dimension was programme maturity, which is neither axis.
+//   • `capacity-estimation` dropped its disk-seek rung, which made one step 6x
+//     rather than the "orders of magnitude" the caption claims, and put a local disk
+//     farther along a near-to-far axis than another host.
 //
 // Checked in a BROWSER, not in the static HTML. Lesson concept panes hydrate
 // client-side, so NO schematic appears in the exported markup for ANY lesson —
@@ -12,9 +22,8 @@ import { readFileSync } from "node:fs";
 // shipped content at run time rather than hardcoded, so reordering a lesson
 // cannot silently make this test check the wrong concept.
 const CASES = [
-  ["execution-delivery-l6", "toil-reduction-program", 4],
   ["technical-depth-l6", "consistency-model-spectrum", 4],
-  ["systems-architecture-l3", "capacity-estimation", 6],
+  ["systems-architecture-l3", "capacity-estimation", 4],
   ["execution-delivery-l5", "dora-as-team-signal", 4],
   ["systems-architecture-l7", "managing-technical-quality-at-scale", 4],
   ["systems-architecture-l7", "driving-irreversible-bets-with-consensus", 4],

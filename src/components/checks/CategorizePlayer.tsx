@@ -18,14 +18,21 @@ import { displayForCategorize } from "@/lib/checkDisplay";
 import type { CategorizeCheck } from "@/lib/types";
 
 export function CategorizePlayer({
-  item, locale, revealed, onChange,
+  item, locale, revealed, onChange, showDetail = true, attempt = 0,
 }: {
   item: CategorizeCheck; locale: Locale; revealed: boolean; onChange: (r: number[]) => void;
+  /** Per-element ok/bad marking. FALSE in graded mode: a per-element feedback
+   *  vector against a layout the learner can re-enter is a Mastermind oracle, and
+   *  it cleared every checkpoint by attempt 4. The all-or-nothing verdict still
+   *  shows in the panel. */
+  showDetail?: boolean;
+  /** Folded into the display key, so a retry re-lays the elements out. */
+  attempt?: number;
 }) {
   const [placed, setPlaced] = useState<number[]>(Array(item.items.length).fill(-1));
   const [sel, setSel] = useState<number | null>(null);
   // Deterministic in item.id, so server and client agree (no Math.random).
-  const { itemOrder, bucketOrder } = useMemo(() => displayForCategorize(item), [item]);
+  const { itemOrder, bucketOrder } = useMemo(() => displayForCategorize(item, attempt), [item, attempt]);
 
   function assign(itemIdx: number, bucket: number) {
     if (revealed) return;
@@ -61,7 +68,7 @@ export function CategorizePlayer({
                 const ok = revealed && it.bucket === bi;
                 return (
                   <li key={i}>
-                    <button type="button" className="cat-placed" data-state={revealed ? (ok ? "ok" : "bad") : undefined}
+                    <button type="button" className="cat-placed" data-state={revealed && showDetail ? (ok ? "ok" : "bad") : undefined}
                       onClick={() => assign(i, -1)} disabled={revealed} aria-label={`remove ${t(it.label, locale)}`}>
                       {t(it.label, locale)}
                     </button>

@@ -248,13 +248,13 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
 
           {gradedCheck && (
             <div className="card">
-              <CheckHost key={gradedCheck.id} item={gradedCheck} locale={locale} mode="graded" onResult={onCheckResult} />
+              <CheckHost key={`${gradedCheck.id}:a${attempt}`} item={gradedCheck} locale={locale} mode="graded" attempt={attempt} onResult={onCheckResult} />
             </div>
           )}
 
           {buildStep && (
             <div className="card">
-              <ArchitectBuilder key={buildStep.id} challenge={buildStep} locale={locale} mode="graded" onResult={onCheckResult} />
+              <ArchitectBuilder key={`${buildStep.id}:a${attempt}`} challenge={buildStep} locale={locale} mode="graded" onResult={onCheckResult} />
             </div>
           )}
         </div>
