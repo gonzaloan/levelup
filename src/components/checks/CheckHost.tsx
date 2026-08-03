@@ -68,11 +68,14 @@ export function CheckHost({
   //
   // `showDetail` is what the players key their per-element `data-state` off; the
   // all-or-nothing verdict still renders in the panel below.
+  // One decision, used by the players AND by the reveal panel below: may this
+  // surface show WHICH parts were wrong?
+  const detailed = showDetail ?? mode === "formative";
   const common = {
     item, locale, revealed, attempt,
     // Default: formative shows the detail, graded does not. An explicit prop wins,
     // for surfaces like the Daily Brief that score without offering a retry.
-    showDetail: showDetail ?? mode === "formative",
+    showDetail: detailed,
     onChange: setResponse,
   } as const;
 
@@ -97,10 +100,23 @@ export function CheckHost({
           style={{ marginTop: "var(--s-4)", padding: "var(--s-4)", borderRadius: "var(--r-sm)",
             background: correct ? "var(--ok-bg)" : "var(--bad-bg)" }}>
           <p className="eyebrow" style={{ color: correct ? "var(--ok)" : "var(--bad)", marginBottom: 6 }}>
+            {/* The partial score is per-element feedback in aggregate form: "2/4
+                right" narrows the response space almost as fast as knowing WHICH
+                two. Shown only where the detail is shown. */}
             {correct ? `✓ ${m("check.correct", locale)}`
-              : `${m("check.notYet", locale)} · ${score.right}/${score.total}`}
+              : detailed ? `${m("check.notYet", locale)} · ${score.right}/${score.total}`
+              : m("check.notYet", locale)}
           </p>
-          <p style={{ fontSize: "var(--t-sm)", color: "var(--text)" }}>{t(item.explain, locale)}</p>
+          {/* `explain` is the teaching, and for 50 of the 80 cloze checks it names
+              every one of its own answer tokens — which is good writing and a leak
+              on a graded item the learner can re-enter. Shown when the detail is
+              shown, or once they are right. */}
+          {(detailed || correct) && (
+            <p style={{ fontSize: "var(--t-sm)", color: "var(--text)" }}>{t(item.explain, locale)}</p>
+          )}
+          {!detailed && !correct && (
+            <p style={{ fontSize: "var(--t-sm)", color: "var(--text-2)" }}>{m("check.gradedMiss", locale)}</p>
+          )}
           {mode === "formative" && !correct && (
             <button className="btn btn-sm" style={{ marginTop: "var(--s-3)" }} onClick={retry}>
               {m("check.retry", locale)}
