@@ -151,12 +151,20 @@ test("a lesson cross-links back into the Codex", async ({ page }) => {
   await page.goto("/en/lesson/ai-engineering-l4/");
   await page.getByRole("button", { name: /begin|comenzar/i }).click();
   // Walk to the first concept pane that offers a Codex link.
+  //
+  // Concepts carrying a `predict` block withhold everything below the definition
+  // until the prediction resolves — including the Codex links, which name the entry
+  // that answers the question. So resolve it (skipping is enough) before looking.
+  // Three of this lesson's six concepts have one.
   let found = false;
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 8; i++) {
+    const skip = page.getByRole("button", { name: /Skip the prediction|Saltar la predicción/i });
+    if (await skip.count()) { await skip.first().click(); await page.waitForTimeout(200); }
     if (await page.locator(".cp-codex-link").count() > 0) { found = true; break; }
     const next = page.locator(".cp-next");
     if (await next.count() === 0) break;
     await next.click();
+    await page.waitForTimeout(200);
   }
   expect(found, "an AI lesson concept should offer a Codex lookup").toBe(true);
   // `trailingSlash: true` in the export, so the fragment sits after the slash:
