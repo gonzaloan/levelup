@@ -14,7 +14,7 @@ versions to two learners.** Anything resembling a canary has to be client-side.
 ## Gate before any deploy
 
 ```bash
-npm run verify        # 6 steps: typecheck, lint, 12 validators, 3 self-tests, 338 tests
+npm run verify        # 6 steps: typecheck, lint, 11 validators, 3 self-tests, 339 tests
 npx playwright test --workers=1   # 89 browser tests
 npm run build         # must produce the full page set
 ```

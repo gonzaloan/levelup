@@ -32,6 +32,23 @@ const a = F.a11y;
 const an = F.analytics;
 const r = F.routing;
 const g = F.glossary;
+const s = F.systems;
+/**
+ * A newline, as a binding rather than an escape sequence.
+ *
+ * Joining table rows needs a newline inside a template literal, in a file that is itself
+ * edited by scripts — two levels of escaping deep, and the outer level ate the backslash,
+ * leaving a real line break inside a JS string and a syntax error. Even the comment
+ * explaining it got mangled on the first attempt.
+ *
+ * Third occurrence of this class here: a two-character escape became a literal backspace
+ * in gen-facts.cjs, silently turning a filter into a no-op that reported 12 validators
+ * where 11 exist; and a regex died inside a bash heredoc, reporting 0 of 98 glossary
+ * candidates. The lesson is not "escape more carefully" — it is to stop needing an
+ * escape where a binding will do.
+ */
+const NL = String.fromCharCode(10);
+const interviewTracks = F.systems.interviewMode.tracks;
 
 /** Percentage of the 178 concepts, as a whole number. */
 const pct = (n) => Math.round((n / lm.totalConcepts) * 100);
@@ -437,6 +454,87 @@ migration has to be undone.
 `;
 
 // ─────────────────────────────────────────────────────────────────────────
+docs["STATUS.md"] = `# Transformation status
+
+> Section 28 dashboard. GENERATED from \`facts.json\` — every count below is measured,
+> and \`tests/facts.test.ts\` fails if this file and the measurement disagree.
+>
+> The previous version was hand-written and said "the route model is designed but not
+> built" for four commits after it shipped, with metrics from three commits earlier. That
+> is the failure mode a dashboard has, so this one is derived.
+
+## Current phase
+
+The audit, the target IA, the route model, the validation suite and the section 28/42
+document set are all built. What remains is content depth, not structure — see
+**Next reviewable step**.
+
+## Learning model: ${stageTally.full} stages complete, ${stageTally.partial} partial, ${stageTally.none} absent
+
+| Stage | Concepts | Coverage |
+|---|---:|---:|
+${Object.entries(lm.coverage).map(([k, n]) => `| ${k === "worked" ? "worked example" : k} | ${n} | ${pct(n)}% |`).join(NL)}
+
+Explain is the absent one, and it is blocked by the deployment model rather than by
+effort: free-text grading needs a server, and this is a static export with
+${an.fetchCallsToApi} API routes.
+
+## Content
+
+- **${c.spineConcepts} spine concepts** across ${c.domains} domains, L3–L7
+- **${c.checks} checks** in ${Object.keys(c.checksByKind).length} mechanics — ${Object.entries(c.checksByKind).map(([k, n]) => `${n} ${k}`).join(", ")}
+- **${c.checkpoints} checkpoints, ${c.checkpointItems} items**; ${c.midQuizItems} formative mid-lesson items
+- **${c.codexEntries} Codex entries** in ${c.codexClusters} clusters, ${c.codexArchitectures} reference architectures
+- **${c.builds} build challenges**, **${lm.coverage.predict} predict steps**, **${lm.coverage.transfer} transfer items**
+- **${vis.figures} authored figures** + ${vis.interactiveWidgets} interactive widgets
+- **${c.prerequisiteEdges} within-domain prerequisite edges** (hard gate) + **${c.leansOnEdges} cross-route \`leansOn\` edges** (advisory)
+
+## Bilingual
+
+${F.i18n.en} English and ${F.i18n.es} Spanish strings — equal, with
+**${F.i18n.emptyProse} empty prose fields**. The ${F.i18n.emptyStructural} empty strings
+are positional slots, not missing translations.
+
+Glossary: **${g.terms} terms** (${g.kept} kept in English, ${g.localized} localized),
+${g.bans} banned renderings enforced on every build, ${g.withNote} carrying a written
+note where the decision contradicts its own measurement.
+
+## Verification
+
+- **${v.contentValidators} content validators** in \`npm run verify\` (${v.contentCheckSteps} chain steps; one is a generator, not a gate)
+- **${v.selfTests} gate self-tests** — they attack the validators, which is where four of my own wrong rules were found
+- **${v.unitTests} unit tests** across ${v.unitTestFiles} files
+- **${v.e2eTests} Playwright tests** across ${v.e2eSpecFiles} spec files
+- ${v.baselineFiles} ratchet baselines: ${v.baselineNames.map((n) => `\`${n}\``).join(", ")} — they may only shrink
+
+## Systems section 33-38 specifies
+
+| System | State |
+|---|---|
+| Spaced review | Built — ${s.spacedReview.intervals.length}-rung ladder, ${s.spacedReview.grades.length} grades, pure module |
+| Review queue | **${s.reviewQueue.sourcesImplemented} of ${s.reviewQueue.sourcesSpecified} sources** |
+| Confidence | Captured and used for the band cap; **not read by the scheduler** |
+| Saved content | **Absent** (section 33.1) |
+| Interview mode | A generated view over ${interviewTracks} tracks; **no product surface** |
+| Analytics | **${an.trackingCalls} tracking calls** |
+
+## Risks
+
+1. **No visual regression baseline.** ${v.e2eTests} browser tests assert structure, not pixels. A CSS regression that keeps the DOM intact passes everything. Highest residual risk.
+2. **A gate that fires on correct content trains people to bypass it.** Several of mine did during this work — most recently a glossary that banned ${"`rendimiento`"} (meaning *performance*) as a calque of throughput. Every gate now ships with correct-content fixtures. Managed, not closed.
+3. **The ratchets can be gamed by adding baseline lines.** None was added in this work; content was fixed instead, and one line was deleted when a figure became traceable.
+4. **${lm.totalConcepts - lm.coverage.predict} concepts have no Predict step and ${lm.totalConcepts - lm.coverage.build} have no Build challenge.** The engines exist; the content does not.
+5. **No telemetry**, so no claim about learner behaviour in any of these documents has been validated against a learner.
+
+## Next reviewable step
+
+Extend Predict and Build to the Staff Engineer route, the way the AI route was done: the
+engines and the validating merge tools now exist, so each concept is an additive,
+independently shippable patch. Then wire wrong-with-high-confidence into the review queue
+— the data is already in \`responseLog\`, which makes it the cheapest of the
+${s.reviewQueue.sourcesSpecified - s.reviewQueue.sourcesImplemented} unbuilt queue sources.
+`;
+
 docs["rollout-plan.md"] = `# Rollout plan
 
 > Section 20. Generated from \`facts.json\`.

@@ -14,12 +14,32 @@ async function openLesson(page: Page, id: string, locale = "en") {
   await page.waitForTimeout(700); // intro loader
 }
 
+/**
+ * Walk to concept pane `index`.
+ *
+ * Waits on the pane actually being on screen rather than on a 250 ms guess. The fixed
+ * timeout passed this file in isolation and failed once in a full 10-minute run — the
+ * click landed before the pane had swapped, so the next click hit the previous pane's
+ * button. A flaky test is a defect in the suite even when the product is fine, because
+ * the next real failure gets dismissed as "that one is flaky".
+ */
 async function enterConcept(page: Page, index: number) {
   await page.getByRole("button", { name: /→/ }).first().click();
-  await page.waitForTimeout(250);
+  await page.locator(".lesson-content").first().waitFor({ state: "visible" });
   for (let i = 0; i < index; i++) {
+    // `aria-current="step"` marks the open pane and its `aria-label` starts with the
+    // 1-based position ("3. Backpressure"), so the label changing IS the observable fact
+    // that navigation completed. Keyed on the label rather than an invented `data-i`,
+    // which ConceptNav does not render — a selector that matches nothing would fall
+    // straight through to the timeout this replaces.
+    const current = page.locator('nav.concept-nav button[aria-current="step"]');
+    const before = await current.getAttribute("aria-label").catch(() => null);
     await page.getByRole("button", { name: /→/ }).last().click();
-    await page.waitForTimeout(250);
+    if (before !== null) {
+      await expect(current).not.toHaveAttribute("aria-label", before, { timeout: 5000 });
+    } else {
+      await page.waitForTimeout(250);
+    }
   }
 }
 

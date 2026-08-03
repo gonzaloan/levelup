@@ -214,8 +214,16 @@ const VALIDATION = (() => {
   const countTests = (files) =>
     files.reduce((a, f) => a + (src(f).match(/^\s*(?:it|test)\(/gm) || []).length, 0);
   const baselines = fs.readdirSync(__dirname).filter((f) => /baseline/.test(f));
+  // A `gen-*` step in the chain is a GENERATOR, not a validator. `content:check` runs
+  // gen-glossary.cjs immediately before check-glossary.cjs so the measured usage counts
+  // cannot be stale — but counting it as a validator overstates the gate count by one,
+  // and "12 content validators" would have gone into STATUS.md and validation-report.md
+  // as evidence. Both numbers are reported, because the length of the chain is also a
+  // fact worth having.
+  const contentSteps = chain("content:check");
   return {
-    contentValidators: chain("content:check").length,
+    contentValidators: contentSteps.filter((s) => !s.includes("/gen-")).length,
+    contentCheckSteps: contentSteps.length,
     selfTests: chain("gates:selftest").length,
     verifySteps: chain("verify").length,
     unitTestFiles: unit.length,
