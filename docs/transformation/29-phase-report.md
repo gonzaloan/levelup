@@ -24,7 +24,22 @@ identified by TEXT, so shuffling positions does not stop elimination across retr
 capping attempts and by honouring the 0.85 threshold `store.ts` already documented —
 `(n-1)/n` is 0.75 at four steps, and 9 checkpoints cleared below the project's own bar.
 
-Two of my tests also passed after the defect they guard was fully restored.
+Three of my tests passed after the defect they guard was fully restored — every time
+because the test rebuilt the thing it was meant to observe instead of importing it.
+
+**A second round, verifying those fixes, failed too.** Two of the fixes guarded a
+place the attacker does not have to go: the attempt cap lived in React state, so a
+page reload handed out another independently-scoring run (28 of 35 checkpoints cleared
+above 5% within six reloads), and the Architecture Builder's criterion list was gated
+on `mode` — but `/build` is formative and serves all six challenges the checkpoints
+grade, so it printed every gate's answer at zero cost. Unscored is not unguarded.
+
+The third round-2 finding closed the question rather than the loop: widening the
+display guard further is **unsatisfiable**. At 3 pairs the match dihedral group forbids
+100% of the permutation space, and 60 of 101 categorize keys are an even sweep in
+AUTHORED order, which no shuffle touches. Those are content defects wearing a display
+costume (ADR-011), and the residual is now two assertions carrying the measured
+numbers rather than a ceiling of zero that quietly fails.
 
 The lesson generalises past this codebase: **a fix verified only by its author
 converges on the author's model of the defect.** Everything above was found by
@@ -64,7 +79,7 @@ Every count is reproducible. The command is named beside each.
 | Dead diagram references | 16 → 0 | `node tools/check-refs.cjs` |
 | Missing OG share card | 1 → 0 | same |
 | Lesson overviews using the banned template | 12 reported / 17 real → 12 baselined, 5 rewritten | `node tools/check-prose.cjs` |
-| Tests | 207 → 246 | `npm test` |
+| Tests | 207 → 252 | `npm test` |
 | Content validators in `verify` | 4 → 8, plus 2 self-tests | `npm run verify` |
 
 ### The three blockers, in order of severity

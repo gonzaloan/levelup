@@ -45,9 +45,15 @@ passed without reading would have been building on sand.
 
 ## In review
 
-Two adversarial reviewers returned **FAIL** on the first round, with 3 assessment
-blockers and 6 content blockers between them. Every one was reproduced, fixed, and
-covered by a test. A round-2 assessment review is running against the fixes.
+TWO ROUNDS, both **FAIL**. Round 1: 3 assessment blockers and 6 content blockers.
+Round 2, verifying those fixes: 3 more, because two of my fixes guarded a place the
+attacker does not have to go (a cap in React state that F5 resets; a criterion list
+gated on `mode` when `/build` is formative and serves every graded challenge), and one
+test certified a threshold it never measured.
+
+Every blocker across both rounds was reproduced with a number, fixed, and then
+verified by REVERTING the fix and confirming the test fails. Final: 252 vitest, 97/97
+Playwright.
 
 **What the first round proved about my own work:** every blocker was my fix being
 INCOMPLETE rather than wrong. The pool split was correct and failed at a third call
@@ -83,7 +89,7 @@ Nothing is blocked on a decision. The items below are unstarted, not stuck.
   H_es 3.92 · I 3.62
 
 ### Verification
-- 244 vitest across 26 files
+- 252 vitest across 26 files
 - 8 content validators in `npm run verify`: `merge-lessons`, `merge-codex`,
   `merge-checks`, `check-refs`, `check-coverage`, `check-axes`, `check-trace`,
   `check-prose`
