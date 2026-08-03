@@ -44,6 +44,17 @@ const PATCHABLE = new Set([
   // surplus. checkConcept already validates it — bilingual, min 100 chars, no
   // calques — so patching it is as safe as patching the explanation itself.
   "depth",
+  // `predict` is the commitment step. Only 3 of 178 concepts had one, and closing
+  // that gap means adding a single field to concepts whose prose is already
+  // hand-corrected — exactly the case this patcher exists for, rather than
+  // re-emitting a whole lesson and risking the Spanish fixes.
+  //
+  // Safe to allow because checkConcept enforces the parts that make a prediction
+  // real: ≥2 options, EXACTLY one correct, a bilingual `why` on every option
+  // including the wrong ones (min 30 chars), and a bilingual prompt and resolution
+  // at min 40. A prediction with one option, or with an unexplained wrong answer,
+  // is rejected here rather than shipping as a formality.
+  "predict",
 ]);
 
 function main() {
@@ -114,7 +125,13 @@ function main() {
         : value.kind ? value.kind
         : Array.isArray(value) ? `${value.length} item(s)`
         : value.en ? `${value.en.trim().split(/\s+/).length} words`
-        : "replaced";
+        // A `predict` has no `en`, no `kind` and is not an array, so it used to fall
+        // through to the literal word "replaced" — which reads as a warning that
+        // authored content was overwritten, on a field that was in fact empty. The
+        // refusal to overwrite is enforced above by the --force check; this is only a
+        // summary line, and it should describe what landed.
+        : value.options ? `${value.options.length} options`
+        : "ok";
       console.log(`  + ${field} on ${where} (${detail})`);
     }
   }

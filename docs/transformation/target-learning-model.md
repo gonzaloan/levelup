@@ -15,7 +15,7 @@ has for each of its 178 concepts.
 
 | Stage | What it demands of the learner | Concepts with it | Coverage |
 |---|---|---:|---:|
-| **Predict** | Commit to an answer before the teaching | 3 | 2% |
+| **Predict** | Commit to an answer before the teaching | 24 | 13% |
 | **Read** | Take in the explanation | 178 | 100% |
 | **See** | Read a figure, widget or architecture | 178 | 100% |
 | **Worked example** | Follow one concrete case end to end | 178 | 100% |
@@ -27,7 +27,7 @@ has for each of its 178 concepts.
 
 Five stages are complete. Four are not, and the gaps are the useful part of this table.
 
-### Predict — 3 of 178
+### Predict — 24 of 178
 
 The pedagogy audit found this missing platform-wide: `grep -rn predict src/` returned
 two unrelated hits. The concept pane opened by naming the judgment, then showed the
@@ -39,7 +39,7 @@ until a choice is made. It is deliberately **unscored and skippable**: attaching
 to a guess made before the teaching punishes the learner for not yet knowing, which is
 the whole reason for asking.
 
-3 concepts have one. This is a content gap, not an engine gap.
+24 concepts have one. This is a content gap, not an engine gap.
 
 ### Build — 6 of 178
 

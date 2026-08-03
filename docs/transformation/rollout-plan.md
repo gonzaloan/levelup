@@ -15,7 +15,7 @@ versions to two learners.** Anything resembling a canary has to be client-side.
 
 ```bash
 npm run verify        # 6 steps: typecheck, lint, 10 validators, 3 self-tests, 334 tests
-npx playwright test --workers=1   # 87 browser tests
+npx playwright test --workers=1   # 89 browser tests
 npm run build         # must produce the full page set
 ```
 
@@ -32,7 +32,7 @@ by a git revert.
 stored progress changes meaning.
 
 **Stage 3 — content depth.** The gaps in `target-learning-model.md`:
-175 concepts still need a Predict step,
+154 concepts still need a Predict step,
 172 need a Build challenge. Each is additive and
 independently shippable.
 
@@ -49,7 +49,7 @@ Every stored-progress field added is optional, so no rollback needs a data migra
 
 ## Risks
 
-- **No visual regression baseline.** A CSS regression that keeps the DOM intact passes all 87 browser tests. Highest residual risk.
+- **No visual regression baseline.** A CSS regression that keeps the DOM intact passes all 89 browser tests. Highest residual risk.
 - **No telemetry.** With 0 tracking calls, a rollout is judged by looking. If the route split confuses learners, nothing reports it.
 - **The attempt cap will read as a restriction** to anyone who had been refreshing to re-roll a checkpoint.
 - **4.1 MB of assets** with no CI budget.

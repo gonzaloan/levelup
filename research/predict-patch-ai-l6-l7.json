@@ -1,0 +1,493 @@
+{
+  "_note": "Predict steps for the AI route, L6 and L7. At these levels the judgment is organizational rather than technical, so each scenario forces a choice between a local fix and a systemic one — which is the distinction the levels are about.",
+  "patches": [
+    {
+      "lessonId": "ai-engineering-l6",
+      "slug": "ai-observability",
+      "field": "predict",
+      "predict": {
+        "prompt": {
+          "en": "Your dashboard shows a healthy 5xx rate and a mean latency of 2.1s. Users say the assistant is slow and getting worse. Before you read on: what would you add first?",
+          "es": "Tu dashboard muestra una tasa de 5xx sana y una latencia promedio de 2,1s. Los usuarios dicen que el asistente está lento y empeorando. Antes de seguir leyendo: ¿qué agregarías primero?"
+        },
+        "options": [
+          {
+            "correct": true,
+            "text": {
+              "en": "A span per step, so the time can be attributed instead of averaged, and a percentile instead of a mean",
+              "es": "Un span por paso, para atribuir el tiempo en vez de promediarlo, y un percentil en vez de un promedio"
+            },
+            "why": {
+              "en": "Traces localize; metrics do not. In the measured case, six steps and a 14s p99 turned out to be one sequential Stripe lookup — visible only once each step was its own span. A mean of 2.1s hides 2% of users at 30s, and those are the ones who churn.",
+              "es": "Las trazas localizan; las métricas no. En el caso medido, seis pasos y un p99 de 14s resultaron ser una búsqueda secuencial a Stripe, visible solo cuando cada paso fue su propio span. Un promedio de 2,1s esconde al 2% de usuarios en 30s, y esos son los que se van."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "More eval coverage, since the offline suite clearly is not catching the regression",
+              "es": "Más cobertura de evaluación, ya que la suite offline claramente no está atrapando la regresión"
+            },
+            "why": {
+              "en": "Worth doing, and it answers a different question. Offline evals cannot reproduce the traffic pattern that produces a tail, which is why the concept asks what you record from REAL traffic.",
+              "es": "Vale la pena y responde otra pregunta. Las evaluaciones offline no pueden reproducir el patrón de tráfico que produce una cola, y por eso el concepto pregunta qué registras del tráfico REAL."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "A thumbs-up/thumbs-down control, so you find out which answers users disliked",
+              "es": "Un control de pulgar arriba/abajo, para saber qué respuestas les disgustaron a los usuarios"
+            },
+            "why": {
+              "en": "Explicit feedback is sparse and biased. Implicit signals are better and already there: an edit, a regenerate, or an abandoned session is a grade the user handed you for free. And none of them localizes latency.",
+              "es": "El feedback explícito es escaso y sesgado. Las señales implícitas son mejores y ya están ahí: una edición, un regenerar o una sesión abandonada son una nota que el usuario te dio gratis. Y ninguna localiza la latencia."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Logging of the final answer for every request, so slow cases can be inspected afterwards",
+              "es": "Registrar la respuesta final de cada petición, para poder inspeccionar después los casos lentos"
+            },
+            "why": {
+              "en": "This is the first named pitfall: logging only the final answer and not the intermediate tool and model calls, so you can never localize where the time or the error went.",
+              "es": "Este es el primer pitfall nombrado: registrar solo la respuesta final y no las llamadas intermedias a herramientas y al modelo, así nunca puedes localizar dónde se fue el tiempo o el error."
+            }
+          }
+        ],
+        "resolution": {
+          "en": "Green infrastructure metrics can hide an entire quality incident, because quality has no 5xx. Instrument three things: a span per step so latency is attributable, a percentile rather than a mean, and a quality signal of its own — an LLM-judge score on a small slice of live traffic, recorded per span.",
+          "es": "Las métricas de infraestructura en verde pueden esconder un incidente de calidad completo, porque la calidad no tiene 5xx. Instrumenta tres cosas: un span por paso para que la latencia sea atribuible, un percentil en vez de un promedio, y una señal propia de calidad: un puntaje de juez LLM sobre una fracción chica del tráfico vivo, registrado por span."
+        }
+      }
+    },
+    {
+      "lessonId": "ai-engineering-l6",
+      "slug": "ai-architecture-guardrails",
+      "field": "predict",
+      "predict": {
+        "prompt": {
+          "en": "Your output guardrail calls a classifier that occasionally times out. Someone sets it to allow the response through on timeout, so users are never blocked by an outage. Before you read on: what did that just buy?",
+          "es": "Tu guardrail de salida llama a un clasificador que a veces expira. Alguien lo configura para dejar pasar la respuesta cuando expira, para que una caída nunca bloquee a los usuarios. Antes de seguir leyendo: ¿qué acaba de comprar eso?"
+        },
+        "options": [
+          {
+            "correct": true,
+            "text": {
+              "en": "Worse than no guardrail — an outage becomes an unfiltered firehose, and you trust it",
+              "es": "Peor que no tener guardrail: una caída se vuelve una manguera sin filtrar, y encima confías en él"
+            },
+            "why": {
+              "en": "A guardrail that passes everything when its classifier times out is worse than none, precisely because you now rely on it. Without it, the risk is visible and someone designs around it; with a fail-open one, the risk is invisible and correlated with exactly the moments things are already going wrong.",
+              "es": "Un guardrail que deja pasar todo cuando su clasificador expira es peor que ninguno, justamente porque ahora dependes de él. Sin él, el riesgo es visible y alguien diseña alrededor; con uno que falla abierto, el riesgo es invisible y está correlacionado con los momentos en que ya algo va mal."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "A reasonable availability tradeoff — blocking real users to catch rare bad output is the wrong ratio",
+              "es": "Un tradeoff razonable de disponibilidad: bloquear usuarios reales para atrapar salidas malas raras es la proporción equivocada"
+            },
+            "why": {
+              "en": "Defensible for a low-stakes filter and wrong as a default, because the failure is not random with respect to risk. The honest version of this position is to remove the guardrail and say so, rather than keeping one that reports success while passing everything.",
+              "es": "Defendible para un filtro de bajo riesgo y equivocado como default, porque la falla no es aleatoria respecto al riesgo. La versión honesta de esta postura es quitar el guardrail y decirlo, en vez de conservar uno que reporta éxito mientras deja pasar todo."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Nothing much — the timeout is rare, so the exposure window is small",
+              "es": "Casi nada: el timeout es raro, así que la ventana de exposición es chica"
+            },
+            "why": {
+              "en": "Rare and clustered. Classifier timeouts arrive during load or a dependency incident, so the unfiltered window coincides with peak traffic rather than being spread thin.",
+              "es": "Raro y agrupado. Los timeouts del clasificador llegan bajo carga o durante un incidente de dependencia, así que la ventana sin filtro coincide con el tráfico pico en vez de repartirse."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Lower p99, which is the real win — the guardrail was the slowest step in the chain",
+              "es": "Menor p99, que es la victoria real: el guardrail era el paso más lento de la cadena"
+            },
+            "why": {
+              "en": "Latency is a genuine concern with guardrails, and the fix is to run independent checks in parallel rather than chaining them serially — not to make the check optional under load.",
+              "es": "La latencia es una preocupación real con los guardrails, y el arreglo es correr las verificaciones independientes en paralelo en vez de encadenarlas en serie, no volver la verificación opcional bajo carga."
+            }
+          }
+        ],
+        "resolution": {
+          "en": "Fail closed or do not ship it. A guardrail belongs in code rather than in the prompt — the refund-policy rule only held once every claim had to cite a retrieved chunk — and the gateway is where it goes, so a model swap, a rate limit or a per-team cost cap is one config edit instead of forty repositories.",
+          "es": "Falla cerrado o no lo despliegues. Un guardrail va en código, no en el prompt (la regla de política de reembolsos solo se sostuvo cuando cada afirmación tuvo que citar un chunk recuperado), y el gateway es donde va, así que cambiar de modelo, poner un rate limit o un tope de costo por equipo es una edición de configuración en vez de cuarenta repositorios."
+        }
+      }
+    },
+    {
+      "lessonId": "ai-engineering-l6",
+      "slug": "unit-economics-at-scale",
+      "field": "predict",
+      "predict": {
+        "prompt": {
+          "en": "Your model bill doubles as usage grows. Procurement offers a 15% volume discount. Your system prompt is a static 2,500 tokens and each request adds about 500 dynamic tokens. Before you read on: take the discount, or change something?",
+          "es": "Tu factura del modelo se duplica al crecer el uso. Compras te ofrece un descuento por volumen del 15%. Tu system prompt es de 2.500 tokens estáticos y cada petición agrega unos 500 tokens dinámicos. Antes de seguir leyendo: ¿tomas el descuento o cambias algo?"
+        },
+        "options": [
+          {
+            "correct": true,
+            "text": {
+              "en": "Cache the static prefix first — it rebills at roughly a tenth, which dwarfs 15%",
+              "es": "Primero cachea el prefijo estático: se refactura a cerca de un décimo, lo que aplasta al 15%"
+            },
+            "why": {
+              "en": "83% of the input never changes, which is exactly the shape prompt caching exists for: the static prefix rebills at about 0.1x and only the ~500 dynamic tokens pay full rate. A fixed prefix is a caching problem, not a pricing problem, and the two have different fixes.",
+              "es": "El 83% de la entrada nunca cambia, y esa es justo la forma para la que existe el prompt caching: el prefijo estático se refactura a cerca de 0,1x y solo los ~500 tokens dinámicos pagan tarifa completa. Un prefijo fijo es un problema de caching, no de precios, y los dos tienen arreglos distintos."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Take the discount — it is guaranteed savings with no engineering work or risk",
+              "es": "Toma el descuento: es un ahorro garantizado sin trabajo de ingeniería ni riesgo"
+            },
+            "why": {
+              "en": "Take it as well, if it is free. But accepting it INSTEAD of caching leaves roughly an order of magnitude on the table on the majority of your input, and the discount does nothing about the retry loops that multiply calls per task.",
+              "es": "Tómalo también, si es gratis. Pero aceptarlo EN VEZ de cachear deja cerca de un orden de magnitud sobre la mesa en la mayoría de tu entrada, y el descuento no hace nada contra los bucles de reintento que multiplican llamadas por tarea."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Trim the system prompt — 2,500 tokens on every call is the obvious waste",
+              "es": "Recorta el system prompt: 2.500 tokens en cada llamada es el desperdicio obvio"
+            },
+            "why": {
+              "en": "Trimming input while output runs unbounded saves almost nothing, since output bills at several times the input rate. And a static prefix is the cheapest thing in the request once cached — shortening it optimizes the part you were about to stop paying for.",
+              "es": "Recortar la entrada mientras la salida corre sin límite ahorra casi nada, ya que la salida se factura a varias veces la tarifa de entrada. Y un prefijo estático es lo más barato de la petición una vez cacheado: acortarlo optimiza justo la parte que estabas a punto de dejar de pagar."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Switch to a cheaper model for the same workload and re-measure quality afterwards",
+              "es": "Cambia a un modelo más barato para la misma carga y vuelve a medir la calidad después"
+            },
+            "why": {
+              "en": "Sometimes right, and it is the change with the largest quality risk, so it is the last one to try rather than the first. A cheap call that fails and gets retried is the expensive one.",
+              "es": "A veces correcto, y es el cambio con mayor riesgo de calidad, así que es el último a probar y no el primero. Una llamada barata que falla y se reintenta es la caraSalida."
+            }
+          }
+        ],
+        "resolution": {
+          "en": "Measure cost per successful task, not per token — a cheap call that fails and gets retried is the expensive one. Then look in this order: cache what never changes, cap what the model may generate (`max_tokens` is a ceiling you set, never a default you inherit), count the calls per task including retries, and only then negotiate.",
+          "es": "Mide el costo por tarea exitosa, no por token: una llamada barata que falla y se reintenta es la cara. Después mira en este orden: cachea lo que nunca cambia, limita lo que el modelo puede generar (`max_tokens` es un techo que fijas, nunca un default que heredas), cuenta las llamadas por tarea incluyendo reintentos, y solo entonces negocia."
+        }
+      }
+    },
+    {
+      "lessonId": "ai-engineering-l6",
+      "slug": "security-program-adversarial",
+      "field": "predict",
+      "predict": {
+        "prompt": {
+          "en": "You passed a penetration test at launch and shipped. Two months later the team has swapped the model twice and edited prompts weekly. Before you read on: what does that pen test still tell you?",
+          "es": "Pasaste una prueba de penetración en el lanzamiento y desplegaste. Dos meses después el equipo cambió el modelo dos veces y editó prompts cada semana. Antes de seguir leyendo: ¿qué te sigue diciendo esa prueba?"
+        },
+        "options": [
+          {
+            "correct": true,
+            "text": {
+              "en": "Almost nothing about today — the risk surface moved with every prompt and model change, so the gates belong in CI",
+              "es": "Casi nada sobre hoy: la superficie de riesgo se movió con cada cambio de prompt y de modelo, así que las compuertas van en CI"
+            },
+            "why": {
+              "en": "A one-time test at launch is the named pitfall, because prompts, tools and model versions change weekly. What survives is a standing program: adversarial checks running in CI and at the gateway, so every change is tested rather than every quarter.",
+              "es": "Una prueba única en el lanzamiento es el pitfall nombrado, porque prompts, herramientas y versiones del modelo cambian cada semana. Lo que sobrevive es un programa permanente: verificaciones adversarias corriendo en CI y en el gateway, así se prueba cada cambio y no cada trimestre."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "That the architecture is sound — model and prompt changes do not alter the trust boundaries",
+              "es": "Que la arquitectura es sólida: los cambios de modelo y prompt no alteran los límites de confianza"
+            },
+            "why": {
+              "en": "A prompt edit can widen what the model attempts, and a model swap changes what it complies with. Neither moves the boundary lines on a diagram, and both move the behaviour at those boundaries.",
+              "es": "Una edición de prompt puede ampliar lo que el modelo intenta, y un cambio de modelo altera con qué cumple. Ninguno mueve las líneas del diagrama, y los dos mueven el comportamiento en esos límites."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Enough for compliance, and a fresh test at the next annual review closes the gap",
+              "es": "Suficiente para cumplimiento, y una prueba nueva en la revisión anual cierra la brecha"
+            },
+            "why": {
+              "en": "This is treating the artifact as the goal. An annual cadence against a weekly change rate leaves most of the year untested, whatever the compliance document says.",
+              "es": "Esto es tratar el artefacto como el objetivo. Una cadencia anual contra una tasa de cambio semanal deja la mayor parte del año sin probar, diga lo que diga el documento de cumplimiento."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "That injection is handled, since the tester would have tried it and the prompts have been hardened since",
+              "es": "Que la inyección está resuelta, ya que el tester la habría intentado y los prompts se endurecieron desde entonces"
+            },
+            "why": {
+              "en": "Hardening prompts treats injection as a prompt-engineering problem, and it is an architecture problem: isolate untrusted content and constrain what the tools can do. `send_email` restricted to pre-approved recipients turns a successful injection into a refused action.",
+              "es": "Endurecer prompts trata la inyección como un problema de ingeniería de prompts, y es un problema de arquitectura: aísla el contenido no confiable y restringe lo que las herramientas pueden hacer. `send_email` limitado a destinatarios preaprobados convierte una inyección exitosa en una acción rechazada."
+            }
+          }
+        ],
+        "resolution": {
+          "en": "A standing program beats an annual test, because the risk surface changes on your release cadence rather than the auditor's. Three things make it real: scope the tool rather than the wording, issue short-lived task-scoped credentials instead of standing ones, and treat consumption limits as a security control — with no per-key rate limit or token cap, one bug produces a ruinous bill (LLM10).",
+          "es": "Un programa permanente le gana a una prueba anual, porque la superficie de riesgo cambia al ritmo de tus releases y no al del auditor. Tres cosas lo vuelven real: acota la herramienta y no la redacción, emite credenciales de corta duración con alcance de tarea en vez de permanentes, y trata los límites de consumo como control de seguridad: sin rate limit por llave ni tope de tokens, un bug produce una factura ruinosa (LLM10)."
+        }
+      }
+    },
+    {
+      "lessonId": "ai-engineering-l6",
+      "slug": "ai-governance-responsible-ai-program",
+      "field": "predict",
+      "predict": {
+        "prompt": {
+          "en": "Legal asks which risk tier your resume-screening feature falls under and who signed off. There is a review board that meets fortnightly. Before you read on: what does the board give you, and what does it not?",
+          "es": "Legal pregunta en qué nivel de riesgo cae tu función de filtrado de CVs y quién lo aprobó. Hay un comité de revisión que se reúne cada dos semanas. Antes de seguir leyendo: ¿qué te da el comité y qué no?"
+        },
+        "options": [
+          {
+            "correct": true,
+            "text": {
+              "en": "A document and a queue — what answers the question is a gate in the build that produces evidence per release",
+              "es": "Un documento y una cola: lo que responde la pregunta es una compuerta en el build que produce evidencia por release"
+            },
+            "why": {
+              "en": "Gates produce evidence; policies produce documents. A fortnightly board becomes a launch bottleneck and still cannot say what the current version does. Classify before building — EU resume screening is high-risk under the AI Act, and the tier sets the obligations — then put an owner on each artifact and fail the build on a bias regression.",
+              "es": "Las compuertas producen evidencia; las políticas producen documentos. Un comité cada dos semanas se vuelve un cuello de botella de lanzamiento y aun así no puede decir qué hace la versión actual. Clasifica antes de construir (el filtrado de CVs en la UE es de alto riesgo bajo el AI Act, y el nivel define las obligaciones), después pon un dueño en cada artefacto y falla el build ante una regresión de sesgo."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Exactly what is needed — a human sign-off is the accountability Legal is asking about",
+              "es": "Exactamente lo que se necesita: una aprobación humana es la responsabilidad que Legal pregunta"
+            },
+            "why": {
+              "en": "A signature dates from the moment it was given. Legal is asking what is true of the version in production, which a fortnightly meeting cannot track.",
+              "es": "Una firma tiene la fecha del momento en que se dio. Legal pregunta qué es cierto de la versión en producción, y una reunión cada dos semanas no puede seguir eso."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "A bias evaluation, which is the substance of a responsible-AI program",
+              "es": "Una evaluación de sesgo, que es la sustancia de un programa de IA responsable"
+            },
+            "why": {
+              "en": "One of three artifacts, and each covers a gap the others leave: a model card, a red team who did not build the thing, and a bias eval per protected group. A bias eval alone tells you nothing about undocumented behaviour or adversarial use.",
+              "es": "Uno de tres artefactos, y cada uno cubre una brecha que los otros dejan: una tarjeta de modelo, un red team que no lo construyó y una evaluación de sesgo por grupo protegido. Una evaluación de sesgo sola no te dice nada sobre comportamiento no documentado o uso adversario."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Nothing useful — governance is overhead that slows releases without reducing risk",
+              "es": "Nada útil: la gobernanza es overhead que frena releases sin reducir riesgo"
+            },
+            "why": {
+              "en": "Reverse zealotry. The tier classification is a legal fact about this feature, not a preference, and a high-risk classification carries obligations whether or not anyone finds the process congenial.",
+              "es": "Fanatismo inverso. La clasificación de nivel es un hecho legal sobre esta función, no una preferencia, y una clasificación de alto riesgo trae obligaciones sin importar si a alguien le agrada el proceso."
+            }
+          }
+        ],
+        "resolution": {
+          "en": "Classify the feature before building it, because the tier sets the obligations. Then make the program survive turnover: three artifacts with a named owner each, gates that fail the build rather than a board that queues it, an eval set that absorbs new production failures instead of rotting, and a rollback plan — treating a model like static config leaves a bad version live while someone debugs.",
+          "es": "Clasifica la función antes de construirla, porque el nivel define las obligaciones. Después haz que el programa sobreviva la rotación: tres artefactos con un dueño nombrado cada uno, compuertas que fallan el build en vez de un comité que lo encola, un conjunto de evaluación que absorbe fallas nuevas de producción en vez de podrirse, y un plan de rollback: tratar un modelo como configuración estática deja viva una versión mala mientras alguien depura."
+        }
+      }
+    },
+    {
+      "lessonId": "ai-engineering-l7",
+      "slug": "eval-as-org-capability",
+      "field": "predict",
+      "predict": {
+        "prompt": {
+          "en": "A stronger model ships next month. Two teams want to adopt it. One has a prompt library; the other has 400 labelled production failures. Before you read on: which one switches in a week?",
+          "es": "El mes que viene sale un modelo más fuerte. Dos equipos quieren adoptarlo. Uno tiene una biblioteca de prompts; el otro tiene 400 fallas de producción etiquetadas. Antes de seguir leyendo: ¿cuál cambia en una semana?"
+        },
+        "options": [
+          {
+            "correct": true,
+            "text": {
+              "en": "The one with the failure cases — it can answer 'did anything get worse' instead of guessing",
+              "es": "El de los casos de falla: puede responder '¿algo empeoró?' en vez de adivinar"
+            },
+            "why": {
+              "en": "Accumulated failure cases are the moat; a prompt copies in an afternoon. The switch decision is a measurement against your own distribution, and only one of these teams can make it. That asymmetry is why the eval set is the asset and the prompt is not.",
+              "es": "Los casos de falla acumulados son el foso; un prompt se copia en una tarde. La decisión de cambiar es una medición contra tu propia distribución, y solo uno de estos equipos puede hacerla. Esa asimetría es la razón de que el conjunto de evaluación sea el activo y el prompt no."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Both, roughly — the new model is better on benchmarks, so neither needs much validation",
+              "es": "Ambos, más o menos: el modelo nuevo es mejor en benchmarks, así que ninguno necesita mucha validación"
+            },
+            "why": {
+              "en": "Leaderboards are marketing. An MMLU or arena rank measures benchmark tasks, and says nothing about your invoice formats or your definition of a wrong answer.",
+              "es": "Las tablas de posiciones son marketing. Un puesto en MMLU o en una arena mide tareas de benchmark, y no dice nada sobre tus formatos de factura ni sobre tu definición de respuesta equivocada."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "The prompt-library team, since prompts are what has to be ported and they have them organized",
+              "es": "El equipo de la biblioteca de prompts, ya que los prompts son lo que hay que portar y los tienen organizados"
+            },
+            "why": {
+              "en": "Porting prompts is the easy half and mostly mechanical. The hard half is knowing whether the port lost anything, which needs cases rather than prompts.",
+              "es": "Portar prompts es la mitad fácil y casi mecánica. La mitad difícil es saber si el port perdió algo, y eso necesita casos, no prompts."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Whichever has an LLM judge configured, since that scales the comparison to thousands of examples",
+              "es": "El que tenga un juez LLM configurado, ya que eso escala la comparación a miles de ejemplos"
+            },
+            "why": {
+              "en": "Only if it was calibrated against human labels. An uncalibrated judge is a number you cannot defend, and it drifts across model versions — including the one you are evaluating.",
+              "es": "Solo si se calibró contra etiquetas humanas. Un juez sin calibrar es un número que no puedes defender, y deriva entre versiones de modelo, incluida la que estás evaluando."
+            }
+          }
+        ],
+        "resolution": {
+          "en": "The eval set is the durable asset, because it is the only thing that turns 'a better model shipped' into a one-week decision. Two habits keep it alive: close every incident by adding the case, or coverage decays as traffic shifts; and re-validate any judge whenever the rubric or the judge model changes.",
+          "es": "El conjunto de evaluación es el activo duradero, porque es lo único que convierte 'salió un modelo mejor' en una decisión de una semana. Dos hábitos lo mantienen vivo: cierra cada incidente agregando el caso, o la cobertura se degrada a medida que cambia el tráfico; y revalida cualquier juez cada vez que cambie la rúbrica o el modelo juez."
+        }
+      }
+    },
+    {
+      "lessonId": "ai-engineering-l7",
+      "slug": "build-buy-model-strategy",
+      "field": "predict",
+      "predict": {
+        "prompt": {
+          "en": "Open weights would cost you a third per token versus your current API. Finance likes the number. Before you read on: what is missing from it, and what would you compute instead?",
+          "es": "Los pesos abiertos te costarían un tercio por token frente a tu API actual. Finanzas le gusta el número. Antes de seguir leyendo: ¿qué le falta y qué calcularías en su lugar?"
+        },
+        "options": [
+          {
+            "correct": true,
+            "text": {
+              "en": "The ops bill — compute the crossover as (GPU + on-call + eval cost) over (API price × tokens per task), at your own volume",
+              "es": "La factura de operación: calcula el punto de cruce como (GPU + guardia + costo de evaluación) sobre (precio API × tokens por tarea), con tu propio volumen"
+            },
+            "why": {
+              "en": "Per-token cost ignores that you now run a GPU fleet, autoscaling and an on-call rotation. Those are fixed costs that sink the savings until volume is genuinely high, and the crossover moves with model size, instance price and utilization — so it has to be recomputed rather than quoted.",
+              "es": "El costo por token ignora que ahora operas una flota de GPU, autoescalado y una rotación de guardia. Esos son costos fijos que hunden el ahorro hasta que el volumen es genuinamente alto, y el punto de cruce se mueve con el tamaño del modelo, el precio de la instancia y la utilización, así que hay que recalcularlo en vez de citarlo."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Nothing — a third of the cost is decisive at any volume, and the savings compound",
+              "es": "Nada: un tercio del costo es decisivo a cualquier volumen, y el ahorro se acumula"
+            },
+            "why": {
+              "en": "This is the first named pitfall verbatim: choosing open weights on cost-per-token alone. At low volume the fixed ops cost dominates completely, so a third per token can still be several times more expensive in total.",
+              "es": "Este es el primer pitfall nombrado textual: elegir pesos abiertos solo por costo por token. A bajo volumen el costo fijo de operación domina por completo, así que un tercio por token puede seguir siendo varias veces más caro en total."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Quality — you should compare accuracy first and treat cost as a tiebreaker",
+              "es": "La calidad: deberías comparar exactitud primero y tratar el costo como desempate"
+            },
+            "why": {
+              "en": "Reasonable and not the gap in this number. The stated figure is a cost claim that is wrong as a cost claim, and quality is a separate axis that would need its own eval.",
+              "es": "Razonable y no es la brecha de este número. La cifra planteada es una afirmación de costo que está mal como afirmación de costo, y la calidad es un eje aparte que necesitaría su propia evaluación."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Control — the real argument for open weights is training your own model on your data",
+              "es": "El control: el argumento real por los pesos abiertos es entrenar tu propio modelo con tus datos"
+            },
+            "why": {
+              "en": "'Build' means fine-tuning, retrieval or orchestration. Training a foundation model from scratch is for a handful of labs, and confusing the two is how a strategy discussion becomes an unbudgeted research program.",
+              "es": "'Construir' significa fine-tuning, recuperación u orquestación. Entrenar un modelo base desde cero es para un puñado de laboratorios, y confundir ambos es como una discusión de estrategia se vuelve un programa de investigación sin presupuesto."
+            }
+          }
+        ],
+        "resolution": {
+          "en": "Reversibility beats capability: choose the provider you can unpick with a config change. The concrete requirement is an abstraction layer, because coupling business logic to one vendor's SDK turns 'let us try the new model' into a quarter of migration work — which means it never happens, and the frontier moves without you.",
+          "es": "La reversibilidad le gana a la capacidad: elige el proveedor que puedas desenganchar con un cambio de configuración. El requisito concreto es una capa de abstracción, porque acoplar la lógica de negocio al SDK de un proveedor convierte 'probemos el modelo nuevo' en un trimestre de migración, lo que significa que nunca pasa y la frontera se mueve sin ti."
+        }
+      }
+    },
+    {
+      "lessonId": "ai-engineering-l7",
+      "slug": "ai-technical-direction",
+      "field": "predict",
+      "predict": {
+        "prompt": {
+          "en": "A team proposes an agent mesh to sort incoming requests into twelve fixed categories. You have no authority over them. Before you read on: what do you do, and what makes it stick?",
+          "es": "Un equipo propone una malla de agentes para clasificar peticiones entrantes en doce categorías fijas. No tienes autoridad sobre ellos. Antes de seguir leyendo: ¿qué haces y qué lo hace perdurar?"
+        },
+        "options": [
+          {
+            "correct": true,
+            "text": {
+              "en": "Say no with the arithmetic, and ship the alternative as a template and a default so it outlives the conversation",
+              "es": "Di no con la aritmética, y entrega la alternativa como plantilla y default para que sobreviva a la conversación"
+            },
+            "why": {
+              "en": "Twelve fixed categories need a lookup plus one call, not an agent mesh, and refusing a model where a lookup table wins is the Principal signal. But direction set only in a meeting evaporates the moment you leave the room — it lands as docs, templates and defaults, never as attendance.",
+              "es": "Doce categorías fijas necesitan una búsqueda más una llamada, no una malla de agentes, y rechazar un modelo donde gana una tabla de búsqueda es la señal de Principal. Pero la dirección fijada solo en una reunión se evapora en cuanto sales del cuarto: aterriza como documentos, plantillas y defaults, nunca como asistencia."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Approve it — you have no authority, and blocking a team you do not own costs more credibility than it saves",
+              "es": "Apruébalo: no tienes autoridad, y frenar a un equipo que no es tuyo cuesta más credibilidad de la que ahorra"
+            },
+            "why": {
+              "en": "Saying yes to every 'add an agent' to avoid friction is the first named pitfall, and the cost lands on you anyway: the org accretes fragile, expensive features where a query was correct, and you own the aggregate reliability problem.",
+              "es": "Decir sí a cada 'agreguemos un agente' para evitar roce es el primer pitfall nombrado, y el costo cae en ti de todos modos: la organización acumula funciones frágiles y caras donde una consulta era correcta, y tú eres dueño del problema agregado de fiabilidad."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Escalate to their leadership, since a technical argument needs organizational weight behind it",
+              "es": "Escala a su liderazgo, ya que un argumento técnico necesita peso organizacional detrás"
+            },
+            "why": {
+              "en": "Occasionally necessary and expensive every time. It also does not produce the artifact — the next team proposes the same mesh, because nothing was written down.",
+              "es": "Ocasionalmente necesario y caro siempre. Además no produce el artefacto: el siguiente equipo propone la misma malla, porque nada quedó escrito."
+            }
+          },
+          {
+            "correct": false,
+            "text": {
+              "en": "Set a standing rule that agents need approval, so this class of proposal stops arriving",
+              "es": "Fija una regla permanente de que los agentes necesitan aprobación, para que esta clase de propuesta deje de llegar"
+            },
+            "why": {
+              "en": "A blanket rule is reverse zealotry with process attached. You lose credibility and get routed around when a model genuinely was the right tool — skepticism is a scalpel, not a wall.",
+              "es": "Una regla general es fanatismo inverso con proceso encima. Pierdes credibilidad y te esquivan cuando un modelo sí era la herramienta correcta: el escepticismo es un bisturí, no un muro."
+            }
+          }
+        ],
+        "resolution": {
+          "en": "Direction without authority works through artifacts, not attendance. Refusing a model where a lookup table wins is the signal that you are optimizing for the org rather than for the interesting problem — and it only holds if the refusal ships with a documented default someone can copy, so the next team does not re-litigate it.",
+          "es": "La dirección sin autoridad funciona con artefactos, no con asistencia. Rechazar un modelo donde gana una tabla de búsqueda es la señal de que optimizas para la organización y no para el problema interesante, y solo se sostiene si el rechazo llega con un default documentado que alguien pueda copiar, para que el siguiente equipo no lo vuelva a discutir."
+        }
+      }
+    }
+  ]
+}

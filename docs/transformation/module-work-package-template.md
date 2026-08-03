@@ -38,7 +38,7 @@ One domain × level cluster: 35 exist, averaging
 
 ```bash
 npm run verify
-npx playwright test --workers=1   # 87 tests; --workers=1 is required, the specs share localStorage
+npx playwright test --workers=1   # 89 tests; --workers=1 is required, the specs share localStorage
 ```
 
 ## Reviewer questions

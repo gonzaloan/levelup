@@ -22,7 +22,7 @@ correct rather than a gap.
 | `showDetail` gating | Graded surfaces no longer reveal per-element marks | No effect |
 | Attempt cap persisted | F5 no longer resets the cap | New field; a learner mid-checkpoint starts at 0 attempts |
 | `leansOn` (37 edges) | Foundations surface where a concept needs them | Advisory only, never gates |
-| Predict step (3 concepts) | A commitment before the teaching | Unscored, so nothing to store |
+| Predict step (24 concepts) | A commitment before the teaching | Unscored, so nothing to store |
 
 ## Backward compatibility of stored progress
 
@@ -43,6 +43,6 @@ migration has to be undone.
 
 ## Not migrated
 
-- **175 concepts have no Predict step** and 172 have no Build challenge. The engines exist; the content does not.
+- **154 concepts have no Predict step** and 172 have no Build challenge. The engines exist; the content does not.
 - **Explain and Transfer do not exist** — see `target-learning-model.md`.
 - **No analytics migration**, because there is no analytics.

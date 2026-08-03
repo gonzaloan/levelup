@@ -45,6 +45,6 @@ That is also what made the defects below findable.
 
 ## Known gaps
 
-- **No visual regression baseline.** 87 Playwright tests assert structure; none compare pixels. A CSS regression that preserves the DOM passes.
+- **No visual regression baseline.** 89 Playwright tests assert structure; none compare pixels. A CSS regression that preserves the DOM passes.
 - **No CI size budget.** 4.1 MB across 55 assets, and nothing fails if it doubles.
 - **34 axes figures are the fragile kind.** They encode a judgment in geometry, which is why they were the ones found broken. `check-axes.cjs` covers contradiction, not subtlety.
