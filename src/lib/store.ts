@@ -38,6 +38,18 @@ export interface Progress {
   skipped: string[];                      // concept slugs the learner set aside
   // ── Codex layer (additive; absent in older saves, defaulted below) ────────
   codexRead: string[];                    // Codex entry slugs the learner marked read
+  /**
+   * Which route the learner is walking, if they have chosen.
+   *
+   * `undefined` means unchosen, which is different from a default: the whole point
+   * of two routes is that the learner picks, and picking FOR them by defaulting to
+   * one reproduces the single-ladder problem with extra steps. Absent in older
+   * saves, and the picker is what fills it.
+   *
+   * Not exclusive. A learner may switch, and switching costs nothing because the two
+   * positions are independent — progress on the route they leave is untouched.
+   */
+  route?: string;
 }
 
 /** What a learner did on one day — the shareable record of a brief. */
@@ -68,6 +80,7 @@ const EMPTY: Progress = {
   dailyLog: {},
   skipped: [],
   codexRead: [],
+  // `route` is deliberately absent from EMPTY: unchosen is a real state.
 };
 
 export function load(): Progress {
@@ -301,6 +314,14 @@ export function skipConcept(slug: string): Progress {
   return update((p) =>
     p.skipped.includes(slug) ? p : { ...p, skipped: [...p.skipped, slug] }
   );
+}
+
+/**
+ * Choose a route. Switching is free and non-destructive: the two positions are
+ * independent, so leaving one does not touch its progress.
+ */
+export function chooseRoute(route: string): Progress {
+  return update((p) => ({ ...p, route }));
 }
 
 export function unskipConcept(slug: string): Progress {

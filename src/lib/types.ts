@@ -104,6 +104,21 @@ export interface Concept {
   prerequisites: string[];    // concept slugs, within-domain
   source: string;             // the real, checkable source that grounds it
   moduleId?: string;          // deep authored module, when one exists for this concept
+  /**
+   * Shared-Foundations concepts this one leans on, ACROSS domains.
+   *
+   * Deliberately separate from `prerequisites`, which is a HARD gate: `daily.ts:87`
+   * will not serve a concept until every prerequisite is read, and `merge-domain.cjs`
+   * requires them to resolve within the same domain so the brief cannot deadlock.
+   *
+   * A cross-route dependency is advisory, not gating. An AI Architect designing an
+   * inference queue benefits from `backpressure-flow-control` and should be told so
+   * at the moment it matters — but making it a gate would force every AI learner
+   * through the systems domain, which is the coupling the route split exists to
+   * remove. This is the section 5.3 mechanism: one canonical definition, surfaced
+   * from the modules that need it.
+   */
+  leansOn?: string[];
 }
 
 export interface CurriculumLevel {

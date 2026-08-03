@@ -159,6 +159,7 @@ export const MESSAGES = {
   // The Predict stage: a commitment before the concept explains itself. Never
   // scored, so the copy avoids the language of grading.
   "rail.afterPredict": { en: "Takeaways unlock after your prediction", es: "Los puntos clave se abren después de tu predicción" },
+  "lesson.leansOn":    { en: "Leans on", es: "Se apoya en" },
   "predict.label":      { en: "Predict first", es: "Predice primero" },
   "predict.right":      { en: "That is the one", es: "Esa es" },
   "predict.wrong":      { en: "Not that one — and this is the useful part", es: "No es esa, y eso es lo útil" },

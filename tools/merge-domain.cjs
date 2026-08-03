@@ -26,7 +26,7 @@ function i18nOk(v) {
 }
 
 /** Validate one domain object in isolation + against the rest of the spine. */
-function validateDomain(dom, otherSlugs) {
+function validateDomain(dom, otherSlugs, domainOfSlug = new Map()) {
   if (typeof dom.id !== "string" || !/^[a-z][a-z0-9-]*$/.test(dom.id)) bad(`domain id invalid: ${dom.id}`);
   if (!Number.isInteger(dom.axisId) || dom.axisId < 1 || dom.axisId > 7) bad(`${dom.id}: axisId must be 1..7`);
   if (!Array.isArray(dom.levels) || dom.levels.length === 0) return bad(`${dom.id}: no levels`);
@@ -65,6 +65,36 @@ function validateDomain(dom, otherSlugs) {
     }
   }
 
+  // `leansOn` — advisory cross-route dependencies (section 5.3). Validated
+  // separately from `prerequisites` because the two mean different things: a
+  // prerequisite GATES the daily brief and must resolve within the domain, while a
+  // leansOn edge only surfaces a shared foundation at the moment it matters. Getting
+  // these confused would force every AI learner through the systems domain.
+  const SHARED_DOMAINS = new Set(["technical-depth", "systems-architecture", "cloud-platform"]);
+  for (const lv of dom.levels) {
+    for (const c of lv.concepts ?? []) {
+      if (c.leansOn === undefined) continue;
+      if (!Array.isArray(c.leansOn)) { bad(`${c.slug}: leansOn must be an array`); continue; }
+      if (SHARED_DOMAINS.has(dom.id) && c.leansOn.length) {
+        bad(`${c.slug}: ${dom.id} IS a shared foundation — it cannot lean on the layer it is in`);
+      }
+      for (const target of c.leansOn) {
+        // Must be a real spine slug, and must be a shared foundation. Resolved
+        // against the whole spine rather than this domain, which is the point.
+        const owner = domainOfSlug.get(target) ?? (otherSlugs.has(target) ? "unknown" : undefined);
+        if (!owner) { bad(`${c.slug}: leansOn "${target}" is not a spine concept`); continue; }
+        if (owner === "unknown") {
+          // Present in the spine but this caller did not supply the domain map. Skip
+          // rather than guess: a validator that guesses is worse than one that says
+          // it did not check.
+        } else if (!SHARED_DOMAINS.has(owner)) {
+          bad(`${c.slug}: leansOn "${target}" lives in ${owner}, which is not a shared foundation`);
+        }
+      }
+      if (new Set(c.leansOn).size !== c.leansOn.length) bad(`${c.slug}: leansOn has duplicates`);
+    }
+  }
+
   // Cycle detection over the within-domain prerequisite DAG.
   const graph = new Map();
   for (const lv of dom.levels) for (const c of lv.concepts ?? []) graph.set(c.slug, c.prerequisites ?? []);
@@ -86,10 +116,14 @@ function main() {
   const spine = JSON.parse(fs.readFileSync(SPINE, "utf8"));
 
   if (checkOnly) {
+    // slug -> owning domain, across the WHOLE spine: `leansOn` resolves across
+    // domains by design, unlike `prerequisites`.
+    const domainOfSlug = new Map();
+    for (const d of spine.domains) for (const lv of d.levels) for (const c of lv.concepts) domainOfSlug.set(c.slug, d.id);
     for (const dom of spine.domains) {
       const others = new Set();
       for (const d of spine.domains) if (d.id !== dom.id) for (const lv of d.levels) for (const c of lv.concepts) others.add(c.slug);
-      validateDomain(dom, others);
+      validateDomain(dom, others, domainOfSlug);
     }
     const total = spine.domains.reduce((a, d) => a + d.levels.reduce((b, l) => b + l.concepts.length, 0), 0);
     if (errs.length) { for (const e of errs) console.error("  ✗ " + e); process.exit(1); }
@@ -109,7 +143,11 @@ function main() {
       if (d.id === incoming.id) continue;
       for (const lv of d.levels) for (const c of lv.concepts) others.add(c.slug);
     }
-    validateDomain(incoming, others);
+    const domainOfSlug = new Map();
+    for (const d of spine.domains) for (const lv of d.levels) for (const c of lv.concepts) domainOfSlug.set(c.slug, d.id);
+    // The incoming domain's own slugs too, so a self-referential mistake is caught.
+    for (const lv of incoming.levels) for (const c of lv.concepts ?? []) domainOfSlug.set(c.slug, incoming.id);
+    validateDomain(incoming, others, domainOfSlug);
     if (errs.length) continue;
     if (existingIdx >= 0) spine.domains[existingIdx] = incoming;
     else spine.domains.push(incoming);

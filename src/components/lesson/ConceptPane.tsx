@@ -35,6 +35,8 @@ import { CodeView } from "./CodeView";
 import { para, leadAndRest } from "./util";
 import { ProseBlocks, blocksFrom, blockWords, type Block } from "./Prose";
 import { codexEntriesForConcept } from "@/lib/codex";
+import { foundationsForConcept } from "@/lib/routes";
+import { CONCEPT_BY_SLUG } from "@/lib/curriculum";
 import type { Concept, ConceptLesson } from "@/lib/types";
 
 /** Inline per the build contract: new chrome doesn't edit the shared catalog. */
@@ -183,6 +185,13 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
   // Capped at 3: this is a pointer, not a second table of contents, and a concept
   // with eight Codex entries would bury the pane's own "next" button.
   const codexEntries = codexEntriesForConcept(lessonConcept.slug).slice(0, 3);
+  // Shared Foundations this concept leans on. THE mechanism that makes the shared
+  // layer a layer: one canonical definition, surfaced from the module that needs it,
+  // at the moment it matters — rather than a third ladder to march up.
+  const foundations = foundationsForConcept(lessonConcept.slug)
+    .map((slug) => CONCEPT_BY_SLUG.get(slug))
+    .filter((c): c is NonNullable<typeof c> => !!c)
+    .slice(0, 4);
 
   return (
     <section className="card lesson-content">
@@ -371,6 +380,22 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
              teaches the judgment, the Codex holds the vocabulary and the numbers.
              Rendered only where a Codex entry actually names this concept, so it
              never becomes a link to a page that has nothing to add. */}
+      {/* The foundations this concept leans on. Advisory, never a gate: an AI
+          Architect reasoning about an inference queue benefits from backpressure and
+          should be told so HERE, but forcing them through the systems domain first is
+          the coupling the two routes exist to remove. See `leansOn` in types.ts. */}
+      {foundations.length > 0 && (
+        <p className="cp-foundations">
+          <span className="eyebrow">{m("lesson.leansOn", locale)}</span>
+          {foundations.map((f) => (
+            <Link key={f.concept.slug} href={`/${locale}/lesson/${f.domainId}-${f.level.toLowerCase()}`}
+              className="cp-foundation-link">
+              {t(f.concept.title, locale)}
+            </Link>
+          ))}
+        </p>
+      )}
+
       {codexEntries.length > 0 && (
         <p className="cp-codex">
           <span className="eyebrow">{t(LOOK_UP, locale)}</span>
