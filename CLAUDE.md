@@ -5,8 +5,12 @@ export, content-as-data, dark-only with two themes. This file orients any future
 before making changes.
 
 ## Run & verify
+- **`npm run verify` — the gate.** typecheck, lint, 7 content validators, both gate self-tests,
+  then vitest. If this is green the tree is shippable except for the browser layer.
 - `npm run dev` — local dev.
 - `npm test` — vitest (node env, pure-logic tests only; no jsdom → no React-render tests).
+  Source-reading tests (`a11y-source`, parts of `check-integrity`) exist BECAUSE of that limit:
+  they cannot prove a glyph is visible, only that the JSX contains it. Playwright covers the rest.
 - `npm run build` — static export to `out/` (this is the real integration check).
 - `npx playwright test --workers=1` — visual/e2e. **Always `--workers=1` (or 2)**: the static
   `serve` can't handle 8 parallel workers and gives spurious timeouts.
@@ -37,6 +41,23 @@ before making changes.
     the article (a "working" link that delivers nothing).
   - `check-prose.cjs` — the prose gate (below). `--audit` for the full report, `--baseline` to reset
     the ratchet.
+  - `merge-checks.cjs` — knowledge checks. Validates every index in range, both languages really
+    translated (the measured EN/ES function-word skew, not a diacritic count), and refuses a match
+    under 3 pairs. `selftest-merge-checks.cjs` replays 16 defect classes against it plus a
+    known-good fixture, because a validator that passes everything and one that checks nothing
+    produce the same output.
+  - `check-coverage.cjs` — every domain owes its learners the same mechanics. Derives the matrix
+    from the spine. Exists because `cloud-platform` shipped with 0 of 290 checks and no validator
+    could see it: they all check that what EXISTS is well-formed, and a domain with zero checks is
+    well-formed. Baseline in `coverage-baseline.json`, with a reason per line.
+  - `check-refs.cjs` — every id the content points at must resolve: diagram registry, viz registry,
+    literal `public/` paths, and the badge/OG cards derived from the spine. Found 16 dead diagram
+    ids in `ai-l5.json` that rendered nothing (`Diagram` returns `null` on a miss), a missing
+    `/hero/codex.webp`, and the 7th domain's OG card, whose absence 404'd its LinkedIn share.
+  - `inventory.cjs` + `audit.cjs` — the transformation's reproducible content inventory (470 units)
+    and its 0–4 rubric scoring. `selftest-inventory.cjs` (25 checks) guards both detectors.
+  - `gen-og.mjs` — renders an achievement's 1200×627 share card. Reproducible replacement for the
+    one-off pass that produced 16 of 17 and left the 7th domain's out.
   Each takes `--check` to validate what is already shipped.
 - `src/i18n/` — locales + the UI message catalog (`messages.ts`).
 - `docs/specs/`, `docs/superpowers/plans/` — design specs and implementation plans.
@@ -61,6 +82,23 @@ before making changes.
   random): the authored JSON puts the correct answer first in ~97% of items, which made every quiz
   clickable without reading. Any new quiz surface MUST shuffle, and must key state/grading off the
   ORIGINAL index — never the display position.
+  **The four novel mechanics shuffle through `src/lib/checkDisplay.ts`, and shuffling alone is not
+  enough.** Their authored keys are the identity permutation (63/73 match, 58/61 cloze, 62/81
+  categorize), and a uniform shuffle lands on the giveaway order by chance — 11 of 233 checks still
+  fell. Each mechanic passes its ACTUAL exploit as an `unsafe` predicate and the order is re-keyed
+  until the exploit fails. One 2×2 match was unfixable by any shuffle (row-i-to-row-i yields the
+  same pair set either way), so `merge-checks.cjs` rejects a match under 3 pairs: a content rule,
+  not a display rule.
+  **Do not force the correct answer away from position 0.** Measured: it lands there 27.2% of the
+  time against ~25% expected by chance. Forcing it to zero installs a sharper tell than the bias —
+  "option 1 is never right" is exploitable in one sitting.
+  **Practice and graded checks come from disjoint pools** (`poolFor` in `checks.ts`). They used to be
+  the same items: 66 of 70 graded checkpoint checks were what the learner had just solved
+  formatively with free retry and the answer printed. Also, both selectors took only the first two,
+  so 294 of 368 authored checks were unreachable by anyone.
+  **A failed checkpoint does not reveal the key.** It used to paint the correct option green on every
+  reveal while `retry()` replayed an identical order, so two passes cleared any gate. A wrong pick
+  now marks only the pick, and an attempt counter feeds the shuffle key.
 - **Teaching content has a written contract, and the contract is a GATE.**
   `docs/curriculum/REWRITE-CONTRACT.md` is the five-section template every concept follows
   (definition first in plain words → a labelled `## What you buy, and what you pay` triple → the
@@ -87,6 +125,24 @@ before making changes.
   (every Cloud lesson rendered as "Technical Depth"), a `DOMAIN_ORDER.indexOf` sort that put the
   unlisted domain FIRST, a hardcoded domain allowlist in a merge script, and the same list in a test.
   If you write a domain id or a count as a literal, assume it will be wrong within a month.
+
+- **A gate that fires on correct content is a broken gate — and one that fires on nothing may be
+  too.** Four rules written during the 2026-08 transformation were wrong, each found by attacking
+  the rule rather than reading its output: duplication over generated labels reported 595 false
+  pairs; "no diacritics past 40 words" missed a 35-word untranslated paragraph and at 25 words fired
+  on 10 pieces of correct Spanish (authored Spanish runs to 52 accent-free words — no threshold on
+  that signal both catches and spares, so the rule became the measured EN/ES function-word skew);
+  scoring N/A as 0 manufactured 435 fake audit failures; "the objective ends in a question mark"
+  scored all 178 concepts a perfect 4. Every gate here now ships a self-test containing BOTH real
+  defects and real correct content, and `npm run verify` runs them.
+- **Verify a test by reverting the fix it guards.** One test in this pass passed after the defect was
+  fully restored: it rebuilt the shuffle key itself instead of consuming what the component uses, so
+  it proved a property of its own arithmetic. A pure test cannot observe a component's arguments —
+  either extract the seam (`checkpointItemKey`) or assert the wiring in source.
+- **Absence is invisible to schema validators.** `merge-lessons`, `merge-codex` and `check-prose` all
+  check that what exists is well-formed. They cannot see a domain with no checks, an `axes` diagram
+  with no nodes, or a `source` that is simply missing — all three shipped. `check-coverage.cjs` and
+  `check-refs.cjs` exist for that class, and `source` is now required rather than validated-when-present.
 
 ## Hard bars (project identity)
 - **"Must not look AI-generated"**: hand-authored SVG/CSS for anything explanatory. Diffusion/raster
