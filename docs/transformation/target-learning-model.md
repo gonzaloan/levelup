@@ -23,9 +23,9 @@ has for each of its 178 concepts.
 | **Recall** | Retrieve from memory, unprompted | 178 | 100% |
 | **Build** | Construct the thing, not pick it | 10 | 6% |
 | **Explain** | Articulate it in their own words | 0 | 0% |
-| **Transfer** | Apply it in a second, unlike context | 0 | 0% |
+| **Transfer** | Apply it in a second, unlike context | 6 | 3% |
 
-Five stages are complete. Four are not, and the gaps are the useful part of this table.
+5 stages cover every concept, 3 are partial, and 1 does not exist. The gaps are the useful part of this table.
 
 ### Predict — 24 of 178
 
@@ -49,7 +49,7 @@ real and `/build` serves it.
 
 10 challenges exist. Two consequences follow, and only the first is obvious:
 most concepts have no constructive check, and the pool is too small for graded and
-practice sets to be disjoint the way `poolFor()` splits the 368 checks.
+practice sets to be disjoint the way `poolFor()` splits the 380 checks.
 
 ### Explain — 0 of 178
 
@@ -62,16 +62,32 @@ and no API routes (`fetchCallsToApi: 0`), so grading free text would
 mean either shipping a key to the browser or abandoning the deployment model. The
 honest position is that Explain is unbuilt, not that flashcards cover it.
 
-### Transfer — 0 of 178
+### Transfer — 6 of 178
 
-Also zero. Transfer means the same judgment applied in a context the learner has not
-seen, and no item type is tagged for it. The 37 `leansOn` edges are the
-seam it would be built on: a cross-route dependency is exactly a second, unlike context
-for the concept it points at.
+Transfer means the same judgment applied in a context the learner has not seen. The
+`leansOn` edges are the seam it is built on: a cross-route dependency is exactly a
+second, unlike context for the concept it points at, and the corpus already records
+37 of them.
+
+6 concepts now carry a transfer item — a systems concept assessed
+in an AI scenario. `backpressure-flow-control` is asked about a saturating inference
+endpoint, `delivery-semantics-idempotency` about an agent retrying a tool call,
+`caching-strategies` about which part of an LLM request may be cached. Each lands in
+the GRADED pool, so clearing the checkpoint requires the transfer rather than rewarding it.
+
+The measurement was the hard part. Six such items shipped before the schema had a
+`transferTo` field, and this document correctly reported zero — nothing distinguished
+them from an ordinary check, so no gate could count them. `merge-checks.cjs` now
+requires that the named domain have an authored `leansOn` relationship with the
+concept, which stops the field from becoming a label meaning "this feels cross-domain".
+
+Remaining: 172 concepts. The ceiling is the edge
+count, not effort — a concept with no cross-domain relationship has no second context to
+be assessed in, and inventing one would be the unfounded claim the validator now rejects.
 
 ## What holds the model up
 
-- **368 checks across 4 mechanics** — 80 cloze, 101 categorize, 94 order, 93 match. All four are display-shuffled per attempt, so no mechanic is passable positionally.
+- **380 checks across 4 mechanics** — 82 cloze, 105 categorize, 98 order, 95 match. All four are display-shuffled per attempt, so no mechanic is passable positionally.
 - **35 checkpoints, 183 items** — the graded gate at the end of each domain×level cluster, capped at two attempts and threshold `max(0.85, (n-1)/n)`.
 - **105 mid-lesson items** — formative, never scored, by design.
 - **178 concepts with flashcards** — the Recall stage.
@@ -81,7 +97,7 @@ for the concept it points at.
 
 A learner who has seen the answer has not been assessed. Three mechanisms enforce this:
 
-1. `poolFor(slug, want)` splits the 368 authored checks by index parity — even is practice, odd is graded — so the two pools are disjoint. Overlap went from 94.3% to 0%.
+1. `poolFor(slug, want)` splits the 380 authored checks by index parity — even is practice, odd is graded — so the two pools are disjoint. Overlap went from 94.3% to 0%.
 2. `showDetail` gates per-element marking, partial score AND the explanation. A graded surface reveals nothing except the total.
 3. The attempt number is folded into the shuffle key and persisted in `Progress`, so a retry is a different arrangement. Before this, a failed attempt revealed the key and the retry replayed the identical order — a Mastermind oracle.
 

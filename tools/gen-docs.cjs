@@ -35,6 +35,19 @@ const g = F.glossary;
 
 /** Percentage of the 178 concepts, as a whole number. */
 const pct = (n) => Math.round((n / lm.totalConcepts) * 100);
+/**
+ * How many of the nine stages are complete, partial, or absent — derived, because this
+ * sentence was hardcoded as "Five stages are complete. Four are not" and went stale the
+ * moment Predict reached 24 and Transfer reached 6.
+ */
+const stageTally = (() => {
+  const vals = Object.values(lm.coverage);
+  return {
+    full: vals.filter((n) => n === lm.totalConcepts).length,
+    partial: vals.filter((n) => n > 0 && n < lm.totalConcepts).length,
+    none: vals.filter((n) => n === 0).length,
+  };
+})();
 const mb = (bytes) => (bytes / 1024 / 1024).toFixed(1);
 
 const docs = {};
@@ -67,7 +80,7 @@ has for each of its ${lm.totalConcepts} concepts.
 | **Explain** | Articulate it in their own words | ${lm.coverage.explain} | ${pct(lm.coverage.explain)}% |
 | **Transfer** | Apply it in a second, unlike context | ${lm.coverage.transfer} | ${pct(lm.coverage.transfer)}% |
 
-Five stages are complete. Four are not, and the gaps are the useful part of this table.
+${stageTally.full} stages cover every concept, ${stageTally.partial} ${stageTally.partial === 1 ? "is" : "are"} partial, and ${stageTally.none} ${stageTally.none === 1 ? "does" : "do"} not exist. The gaps are the useful part of this table.
 
 ### Predict — ${lm.coverage.predict} of ${lm.totalConcepts}
 
@@ -106,10 +119,26 @@ honest position is that Explain is unbuilt, not that flashcards cover it.
 
 ### Transfer — ${lm.coverage.transfer} of ${lm.totalConcepts}
 
-Also zero. Transfer means the same judgment applied in a context the learner has not
-seen, and no item type is tagged for it. The ${c.leansOnEdges} \`leansOn\` edges are the
-seam it would be built on: a cross-route dependency is exactly a second, unlike context
-for the concept it points at.
+Transfer means the same judgment applied in a context the learner has not seen. The
+\`leansOn\` edges are the seam it is built on: a cross-route dependency is exactly a
+second, unlike context for the concept it points at, and the corpus already records
+${c.leansOnEdges} of them.
+
+${lm.coverage.transfer} concepts now carry a transfer item — a systems concept assessed
+in an AI scenario. \`backpressure-flow-control\` is asked about a saturating inference
+endpoint, \`delivery-semantics-idempotency\` about an agent retrying a tool call,
+\`caching-strategies\` about which part of an LLM request may be cached. Each lands in
+the GRADED pool, so clearing the checkpoint requires the transfer rather than rewarding it.
+
+The measurement was the hard part. Six such items shipped before the schema had a
+\`transferTo\` field, and this document correctly reported zero — nothing distinguished
+them from an ordinary check, so no gate could count them. \`merge-checks.cjs\` now
+requires that the named domain have an authored \`leansOn\` relationship with the
+concept, which stops the field from becoming a label meaning "this feels cross-domain".
+
+Remaining: ${lm.totalConcepts - lm.coverage.transfer} concepts. The ceiling is the edge
+count, not effort — a concept with no cross-domain relationship has no second context to
+be assessed in, and inventing one would be the unfounded claim the validator now rejects.
 
 ## What holds the model up
 

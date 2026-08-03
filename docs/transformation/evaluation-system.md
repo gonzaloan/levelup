@@ -4,23 +4,23 @@
 
 ## The pool
 
-666 scored items across four surfaces.
+678 scored items across four surfaces.
 
 | Surface | Count | Scored | Reveals detail |
 |---|---:|---|---|
 | Checkpoint MCQ | 183 | yes | total only |
 | Mid-lesson quiz | 105 | **no** — formative by design | yes |
-| Mechanic checks | 368 | when graded | practice only |
+| Mechanic checks | 380 | when graded | practice only |
 | Build challenges | 10 | yes | practice only |
 
-Mechanics: 80 cloze, 101 categorize, 94 order, 93 match.
+Mechanics: 82 cloze, 105 categorize, 98 order, 95 match.
 
 ## What makes a score mean something
 
 Four defects had to be fixed before any of these numbers could be trusted, and each was
 found by attacking the surface rather than reading it:
 
-1. **Three of four mechanics were passable positionally.** `checkDisplay.ts` now re-keys the display permutation until an exploit predicate fails, and each mechanic must defeat its whole blind FAMILY — rotations, reflections, alternations, not just the identity. 0 of 368 are now positionally passable across attempts 0-3.
+1. **Three of four mechanics were passable positionally.** `checkDisplay.ts` now re-keys the display permutation until an exploit predicate fails, and each mechanic must defeat its whole blind FAMILY — rotations, reflections, alternations, not just the identity. 0 of 380 are now positionally passable across attempts 0-3.
 2. **Graded and practice pools overlapped 94.3%.** `poolFor()` splits by authored index parity, so they are disjoint. Reachable checks went from 20% to 57%.
 3. **A failed attempt revealed the key, and the retry replayed the identical order** — a Mastermind oracle: frozen order plus per-element feedback lets a solver eliminate consistently. The attempt number is now folded into the shuffle key and persisted in `Progress`.
 4. **`/build` printed the answer key** for every graded challenge, because `revealSpec` defaulted to the formative behaviour.

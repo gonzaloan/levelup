@@ -56,7 +56,7 @@ now names the symbol it would need to find.
 ## What to build next, in order
 
 1. **Wrong-with-high-confidence into the queue.** The data already exists in `responseLog`; it is the highest-value signal in section 33.2 and the cheapest to wire, because nothing new has to be collected.
-2. **Confidence on checks.** 368 checks currently produce none, so 67% of the item pool cannot contribute calibration data.
+2. **Confidence on checks.** 380 checks currently produce none, so 67% of the item pool cannot contribute calibration data.
 3. **Recent mistakes.** Straightforward from `responseLog`; today's brief ignores it.
 4. **Last-seen age**, independent of the ladder — a concept can be "not due" and still cold.
 

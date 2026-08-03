@@ -13,7 +13,7 @@ proving the tracks can be fed without authoring a second corpus.
 | Track | Usable items | Rubric | Follow-ups |
 |---|---:|---|---|
 | ai-architecture | 50 | **no** | **no** |
-| system-design | 108 | **no** | **no** |
+| system-design | 116 | **no** | **no** |
 | aws-architecture | 63 | **no** | **no** |
 | staff-engineer | 157 | **no** | **no** |
 
@@ -31,7 +31,7 @@ needs a model call, which needs a server. This platform is a static export with
 ## What is buildable without a server
 
 - **Constraint escalation on MCQ.** Present a scenario, take a choice, then add a constraint that changes the answer, from authored branches. `SjtResponse.downstream` already models this.
-- **Timed mixed sets.** Draw 378 usable items across the 4 tracks, shuffled per attempt with the existing machinery.
+- **Timed mixed sets.** Draw 386 usable items across the 4 tracks, shuffled per attempt with the existing machinery.
 - **A self-scored rubric.** Show the dimensions and let the learner grade; honest as a reflection tool, worthless as a measurement, and it must be labelled as such.
 
 ## Rule

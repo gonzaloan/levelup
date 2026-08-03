@@ -107,7 +107,11 @@ const STAGE_FIELDS = {
   recall: (c) => Boolean(c.flashcards?.length),
   build: (c) => BUILDS.some((b) => b.concept === c.slug),
   explain: () => false,   // no free-text articulation surface exists
-  transfer: () => false,  // no second-context item type exists
+  // A concept is covered for Transfer when an item applies it in a domain it is not
+  // taught in. The `transferTo` field is what makes this measurable: six such items
+  // existed in checks.json before the field did, and this generator correctly reported
+  // 0, because nothing distinguished them from an ordinary check.
+  transfer: (c) => CHECKS.some((k) => k.concept === c.slug && k.transferTo),
 };
 const stageCoverage = {};
 for (const [stage, has] of Object.entries(STAGE_FIELDS)) {

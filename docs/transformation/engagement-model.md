@@ -41,5 +41,5 @@ cleared. Progress that can be refreshed into existence is not progress.
 
 - **Saved content does not exist** (section 33.1). See `saved-content-model.md`.
 - **The review queue draws on 1 of the 8 sources** section 33.2 names. See `retention-engine.md`.
-- **No confidence prompt on checks** (`onChecks: false`) — only on assessment items, so 368 checks produce no calibration data.
+- **No confidence prompt on checks** (`onChecks: false`) — only on assessment items, so 380 checks produce no calibration data.
 - **Nothing is measured in aggregate** (0 tracking calls), so no claim here has been validated against learner behaviour.

@@ -5,16 +5,16 @@
 ## What was audited
 
 The 4 tracks section 35.1 names, fed from the existing pool of
-666 items. No new content was authored.
+678 items. No new content was authored.
 
 | Track | Usable items | Rubric | Follow-ups | Records what it lacks |
 |---|---:|---|---|---|
 | ai-architecture | 50 | **no** | **no** | 4 items |
-| system-design | 108 | **no** | **no** | 4 items |
+| system-design | 116 | **no** | **no** | 4 items |
 | aws-architecture | 63 | **no** | **no** | 4 items |
 | staff-engineer | 157 | **no** | **no** | 4 items |
 
-Total usable: 378.
+Total usable: 386.
 
 ## Findings
 
@@ -38,4 +38,4 @@ read oddly as an interview prompt, and nothing currently detects that.
 
 - **Do not copy items into an interview file.** A duplicate drifts from its original, and then two answers to the same question disagree.
 - **Do not claim a rubric that is self-scored.** A self-graded rubric is a reflection tool; labelling it a measurement is the dishonesty.
-- **Do not present the 378 items as interview-calibrated.** They are lesson items filtered by topic.
+- **Do not present the 386 items as interview-calibrated.** They are lesson items filtered by topic.

@@ -267,6 +267,25 @@ export interface CheckBase {
   prompt: I18nText;            // the instruction / question
   explain: I18nText;           // shown on reveal — why the answer is right
   track: Track;
+  /**
+   * The domain this check's SCENARIO is set in, when it is not the concept's own.
+   *
+   * This is what makes an item a Transfer item (section 23): the same judgment applied
+   * in a second, unlike context. `chk-backpressure-flow-control-5` teaches a systems
+   * concept and its scenario is a saturating inference endpoint, so it carries
+   * `transferTo: "ai-engineering"`.
+   *
+   * A field rather than a naming convention, because the coverage claim has to be
+   * measurable. Six transfer items existed in checks.json before this field did, and
+   * `facts.json` reported `transfer: 0` — correctly, since nothing distinguished them
+   * from an ordinary check. An untagged transfer item is not a transfer item as far as
+   * any gate is concerned.
+   *
+   * The pairings come from the authored `leansOn` edges, and `merge-checks.cjs` requires
+   * that: a transfer target must be a domain the concept actually leans on or is leaned
+   * on by, so this cannot become a free-text label for "this one feels cross-domain".
+   */
+  transferTo?: string;
 }
 // Complete-the-sentence: `segments` are the n+1 text pieces around n blanks;
 // the learner fills each blank from `bank`. `answers[i]` is the bank index for blank i.

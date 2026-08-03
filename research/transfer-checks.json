@@ -1,0 +1,160 @@
+{
+  "_note": "TRANSFER items: each one applies a systems concept in an AI context it was never taught in. Attached to the FOUNDATION concept (the id must carry its slug), because the thing being tested is whether that concept survives a change of domain — which is what transfer means. The pairings come from the authored `leansOn` edges, so these are the cross-route dependencies the shared layer already records, turned into assessment.",
+  "checks": [
+    {
+      "id": "chk-backpressure-flow-control-5",
+      "concept": "backpressure-flow-control",
+      "kind": "order",
+      "track": "ai",
+      "transferTo": "ai-engineering",
+      "prompt": {
+        "en": "An inference endpoint is saturating: offered load is 5k req/s against a server that completes 3k. Order the steps that preserve goodput, most effective first.",
+        "es": "Un endpoint de inferencia se está saturando: la carga ofrecida es de 5k req/s contra un servidor que completa 3k. Ordena los pasos que preservan el goodput, del más efectivo al menos."
+      },
+      "items": [
+        { "en": "Bound the request queue, so overload is visible instead of buffered", "es": "Acota la cola de peticiones, para que la sobrecarga sea visible en vez de bufferearse" },
+        { "en": "Shed the excess fast with a 429, so accepted requests still meet their deadline", "es": "Descarta rápido el exceso con un 429, para que las peticiones aceptadas cumplan su deadline" },
+        { "en": "Propagate the deadline to the model call, so no work continues past its usefulness", "es": "Propaga el deadline a la llamada del modelo, para que ningún trabajo siga después de dejar de servir" },
+        { "en": "Cap retries at a fraction of traffic and jitter the backoff", "es": "Limita los reintentos a una fracción del tráfico y aplica jitter al backoff" },
+        { "en": "Add GPU capacity once the queue is bounded and the numbers are real", "es": "Agrega capacidad de GPU una vez que la cola está acotada y los números son reales" }
+      ],
+      "explain": {
+        "en": "The same order as any saturated service, and the reason is the same: an unbounded queue turns 5k of offered load into 15k against a 3k server, because every timed-out caller retries. Bounding comes first because it makes the overload visible; shedding preserves goodput at 3k instead of collapsing it to zero. Adding GPUs first is the expensive version of not measuring — you scale the queue, not the throughput.",
+        "es": "El mismo orden que en cualquier servicio saturado, y por la misma razón: una cola sin acotar convierte 5k de carga ofrecida en 15k contra un servidor de 3k, porque cada llamador que expira reintenta. Acotar va primero porque vuelve visible la sobrecarga; descartar preserva el goodput en 3k en vez de colapsarlo a cero. Agregar GPUs primero es la versión cara de no medir: escalas la cola, no el throughput."
+      }
+    },
+    {
+      "id": "chk-delivery-semantics-idempotency-5",
+      "concept": "delivery-semantics-idempotency",
+      "kind": "categorize",
+      "track": "ai",
+      "transferTo": "ai-engineering",
+      "prompt": {
+        "en": "An agent loop retries a tool call after a timeout. Sort each tool by whether a duplicate call is harmless or needs an idempotency key.",
+        "es": "Un bucle de agente reintenta una llamada a herramienta después de un timeout. Clasifica cada herramienta según si una llamada duplicada es inofensiva o necesita una clave de idempotencia."
+      },
+      "buckets": [
+        { "en": "Safe to retry as-is", "es": "Seguro reintentar tal cual" },
+        { "en": "Needs an idempotency key", "es": "Necesita clave de idempotencia" }
+      ],
+      "items": [
+        { "label": { "en": "Search the document index", "es": "Buscar en el índice de documentos" }, "bucket": 0 },
+        { "label": { "en": "Read a customer record", "es": "Leer un registro de cliente" }, "bucket": 0 },
+        { "label": { "en": "Recompute an embedding for a chunk", "es": "Recalcular el embedding de un chunk" }, "bucket": 0 },
+        { "label": { "en": "Issue a refund", "es": "Emitir un reembolso" }, "bucket": 1 },
+        { "label": { "en": "Send the customer an email", "es": "Enviar un correo al cliente" }, "bucket": 1 },
+        { "label": { "en": "Append a row to the audit log", "es": "Agregar una fila al log de auditoría" }, "bucket": 1 }
+      ],
+      "explain": {
+        "en": "The tool's effect decides it, not the fact that a model is calling it. A lost ack looks exactly like a lost message, so the agent cannot know whether its first attempt landed — reads and pure recomputation are safe under that uncertainty, and anything that changes the world once is not. The key has to be generated before the first attempt, once per logical operation, and reused by every retry.",
+        "es": "Lo decide el efecto de la herramienta, no el hecho de que la llame un modelo. Un ack perdido se ve exactamente igual que un mensaje perdido, así que el agente no puede saber si su primer intento aterrizó: las lecturas y el recálculo puro son seguros bajo esa incertidumbre, y todo lo que cambia el mundo una vez no lo es. La clave se genera antes del primer intento, una por operación lógica, y la reutiliza cada reintento."
+      }
+    },
+    {
+      "id": "chk-caching-strategies-5",
+      "concept": "caching-strategies",
+      "kind": "match",
+      "track": "ai",
+      "transferTo": "ai-engineering",
+      "prompt": {
+        "en": "Match each part of an LLM request to what caching it buys you, and what it costs.",
+        "es": "Empareja cada parte de una petición a un LLM con lo que te compra cachearla y lo que cuesta."
+      },
+      "left": [
+        { "en": "A 2,500-token system prompt that never changes", "es": "Un system prompt de 2.500 tokens que nunca cambia" },
+        { "en": "The retrieved chunks for a popular query", "es": "Los chunks recuperados de una consulta popular" },
+        { "en": "The generated answer to an exact repeated question", "es": "La respuesta generada a una pregunta repetida exacta" },
+        { "en": "A per-user account balance the agent may quote", "es": "El saldo de cuenta de un usuario que el agente podría citar" }
+      ],
+      "right": [
+        { "en": "Rebills at a fraction of the input rate; costs nothing, since it cannot go stale", "es": "Se refactura a una fracción de la tarifa de entrada; no cuesta nada, porque no puede quedar viejo" },
+        { "en": "Skips the retrieval hop; costs staleness bounded by the TTL as the corpus changes", "es": "Se salta el salto de recuperación; cuesta obsolescencia acotada por el TTL a medida que cambia el corpus" },
+        { "en": "Skips the generation entirely; costs a stampede on expiry unless one request recomputes", "es": "Se salta la generación por completo; cuesta una estampida al expirar salvo que una sola petición recalcule" },
+        { "en": "Must not be cached at all: fast-changing and must-be-exact", "es": "No debe cachearse: cambia rápido y debe ser exacto" },
+        { "en": "Halves the model's parameter count, so more of it fits in GPU memory", "es": "Reduce a la mitad los parámetros del modelo, así cabe más en memoria de GPU" }
+      ],
+      "pairs": [[0, 0], [1, 1], [2, 2], [3, 3]],
+      "explain": {
+        "en": "Staleness is the product being sold, and the rule transfers unchanged from any cache: a fixed prefix is free to cache because it cannot go stale, retrieved context trades freshness for a hop, and a full answer trades the most and stampedes hardest on expiry. A balance is the same exclusion as ever — fast-changing plus must-be-exact rules the technique out, whether the reader is a web page or a model.",
+        "es": "La obsolescencia es el producto que se vende, y la regla se transfiere sin cambios desde cualquier caché: un prefijo fijo es gratis de cachear porque no puede quedar viejo, el contexto recuperado cambia frescura por un salto, y una respuesta completa cambia lo máximo y estampida más fuerte al expirar. Un saldo es la misma exclusión de siempre: cambia rápido y debe ser exacto, así que la técnica queda descartada, sea el lector una página web o un modelo."
+      }
+    },
+    {
+      "id": "chk-indexing-tradeoffs-5",
+      "concept": "indexing-tradeoffs",
+      "kind": "cloze",
+      "track": "ai",
+      "transferTo": "ai-engineering",
+      "prompt": {
+        "en": "Complete the reasoning about a vector index, using what any index costs.",
+        "es": "Completa el razonamiento sobre un índice vectorial, usando lo que cuesta cualquier índice."
+      },
+      "segments": [
+        { "en": "A vector index speeds one class of read — nearest-neighbour search — and taxes every ", "es": "Un índice vectorial acelera una clase de lectura (búsqueda de vecinos cercanos) y grava cada " },
+        { "en": " plus the memory to hold the vectors. Raising HNSW's parameters buys ", "es": " más la memoria para guardar los vectores. Subir los parámetros de HNSW compra " },
+        { "en": " and costs ", "es": " y cuesta " },
+        { "en": ", which is the same three-sided budget as any index: you cannot have all of them.", "es": ", que es el mismo presupuesto de tres lados que cualquier índice: no puedes tener todo." }
+      ],
+      "bank": [
+        { "en": "write", "es": "escritura" },
+        { "en": "recall", "es": "recall" },
+        { "en": "query latency and memory", "es": "latencia de consulta y memoria" },
+        { "en": "read", "es": "lectura" },
+        { "en": "storage only", "es": "solo almacenamiento" }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "A vector index is an index, so the same accounting applies: it is paid for on every write and in storage, and it is justified by a read that runs often enough to matter. The three-sided budget — recall, query latency, memory — is the vector-search version of the tradeoff a B-tree makes between range reads and write amplification. Recognising it as the same shape is the point.",
+        "es": "Un índice vectorial es un índice, así que aplica la misma contabilidad: se paga en cada escritura y en almacenamiento, y se justifica con una lectura que corre lo bastante seguido para importar. El presupuesto de tres lados (recall, latencia de consulta, memoria) es la versión de búsqueda vectorial del tradeoff que un B-tree hace entre lecturas por rango y amplificación de escritura. Reconocerlo como la misma forma es el punto."
+      }
+    },
+    {
+      "id": "chk-distributed-failure-modes-5",
+      "concept": "distributed-failure-modes",
+      "kind": "categorize",
+      "track": "ai",
+      "transferTo": "ai-engineering",
+      "prompt": {
+        "en": "An agent chains six steps across four services. Sort each symptom by whether a metric can find it or only a trace can.",
+        "es": "Un agente encadena seis pasos en cuatro servicios. Clasifica cada síntoma según si una métrica puede encontrarlo o solo una traza."
+      },
+      "buckets": [
+        { "en": "A metric shows it", "es": "Una métrica lo muestra" },
+        { "en": "Only a trace localizes it", "es": "Solo una traza lo localiza" }
+      ],
+      "items": [
+        { "label": { "en": "The error rate doubled after a deploy", "es": "La tasa de error se duplicó tras un despliegue" }, "bucket": 0 },
+        { "label": { "en": "Cost per request rose 40%", "es": "El costo por petición subió 40%" }, "bucket": 0 },
+        { "label": { "en": "p99 is 14s and nobody knows which of the six steps owns it", "es": "El p99 es de 14s y nadie sabe cuál de los seis pasos lo carga" }, "bucket": 1 },
+        { "label": { "en": "One dependency is called sequentially where it could be parallel", "es": "Una dependencia se llama en secuencia donde podría ser en paralelo" }, "bucket": 1 },
+        { "label": { "en": "The agent retried a tool three times before succeeding", "es": "El agente reintentó una herramienta tres veces antes de tener éxito" }, "bucket": 1 },
+        { "label": { "en": "Requests per second dropped to zero", "es": "Las peticiones por segundo cayeron a cero" }, "bucket": 0 }
+      ],
+      "explain": {
+        "en": "The split is not about severity, it is about attribution. A metric aggregates, so it can tell you THAT something changed across the whole system; a trace keeps the per-request structure, so it can tell you WHERE. Six steps and a 14s p99 became one sequential lookup only once each step was its own span — and an agent's retries are invisible to a metric that only sees the final outcome.",
+        "es": "La división no es por gravedad, es por atribución. Una métrica agrega, así que puede decirte QUE algo cambió en todo el sistema; una traza conserva la estructura por petición, así que puede decirte DÓNDE. Seis pasos y un p99 de 14s resultaron ser una búsqueda secuencial solo cuando cada paso fue su propio span, y los reintentos de un agente son invisibles para una métrica que solo ve el resultado final."
+      }
+    },
+    {
+      "id": "chk-correctness-under-partial-failure-5",
+      "concept": "correctness-under-partial-failure",
+      "kind": "order",
+      "track": "ai",
+      "transferTo": "ai-engineering",
+      "prompt": {
+        "en": "An output guardrail's classifier starts timing out under load. Order the responses from most correct to least.",
+        "es": "El clasificador de un guardrail de salida empieza a expirar bajo carga. Ordena las respuestas de la más correcta a la menos."
+      },
+      "items": [
+        { "en": "Fail closed: block the response and say the check was unavailable", "es": "Falla cerrado: bloquea la respuesta y avisa que la verificación no estaba disponible" },
+        { "en": "Serve a degraded fallback that does not need the classifier", "es": "Sirve un fallback degradado que no necesita el clasificador" },
+        { "en": "Remove the guardrail and state plainly that the output is unchecked", "es": "Quita el guardrail y declara con claridad que la salida no se verifica" },
+        { "en": "Fail open on timeout, so users are never blocked", "es": "Falla abierto al expirar, para que los usuarios nunca se bloqueen" }
+      ],
+      "explain": {
+        "en": "Failing closed is the same answer a partitioned node gives: refuse rather than serve something you cannot vouch for. A degraded fallback is second because it is honest about what it is. Removing the guardrail ranks ABOVE failing open, which is the counter-intuitive part — a guardrail that passes everything on timeout is worse than none, because you now rely on it and the failure arrives exactly when load is already high.",
+        "es": "Fallar cerrado es la misma respuesta que da un nodo particionado: negarse en vez de servir algo por lo que no puedes responder. Un fallback degradado va segundo porque es honesto sobre lo que es. Quitar el guardrail va POR ENCIMA de fallar abierto, y esa es la parte contraintuitiva: un guardrail que deja pasar todo al expirar es peor que ninguno, porque ahora dependes de él y la falla llega justo cuando la carga ya está alta."
+      }
+    }
+  ]
+}

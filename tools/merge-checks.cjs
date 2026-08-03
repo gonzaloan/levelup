@@ -26,7 +26,41 @@ const CHECKS = path.join(DATA, "checks.json");
 
 const curriculum = JSON.parse(fs.readFileSync(path.join(DATA, "curriculum.json"), "utf8"));
 const SPINE = new Set();
-for (const d of curriculum.domains) for (const lv of d.levels) for (const c of lv.concepts) SPINE.add(c.slug);
+/** slug -> the domain that owns it, so a transfer target can be checked. */
+const DOMAIN_OF = new Map();
+/**
+ * slug -> the set of OTHER domains it has an authored cross-domain relationship with,
+ * in either direction.
+ *
+ * This is what keeps `transferTo` honest. A transfer item is the same judgment applied
+ * in a second, unlike context — and the corpus already records which contexts are
+ * genuinely related, as `leansOn` edges. Without this check the field would degrade into
+ * a free-text label meaning "this one feels cross-domain", which is exactly how a
+ * coverage number stops describing anything.
+ */
+const RELATED_DOMAINS = new Map();
+for (const d of curriculum.domains) {
+  for (const lv of d.levels) {
+    for (const c of lv.concepts) { SPINE.add(c.slug); DOMAIN_OF.set(c.slug, d.id); }
+  }
+}
+for (const d of curriculum.domains) {
+  for (const lv of d.levels) {
+    for (const c of lv.concepts) {
+      for (const lean of c.leansOn ?? []) {
+        const target = DOMAIN_OF.get(lean);
+        if (!target || target === d.id) continue;
+        if (!RELATED_DOMAINS.has(c.slug)) RELATED_DOMAINS.set(c.slug, new Set());
+        RELATED_DOMAINS.get(c.slug).add(target);
+        // …and the reverse: a foundation is related to every domain that leans on it,
+        // which is the direction these six transfer items actually run.
+        if (!RELATED_DOMAINS.has(lean)) RELATED_DOMAINS.set(lean, new Set());
+        RELATED_DOMAINS.get(lean).add(d.id);
+      }
+    }
+  }
+}
+const DOMAIN_IDS = new Set(curriculum.domains.map((d) => d.id));
 
 const KINDS = new Set(["cloze", "order", "match", "categorize"]);
 const TRACKS = new Set(["general", "ai"]);
@@ -118,6 +152,20 @@ function validate(c) {
   if (id.startsWith("chk-") && c.concept && !id.startsWith(`chk-${c.concept}-`)) {
     err(id, `id does not carry its own concept slug (${c.concept})`);
   }
+  // A transfer item names the domain its SCENARIO is set in. It must be a real domain,
+  // it must not be the concept's own (that is not a second context), and the two must
+  // have an authored `leansOn` relationship.
+  if (c.transferTo !== undefined) {
+    if (!DOMAIN_IDS.has(c.transferTo)) {
+      err(id, `transferTo "${c.transferTo}" is not a domain id`);
+    } else if (c.transferTo === DOMAIN_OF.get(c.concept)) {
+      err(id, `transferTo "${c.transferTo}" is the concept's own domain — that is not a second context`);
+    } else if (!(RELATED_DOMAINS.get(c.concept) ?? new Set()).has(c.transferTo)) {
+      err(id, `transferTo "${c.transferTo}" has no authored leansOn edge with ${c.concept} — ` +
+              `add the edge to curriculum.json, or the transfer claim is unfounded`);
+    }
+  }
+
   i18n(id, "prompt", c.prompt);
   i18n(id, "explain", c.explain);
   // An `explain` that only restates the answer teaches nothing (section 9 step 5).

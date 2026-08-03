@@ -78,11 +78,49 @@ describe("facts.json agrees with the source it measures", () => {
     expect(facts.learningModel.totalConcepts).toBe(CONCEPT_LESSONS.length);
   });
 
-  it("reports Explain and Transfer as absent, because they are", () => {
-    // If either is ever built, this test SHOULD fail — that is the signal to update the
-    // learning model doc rather than leaving it claiming a gap that has been closed.
+  it("reports Explain as absent, because it is", () => {
+    // Explain needs free-text grading, which needs a server. This platform is a static
+    // export with no API routes, so the stage is blocked by the deployment model rather
+    // than by effort — see target-learning-model.md. If it is ever built, this test
+    // SHOULD fail, which is the signal to rewrite that section.
     expect(facts.learningModel.coverage.explain, "Explain now exists — update the docs").toBe(0);
-    expect(facts.learningModel.coverage.transfer, "Transfer now exists — update the docs").toBe(0);
+  });
+
+  it("counts a Transfer item only when it is TAGGED as one", () => {
+    // This test previously asserted `transfer: 0`, and six transfer items were already
+    // shipping. Both were right: the items existed and nothing marked them, so no gate
+    // could tell them from an ordinary check. `transferTo` is that mark.
+    //
+    // The assertion is derived from the content rather than restated, so authoring a
+    // seventh item moves it without an edit here.
+    const tagged = CHECKS.filter((k) => (k as { transferTo?: string }).transferTo);
+    expect(tagged.length, "no check is tagged as a transfer item").toBeGreaterThan(0);
+    const concepts = new Set(tagged.map((k) => k.concept));
+    expect(facts.learningModel.coverage.transfer).toBe(concepts.size);
+  });
+
+  it("every Transfer item names a domain its concept genuinely relates to", () => {
+    // The rule merge-checks.cjs enforces, asserted here too because it is the property
+    // that keeps the coverage number meaningful. Without it, `transferTo` becomes a
+    // free-text label meaning "this feels cross-domain".
+    const domainOf = new Map(CONCEPTS.map((c) => [c.concept.slug, c.domainId]));
+    const related = new Map<string, Set<string>>();
+    for (const c of CONCEPTS) {
+      for (const lean of c.concept.leansOn ?? []) {
+        const target = domainOf.get(lean);
+        if (!target || target === c.domainId) continue;
+        if (!related.has(lean)) related.set(lean, new Set());
+        related.get(lean)!.add(c.domainId);
+      }
+    }
+    const bad: string[] = [];
+    for (const k of CHECKS) {
+      const to = (k as { transferTo?: string }).transferTo;
+      if (!to) continue;
+      if (to === domainOf.get(k.concept)) { bad.push(`${k.id}: transfers to its own domain`); continue; }
+      if (!related.get(k.concept)?.has(to)) bad.push(`${k.id}: no leansOn edge to ${to}`);
+    }
+    expect(bad, "a transfer claim is unfounded").toEqual([]);
   });
 
   it("reports zero analytics, and would notice instrumentation appearing", () => {
