@@ -30,6 +30,51 @@ export function checksForLesson(lessonId: string): CheckItem[] {
   return CHECKS.filter((c) => slugs.has(c.concept));
 }
 
+// ── Practice pool vs graded pool ─────────────────────────────────────────────
+//
+// THE DEFECT THIS SPLIT FIXES
+// The lesson's practice stage took `checksForLesson(id).slice(0, 2)` and the
+// checkpoint took `coversConcepts.flatMap(checksForConcept).slice(0, 2)`. Both
+// walk the same concept order over the same array, so they landed on the same
+// items: 66 of the 70 graded checkpoint checks (94%) were byte-identical to the
+// two the learner had just played formatively, minutes earlier, with unlimited
+// free retry AND the explanation printed. 32 of 35 checkpoints had every graded
+// check pre-seen. The graded portion of the gate was a replay of a solved puzzle.
+//
+// A second consequence: because both selectors took only the first two, just 74
+// of 368 authored checks (20%) were reachable by any learner on any surface. 294
+// were authored and never served.
+//
+// THE SPLIT
+// Per concept, checks alternate: even authored positions are practice, odd are
+// held out for grading. That guarantees disjoint pools wherever a concept has 2+
+// checks (which is nearly all of them), and it is a pure function of authored
+// order, so it needs no state and cannot drift between the two call sites.
+//
+// A concept with exactly ONE check gives it to practice, not to the gate: an
+// unseen graded item is the goal, but a concept whose only check is withheld
+// would give the learner no formative rep at all, which is worse.
+function poolFor(slug: string, want: "practice" | "graded"): CheckItem[] {
+  const all = checksForConcept(slug);
+  if (all.length <= 1) return want === "practice" ? all : [];
+  return all.filter((_, i) => (i % 2 === 0) === (want === "practice"));
+}
+
+/** Formative checks for a lesson — the pool the learner may retry freely. */
+export function practiceChecksForLesson(lessonId: string): CheckItem[] {
+  const lesson = LESSONS.find((l) => l.lessonId === lessonId);
+  if (!lesson) return [];
+  return lesson.concepts.flatMap((c) => poolFor(c.slug, "practice"));
+}
+
+/**
+ * Graded checks for a checkpoint — held out, so clearing the gate is evidence.
+ * Never returns an item `practiceChecksForLesson` can serve for the same concept.
+ */
+export function gradedChecksForConcepts(slugs: readonly string[]): CheckItem[] {
+  return slugs.flatMap((s) => poolFor(s, "graded"));
+}
+
 // ── Response shapes (what a player emits) ────────────────────────────────
 export type ClozeResponse = number[];              // bank index chosen per blank
 export type OrderResponse = number[];              // the item indices in the learner's order

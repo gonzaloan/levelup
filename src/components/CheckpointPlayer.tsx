@@ -14,7 +14,7 @@ import { AXIS_BY_ID } from "@/lib/axes";
 import { recordCheckpoint } from "@/lib/store";
 import { fireReward } from "./Reward";
 import { BossIntro, BossHealth } from "./BossIntro";
-import { checksForConcept } from "@/lib/checks";
+import { gradedChecksForConcepts } from "@/lib/checks";
 import { shuffleOptions, itemKey } from "@/lib/shuffle";
 import { buildsForConcept } from "@/lib/build";
 import { CheckHost } from "./checks/CheckHost";
@@ -40,13 +40,19 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   const [correctCount, setCorrectCount] = useState(0);
   const [done, setDone] = useState(false);
   const [finalScore, setFinalScore] = useState(0);
+  // Which attempt this is. It seeds the option shuffle, so retrying re-orders
+  // every item instead of replaying a memorised sequence. See `retry()`.
+  const [attempt, setAttempt] = useState(0);
 
   const items = checkpoint.items;
   // Graded novel-mechanic checks for this checkpoint's concepts (up to 2),
   // appended after the MCQ items. They count toward the same gate as booleans.
-  const gradedChecks = checkpoint.coversConcepts
-    .flatMap((slug) => checksForConcept(slug))
-    .slice(0, 2);
+  //
+  // Drawn from the HELD-OUT pool. This used to be `checksForConcept(...).slice(0,2)`,
+  // which walked the same array the lesson's practice stage walks — so 66 of 70
+  // graded checks were the same items the learner had just solved formatively with
+  // free retry and the answer printed. See `poolFor` in lib/checks.ts.
+  const gradedChecks = gradedChecksForConcepts(checkpoint.coversConcepts).slice(0, 2);
   // At most one graded Architecture Build for a covered concept, appended last —
   // a constructive item worth the same single boolean as any other step.
   const gradedBuild = checkpoint.coversConcepts
@@ -61,8 +67,12 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   const buildStep = gradedBuild && idx >= buildStart ? gradedBuild : undefined;
   const clear = clearThreshold(totalSteps);
   // Display order for the current MCQ's options, stable per item.
+  // The attempt number is part of the key: without it, `itemKey` is a pure
+  // function of stable inputs, so every retry presented all 183 items in an
+  // identical order. Combined with the full answer reveal below, that made the
+  // whole 35-checkpoint gate memorisable in two passes.
   const displayOptions = item
-    ? shuffleOptions(item.options, itemKey(checkpoint.id, idx, item.stem.en))
+    ? shuffleOptions(item.options, itemKey(`${checkpoint.id}:a${attempt}`, idx, item.stem.en))
     : [];
   // Human-facing gate: "miss at most one" reads truer than a percent at n≤5.
   const gateLabel = { en: "one miss allowed", es: "se permite un error" };
@@ -123,6 +133,9 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   }
 
   function retry() {
+    // Advancing `attempt` reshuffles every item's options, so a second run is a
+    // different exam rather than a recital of the first.
+    setAttempt((a) => a + 1);
     setStarted(true); setIdx(0); setPicked(null); setCorrectCount(0); setDone(false); setFinalScore(0);
   }
 
@@ -176,29 +189,34 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
                 {displayOptions.map(({ option: o, originalIndex: oi }) => {
                   const isPicked = picked === oi;
                   const revealed = picked !== null;
-                  const border = revealed
-                    ? (o.correct ? "var(--ok)" : isPicked ? "var(--bad)" : "var(--hairline)")
-                    : "var(--hairline)";
-                  // Correctness must not be carried by colour alone. This is the
-                  // mastery gate — the highest-stakes surface in the product — and
-                  // it shipped with a green or red border and nothing else, so a
-                  // learner who cannot distinguish those two hues could not tell a
-                  // cleared answer from a failed one. `MidQuiz` already solved
-                  // this; the glyph and the label below are that same pattern.
-                  const mark = !revealed ? null : o.correct ? "✓" : isPicked ? "✗" : null;
+                  // On a WRONG answer, show only that the pick was wrong — not
+                  // which option was right.
+                  //
+                  // This surface used to paint the correct option green on every
+                  // reveal, so a failed attempt handed over 100% of the answer key,
+                  // and `retry()` replayed the same items in a provably identical
+                  // order. Two passes cleared any checkpoint. A learner who answers
+                  // correctly still gets the full confirmation; a learner who does
+                  // not gets their own rationale (which explains the misconception)
+                  // and another attempt with a different presentation.
+                  const showKey = isPicked && o.correct;
+                  const border = !revealed
+                    ? "var(--hairline)"
+                    : showKey ? "var(--ok)" : isPicked ? "var(--bad)" : "var(--hairline)";
+                  const mark = !revealed ? null : showKey ? "✓" : isPicked ? "✗" : null;
                   return (
                     <button key={oi} className="btn" disabled={revealed} onClick={() => choose(oi)}
                       style={{ textAlign: "left", justifyContent: "flex-start", borderColor: border, background: "var(--surface-2)", alignItems: "flex-start", lineHeight: 1.45 }}>
                       {mark && (
                         <span aria-hidden="true" className="mono"
-                          style={{ color: o.correct ? "var(--ok)" : "var(--bad)", marginRight: "var(--s-2)", fontWeight: 700 }}>
+                          style={{ color: showKey ? "var(--ok)" : "var(--bad)", marginRight: "var(--s-2)", fontWeight: 700 }}>
                           {mark}
                         </span>
                       )}
                       {t(o.text, locale)}
                       {mark && (
                         <span className="sr-only">
-                          {` — ${o.correct ? m("lesson.correct", locale) : m("lesson.notQuite", locale)}`}
+                          {` — ${showKey ? m("lesson.correct", locale) : m("lesson.notQuite", locale)}`}
                         </span>
                       )}
                     </button>

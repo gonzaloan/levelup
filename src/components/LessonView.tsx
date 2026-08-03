@@ -14,7 +14,7 @@ import { SceneryBackground } from "./SceneryBackground";
 import { ConceptNav } from "./ConceptNav";
 import { ContextRail } from "./ContextRail";
 import { markConceptsRead } from "@/lib/store";
-import { checksForLesson } from "@/lib/checks";
+import { practiceChecksForLesson } from "@/lib/checks";
 import { resourcesForConcepts } from "@/lib/resources";
 import { ResourceList } from "./ResourceList";
 import { ConceptPane } from "./lesson/ConceptPane";
@@ -65,8 +65,11 @@ export function LessonView({
   const flashcards = lesson.concepts.flatMap((c) => c.flashcards ?? []);
   const hasCheat = !!lesson.cheatSheet && lesson.cheatSheet.length > 0;
   const hasExam = lesson.midQuiz.length > 0;
-  // Up to 2 formative checks for this lesson (instant feedback, no score).
-  const practiceChecks = checksForLesson(lesson.lessonId).slice(0, 2);
+  // Formative checks for this lesson (instant feedback, no score, free retry).
+  // Drawn from the PRACTICE pool only — the checkpoint's graded items are held
+  // out, so clearing the gate is not a replay of a puzzle already solved here.
+  // The cap was 2, which left 294 of 368 authored checks unreachable by anyone.
+  const practiceChecks = practiceChecksForLesson(lesson.lessonId).slice(0, 4);
   // Primary sources attached to any concept in this lesson (deduped, essentials
   // first). Empty for lessons whose concepts have no mapped resources yet —
   // ResourceList renders nothing at all in that case.

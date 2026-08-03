@@ -19,7 +19,13 @@
 // authored JSON, because the authored order is not what the learner sees. Testing
 // the JSON would let a future refactor drop the shuffle and still pass.
 import { describe, it, expect } from "vitest";
-import { CHECKS, gradeCheck, type CheckResponse } from "@/lib/checks";
+import {
+  CHECKS, gradeCheck, gradedChecksForConcepts, practiceChecksForLesson,
+  type CheckResponse,
+} from "@/lib/checks";
+import { CHECKPOINTS as SPINE_CHECKPOINTS } from "@/lib/curriculum";
+import { shuffleOptions, itemKey } from "@/lib/shuffle";
+import { LESSONS } from "@/lib/lessons";
 import {
   displayForCloze, displayForMatch, displayForCategorize, displayForOrder,
 } from "@/lib/checkDisplay";
@@ -29,6 +35,7 @@ const cloze = CHECKS.filter((c): c is ClozeCheck => c.kind === "cloze");
 const match = CHECKS.filter((c): c is MatchCheck => c.kind === "match");
 const categorize = CHECKS.filter((c): c is CategorizeCheck => c.kind === "categorize");
 const order = CHECKS.filter((c): c is OrderCheck => c.kind === "order");
+const LESSON_IDS = LESSONS.map((l) => l.lessonId);
 
 /** How many of `items` a strategy passes, as a count and a share. */
 function exploitRate<T>(items: T[], attack: (item: T) => boolean) {
@@ -155,5 +162,133 @@ describe("the authored corpus still carries the bias the shuffle exists to hide"
     expect(idMatch / match.length).toBeGreaterThan(0.5);
     expect(idCloze / cloze.length).toBeGreaterThan(0.5);
     expect(idCat / categorize.length).toBeGreaterThan(0.5);
+  });
+});
+
+describe("the graded pool is held out from the practice pool", () => {
+  // THE DEFECT: the lesson's practice stage took `checksForLesson(id).slice(0,2)`
+  // and the checkpoint took `coversConcepts.flatMap(checksForConcept).slice(0,2)`.
+  // Both walked the same array, so 66 of the 70 graded checks (94%) were the SAME
+  // items the learner had just played formatively — with unlimited free retry and
+  // the explanation printed. 32 of 35 checkpoints had every graded check pre-seen.
+  // A gate made of puzzles you just solved with the answers visible is not a gate.
+  const CHECKPOINTS = SPINE_CHECKPOINTS;
+
+  it("no checkpoint grades an item its own lesson serves as practice", () => {
+    const offenders: string[] = [];
+    for (const cp of CHECKPOINTS) {
+      const graded = gradedChecksForConcepts(cp.coversConcepts).slice(0, 2);
+      const lessonId = `${cp.domainId}-${cp.afterLevel.toLowerCase()}`;
+      const practice = new Set(practiceChecksForLesson(lessonId).slice(0, 4).map((c) => c.id));
+      const dup = graded.filter((c) => practice.has(c.id));
+      if (dup.length) offenders.push(`${cp.id}: ${dup.map((c) => c.id).join(", ")}`);
+    }
+    expect(offenders, `graded items already seen in practice: ${offenders.join(" | ")}`).toEqual([]);
+  });
+
+  it("every checkpoint still has at least one graded check", () => {
+    // The split must not starve the gate: holding items back is only worth doing
+    // if something is left to grade with.
+    const empty = CHECKPOINTS.filter((cp) => gradedChecksForConcepts(cp.coversConcepts).length === 0);
+    expect(empty.map((c) => c.id), "checkpoints left with no graded check").toEqual([]);
+  });
+
+  it("every lesson still has formative practice", () => {
+    const empty = LESSON_IDS.filter((id) => practiceChecksForLesson(id).length === 0);
+    expect(empty, "lessons left with no practice check").toEqual([]);
+  });
+
+  it("most authored checks are reachable by some learner", () => {
+    // 294 of 368 authored checks were unreachable because both selectors took only
+    // the first two. Authoring content nobody can reach is the most expensive kind
+    // of waste, so this asserts a floor rather than a nice-to-have.
+    const reachable = new Set<string>();
+    for (const cp of CHECKPOINTS) {
+      for (const c of gradedChecksForConcepts(cp.coversConcepts).slice(0, 2)) reachable.add(c.id);
+    }
+    for (const id of LESSON_IDS) {
+      for (const c of practiceChecksForLesson(id).slice(0, 4)) reachable.add(c.id);
+    }
+    const share = reachable.size / CHECKS.length;
+    expect(share, `only ${reachable.size} of ${CHECKS.length} checks are reachable`).toBeGreaterThan(0.5);
+  });
+});
+
+describe("a retry is a different exam, not a recital", () => {
+  // `itemKey(scope, index, stem)` was a pure function of stable inputs, so every
+  // retry presented all 183 checkpoint items in an IDENTICAL order. Paired with a
+  // reveal that used to paint the correct option green on a miss, that made the
+  // whole 35-checkpoint gate memorisable in two passes: fail once to collect the
+  // key, pass second time from memory.
+  //
+  // `CheckpointPlayer` now folds an attempt counter into the scope. This is a unit
+  // test rather than a browser one on purpose: reaching the failure screen by
+  // clicking requires completing the graded categorize/match/cloze steps appended
+  // after the MCQs, and a harness that solves four mechanics wrongly-but-validly
+  // tests the harness. The property is pure, so it is asserted exactly.
+  const SPINE = SPINE_CHECKPOINTS;
+
+  it("bumping the attempt changes the option order for essentially every item", () => {
+    let changed = 0, total = 0;
+    for (const cp of SPINE) {
+      cp.items.forEach((item, idx) => {
+        total++;
+        const a0 = shuffleOptions(item.options, itemKey(`${cp.id}:a0`, idx, item.stem.en))
+          .map((o) => o.originalIndex).join(",");
+        const a1 = shuffleOptions(item.options, itemKey(`${cp.id}:a1`, idx, item.stem.en))
+          .map((o) => o.originalIndex).join(",");
+        if (a0 !== a1) changed++;
+      });
+    }
+    // Not 100%: a uniform shuffle of a 3- or 4-option list can coincide across two
+    // seeds, and forcing a difference per item would be a worse trade than a
+    // learner occasionally seeing one familiar arrangement. The bar is that a
+    // memorised RUN is worthless, which needs most items to move, not all.
+    expect(changed / total, `only ${changed}/${total} items reshuffle on retry`).toBeGreaterThan(0.6);
+  });
+
+  it("the same attempt is still stable — SSR and hydration must agree", () => {
+    for (const cp of SPINE.slice(0, 8)) {
+      cp.items.forEach((item, idx) => {
+        const key = itemKey(`${cp.id}:a2`, idx, item.stem.en);
+        expect(shuffleOptions(item.options, key).map((o) => o.originalIndex))
+          .toEqual(shuffleOptions(item.options, key).map((o) => o.originalIndex));
+      });
+    }
+  });
+
+  it("the correct answer lands in every position at roughly chance rate", () => {
+    // My first version of this test asserted that NO attempt renders the authored
+    // order (which puts the key first in 178 of 178 checkpoint items). It reported
+    // 194 violations — and that assertion was wrong. Measured: 27.2% of
+    // attempt-instances put the key first, against ~25% expected by chance for a
+    // 4-option shuffle. That is the shuffle working.
+    //
+    // Forcing it to zero would install a WORSE tell than the one being fixed:
+    // "the first option is never correct" is a rule a learner can exploit in one
+    // sitting. What matters is that position carries no information, so the test
+    // asserts the distribution is near-uniform in BOTH directions.
+    const counts = [0, 0, 0, 0, 0, 0];
+    let total = 0;
+    for (const cp of SPINE) {
+      cp.items.forEach((item, idx) => {
+        const n = item.options.length;
+        if (n < 3) return;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const order = shuffleOptions(item.options, itemKey(`${cp.id}:a${attempt}`, idx, item.stem.en));
+          const pos = order.findIndex((o) => o.option.correct);
+          counts[pos]++;
+          total++;
+        }
+      });
+    }
+    // Options are mostly 4-wide, so each slot should hold roughly a quarter. Allow
+    // a generous band: the point is that no slot is empty and none dominates.
+    const used = counts.filter((c) => c > 0).length;
+    expect(used, "the correct answer never reaches some positions").toBeGreaterThanOrEqual(3);
+    const maxShare = Math.max(...counts) / total;
+    const minShare = Math.min(...counts.filter((c) => c > 0)) / total;
+    expect(maxShare, `one position holds ${(100 * maxShare).toFixed(1)}% of correct answers`).toBeLessThan(0.42);
+    expect(minShare, `one position holds only ${(100 * minShare).toFixed(1)}%`).toBeGreaterThan(0.05);
   });
 });
