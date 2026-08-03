@@ -277,4 +277,7 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { checkChallenge };
+// `errs`/`warns` are exported so tools/selftest-merge-builds.cjs can read what a mutated
+// challenge produced. Without them the self-test read `undefined`, silently fell back to an
+// empty array, and reported 12 rules as broken when the harness was the broken part.
+module.exports = { checkChallenge, errs, warns };

@@ -84,6 +84,11 @@ describe("facts.json agrees with the source it measures", () => {
     expect(facts.learningModel.coverage.practice)
       .toBe(CONCEPT_LESSONS.filter((c) => CHECKS.some((k) => k.concept === c.slug)).length);
     expect(facts.learningModel.totalConcepts).toBe(CONCEPT_LESSONS.length);
+    // The stage count itself: the docs say "the nine stages, measured", and a table with a
+    // row missing would still read as complete.
+    expect(facts.learningModel.stages, "the stage count disagrees with the coverage table")
+      .toBe(Object.keys(facts.learningModel.coverage).length);
+    expect(facts.learningModel.stages, "a learning stage was added or removed — update the docs").toBe(9);
   });
 
   it("reports Explain as absent, because it is", () => {
@@ -181,6 +186,27 @@ describe("facts.json agrees with the source it measures", () => {
 
     expect((facts.i18n.structuralPaths as string[]).length, "no structural slots — did the classifier break?")
       .toBeGreaterThan(0);
+
+    // `emptyStructural` is the NUMBER that ships into STATUS.md and validation-report.md as
+    // "The N empty strings". Deleting the old tautology left it asserted by nothing at all:
+    // setting it to 9999, to 0, or to "banana" kept the suite green while two published
+    // documents printed the wrong figure.
+    //
+    // Derived independently here by counting empty en/es leaves across the same six files
+    // the generator reads, so the count comes from the content rather than from the field.
+    let emptyLeaves = 0;
+    const countEmpty = (o: unknown): void => {
+      if (!o || typeof o !== "object") return;
+      for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+        if (typeof v === "string") { if ((k === "en" || k === "es") && !v.trim()) emptyLeaves++; }
+        else countEmpty(v);
+      }
+    };
+    for (const f of Object.keys(data)) countEmpty(data[f]);
+    expect(facts.i18n.emptyStructural + facts.i18n.emptyProse,
+      "the empty-string totals do not add up to what the content holds").toBe(emptyLeaves);
+    expect(facts.i18n.emptyStructural, "emptyStructural disagrees with the paths it enumerates")
+      .toBe((facts.i18n.structuralPaths as string[]).length);
     for (const path of facts.i18n.structuralPaths as string[]) {
       const { node } = at(path);
       expect(node, `${path} does not resolve in the shipped content`).toBeDefined();
@@ -376,6 +402,103 @@ describe("every countable fact is re-derived, not just carried", () => {
       .toBe(facts.glossary.terms);
   });
 
+  it("re-derives every review-queue predicate from the scheduler source", () => {
+    // All ten were unasserted. The count was guarded, so `sourcesImplemented` could not lie
+    // about the total — but any individual predicate could flip and nothing would notice,
+    // and each one is a claim in retention-engine.md's table.
+    const daily = readFileSync("src/lib/daily.ts", "utf8");
+    const review = readFileSync("src/lib/review.ts", "utf8");
+    const both = daily + review;
+    const expected: Record<string, boolean> = {
+      "concepts near forgetting": /dueConcepts/.test(daily),
+      "recent mistakes": /responseLog/.test(daily),
+      "correct but low confidence": /lowConfidenceCorrect|confidence.*correct/.test(both),
+      "wrong but high confidence": /confidentWrong|highConfidenceWrong/.test(both),
+      "saved concepts": /saved/i.test(daily),
+      "weak prerequisites": /prerequisiteStrength|weakPrereq/.test(daily),
+      "knowledge the active module needs": /moduleId/.test(daily),
+      "unreviewed for too long": /lastSeen|staleAfter/.test(daily),
+      "transfer failures": /transferTo/.test(both),
+      "interview weaknesses": /interview/i.test(both),
+    };
+    expect(facts.systems.reviewQueue.sources,
+      "a queue-source predicate disagrees with the scheduler source").toEqual(expected);
+    // Section 33.2 names ten. My first reading stopped at eight, which made the shortfall
+    // look 20% smaller than it is.
+    expect(Object.keys(expected).length).toBe(10);
+  });
+
+  it("re-derives the routing, a11y and figure-kind facts", () => {
+    const config = readFileSync("next.config.mjs", "utf8");
+    expect(facts.routing.configFile).toBe("next.config.mjs");
+    expect(facts.routing.staticExport).toBe(/output:\s*["']export["']/.test(config));
+    expect(facts.routing.trailingSlash).toBe(/trailingSlash:\s*true/.test(config));
+    expect(facts.routing.hasRedirects).toBe(/redirects\s*:/.test(config));
+    // Static export with no redirect table is the deployment premise the migration map
+    // rests on, so these are load-bearing rather than trivia.
+    expect(facts.routing.staticExport, "the static-export premise no longer holds").toBe(true);
+    expect(facts.routing.pages.length).toBe(facts.routing.pageRoutes);
+
+    // The a11y signals, recounted with the same comment-stripping the generator uses — a
+    // rule that scans raw source flags its own documentation, which happened twice here.
+    const tsx: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(`${dir}/${e.name}`);
+        else if (/\.tsx?$/.test(e.name)) tsx.push(`${dir}/${e.name}`);
+      }
+    };
+    walk("src");
+    const strip = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    const bodies = tsx.map((f) => strip(readFileSync(f, "utf8")));
+    expect(facts.a11y.tsxFiles).toBe(tsx.length);
+    expect(facts.a11y.withAriaLabel).toBe(bodies.filter((t) => /aria-label/.test(t)).length);
+    expect(facts.a11y.withRole).toBe(bodies.filter((t) => /role="/.test(t)).length);
+    expect(facts.a11y.prefersReducedMotion)
+      .toBe(bodies.filter((t) => /prefers-reduced-motion|useReducedMotion|MOTION/.test(t)).length);
+
+    // Asset extensions back the "assets optimised" claim in visual-asset-audit.md.
+    const exts: Record<string, number> = {};
+    const walkPub = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walkPub(`${dir}/${e.name}`);
+        else {
+          const ext = e.name.includes(".") ? `.${e.name.split(".").pop()}` : "(none)";
+          exts[ext] = (exts[ext] ?? 0) + 1;
+        }
+      }
+    };
+    walkPub("public");
+    expect(facts.visual.publicByExt).toEqual(exts);
+  });
+
+  it("re-derives the remaining systems booleans", () => {
+    const joined: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(`${dir}/${e.name}`);
+        else if (/\.tsx?$/.test(e.name)) joined.push(readFileSync(`${dir}/${e.name}`, "utf8"));
+      }
+    };
+    walk("src");
+    const all = joined.join(String.fromCharCode(10));
+
+    expect(facts.systems.confidence.usedForCalibrationGap)
+      .toBe(/calibrationGap/.test(readFileSync("src/lib/scoring.ts", "utf8")));
+    // Zero of the 380 checks collect confidence, so no calibration data comes from the
+    // mechanic pool — an engagement-model.md claim.
+    expect(facts.systems.confidence.onChecks)
+      .toBe(/confidence/.test(readFileSync("src/components/checks/CheckHost.tsx", "utf8")));
+    expect(facts.systems.savedContent.exists).toBe(/saved_item|savedItems|SavedItem|bookmarks?\b/.test(all));
+    expect(facts.systems.savedContent.objectTypesSpecified, "section 33.1 lists ten savable types").toBe(10);
+    expect(facts.systems.spacedReview.exists).toBe(true);
+    expect(facts.systems.interviewMode.inventoryExists).toBe(existsSync(`${DOCS}/interview-bank.json`));
+    expect(facts.systems.interviewMode.tracks)
+      .toBe(JSON.parse(readFileSync(`${DOCS}/interview-bank.json`, "utf8")).tracks.length);
+    expect(facts.analytics.localStorageKeys, "the progress key must be found, not just the theme key")
+      .toContain("levelup.v1");
+  });
+
   it("keeps most of facts.json under assertion, so coverage cannot quietly decay", () => {
     // The meta-test. Adding fields to the generator with no assertions makes this fail,
     // which is the signal to assert them rather than to raise the threshold.
@@ -394,14 +517,79 @@ describe("every countable fact is re-derived, not just carried", () => {
     // without naming one of them. The first version of this check only looked at the leaf's
     // own key and reported 60 gaps where 3 existed — measuring the wrong thing, which is
     // the error this whole file exists to catch.
-    const named = (key: string) => src.includes(`.${key}`) || src.includes(`"${key}"`);
+    // STRUCTURAL, not a bare-token substring match.
+    //
+    // The first version asked whether `.key` or `"key"` appeared ANYWHERE in the file,
+    // including inside comments, and credited a leaf if any ancestor token matched. That
+    // handed blanket coverage to every child of 19 object nodes: all ten
+    // `systems.reviewQueue.sources.*` leaves were credited on the bare word `sources`, and
+    // adding a brand-new `sources.telemetry` kept the suite green. It reported 99% where the
+    // real figure was materially lower — the same over-credit error, one level up, as the
+    // heuristic it replaced.
+    //
+    // Now a leaf counts only if the test file contains its actual `facts.`-rooted chain, or
+    // that of an ancestor which is compared with `toEqual` — because `toEqual` on an object
+    // IS strict and does cover its children (verified: adding `visual.byKind.sankey` fails).
+    let code = src.replace(/\/\/[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, "");
+
+    // Resolve local aliases before matching, or the check under-credits as badly as the
+    // substring version over-credited. `const sys = facts.systems` then `sys.savedContent`
+    // IS an assertion on `systems.savedContent`, and `facts.content[k]` inside a loop over a
+    // derived table covers every key in that table. Both were being missed, which is why the
+    // first structural run reported 54% — wrong in the opposite direction.
+    for (const m of src.matchAll(/const\s+(\w+)\s*=\s*facts\.(\w+)\s*;/g)) {
+      code = code.split(`${m[1]}.`).join(`facts.${m[2]}.`);
+    }
+    // A computed member over a derived table covers the table's keys. Only the two that
+    // exist are expanded, deliberately, so this cannot become a blanket exemption.
+    if (code.includes("facts.content[k]")) {
+      const table = src.match(/const derived: Record<string, number> = \{([\s\S]*?)\n {4}\};/);
+      for (const key of table?.[1].matchAll(/^\s{6}(\w+):/gm) ?? []) code += ` facts.content.${key[1]} `;
+    }
+    if (code.includes("facts.learningModel.coverage[")) {
+      for (const k of Object.keys(facts.learningModel.coverage)) code += ` facts.learningModel.coverage.${k} `;
+    }
+
+    const chain = (path: string) => `facts.${path}`;
+    /** Is this exact path compared with toEqual, which covers everything under it? */
+    const deepCompared = (path: string) => {
+      // Scans to the end of the expect() call rather than a fixed window, because an
+      // assertion message sits between the path and the matcher:
+      //   expect(facts.visual.byKind, "the per-kind counts disagree").toEqual(byKind)
+      // A 60-character window missed both real cases and reported them as gaps.
+      let from = 0;
+      for (;;) {
+        const i = code.indexOf(chain(path), from);
+        if (i < 0) return false;
+        const tail = code.slice(i + chain(path).length, i + chain(path).length + 400);
+        // The matcher must attach to THIS expect: no other `expect(` may intervene.
+        const upToMatcher = tail.match(/^[\s\S]*?\.(toEqual|toStrictEqual)\(/);
+        if (upToMatcher && !upToMatcher[0].includes("expect(")) return true;
+        from = i + 1;
+      }
+    };
     const referenced = leaves.filter((l) => {
+      if (code.includes(chain(l))) return true;
       const parts = l.split(".");
-      return parts.some((_, i) => named(parts.slice(0, parts.length - i).pop()!));
+      for (let cut = parts.length - 1; cut > 0; cut--) {
+        if (deepCompared(parts.slice(0, cut).join("."))) return true;
+      }
+      return false;
     });
-    const ratio = referenced.length / leaves.length;
-    expect(ratio, `only ${referenced.length}/${leaves.length} facts leaves are referenced by any assertion`)
-      .toBeGreaterThan(0.85);
+    // NAMED, not a ratio.
+    //
+    // A ratio absorbs new gaps: at 124 of 125 covered, adding an unasserted leaf still
+    // cleared an 85% bar, so two of the four mutation probes slipped through. This is the
+    // same defect as the categorize ratchet whose ratio hid an absolute increase — a
+    // threshold that a growing denominator satisfies is not a threshold.
+    //
+    // The exemptions are listed instead, and the list may only shrink. Both are provenance
+    // strings that describe the file rather than the platform, so there is nothing about the
+    // product to assert; anything else appearing here is a fact nobody checks.
+    const ALLOWED_UNASSERTED = ["generatedBy", "note"];
+    const gaps = leaves.filter((l) => !referenced.includes(l));
+    expect(gaps.sort(), `${gaps.length} of ${leaves.length} facts leaves are asserted by nothing`)
+      .toEqual([...ALLOWED_UNASSERTED].sort());
   });
 });
 

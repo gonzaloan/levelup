@@ -147,22 +147,56 @@ export interface CategorizeDisplay { itemOrder: DisplayOrder; bucketOrder: Displ
 export function displayForCategorize(item: CategorizeCheck, attempt: Attempt = 0): CategorizeDisplay {
   const n = item.items.length;
   const buckets = item.buckets.length;
-  // The exploit: sweep the tray in display order, dropping the first n/buckets
-  // chips in the first bucket and so on. Reject any tray order under which that
-  // blind split is correct.
-  // The even sweep is the natural exploit. Alternating buckets cleared 8 of 101 and
-  // a reverse sweep 6 of 101, so all three are rejected.
+
+  // The exploit: sweep the tray in display order, dropping the first n/buckets chips in the
+  // first bucket ON SCREEN and so on. Reject any tray order under which a blind rule is
+  // correct.
+  //
+  // THE RULES ARE EVALUATED IN SCREEN SPACE, and that is the correction that matters. A
+  // learner drops a chip into a bucket POSITION; `bucketOrder` maps that position to an
+  // authored bucket. The first version of this guard compared a rule's output directly
+  // against `item.items[i].bucket` — authored numbers — so "alternate left/right on screen"
+  // was invisible to it. Measured end to end, blind rules cleared 6 of 105 at attempt 0 and
+  // 14 at attempt 1, while this guard AND a content-side audit both reported zero. Both were
+  // computing in the wrong coordinate space, which is why they agreed.
+  //
+  // Every phase of the alternating rule is rejected, not only phase 0: once the bucket order
+  // is in play, phase 0 and phase 1 are different attacks.
   const strategies: ((slot: number) => number)[] = [
     (slot) => Math.min(buckets - 1, Math.floor((slot * buckets) / n)),            // even sweep
-    (slot) => Math.min(buckets - 1, Math.floor(((n - 1 - slot) * buckets) / n)),  // reversed
-    (slot) => slot % buckets,                                                     // alternating
+    (slot) => Math.min(buckets - 1, Math.floor(((n - 1 - slot) * buckets) / n)),  // reversed sweep
   ];
+  for (let phase = 0; phase < buckets; phase++) {
+    strategies.push((slot) => (slot + phase) % buckets);                          // alternating, any phase
+  }
+  for (let only = 0; only < buckets; only++) strategies.push(() => only);         // all in one bucket
+
+  // Drawn FIRST, because the tray guard has to know it.
+  //
+  // `safePerm` is deliberately not used: it bans the identity, and with two buckets that
+  // leaves exactly one permutation — so 97 of 97 two-bucket checks received the same forced
+  // [1,0] on every attempt. A constant is not a shuffle, it is a rename: the author's first
+  // bucket simply becomes the second one, always. The bucket LABELS are on screen, so their
+  // order leaks nothing by itself, and allowing the identity restores a real coin flip.
+  const bucketOrder = seededPermutation(buckets, keyed(item.id, "buckets", attempt));
+
+  // BOTH coordinate spaces, because a learner can act in either.
+  //
+  // Screen space is what a chip-dropping learner produces: "the leftmost bucket on screen"
+  // is authored bucket `bucketOrder[0]`. Authored space is what a learner produces by
+  // reading the bucket LABELS and picking the first-authored one — the labels are visible,
+  // so that is a real strategy too.
+  //
+  // Guarding only screen space is what my first correction did, and it traded one family
+  // for the other: 12 end-to-end clears appeared in authored space that had not been there
+  // before. The two are the same attack expressed in different terms, so the guard has to
+  // reject a tray order under which EITHER reading is the key.
   const unsafe = (o: DisplayOrder) =>
-    strategies.some((at) => o.every((authoredIdx, slot) => item.items[authoredIdx].bucket === at(slot)));
-  return {
-    itemOrder: perm(n, keyed(item.id, "items", attempt), unsafe),
-    bucketOrder: perm(buckets, keyed(item.id, "buckets", attempt)),
-  };
+    strategies.some((at) =>
+      o.every((authoredIdx, slot) => item.items[authoredIdx].bucket === bucketOrder[at(slot)]) ||
+      o.every((authoredIdx, slot) => item.items[authoredIdx].bucket === at(slot)));
+
+  return { itemOrder: perm(n, keyed(item.id, "items", attempt), unsafe), bucketOrder };
 }
 
 // ── Order ────────────────────────────────────────────────────────────────────
