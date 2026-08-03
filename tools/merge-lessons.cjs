@@ -200,6 +200,28 @@ function checkConcept(c, where, ids) {
   // `unit-economics-at-scale` did exactly that. All 178 concepts now carry one, so
   // the field is required rather than optional: an enriched concept that makes a
   // quantitative claim without a source cannot be maintained (section 14).
+  // Predict: a commitment before the concept explains itself. Optional (only the
+  // RAG vertical slice carries it so far), but when present it must be usable —
+  // a prediction with one option, or with no wrong option, is not a prediction.
+  if (c.predict !== undefined) {
+    const pw = `${where}.predict`;
+    checkI18n(c.predict.prompt, `${pw}.prompt`, { min: 40 });
+    checkI18n(c.predict.resolution, `${pw}.resolution`, { min: 40 });
+    const opts = c.predict.options;
+    if (!Array.isArray(opts) || opts.length < 2) {
+      bad(`${pw}.options: needs ≥2 options, or there is nothing to commit to`);
+    } else {
+      const right = opts.filter((o) => o && o.correct === true).length;
+      if (right !== 1) bad(`${pw}.options: exactly one option must be correct (found ${right})`);
+      for (const [i, o] of opts.entries()) {
+        checkI18n(o?.text, `${pw}.options[${i}].text`);
+        // Every option needs its own `why`, including the wrong ones — that IS the
+        // teaching. An option with no explanation makes a wrong guess a dead end.
+        checkI18n(o?.why, `${pw}.options[${i}].why`, { min: 30 });
+      }
+    }
+  }
+
   if (c.source === undefined || typeof c.source !== "string" || c.source.trim().length < 8) {
     bad(`${where}.source: missing or too short to be checkable`);
   }

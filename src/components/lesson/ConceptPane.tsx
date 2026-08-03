@@ -28,6 +28,7 @@ import Link from "next/link";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import { Schematic } from "../Schematic";
+import { Predict } from "./Predict";
 import { FigureZoom } from "../FigureZoom";
 import { getWidget } from "../viz";
 import { CodeView } from "./CodeView";
@@ -142,11 +143,18 @@ function trimDefinition(def: Block[]): [Block[], Block[]] {
   return [[{ kind: "p", text: head }], [{ kind: "p", text: tail }]];
 }
 
-export function ConceptPane({ locale, lessonConcept, meta, index, total, track, onNext }: {
+export function ConceptPane({ locale, lessonConcept, meta, index, total, track, onNext, onPredictResolved }: {
   locale: Locale; lessonConcept: ConceptLesson; meta?: Concept; index: number; total: number; track: string; onNext: () => void;
+  /** Fired when the concept's prediction is answered or skipped, so the sibling
+   *  context rail can stop withholding its Takeaways tab. */
+  onPredictResolved?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showExample, setShowExample] = useState(false);
+  // Predict gates the figure and the labelled sections. Reset per concept via the
+  // `key` on the pane, so moving to the next concept asks again.
+  const [predictDone, setPredictDone] = useState(false);
+  const predictOpen = !!lessonConcept.predict && !predictDone;
   const Widget = lessonConcept.visual ? getWidget(lessonConcept.visual.widgetId) : null;
 
   // Blocks, not paragraphs: an author can now write bullets and bold, and a
@@ -202,11 +210,39 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
              now render below the figure instead. */}
       <ProseBlocks blocks={leadDef} keyBase="lead" className="cp-def" />
 
+      {/* 2b. PREDICT — commit a guess before the figure and the explanation.
+              The audit found this stage missing platform-wide: the pane named the
+              judgment, showed the answer, then explained it, so the learner never
+              committed to anything and never got to be productively wrong.
+              It sits AFTER the plain-words definition (you cannot predict about a
+              thing you have not been told the name of) and BEFORE the figure and
+              the labelled sections, which are what would give it away.
+              Not scored, not stored, skippable — the value is the commitment. */}
+      {lessonConcept.predict && !predictDone && (
+        <Predict
+          spec={lessonConcept.predict}
+          slug={lessonConcept.slug}
+          locale={locale}
+          track={track as "general" | "ai"}
+          onDone={() => { setPredictDone(true); onPredictResolved?.(); }}
+        />
+      )}
+
       {/* 3. The visual, right after the definition it illustrates.
              Widget > code > schematic: something you can manipulate teaches more
              than something you read, and real code more than a boxes-and-labels
              drawing. Code is omitted entirely on concepts where a snippet was
-             decoration — see docs/curriculum/cloud-platform-l5.txt. */}
+             decoration — see docs/curriculum/cloud-platform-l5.txt.
+
+             Held back until the prediction is made or skipped: a figure the learner
+             can read before committing turns Predict into a lookup. */}
+      {/* Everything below waits for the prediction.
+          Guarding each slot individually let two folded figures through (the
+          schematic behind "show diagram" and the code behind "show code"), and a
+          section added later would have slipped through the same way. One wrapper
+          is the invariant: nothing that could answer the question renders while the
+          question is open. */}
+      {!predictOpen && (<>
       {Widget ? (
         <div className="cp-figure">
           <FigureZoom locale={locale} label={meta ? meta.title : undefined}>
@@ -355,6 +391,7 @@ export function ConceptPane({ locale, lessonConcept, meta, index, total, track, 
       <button className={`btn btn-primary${track === "ai" ? " btn-ai" : ""} cp-next`} onClick={onNext}>
         {index + 1 < total ? m("lesson.markReadNext", locale) : m("lesson.startCheck", locale)} →
       </button>
+      </>)}
     </section>
   );
 }

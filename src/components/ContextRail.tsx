@@ -14,9 +14,13 @@ import type { ConceptLesson } from "@/lib/types";
 type TabKey = "takeaways" | "keywords" | "code" | "example" | "architecture";
 
 export function ContextRail({
-  locale, concept, track,
+  locale, concept, track, withheld = false,
 }: {
   locale: Locale; concept: ConceptLesson; track: "general" | "ai";
+  /** True while the concept's prediction is unresolved. The Takeaways tab lists
+   *  the concept's key points, which for a concept with a prediction ARE the
+   *  answer — so the whole rail waits rather than leaking it beside the question. */
+  withheld?: boolean;
 }) {
   // Which tabs exist for this concept (order is stable).
   const tabs = useMemo<TabKey[]>(() => {
@@ -31,6 +35,14 @@ export function ContextRail({
 
   const [active, setActive] = useState<TabKey>(tabs[0] ?? "takeaways");
   if (!tabs.length) return null;
+  if (withheld) {
+    return (
+      <aside className="context-rail context-rail-withheld" data-track={track}
+        aria-label={m("rail.context", locale)}>
+        <p className="eyebrow">{m("rail.afterPredict", locale)}</p>
+      </aside>
+    );
+  }
   const cur = tabs.includes(active) ? active : tabs[0];
   const labelKey: Record<TabKey, MessageKey> = {
     takeaways: "rail.takeaways", keywords: "rail.keywords", code: "rail.code",

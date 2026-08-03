@@ -175,6 +175,33 @@ export interface ConceptVisual { widgetId: string; params?: Record<string, unkno
 // concept broken out with its own micro-explanation.
 export interface ConceptChild { label: I18nText; detail: I18nText; }
 
+/**
+ * A commitment the learner makes BEFORE the concept explains itself.
+ *
+ * WHY THIS EXISTS
+ * The pedagogy audit found Predict missing platform-wide: `grep -rn predict src/`
+ * returned two unrelated hits. The concept pane opens by naming the judgment, then
+ * shows the figure, then explains — so the learner is told the answer before ever
+ * committing to one. No commitment means no generation effect and no productive
+ * failure: they never find out they were wrong before being told.
+ *
+ * Deliberately NOT scored and NOT gated. The value is the commitment itself, and
+ * attaching a score to a guess made before the teaching would punish the learner
+ * for not yet knowing — which is the entire point of asking.
+ *
+ * `resolution` is what the learner reads after committing: not "correct/incorrect"
+ * but why the answer is what it is, so a wrong prediction is the most useful
+ * outcome rather than a penalty.
+ */
+export interface ConceptPredict {
+  /** The question, phrased so a reasoned guess is possible from prior knowledge. */
+  prompt: I18nText;
+  /** 2–4 options. Wrong ones must be real mistakes, not obvious throwaways. */
+  options: { text: I18nText; correct: boolean; why: I18nText }[];
+  /** Shown once a choice is made — the mechanism, not a verdict. */
+  resolution: I18nText;
+}
+
 export interface ConceptLesson {
   slug: string;
   explanation: I18nText;       // authored prose, \n\n-separated paragraphs
@@ -191,6 +218,7 @@ export interface ConceptLesson {
   analogy?: I18nText;          // a plain-language analogy that makes it click
   source?: string;             // checkable citation for enriched claims
   children?: ConceptChild[];   // scannable sub-concept cards
+  predict?: ConceptPredict;    // commit a guess BEFORE the figure and the prose
   mnemonic?: I18nText;         // a memory hook
   flashcards?: { front: I18nText; back: I18nText }[]; // recall step (self-graded)
 }

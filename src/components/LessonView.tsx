@@ -74,6 +74,9 @@ export function LessonView({
   // first). Empty for lessons whose concepts have no mapped resources yet —
   // ResourceList renders nothing at all in that case.
   const lessonResources = resourcesForConcepts(lesson.concepts.map((c) => c.slug));
+  // Has the current concept's prediction been resolved (answered or skipped)?
+  // Reset on every concept change, so each one asks again.
+  const [predicted, setPredicted] = useState(false);
   const scrollTop = () => window.scrollTo({ top: 0, behavior: "smooth" });
   const afterCheck = () => { setStage(practiceChecks.length ? "practice" : "done"); scrollTop(); };
 
@@ -189,6 +192,7 @@ export function LessonView({
         <div className="lesson-grid" style={{ marginTop: "var(--s-6)" }}>
           <ConceptNav locale={locale} concepts={lesson.concepts} meta={conceptMeta} idx={idx} onJump={jump} />
           <ConceptPane
+            key={lesson.concepts[idx].slug}
             locale={locale}
             lessonConcept={lesson.concepts[idx]}
             meta={conceptMeta.get(lesson.concepts[idx].slug)}
@@ -196,8 +200,18 @@ export function LessonView({
             total={total}
             track={track}
             onNext={advance}
+            onPredictResolved={() => setPredicted(true)}
           />
-          <ContextRail locale={locale} concept={lesson.concepts[idx]} track={track as "general" | "ai"} />
+          {/* The rail is a SIBLING of the pane, so the pane's own gate cannot hide
+              it — and the Takeaways tab lists the concept's key points, which for
+              a concept with a prediction are the answer. Held back until the
+              prediction resolves. */}
+          <ContextRail
+            locale={locale}
+            concept={lesson.concepts[idx]}
+            track={track as "general" | "ai"}
+            withheld={!!lesson.concepts[idx].predict && !predicted}
+          />
         </div>
       )}
 

@@ -154,6 +154,14 @@ export const MESSAGES = {
   "lesson.showDiagram": { en: "Show the diagram", es: "Ver el diagrama" },
   "lesson.showCode":    { en: "Show the code", es: "Ver el código" },
   "lesson.pitfalls":    { en: "Common pitfalls", es: "Errores comunes" },
+  // The Predict stage: a commitment before the concept explains itself. Never
+  // scored, so the copy avoids the language of grading.
+  "rail.afterPredict": { en: "Takeaways unlock after your prediction", es: "Los puntos clave se abren después de tu predicción" },
+  "predict.label":      { en: "Predict first", es: "Predice primero" },
+  "predict.right":      { en: "That is the one", es: "Esa es" },
+  "predict.wrong":      { en: "Not that one — and this is the useful part", es: "No es esa, y eso es lo útil" },
+  "predict.continue":   { en: "Now show me why", es: "Ahora muéstrame por qué" },
+  "predict.skip":       { en: "Skip the prediction", es: "Saltar la predicción" },
   "lesson.analogy":     { en: "Think of it like", es: "Piénsalo así" },
   "lesson.walkthrough": { en: "Walkthrough", es: "Desarrollo" },
   "boss.label":         { en: "Boss battle", es: "Batalla contra el jefe" },
