@@ -29,25 +29,23 @@ const path = require("node:path");
 
 const DATA = path.join(__dirname, "..", "src", "content", "data");
 /**
- * Every content file with learner-facing prose.
+ * Every content file with learner-facing prose — discovered, not listed.
  *
- * `builds.json` was missing from this list, so the 6 Architecture Builder challenges
- * were never checked for banned terminology — and one of them ships "pipeline de trozeo
- * y embebido", where `trozeo` is a calque of `chunking`. The gate reported it as 0
- * occurrences, which is true of the files it was reading and false of the platform.
+ * A hard-coded list was wrong twice. It first read 5 of 8 JSON files, hiding a shipped
+ * calque in `builds.json`; the fix added the three missing names, and the accompanying
+ * test compared the list against `readdirSync(...).filter(f => f.endsWith(".json"))` —
+ * so BOTH the list and its guard still missed `gauntlet.ts`, which holds 24 Spanish
+ * strings (boss names, the 30% red-team challenge) and is imported by CodeRedTeam.tsx.
+ * One extension over, in exactly the class of error the guard was written to prevent.
  *
- * A validator's file list is part of its claim. "82 banned renderings checked against
- * every Spanish string" was wrong by one file, and the missing file was the one whose
- * content no other check reads either.
+ * So the list is now derived from the directory. A new content file is scanned the day it
+ * lands, and there is no list to forget to update. The .ts case is read as source and
+ * mined for quoted strings on `en:`/`es:` keys, which is what its shape supports.
  */
-const FILES = [
-  "lessons.json", "codex.json", "checks.json", "curriculum.json", "resources.json",
-  "builds.json",
-  // The assessment layer: 781 more learner-facing strings across items, modules, Rooms
-  // and field work. Also unscanned until tests/glossary.test.ts compared the list
-  // against the directory instead of trusting it.
-  "ai-l5.json", "general-l5.json",
-];
+const FILES = fs
+  .readdirSync(DATA)
+  .filter((f) => /\.(json|ts)$/.test(f) && !f.endsWith(".d.ts"))
+  .sort();
 
 /** Letters that must NOT count as a word boundary — ASCII plus Latin-1/Extended-A. */
 const L = "A-Za-z0-9\\u00C0-\\u024F";
@@ -57,7 +55,14 @@ function wordRe(term, flags = "gi") {
   return new RegExp(`(?<![${L}])${esc(term)}(?![${L}])`, flags);
 }
 
-/** Collect every `en`/`es` leaf string, keeping the two languages separate. */
+/**
+ * Collect every `en`/`es` leaf string, keeping the two languages separate.
+ *
+ * JSON files are walked structurally. `gauntlet.ts` is a TypeScript module, so it is
+ * read as source and mined for `en: "…"` / `es: "…"` literals — less precise than a
+ * parse, and precise enough to catch a banned rendering, which is the only thing this
+ * corpus is used for.
+ */
 function corpus() {
   const out = { en: [], es: [] };
   const walk = (o) => {
@@ -71,7 +76,12 @@ function corpus() {
   };
   for (const f of FILES) {
     const p = path.join(DATA, f);
-    if (fs.existsSync(p)) walk(JSON.parse(fs.readFileSync(p, "utf8")));
+    if (!fs.existsSync(p)) continue;
+    if (f.endsWith(".json")) { walk(JSON.parse(fs.readFileSync(p, "utf8"))); continue; }
+    const src = fs.readFileSync(p, "utf8");
+    for (const m of src.matchAll(/\b(en|es)\s*:\s*"((?:[^"\\]|\\.)*)"/g)) {
+      out[m[1]].push(m[2].replace(/\\"/g, '"'));
+    }
   }
   return out;
 }

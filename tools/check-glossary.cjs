@@ -38,7 +38,10 @@
  */
 const fs = require("node:fs");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 const { corpus, count, wordRe, classify } = require("./glossary-scan.cjs");
+/** A newline as a binding, not an escape — see the note in tools/gen-docs.cjs. */
+const NL = String.fromCharCode(10);
 
 const ROOT = path.join(__dirname, "..");
 const BASELINE = path.join(__dirname, "glossary-baseline.txt");
@@ -183,6 +186,30 @@ for (const h of hits) {
     `${h.term}: the banned rendering "${h.bad}" appears ${h.n}× in Spanish prose. ` +
     `Use "${gEn.terms.find((t) => t.term === h.term).spanish_usage}" instead.`
   );
+}
+
+// The list may only SHRINK, and that is now enforced rather than asserted in a comment.
+// The committed version is the ceiling: a line that is not in HEAD is a line someone added
+// to silence a failure, which converts a defect into a permission. Growth was previously
+// unchecked — appending one pair and regenerating made a shipped calque pass.
+{
+  let committed = null;
+  try {
+    committed = execFileSync("git", ["show", "HEAD:tools/glossary-baseline.txt"], {
+      cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch { /* new file, shallow clone, or no git — cannot compare, so do not block */ }
+  if (committed !== null) {
+    const parse = (t) => new Set(t.split(NL).map((l) => l.replace(/#.*/, "").trim()).filter(Boolean));
+    const was = parse(committed);
+    const added = [...baseline].filter((k) => !was.has(k));
+    if (added.length) {
+      errors.push(
+        `glossary-baseline.txt GREW by ${added.length} line(s): ${added.join(", ")}. ` +
+        `A baseline records existing debt and may only shrink — fix the content instead.`
+      );
+    }
+  }
 }
 
 const stale = [...baseline].filter((k) => !usedBaseline.has(k));

@@ -14,8 +14,8 @@ versions to two learners.** Anything resembling a canary has to be client-side.
 ## Gate before any deploy
 
 ```bash
-npm run verify        # 6 steps: typecheck, lint, 11 validators, 3 self-tests, 339 tests
-npx playwright test --workers=1   # 89 browser tests
+npm run verify        # 6 steps: typecheck, lint, 11 validators, 3 self-tests, 346 tests
+npx playwright test --workers=1   # 110 browser tests
 npm run build         # must produce the full page set
 ```
 
@@ -49,7 +49,7 @@ Every stored-progress field added is optional, so no rollback needs a data migra
 
 ## Risks
 
-- **No visual regression baseline.** A CSS regression that keeps the DOM intact passes all 89 browser tests. Highest residual risk.
+- **No visual regression baseline.** A CSS regression that keeps the DOM intact passes all 110 browser tests. Highest residual risk.
 - **No telemetry.** With 0 tracking calls, a rollout is judged by looking. If the route split confuses learners, nothing reports it.
 - **The attempt cap will read as a restriction** to anyone who had been refreshing to re-roll a checkpoint.
 - **4.1 MB of assets** with no CI budget.

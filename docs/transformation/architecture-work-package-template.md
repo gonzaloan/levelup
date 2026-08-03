@@ -30,7 +30,7 @@ prevent.
 `CodexArchitecture` carries `problem`, `whenThisShape`, `components`, `flow`,
 `tradeoffs`, `failureModes`, `source`, `vendor`, `diagram`.
 
-Section 38.2 additionally asks for `scale`, `account_boundaries`,
+Section 38.2 defines **26** fields in total; beyond these it asks for `scale`, `account_boundaries`,
 `network_boundaries`, `identity_model` and `data_classification` — **absent from the
 schema**. Note here what you could not record, rather than omitting it silently.
 

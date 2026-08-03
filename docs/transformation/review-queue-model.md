@@ -5,7 +5,7 @@
 
 ## Target composition
 
-A queue that mixes 8 signals, ranked, capped at
+A queue that mixes 10 signals, ranked, capped at
 3 items per brief so a session stays finishable.
 
 | Priority | Source | Why it ranks there | Built |
@@ -30,7 +30,7 @@ and trusted.
 - **Deterministic order for a given day and state.** No `Math.random()`, no `Date.now()` — the app is a static export and a non-deterministic render breaks hydration parity.
 - **A review is not a re-read.** It must be a check or a scenario, because re-reading produces the fluency illusion.
 
-## Why the current implementation is 1 of 8
+## Why the current implementation is 1 of 10
 
 Two sources are cheap and unbuilt (confident-wrong and recent mistakes — the data is
 already in `responseLog`), two need features that do not exist (saved content, an

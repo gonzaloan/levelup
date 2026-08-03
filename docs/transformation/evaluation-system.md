@@ -4,7 +4,7 @@
 
 ## The pool
 
-678 scored items across four surfaces.
+678 items across four surfaces, of which **363 are scored**. The other 315 are formative by design — mid-lesson quizzes and the practice half of the check pool — and calling the whole bank "scored" was wrong by exactly that number.
 
 | Surface | Count | Scored | Reveals detail |
 |---|---:|---|---|

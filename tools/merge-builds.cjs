@@ -206,7 +206,15 @@ function main() {
         console.log(`  ${replaced ? "replaced" : "added"} ${b.id} (${b.palette.length} palette, ${criteria} criteria)`);
       }
     }
-    if (!errs.length) data.builds = [...byId.values()];
+    // Validate the WHOLE result, not just the patch. A corrupt pre-existing entry used
+    // to survive a merge of a valid one and be written straight back out, so the tool
+    // produced a file its own --check mode rejects.
+    if (!errs.length) {
+      const merged = [...byId.values()];
+      const seenAll = new Set();
+      for (const b of merged) checkChallenge(b, b.id ?? "(no id)", spineSlugs, seenAll);
+      if (!errs.length) data.builds = merged;
+    }
   }
 
   if (warns.length) { console.log(`\n${warns.length} warning(s):`); for (const w of warns.slice(0, 20)) console.log("  ! " + w); }

@@ -5,16 +5,16 @@
 ## What runs
 
 `npm run verify` is 6 steps: typecheck, lint, 11 content
-validators, 3 gate self-tests, the inventory generators, and 339
-unit tests across 30 files. Playwright adds 89 browser tests
+validators, 3 gate self-tests, the inventory generators, and 346
+unit tests across 30 files. Playwright adds 110 browser tests
 across 19 spec files.
 
 | Layer | Count | What it can catch |
 |---|---:|---|
 | Content validators | 11 | Duplicate ids, broken concept links, prerequisite cycles, missing translations, dead asset refs, uncovered domain×mechanic cells, contradictory axes figures, untraceable figures, prose defects, banned terminology |
 | Gate self-tests | 3 | Whether the validators above actually fail on the defects they exist for |
-| Unit tests | 339 | Route independence, check integrity, exploit families, scoring, a11y source properties, inventory agreement, glossary/doc drift |
-| Playwright | 89 | What a learner can actually see and reach in a browser |
+| Unit tests | 346 | Route independence, check integrity, exploit families, scoring, a11y source properties, inventory agreement, glossary/doc drift |
+| Playwright | 110 | What a learner can actually see and reach in a browser |
 
 ## The self-tests are the load-bearing part
 
@@ -29,7 +29,7 @@ was wrong at least once, and reading its output would not have revealed it:
 - An attack script reported all 94 order checks broken by "sort ascending". That sorts the array of *authored* indices, which trivially yields `[0..n-1]`; a learner cannot execute it, because the index is a React key and never reaches the DOM.
 - Three tests passed against a **fully restored defect**, because each rebuilt the thing it should have observed.
 - A rule scanning raw source flagged its own explanatory comment. Twice.
-- `it(` counted **0 of 89** Playwright tests, because Playwright uses `test(`.
+- `it(` counted **0 of 110** Playwright tests, because Playwright uses `test(`.
 
 Every one of those was found by attacking the gate, never by reading its output. That is
 why `gates:selftest` runs in `verify`.
@@ -43,7 +43,7 @@ line to make a build pass is forbidden — it converts a defect into a permissio
 
 ## Bilingual integrity
 
-19883 English and 19883 Spanish strings: exactly equal, and
+19881 English and 19881 Spanish strings: exactly equal, and
 **0 empty prose fields**. The 7 empty strings
 that do exist are positional slots — a cloze sentence that opens with a blank, and one
 deliberate `kind: "none"` figure opt-out — not missing translations. The naive count

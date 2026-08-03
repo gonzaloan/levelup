@@ -20,7 +20,14 @@ const EN = path.join(ROOT, "content", "glossary.en.json");
 const ES = path.join(ROOT, "content", "glossary.es.json");
 const BASE = path.join(__dirname, "glossary-baseline.txt");
 
-const originals = { [EN]: fs.readFileSync(EN, "utf8"), [ES]: fs.readFileSync(ES, "utf8"), [BASE]: fs.readFileSync(BASE, "utf8") };
+const SCAN = path.join(__dirname, "glossary-scan.cjs");
+const originals = {
+  [EN]: fs.readFileSync(EN, "utf8"),
+  [ES]: fs.readFileSync(ES, "utf8"),
+  [BASE]: fs.readFileSync(BASE, "utf8"),
+  // The scanner's SCOPE is mutated by one of the cases below, so it has to be restorable.
+  [SCAN]: fs.readFileSync(SCAN, "utf8"),
+};
 const restore = () => { for (const [f, t] of Object.entries(originals)) fs.writeFileSync(f, t); };
 
 /** Runs the validator. Returns {ok, out}. */
@@ -160,6 +167,37 @@ defect("a term present in one file only", () => {
 }, null);
 
 defect("a missing glossary file", () => fs.unlinkSync(EN), "is missing");
+
+// ── 6b. the scanner's SCOPE ───────────────────────────────────────────────
+// The case this file was missing. Every other check mutates the glossary data; none
+// touched the thing that decides which content is READ. Deleting three filenames from
+// FILES dropped ~1,000 Spanish strings from the corpus and all 24 checks still passed.
+//
+// Mutating the scanner is unusual for a self-test and correct here: a validator that
+// reads less than it claims reports zero errors, which is indistinguishable from clean.
+defect("a scanner that reads fewer files than the directory holds", () => {
+  const src = fs.readFileSync(SCAN, "utf8");
+  // Narrow the discovery filter to a single file, the way a hand-maintained list would
+  // drift. The scanner now derives FILES from the directory, so this is the modern shape
+  // of the same mistake.
+  const FILTER = '.filter((f) => /\.(json|ts)$/.test(f) && !f.endsWith(".d.ts"))';
+  const narrowed = src.replace(FILTER, '.filter((f) => f === "curriculum.json")');
+  if (narrowed === src) {
+    // Filter written differently than expected — fail loudly rather than silently
+    // passing a case that mutated nothing.
+    fs.writeFileSync(SCAN, src + String.fromCharCode(10) + "throw new Error('selftest: could not narrow FILES');" + String.fromCharCode(10));
+    return;
+  }
+  fs.writeFileSync(SCAN, narrowed);
+}, null);
+
+// ── 6c. the baseline may only SHRINK ─────────────────────────────────────
+// Only STALE lines errored, so appending a line silenced a real, newly-shipped calque —
+// two edits turned a defect into a permanent warning. The rule was in the header and not
+// in the code.
+defect("a baseline line APPENDED to silence a shipped rendering", () => {
+  fs.writeFileSync(BASE, originals[BASE] + "embedding|incrustación" + String.fromCharCode(10));
+}, "GREW");
 
 // ── 6. a stale baseline must shrink, never linger ─────────────────────────
 defect("a baseline line for something that no longer ships", () => {

@@ -43,7 +43,7 @@ effort: free-text grading needs a server, and this is a static export with
 
 ## Bilingual
 
-19883 English and 19883 Spanish strings — equal, with
+19881 English and 19881 Spanish strings — equal, with
 **0 empty prose fields**. The 7 empty strings
 are positional slots, not missing translations.
 
@@ -55,8 +55,8 @@ note where the decision contradicts its own measurement.
 
 - **11 content validators** in `npm run verify` (12 chain steps; one is a generator, not a gate)
 - **3 gate self-tests** — they attack the validators, which is where four of my own wrong rules were found
-- **339 unit tests** across 30 files
-- **89 Playwright tests** across 19 spec files
+- **346 unit tests** across 30 files
+- **110 Playwright tests** across 19 spec files
 - 5 ratchet baselines: `coverage-baseline.json`, `glossary-baseline.txt`, `match-spare-baseline.txt`, `prose-baseline.txt`, `trace-baseline.txt` — they may only shrink
 
 ## Systems section 33-38 specifies
@@ -64,7 +64,7 @@ note where the decision contradicts its own measurement.
 | System | State |
 |---|---|
 | Spaced review | Built — 7-rung ladder, 4 grades, pure module |
-| Review queue | **1 of 8 sources** |
+| Review queue | **1 of 10 sources** |
 | Confidence | Captured and used for the band cap; **not read by the scheduler** |
 | Saved content | **Absent** (section 33.1) |
 | Interview mode | A generated view over 4 tracks; **no product surface** |
@@ -72,7 +72,7 @@ note where the decision contradicts its own measurement.
 
 ## Risks
 
-1. **No visual regression baseline.** 89 browser tests assert structure, not pixels. A CSS regression that keeps the DOM intact passes everything. Highest residual risk.
+1. **No visual regression baseline.** 110 browser tests assert structure, not pixels. A CSS regression that keeps the DOM intact passes everything. Highest residual risk.
 2. **A gate that fires on correct content trains people to bypass it.** Several of mine did during this work — most recently a glossary that banned `rendimiento` (meaning *performance*) as a calque of throughput. Every gate now ships with correct-content fixtures. Managed, not closed.
 3. **The ratchets can be gamed by adding baseline lines.** None was added in this work; content was fixed instead, and one line was deleted when a figure became traceable.
 4. **154 concepts have no Predict step and 168 have no Build challenge.** The engines exist; the content does not.
@@ -84,4 +84,4 @@ Extend Predict and Build to the Staff Engineer route, the way the AI route was d
 engines and the validating merge tools now exist, so each concept is an additive,
 independently shippable patch. Then wire wrong-with-high-confidence into the review queue
 — the data is already in `responseLog`, which makes it the cheapest of the
-7 unbuilt queue sources.
+9 unbuilt queue sources.

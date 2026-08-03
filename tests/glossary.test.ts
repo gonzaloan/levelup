@@ -106,20 +106,39 @@ describe("the translate flag agrees with the corpus", () => {
   });
 
   it("never bans an acronym's own expansion", () => {
-    // Section 13 asks for a first_use_explanation, and "objetivo de nivel de servicio
-    // (SLO)" IS that explanation. The first draft banned the expansions of SLO, SLI,
-    // SLA, ADR, DLQ, MCP, LLM and RAG — forbidding the exact practice the glossary
-    // exists to encourage.
+    // This assertion was VACUOUS. All 29 acronym entries have `avoid: []`, so the inner
+    // loop ran zero times and `violations` was empty by construction — it could not fail.
+    // It also used ">= 3 words" as the definition of an expansion, which misses
+    // "vector database" (2 words).
+    //
+    // The property is now checked where it is decidable: an acronym's expansion is its
+    // ALIAS, and no term may ban a phrase that any term lists as an alias. That is
+    // falsifiable — adding `avoid: ["objetivo de nivel de servicio"]` to SLO fails it,
+    // because SLO carries that phrase as an alias.
+    const aliases = new Set<string>();
+    for (const t of EN.terms) for (const a of t.aliases) aliases.add(a.toLowerCase());
+    expect(aliases.size, "no term declares an alias — this test would be vacuous")
+      .toBeGreaterThan(10);
+
     const violations: string[] = [];
     for (const t of EN.terms) {
-      const isAcronym = /^[A-Z][A-Z0-9]{1,6}$/.test(t.term);
-      if (!isAcronym) continue;
       for (const bad of t.avoid) {
-        // An expansion is a multi-word phrase; a calque of an acronym is not.
-        if (bad.trim().split(/\s+/).length >= 3) violations.push(`${t.term} bans "${bad}"`);
+        if (aliases.has(bad.toLowerCase())) violations.push(`${t.term} bans "${bad}", which is an alias`);
       }
     }
-    expect(violations, "an acronym expansion is banned").toEqual([]);
+    expect(violations, "a banned rendering is some term's own alias").toEqual([]);
+
+    // And the original intent, stated so it cannot silently become unreachable: if an
+    // acronym ever gains an `avoid` entry, that entry must not be a multi-word phrase,
+    // because "objetivo de nivel de servicio (SLO)" IS the first-use explanation
+    // section 13 asks for.
+    const acronyms = EN.terms.filter((t) => /^[A-Z][A-Z0-9]{1,6}$/.test(t.term));
+    expect(acronyms.length, "no acronym entries at all").toBeGreaterThan(5);
+    for (const t of acronyms) {
+      for (const bad of t.avoid) {
+        expect(bad.trim().split(/\s+/).length, `${t.term} bans the phrase "${bad}"`).toBe(1);
+      }
+    }
   });
 
   it("excludes `principal`, which measures as kept but is a false friend", () => {
@@ -189,16 +208,38 @@ describe("the scanner reads every file with learner-facing prose", () => {
   // platform.
   //
   // A validator's file list is part of its claim, so it is asserted rather than trusted.
-  it("scans every content data file, so no file is silently exempt", () => {
-    const scanner = readFileSync("tools/glossary-scan.cjs", "utf8");
-    // `[a-z-]+` missed `ai-l5.json` and `general-l5.json` because of the digit, so this
-    // test reported them unscanned after they had been added. A detector that cannot see
-    // a filename is indistinguishable from a file that is not listed — the same class of
-    // error as the `\b` boundary and the `it(`-only test count.
-    const listed = [...scanner.matchAll(/"([\w.-]+\.json)"/g)].map((m) => m[1]);
-    const onDisk = readdirSync("src/content/data").filter((f) => f.endsWith(".json"));
-    const unscanned = onDisk.filter((f) => !listed.includes(f));
-    expect(unscanned, "a content file is not checked for banned terminology").toEqual([]);
+  it("scans every content file, whatever its extension", () => {
+    // Wrong in three ways across two rewrites, each time by not seeing a file:
+    //   - the first version scraped quoted ".json" names out of the scanner SOURCE, so a
+    //     filename in a comment satisfied it, and it filtered the directory to .json, so
+    //     gauntlet.ts (24 Spanish strings, imported by CodeRedTeam.tsx) was invisible;
+    //   - the second asked whether each file's Spanish reaches the corpus, but sampled it
+    //     with a JSON-shaped pattern. gauntlet.ts uses a bare `es:` key, so no sample was
+    //     found and the file was silently SKIPPED — passing while unscanned.
+    //
+    // A detector that cannot see a file looks exactly like a file that is fine. So both
+    // key forms are matched, and a file that clearly holds Spanish but yields no sample
+    // is a failure rather than a skip.
+    const { corpus } = require("../tools/glossary-scan.cjs");
+    const es = (corpus().es as string[]).join(String.fromCharCode(10));
+    const onDisk = readdirSync("src/content/data").filter((f) => !f.endsWith(".d.ts"));
+
+    const unscanned: string[] = [];
+    const unsampled: string[] = [];
+    for (const f of onDisk) {
+      const raw = readFileSync(`src/content/data/${f}`, "utf8");
+      // Both `"es": "…"` (JSON) and `es: "…"` (TS) — 40-120 chars so the sample is
+      // distinctive, and no backslash so quoting cannot skew the comparison.
+      const samples = [...raw.matchAll(/["']?es["']?\s*:\s*"([^"\\]{40,120})"/g)].map((m) => m[1]);
+      if (!samples.length) {
+        // Does this file contain Spanish at all? Accented characters are the cheap tell.
+        if (/[áéíóúñ¿¡]/.test(raw)) unsampled.push(f);
+        continue;
+      }
+      if (!samples.some((t) => es.includes(t))) unscanned.push(f);
+    }
+    expect(unsampled, "a file holds Spanish but the test could not sample it — fix the sampler").toEqual([]);
+    expect(unscanned, "a content file's Spanish never reaches the glossary corpus").toEqual([]);
   });
 
   it("the corpus it builds actually contains build-challenge prose", () => {

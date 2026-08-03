@@ -4,7 +4,7 @@
 
 ## What was audited
 
-The 4 tracks section 35.1 names, fed from the existing pool of
+4 of the **5** tracks section 35.1 names, fed from the existing pool of
 678 items. No new content was authored.
 
 | Track | Usable items | Rubric | Follow-ups | Records what it lacks |

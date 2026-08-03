@@ -4,7 +4,7 @@
 
 ## Scope
 
-678 items: every scored thing the platform can serve —
+678 items, **363 of them scored** —
 183 checkpoint MCQs, 105 mid-lesson items, 380
 mechanic checks, 10 build challenges.
 

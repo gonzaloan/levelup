@@ -29,9 +29,9 @@ Purity matters for a reason specific to this repo: `Date.now()` and `Math.random
 are forbidden at runtime, because the app is a static export and a non-deterministic
 render breaks hydration parity.
 
-## The queue: 1 of 8 sources
+## The queue: 1 of 10 sources
 
-Section 33.2 names eight signals an adaptive queue should combine.
+Section 33.2 names 10 signals an adaptive queue should combine. My first reading stopped at eight, dropping `transfer failures` and `interview weaknesses` — which made the shortfall look 20% smaller than it is.
 
 | Source | Implemented |
 |---|---|
@@ -43,8 +43,10 @@ Section 33.2 names eight signals an adaptive queue should combine.
 | weak prerequisites | **no** |
 | knowledge the active module needs | **no** |
 | unreviewed for too long | **no** |
+| transfer failures | **no** |
+| interview weaknesses | **no** |
 
-**This table read 3 of 8 before the detectors were corrected**, and both errors
+**This table read 3 of 8 before the detectors were corrected, against a denominator that was itself two short**, and both errors
 flattered the implementation:
 
 - "weak prerequisites" matched `/prerequisite/` in `daily.ts`. That code refuses to serve a concept whose prerequisites are unread — it gates what comes next, and does not surface a shaky prerequisite for review. Different mechanism, opposite direction.

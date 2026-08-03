@@ -264,7 +264,7 @@ So this document plans instrumentation; it does not report on any.
 ## What the platform already knows locally
 
 \`Progress\` has ${an.progressFields} fields in a single \`localStorage\` key
-(\`${an.localStorageKeys.join("`, `") || "levelup.v1"}\` plus the theme key). Every
+(\`levelup.v1\`; the other key, \`levelup.theme\`, holds the theme only). Every
 question below is answerable from data already on the learner's device:
 
 | Question | Field it comes from |

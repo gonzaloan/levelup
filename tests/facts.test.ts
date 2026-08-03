@@ -151,15 +151,32 @@ describe("facts.json agrees with the source it measures", () => {
     expect(facts.i18n.es).toBe(facts.i18n.en);
   });
 
-  it("counts Playwright tests, which use test() and not it()", () => {
-    // The defect this replays: `it(` matched zero of the 87 Playwright tests, so the
-    // validation report would have claimed no browser coverage existed.
+  it("counts TESTS, not call sites — the runners are the authority", () => {
+    // Two regexes were wrong here in sequence, and this test enforced the second one.
+    //
+    //   1. `it(` matched zero of the Playwright tests, because Playwright uses `test(`.
+    //   2. Matching both was STILL wrong: a test generated inside a `for` loop is one
+    //      call site and many tests. Six spec files undercounted, the total read 89
+    //      against a real 110 — and the AI-route sweep I wrote myself was one of them.
+    //
+    // This test recomputed the generator's own regex, so it passed against the defect. A
+    // count of source lines cannot be validated by counting source lines again. The
+    // generator now shells out to `--list`, and this asserts it did so rather than
+    // falling back, because a silent fallback is how an estimate becomes a "measurement".
     const specs = readdirSync("tests/visual").filter((f) => f.endsWith(".spec.ts"));
     expect(facts.validation.e2eSpecFiles).toBe(specs.length);
-    const counted = specs.reduce(
+    expect(facts.validation.e2eTestsFrom, "the e2e count fell back to counting call sites")
+      .toBe("playwright --list");
+    expect(facts.validation.unitTestsFrom, "the unit count fell back to counting call sites")
+      .toBe("vitest list");
+
+    // And the runner-derived figure must EXCEED the call-site count, since a loop
+    // generates more tests than lines. Equal would mean no loop-generated test exists,
+    // which is false for this suite — the sweep in predict.spec.ts is one.
+    const callSites = specs.reduce(
       (a, f) => a + (readFileSync(`tests/visual/${f}`, "utf8").match(/^\s*(?:it|test)\(/gm) || []).length, 0);
-    expect(facts.validation.e2eTests).toBe(counted);
-    expect(facts.validation.e2eTests).toBeGreaterThan(0);
+    expect(facts.validation.e2eTests, "the runner count should exceed the call-site count")
+      .toBeGreaterThan(callSites);
   });
 
   it("counts the validators the verify script actually runs", () => {
@@ -267,7 +284,8 @@ describe("the section 42 docs report what is NOT built", () => {
     const ib = JSON.parse(readFileSync(`${DOCS}/interview-bank.json`, "utf8"));
     const ce = JSON.parse(readFileSync(`${DOCS}/code-example-inventory.json`, "utf8"));
     expect(read("question-bank-audit.md"), "the item count is stale").toContain(`${bank.items.length} items`);
-    expect(read("evaluation-system.md")).toContain(`${bank.items.length} scored items`);
+    expect(read("evaluation-system.md"), "the scored count is stale")
+      .toContain(`**${bank.items.filter((i: {scored: boolean}) => i.scored).length} are scored**`);
     expect(read("code-example-policy.md")).toContain(`${ce.examples.length} snippets`);
     const usable = ib.tracks.reduce((a: number, t: { usableItems: number }) => a + t.usableItems, 0);
     expect(read("interview-question-audit.md"), "the usable-item total is stale")
@@ -293,7 +311,7 @@ describe("the section 42 docs report what is NOT built", () => {
     expect(read("architecture-work-package-template.md").replace(/\s+/g, " "))
       .toContain("**absent from the schema**");
     expect(read("code-example-policy.md"), "the doc does not count its missing schema fields")
-      .toMatch(/five of nine fields are absent/);
+      .toMatch(/12 of its 16 fields are absent/);
   });
 });
 

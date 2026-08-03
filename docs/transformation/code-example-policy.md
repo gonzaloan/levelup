@@ -38,7 +38,7 @@ Most of this corpus is architectural, which is why 377 figures outnumber
 
 The spec's `code_example` anatomy asks for `runtime`, `dependencies`, `setup`,
 `expected_output` and `failure_variant`. `ConceptCode` has `lang`, `snippet`,
-`caption` and `annotations` — so **five of nine fields are absent**.
+`caption` and `annotations` — so **12 of its 16 fields are absent**.
 
 The consequence is concrete: no snippet here is runnable as shipped. They are read, not
 executed. Adding `expected_output` and a `failure_variant` would be the highest-value

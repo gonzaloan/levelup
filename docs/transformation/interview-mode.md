@@ -21,6 +21,15 @@ Every track reports `hasRubric: false` and `hasFollowUps: false`, and each carri
 `missing` list. Reporting `true` there would have been the lie that matters — a
 generated inventory that flatters the platform is worse than no inventory.
 
+## The fifth track is different
+
+Section 35.1 names a **Behavioral Interview** track, and `interview-bank.json` has no
+entry for it. That is not an oversight in the inventory: the other four are fed by a view
+over existing MCQs and mechanic checks, and a behavioural answer is a story about
+something the learner did. There is no item pool to project from, and inventing one would
+be fabricating experience — a rule this project holds elsewhere. So the honest state is
+four tracks feedable and one that needs a different mechanism entirely.
+
 ## Why it is not built
 
 Section 35 wants an interviewer that adds constraints mid-answer, scores against a

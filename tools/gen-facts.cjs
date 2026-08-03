@@ -28,6 +28,15 @@ const OUT = path.join(ROOT, "docs", "transformation", "facts.json");
 const read = (f) => JSON.parse(fs.readFileSync(path.join(DATA, f), "utf8"));
 const src = (rel) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 const exists = (rel) => fs.existsSync(path.join(ROOT, rel));
+/**
+ * A newline as a binding, not an escape.
+ *
+ * Fourth occurrence of escape corruption in this project: a two-char sequence written
+ * through a shell heredoc arrives as the raw control character, and inside a regex that
+ * is a syntax error, while inside a filter it silently became a no-op that reported 12
+ * validators where 11 exist. Bindings cannot be mangled.
+ */
+const NL = String.fromCharCode(10);
 
 const curriculum = read("curriculum.json");
 const lessons = read("lessons.json");
@@ -208,12 +217,40 @@ const VALIDATION = (() => {
   walk("tests");
   const unit = testFiles.filter((f) => !f.includes("/visual/"));
   const e2e = testFiles.filter((f) => f.includes("/visual/"));
-  // Vitest uses `it(`, Playwright uses `test(`. Counting only `it(` reported "0 e2e
-  // tests" while 19 spec files sat in tests/visual/ — a zero that would have gone into
-  // validation-report.md as evidence of a gap that does not exist. Both are matched.
-  const countTests = (files) =>
+  /**
+   * Ask the runners, rather than counting call sites.
+   *
+   * Two regexes were wrong here in sequence. The first matched only `it(` and reported
+   * 0 of the Playwright tests, because Playwright uses `test(`. The fix matched both and
+   * was STILL wrong: a test generated inside a `for` loop has one call site and many
+   * tests, so 6 spec files undercounted and the total read 89 against a real 110 — and
+   * the sweep I wrote myself, `for (const lesson of AI_LESSONS)`, was one of them.
+   *
+   * A regex over source can only ever count call sites. `--list` counts tests, so the
+   * number now comes from the tool that owns the answer. Falls back to the call-site
+   * count if the runner is unavailable, and records which method produced the figure so
+   * a doc cannot quietly quote an estimate as a measurement.
+   */
+  const listCount = (cmd, args, re) => {
+    try {
+      const out = execFileSync(cmd, args, { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024, shell: process.platform === "win32" });
+      const m = out.match(re);
+      return m ? Number(m[1]) : null;
+    } catch { return null; }
+  };
+  const callSites = (files) =>
     files.reduce((a, f) => a + (src(f).match(/^\s*(?:it|test)\(/gm) || []).length, 0);
   const baselines = fs.readdirSync(__dirname).filter((f) => /baseline/.test(f));
+  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
+  const e2eListed = listCount(npx, ["playwright", "test", "--list"], /Total:\s+(\d+)\s+tests?/);
+  // `vitest list` prints one line per test; count the lines that name a file.
+  const unitListed = (() => {
+    try {
+      const out = execFileSync(npx, ["vitest", "list"], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 * 1024 * 1024, shell: process.platform === "win32" });
+      const n = out.split(NL).filter((l) => /^tests\/.+ > /.test(l.trim())).length;
+      return n > 0 ? n : null;
+    } catch { return null; }
+  })();
   // A `gen-*` step in the chain is a GENERATOR, not a validator. `content:check` runs
   // gen-glossary.cjs immediately before check-glossary.cjs so the measured usage counts
   // cannot be stale — but counting it as a validator overstates the gate count by one,
@@ -227,9 +264,11 @@ const VALIDATION = (() => {
     selfTests: chain("gates:selftest").length,
     verifySteps: chain("verify").length,
     unitTestFiles: unit.length,
-    unitTests: countTests(unit),
+    unitTests: unitListed ?? callSites(unit),
+    unitTestsFrom: unitListed !== null ? "vitest list" : "call sites (runner unavailable)",
     e2eSpecFiles: e2e.length,
-    e2eTests: countTests(e2e),
+    e2eTests: e2eListed ?? callSites(e2e),
+    e2eTestsFrom: e2eListed !== null ? "playwright --list" : "call sites (runner unavailable)",
     baselineFiles: baselines.length,
     baselineNames: baselines.sort(),
   };
@@ -251,8 +290,27 @@ const ANALYTICS = (() => {
     // Searched for, and absent. This is the finding, not a gap in the measurement.
     trackingCalls: (joined.match(/\b(gtag|analytics\.track|posthog|mixpanel|amplitude|plausible)\b/g) || []).length,
     fetchCallsToApi: (joined.match(/fetch\(\s*["'`]\/api\//g) || []).length,
-    localStorageKeys: [...new Set((joined.match(/localStorage\.(?:get|set)Item\(\s*["'`]([^"'`]+)/g) || [])
-      .map((m) => m.replace(/.*["'`]/, "")))],
+    /**
+     * Every localStorage key, including ones passed as a constant.
+     *
+     * The literal-only version found exactly one key — `levelup.theme`, from an inline
+     * boot script — and MISSED `levelup.v1`, which is where all progress lives, because
+     * `store.ts` writes `setItem(KEY, …)`. analytics-plan.md then read "a single
+     * localStorage key (`levelup.theme`) plus the theme key", naming the theme store as
+     * the progress store and repeating itself. It was the one sentence in that document a
+     * reader would use to find their own data.
+     *
+     * So string constants that look like a key are resolved too, and the result is
+     * sorted for stability.
+     */
+    localStorageKeys: (() => {
+      const literals = (joined.match(/localStorage\.(?:get|set)Item\(\s*["'`]([^"'`]+)/g) || [])
+        .map((m) => m.replace(/.*["'`]/, ""));
+      // `const KEY = "levelup.v1";` and friends — a key held in a constant is still a key.
+      const consts = (joined.match(/\b(?:const|let)\s+\w*KEY\w*\s*=\s*["'`]([^"'`]+)["'`]/g) || [])
+        .map((m) => m.replace(/.*["'`]([^"'`]+)["'`]/, "$1"));
+      return [...new Set([...literals, ...consts])].sort();
+    })(),
     progressFields: (() => {
       const t = src("src/lib/store.ts");
       const m = t.match(/export interface Progress \{([\s\S]*?)\n\}/);
@@ -338,14 +396,25 @@ const SYSTEMS = (() => {
   const queueSources = {
     "concepts near forgetting": /dueConcepts/.test(daily),
     "recent mistakes": /responseLog/.test(daily),
-    "correct but low confidence": /confidence/.test(daily) || /confidence/.test(review),
-    "wrong but high confidence": /confidence/.test(daily) || /confidence/.test(review),
+    // These two were the SAME expression, so one feature would have counted twice — the
+    // defect the dueConcepts note above says was fixed. Each now names the distinct
+    // signal it needs: a low-confidence CORRECT answer and a high-confidence WRONG one
+    // are different queries over responseLog, and a scheduler can read one without the
+    // other.
+    "correct but low confidence": /lowConfidenceCorrect|confidence.*correct/.test(daily + review),
+    "wrong but high confidence": /confidentWrong|highConfidenceWrong/.test(daily + review),
     "saved concepts": /saved/i.test(daily),
     // Would require reading past wrong answers per prerequisite slug, not gating on read.
     "weak prerequisites": /prerequisiteStrength|weakPrereq/.test(daily),
     "knowledge the active module needs": /moduleId/.test(daily),
     // A distinct signal from the interval ladder: last-seen age regardless of schedule.
     "unreviewed for too long": /lastSeen|staleAfter/.test(daily),
+    // Sources 9 and 10. My first reading of section 33.2 stopped at eight, which made the
+    // shortfall look 20% smaller than it is and dropped two requirements from
+    // review-queue-model.md's target table entirely. Source 9 is newly relevant: Transfer
+    // items now exist, so a failed transfer is a signal the platform could record.
+    "transfer failures": /transferTo/.test(daily + review),
+    "interview weaknesses": /interview/i.test(daily + review),
   };
 
   return {

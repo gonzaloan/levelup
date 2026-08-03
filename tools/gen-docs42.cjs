@@ -118,13 +118,13 @@ render breaks hydration parity.
 
 ## The queue: ${s.reviewQueue.sourcesImplemented} of ${s.reviewQueue.sourcesSpecified} sources
 
-Section 33.2 names eight signals an adaptive queue should combine.
+Section 33.2 names ${s.reviewQueue.sourcesSpecified} signals an adaptive queue should combine. My first reading stopped at eight, dropping \`transfer failures\` and \`interview weaknesses\` — which made the shortfall look 20% smaller than it is.
 
 | Source | Implemented |
 |---|---|
 ${Object.entries(s.reviewQueue.sources).map(([k, ok]) => `| ${k} | ${yn(ok)} |`).join("\n")}
 
-**This table read 3 of 8 before the detectors were corrected**, and both errors
+**This table read 3 of 8 before the detectors were corrected, against a denominator that was itself two short**, and both errors
 flattered the implementation:
 
 - "weak prerequisites" matched \`/prerequisite/\` in \`daily.ts\`. That code refuses to serve a concept whose prerequisites are unread — it gates what comes next, and does not surface a shaky prerequisite for review. Different mechanism, opposite direction.
@@ -158,7 +158,7 @@ docs["evaluation-system.md"] = `# Evaluation system
 
 ## The pool
 
-${bank.items.length} scored items across four surfaces.
+${bank.items.length} items across four surfaces, of which **${bank.items.filter((i) => i.scored).length} are scored**. The other ${bank.items.length - bank.items.filter((i) => i.scored).length} are formative by design — mid-lesson quizzes and the practice half of the check pool — and calling the whole bank "scored" was wrong by exactly that number.
 
 | Surface | Count | Scored | Reveals detail |
 |---|---:|---|---|
@@ -223,6 +223,15 @@ ${interview.tracks.map((t) => `| ${t.track} | ${t.usableItems} | ${yn(t.hasRubri
 Every track reports \`hasRubric: false\` and \`hasFollowUps: false\`, and each carries a
 \`missing\` list. Reporting \`true\` there would have been the lie that matters — a
 generated inventory that flatters the platform is worse than no inventory.
+
+## The fifth track is different
+
+Section 35.1 names a **Behavioral Interview** track, and \`interview-bank.json\` has no
+entry for it. That is not an oversight in the inventory: the other four are fed by a view
+over existing MCQs and mechanic checks, and a behavioural answer is a story about
+something the learner did. There is no item pool to project from, and inventing one would
+be fabricating experience — a rule this project holds elsewhere. So the honest state is
+four tracks feedable and one that needs a different mechanism entirely.
 
 ## Why it is not built
 
@@ -329,7 +338,7 @@ ${codeEx.examples.length} snippets nearly ${Math.round(vis.figures / codeEx.exam
 
 The spec's \`code_example\` anatomy asks for \`runtime\`, \`dependencies\`, \`setup\`,
 \`expected_output\` and \`failure_variant\`. \`ConceptCode\` has \`lang\`, \`snippet\`,
-\`caption\` and \`annotations\` — so **five of nine fields are absent**.
+\`caption\` and \`annotations\` — so **12 of its 16 fields are absent**.
 
 The consequence is concrete: no snippet here is runnable as shipped. They are read, not
 executed. Adding \`expected_output\` and a \`failure_variant\` would be the highest-value
@@ -443,7 +452,7 @@ docs["question-bank-audit.md"] = `# Question bank audit
 
 ## Scope
 
-${bank.items.length} items: every scored thing the platform can serve —
+${bank.items.length} items, **${bank.items.filter((i) => i.scored).length} of them scored** —
 ${c.checkpointItems} checkpoint MCQs, ${c.midQuizItems} mid-lesson items, ${c.checks}
 mechanic checks, ${c.builds} build challenges.
 
@@ -550,7 +559,7 @@ docs["interview-question-audit.md"] = `# Interview question audit
 
 ## What was audited
 
-The ${interview.tracks.length} tracks section 35.1 names, fed from the existing pool of
+${interview.tracks.length} of the **5** tracks section 35.1 names, fed from the existing pool of
 ${bank.items.length} items. No new content was authored.
 
 | Track | Usable items | Rubric | Follow-ups | Records what it lacks |
@@ -787,7 +796,7 @@ prevent.
 \`CodexArchitecture\` carries \`problem\`, \`whenThisShape\`, \`components\`, \`flow\`,
 \`tradeoffs\`, \`failureModes\`, \`source\`, \`vendor\`, \`diagram\`.
 
-Section 38.2 additionally asks for \`scale\`, \`account_boundaries\`,
+Section 38.2 defines **26** fields in total; beyond these it asks for \`scale\`, \`account_boundaries\`,
 \`network_boundaries\`, \`identity_model\` and \`data_classification\` — **absent from the
 schema**. Note here what you could not record, rather than omitting it silently.
 
