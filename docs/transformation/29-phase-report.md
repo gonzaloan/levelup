@@ -36,7 +36,7 @@ grade, so it printed every gate's answer at zero cost. Unscored is not unguarded
 
 The third round-2 finding closed the question rather than the loop: widening the
 display guard further is **unsatisfiable**. At 3 pairs the match dihedral group forbids
-100% of the permutation space, and 60 of 101 categorize keys are an even sweep in
+100% of the permutation space, and 63 of 105 categorize keys were an even sweep in
 AUTHORED order, which no shuffle touches. Those are content defects wearing a display
 costume (ADR-011), and the residual is now two assertions carrying the measured
 numbers rather than a ceiling of zero that quietly fails.

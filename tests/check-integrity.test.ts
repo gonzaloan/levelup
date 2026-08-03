@@ -179,11 +179,26 @@ describe("the authored corpus still carries the bias the shuffle exists to hide"
       const b = c.items.map((i) => i.bucket);
       return b.every((v, i) => i === 0 || b[i - 1] <= v);
     }).length;
-    // These are high by nature — authors write the right answer first. The point
-    // is that the DISPLAY layer must not expose it, which the tests above assert.
+
+    // Match and cloze are still high by nature — authors write the right answer first —
+    // and that is tolerable because the DISPLAY layer hides it, which the tests above
+    // assert. The identity key is only reachable through the rendered order.
     expect(idMatch / match.length).toBeGreaterThan(0.5);
     expect(idCloze / cloze.length).toBeGreaterThan(0.5);
-    expect(idCat / categorize.length).toBeGreaterThan(0.5);
+
+    // CATEGORIZE IS DIFFERENT, and this assertion had it backwards.
+    //
+    // The blind sweep strategy never reads the tray, so shuffling the display cannot
+    // protect a key whose buckets fall in a run — the exploit clears it outright. That made
+    // the authored order a real exposure rather than a tolerable one, and 63 of 105 checks
+    // were in that shape. `tools/fix-categorize-sweeps.cjs` reordered them.
+    //
+    // So the direction flips: a HIGH share here is now a defect, not a fact of authoring.
+    // The residual 19% are keys that are merely non-descending, which is not a blind
+    // pattern — `tests/exploit-family.test.ts` asserts the exploitable count is zero.
+    expect(idCat / categorize.length,
+      `${idCat}/${categorize.length} categorize keys are grouped in authored order — the ` +
+      `sweep exploit ignores the display, so this may only go DOWN`).toBeLessThan(0.25);
   });
 });
 

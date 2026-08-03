@@ -394,10 +394,10 @@ arithmetic says why:
 
 - For a **3-pair match**, the dihedral group is 2n = 6 patterns and there are exactly
   3! = 6 permutations. The guard forbids 100% of the space. At n=4 it forbids 33%, at
-  n=5 only 8% — so it is satisfiable only on long lists, and **24 of the 93 match
+  n=5 only 8% — so it is satisfiable only on long lists, and **25 of the 95 match
   checks are 3×3**.
 - For **categorize**, the authored-order strategies never read the display order.
-  **60 of 101 categorize checks have an authored key that IS an even sweep.** No
+  **63 of 105 categorize checks had an authored key that WAS an even sweep — now 0.** No
   permutation of the tray changes that, because the strategy does not look at the tray.
 
 These are content properties wearing a display costume. Forcing the guard would either

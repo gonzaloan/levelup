@@ -47,4 +47,4 @@ not a clear.
 - **10 Build challenges** across 178 concepts, so constructive assessment covers 6%.
 - **No free-text grading** — see `target-learning-model.md` on why Explain is unbuilt.
 - **No item response calibration.** `responseLog` is collected for future IRT work; author-assigned difficulty is still provisional.
-- **60 of 101 categorize keys are even sweeps in authored order.** Widening the display guard further would forbid 100% of the permutation space at 3 pairs, so these are recorded as content defects (ADR-011) rather than papered over with a stricter shuffle.
+- **Categorize is now clearable by no blind strategy at all** (was 63 of 105 via the even sweep, a 60% clear rate). The sweep ignores the display order, so no shuffle could touch it; fixed in CONTENT by reordering the authored items (`tools/fix-categorize-sweeps.cjs`). The first attempt at that fix interleaved them, which drove the sweep to zero and raised the ALTERNATING strategy from 12.4% to 72.4% — so the gate now asserts the maximum across every blind strategy, not one pattern.
