@@ -108,6 +108,21 @@ before making changes.
   **A guard must cover the exploit FAMILY, not one member.** Rejecting only the straight diagonal left
   28 of 93 match checks (14 of the 24 3x3s) open to some rotation. All four mechanics now reject
   rotations, reversals and alternations, verified across attempts 0-3.
+  **When a guard becomes UNSATISFIABLE, that is information — the defect is not in the layer you are
+  guarding.** Widening the match guard to the full dihedral group forbids 100% of the permutation
+  space at 3 pairs (2n = 6 patterns, 3! = 6 permutations), and the categorize authored-order
+  strategies never read the display order at all — 60 of 101 keys ARE an even sweep. Those are content
+  defects wearing a display costume: a 3-pair match needs a fourth row, a sweep-shaped key needs
+  re-authoring. Forcing the guard falls back to a rotation, and a predictable order is a sharper tell
+  than a chance one. See ADR-011.
+  **A cap that lives in component state is advisory.** `MAX_ATTEMPTS` was `useState(0)`, so F5 handed
+  out another independently-scoring run and `Math.max` meant it could only help the guesser — 28 of 35
+  checkpoints cleared above 5% within six reloads. Enforce at the SCORING boundary (`recordCheckpoint`
+  refuses past the cap), persist it in `Progress`, and restore it in `backup.ts`.
+  **Unscored is not unguarded.** `/build` is formative and prints the criterion list, which states the
+  target topology in words — and all six challenges are also graded checkpoint steps, so a formative
+  page handed over every gate's answer. Gate on a separate `revealSpec`/`showDetail` decision, never
+  on `mode` alone.
   **The dominant attack is not positional and the shuffle cannot touch it.** Options are identified by
   TEXT, so a learner remembers what they ruled out even when it moves. On attempt J they choose among
   n-(J-1) texts. Measured: 23 of 35 checkpoints exceeded a 5% zero-knowledge clear rate somewhere in

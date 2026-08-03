@@ -369,3 +369,65 @@ learner finds where.
 
 ### Date
 2026-08-02
+
+---
+
+## ADR-011 — Some exploits are content defects, and no display layer can fix them
+
+### Status
+**Accepted (measured)** — `tests/exploit-family.test.ts`
+
+### Context
+
+After the display guard was widened to reject each mechanic's exploit family, a
+reviewer found three strategies still clearing above the 15% ceiling that test sets.
+The worst was a categorize sweep in **authored** order at 59%.
+
+The obvious response is to widen `unsafe` again: reject the full dihedral group for
+match, index the cloze reversal on bank length as well as blank count, and test the
+authored-order strategies too. I implemented that and measured it.
+
+### Decision
+
+**Stop widening the display guard.** The wider version is *unsatisfiable*, and the
+arithmetic says why:
+
+- For a **3-pair match**, the dihedral group is 2n = 6 patterns and there are exactly
+  3! = 6 permutations. The guard forbids 100% of the space. At n=4 it forbids 33%, at
+  n=5 only 8% — so it is satisfiable only on long lists, and **24 of the 93 match
+  checks are 3×3**.
+- For **categorize**, the authored-order strategies never read the display order.
+  **60 of 101 categorize checks have an authored key that IS an even sweep.** No
+  permutation of the tray changes that, because the strategy does not look at the tray.
+
+These are content properties wearing a display costume. Forcing the guard would either
+fail to terminate or fall back to a rotation — which is *worse* than the exploit,
+because a predictable order is a sharper tell than a chance one.
+
+### Alternatives
+
+- **Widen the guard anyway, with a longer fallback chain.** Rejected: measured
+  unsatisfiable on 96 match, 80 cloze, 292 categorize and 36 order item/attempt pairs.
+  Every one of those would silently take the rotation escape hatch.
+- **Re-author the 60 categorize keys and the 24 3×3 matches.** The correct fix, and
+  real work: a 3-pair match needs a fourth row or an unmatched distractor; a
+  categorize whose buckets fall in a neat run needs its items authored out of it.
+  Not done in this pass, and recorded rather than implied.
+- **Accept the exposure silently.** Rejected. The residual is now two assertions
+  carrying the measured numbers (62% and 30% ceilings), so the figures live in the
+  suite and a regression is still caught even though the residual is not zero.
+
+### Consequences
+
+A learner who both notices the pattern and can recover authored order retains an
+advantage on some categorize items. That is bounded by the attempt cap and by the
+fact that recovering authored order is not something the UI offers.
+
+The generalisable lesson: **when a guard becomes unsatisfiable, that is information.**
+It means the defect is not in the layer being guarded.
+
+### Affected content
+60 categorize checks with sweep-shaped keys; 24 3-pair match checks.
+
+### Date
+2026-08-02
