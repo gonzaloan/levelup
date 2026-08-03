@@ -16,7 +16,7 @@
   the Spanish is the bug.
 
 This is a policy decision, not an observation about the corpus — both editions are
-complete at 19,344 strings each.
+complete at 20,449 strings each.
 
 ## 2. Shared vs localized fields
 
@@ -63,8 +63,8 @@ Not by taste. Per term, the ratio of *Spanish occurrences of the English word* t
 | <= 0.15 | the Spanish edition has its own settled word | `translate: true` |
 | in between | two authors made different calls | read the sentences, then decide |
 
-Result: **82 kept in English, 46 localized.** By measured verdict: 75 clearly kept, 29
-clearly localized, 22 inconsistent, 2 too rare to call.
+Result: **82 kept in English, 46 localized.** By measured verdict: 76 clearly kept, 31
+clearly localized, 20 inconsistent, 1 too rare to call.
 
 The glossary overrules the raw ratio in **12 cases**, each carrying a written `note`:
 
@@ -74,9 +74,9 @@ The glossary overrules the raw ratio in **12 cases**, each carrying a written `n
 - **Localized despite a kept ratio** — `load shedding` (`descarte de carga`, 8 vs 7),
   `cold start` (`arranque en frío`, 10 vs 7), `service mesh` (`malla de servicios`). The
   Spanish form narrowly leads, and the policy is to record what the corpus settled on
-  rather than overrule 19,000 strings from taste.
+  rather than overrule 20,000 strings from taste.
 
-### `avoid` — 82 banned renderings
+### `avoid` — 80 banned renderings
 
 A rendering in `avoid` **fails the build** if it appears in Spanish prose. That is what
 makes the glossary enforceable, and it is why the list was built by reading sentences
@@ -136,8 +136,13 @@ There is none, by design.
 `reviewState: "reviewed"` in both glossary files. What that claims, precisely:
 
 - Every term's `translate` decision was measured against the corpus, and every override
-  of the measurement carries a written `note`. **39 of 128** terms have one.
-- Every `avoid` entry was checked against shipped Spanish prose. 42 conflicts were found
+  of the measurement carries a written `note`. **50 of 128** terms have one.
+- The scanner reads **all 8** content data files. It read 5 until `tests/glossary.test.ts`
+  compared its list against the directory: `builds.json` and the two assessment files
+  (`ai-l5.json`, `general-l5.json`) were exempt, hiding 781 learner-facing Spanish strings
+  and one real calque (`pipeline de trozeo`, since fixed). A validator's file list is part
+  of its claim, so it is now asserted rather than trusted.
+- Every `avoid` entry was checked against shipped Spanish prose. 45 conflicts were found
   and resolved — by unbanning where the rendering was a real word, and by baselining the
   7 that are real debt.
 - `tools/selftest-glossary.cjs` (**24 checks**) verifies the validator itself: 20 defect
@@ -145,7 +150,7 @@ There is none, by design.
   files disagreeing about one decision — plus 4 correct-content fixtures that must be
   accepted.
 
-What it does **not** claim: that a native reviewer has read all 19,344 Spanish strings.
+What it does **not** claim: that a native reviewer has read all 20,449 Spanish strings.
 Two Spanish regressions were introduced and caught during this transformation, so the
 prose is machine-checked, not human-certified. `check-prose.cjs` and
 `check-glossary.cjs` are what stand behind the Spanish edition today.

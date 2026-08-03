@@ -181,16 +181,25 @@ accepts("a term whose Spanish rival is an ordinary word with its own meaning", (
 });
 
 accepts("a new term with an empty avoid list", () => {
-  // The counts here are the REAL ones for `p50` — 42 in each language. The first draft
-  // of this fixture wrote zeros, on the assumption that a term absent from the glossary
-  // is absent from the corpus. The validator rejected it, and it was right: `p50` ships
-  // 42 times, so the zeros were exactly the hand-typed count the check exists to catch.
-  // A self-test that "fails" because it lied about the content is a finding about the
-  // test.
+  // The counts are MEASURED here, not typed.
+  //
+  // Two revisions got this wrong in opposite directions. The first wrote zeros, assuming
+  // a term absent from the glossary is absent from the corpus; the validator rejected it
+  // and was right, because `p50` ships. The second hardcoded the measured figure, which
+  // then went stale the moment the scanner's file list widened and 781 more strings
+  // entered the corpus — so a correct-content fixture started failing.
+  //
+  // A fixture that restates a number the tool derives is the same defect the tool exists
+  // to catch, one level up. So it derives it.
+  const { corpus, count, classify } = require("./glossary-scan.cjs");
+  const c = corpus();
+  const en = count(c.en.join("\n"), "p50");
+  const es = count(c.es.join("\n"), "p50");
+  const { verdict, ratio } = classify(en, es);
   const entry = (expl) => ({
     term: "p50", canonical: "p50", spanish_usage: "p50", translate: false,
     first_use_explanation: expl, aliases: ["median latency"], avoid: [],
-    usage: { en: 42, esCanonical: 42, englishFormInSpanish: 42, ratio: 1, verdict: "kept" },
+    usage: { en, esCanonical: es, englishFormInSpanish: es, ratio: Number(ratio.toFixed(2)), verdict },
   });
   const g = readEn(), h = readEs();
   g.terms.push(entry("The latency half of all requests come in under — the typical case, not the problem."));

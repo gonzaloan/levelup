@@ -90,7 +90,11 @@ const TERMS = [
   { t: "chunking", es: "chunking", keep: true,
     e: "Splitting source documents into indexable pieces; size and boundaries decide what can be found.",
     s: "Dividir documentos fuente en piezas indexables; el tamaño y los límites deciden qué se puede encontrar.",
-    x: ["fragmentación de trozos", "troceado", "trozado"] },
+    x: ["fragmentación de trozos", "troceado", "trozado", "trozeo"],
+    n: "`trozeo` was added after the scanner's FILES list was fixed to include builds.json: " +
+       "a build challenge ships \"pipeline de trozeo y embebido\", and the gate had reported 0 " +
+       "occurrences because it was not reading that file. A ban list is only as wide as the " +
+       "corpus it is checked against." },
   { t: "overlap", es: "overlap", keep: true,
     e: "Repeating the tail of one chunk at the head of the next, so a fact spanning a boundary survives.",
     s: "Repetir el final de un chunk al inicio del siguiente, para que un dato que cruza el límite sobreviva.",
@@ -118,10 +122,11 @@ const TERMS = [
   { t: "recall", es: "recall", keep: true,
     e: "The fraction of the relevant documents that actually came back. It bounds what the generator can use.",
     s: "La fracción de documentos relevantes que efectivamente volvió. Acota lo que el generador puede usar.",
-    x: ["cobertura de resultados", "recuerdo"],
-    n: "`recuerdo` is the textbook translation and is banned on purpose: it reads as 'memory' in prose. " +
-       "`exhaustividad` is NOT banned — its 2 uses mean exhaustiveness (\"abdicación disfrazada de " +
-       "exhaustividad\"), not the metric." },
+    x: ["cobertura de resultados"],
+    n: "Neither `recuerdo` nor `exhaustividad` is banned, and both were until the scanner's file list " +
+       "was widened. `recuerdo` reads as 'memory' — its one use is \"recuerdo difuso sobre episodios\", " +
+       "about agent memory — and `exhaustividad` means exhaustiveness (\"abdicación disfrazada de " +
+       "exhaustividad\"). Neither is the metric this term names." },
   { t: "hit-rate", es: "hit-rate", keep: true,
     e: "The share of queries whose answer appears anywhere in what was retrieved.",
     s: "La proporción de consultas cuya respuesta aparece en algún lugar de lo recuperado.",
@@ -478,9 +483,10 @@ const TERMS = [
   { t: "control plane", es: "plano de control", keep: false,
     e: "The part that decides and configures, as opposed to the part serving requests.",
     s: "La parte que decide y configura, en contraste con la que atiende peticiones.",
-    x: ["capa de control"],
+    x: [],
     n: "`plano de control` (44) beats `control plane` (15) in Spanish prose. The pair with `data plane` is " +
-       "decided together so the two halves cannot drift apart." },
+       "decided together so the two halves cannot drift apart. `capa de control` is NOT banned: its one use " +
+       "describes guardrails as an online control LAYER, which is a different idea from the control plane." },
   { t: "data plane", es: "plano de datos", keep: false,
     e: "The part that actually serves the request path.",
     s: "La parte que efectivamente atiende la ruta del request.",
@@ -675,7 +681,10 @@ const TERMS = [
   { t: "tech lead", es: "tech lead", keep: true,
     e: "The role accountable for a team's technical direction and delivery.",
     s: "El rol responsable de la dirección técnica y la entrega de un equipo.",
-    x: ["líder técnico"] },
+    x: [],
+    n: "`líder técnico` is NOT banned. Its uses are inside scenarios (\"tu líder técnico eligió el otro " +
+       "enfoque\"), where the natural Spanish reads better than the English title; `tech lead` stays " +
+       "canonical for the role name itself." },
 ];
 
 // ── build ────────────────────────────────────────────────────────────────

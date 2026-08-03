@@ -8,7 +8,7 @@
 // The interesting assertions are the ones about the decisions rather than the shape.
 // A glossary can be perfectly well-formed and still be wrong about its own corpus.
 import { describe, it, expect } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
 
 type Term = {
   term: string;
@@ -178,6 +178,38 @@ describe("the terms are the ones the corpus actually teaches", () => {
       if (es <= en) wrong.push(`${t.term} (es:${es} en:${en}) — ${s.slice(0, 60)}`);
     }
     expect(wrong, "a Spanish explanation reads as English").toEqual([]);
+  });
+});
+
+describe("the scanner reads every file with learner-facing prose", () => {
+  // The blind spot this exists for: `builds.json` was missing from glossary-scan.cjs's
+  // FILES list, so the 6 Architecture Builder challenges were never checked. One of them
+  // shipped "pipeline de trozeo y embebido" — `trozeo` being a calque of `chunking` — and
+  // the gate reported 0 occurrences, which was true of the files it read and false of the
+  // platform.
+  //
+  // A validator's file list is part of its claim, so it is asserted rather than trusted.
+  it("scans every content data file, so no file is silently exempt", () => {
+    const scanner = readFileSync("tools/glossary-scan.cjs", "utf8");
+    // `[a-z-]+` missed `ai-l5.json` and `general-l5.json` because of the digit, so this
+    // test reported them unscanned after they had been added. A detector that cannot see
+    // a filename is indistinguishable from a file that is not listed — the same class of
+    // error as the `\b` boundary and the `it(`-only test count.
+    const listed = [...scanner.matchAll(/"([\w.-]+\.json)"/g)].map((m) => m[1]);
+    const onDisk = readdirSync("src/content/data").filter((f) => f.endsWith(".json"));
+    const unscanned = onDisk.filter((f) => !listed.includes(f));
+    expect(unscanned, "a content file is not checked for banned terminology").toEqual([]);
+  });
+
+  it("the corpus it builds actually contains build-challenge prose", () => {
+    // Asserting the FILES list is necessary and not sufficient — the walker could read
+    // the file and drop its strings. This checks a string that exists ONLY in
+    // builds.json reaches the scanned corpus.
+    const { corpus } = require("../tools/glossary-scan.cjs");
+    const es = (corpus().es as string[]).join("\n");
+    const builds = JSON.parse(readFileSync("src/content/data/builds.json", "utf8"));
+    const sample = (builds.builds ?? builds)[0].prompt.es as string;
+    expect(es, "build-challenge Spanish is not in the scanned corpus").toContain(sample.slice(0, 40));
   });
 });
 

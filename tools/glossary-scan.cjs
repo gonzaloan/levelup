@@ -28,7 +28,26 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const DATA = path.join(__dirname, "..", "src", "content", "data");
-const FILES = ["lessons.json", "codex.json", "checks.json", "curriculum.json", "resources.json"];
+/**
+ * Every content file with learner-facing prose.
+ *
+ * `builds.json` was missing from this list, so the 6 Architecture Builder challenges
+ * were never checked for banned terminology — and one of them ships "pipeline de trozeo
+ * y embebido", where `trozeo` is a calque of `chunking`. The gate reported it as 0
+ * occurrences, which is true of the files it was reading and false of the platform.
+ *
+ * A validator's file list is part of its claim. "82 banned renderings checked against
+ * every Spanish string" was wrong by one file, and the missing file was the one whose
+ * content no other check reads either.
+ */
+const FILES = [
+  "lessons.json", "codex.json", "checks.json", "curriculum.json", "resources.json",
+  "builds.json",
+  // The assessment layer: 781 more learner-facing strings across items, modules, Rooms
+  // and field work. Also unscanned until tests/glossary.test.ts compared the list
+  // against the directory instead of trusting it.
+  "ai-l5.json", "general-l5.json",
+];
 
 /** Letters that must NOT count as a word boundary — ASCII plus Latin-1/Extended-A. */
 const L = "A-Za-z0-9\\u00C0-\\u024F";

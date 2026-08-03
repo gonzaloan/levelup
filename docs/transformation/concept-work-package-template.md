@@ -47,7 +47,7 @@ Measured against the nine stages in `target-learning-model.md`.
 - [ ] `source` is a real, fetched document
 - [ ] Every figure or limit traces to that source (`check-trace.cjs`)
 - [ ] Natural English **and** natural Spanish, not a literal conversion
-- [ ] Glossary applied — 128 terms, 82 banned renderings (`check-glossary.cjs`)
+- [ ] Glossary applied — 128 terms, 80 banned renderings (`check-glossary.cjs`)
 
 ## Gate
 
