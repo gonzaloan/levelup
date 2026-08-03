@@ -82,3 +82,20 @@ export function shuffleOptions<T>(options: readonly T[], key: string): Shuffled<
 export function itemKey(scope: string, index: number, stem: string): string {
   return `${scope}#${index}#${stem.slice(0, 64)}`;
 }
+
+/**
+ * The display key for one checkpoint item on a given ATTEMPT.
+ *
+ * The attempt number is part of the key because without it `itemKey` is a pure
+ * function of stable inputs, so every retry presented all 183 checkpoint items in
+ * an identical order — and a failed attempt used to reveal the whole answer key,
+ * making the gate memorisable in two passes.
+ *
+ * This lives here, rather than inline in `CheckpointPlayer`, so a test can assert
+ * the key the component actually uses. The first version of that test rebuilt the
+ * key itself, which meant reverting the component's attempt counter broke nothing:
+ * a test that restates the implementation guards nothing.
+ */
+export function checkpointItemKey(checkpointId: string, attempt: number, index: number, stem: string): string {
+  return itemKey(`${checkpointId}:a${attempt}`, index, stem);
+}

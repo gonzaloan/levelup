@@ -15,7 +15,7 @@ import { recordCheckpoint } from "@/lib/store";
 import { fireReward } from "./Reward";
 import { BossIntro, BossHealth } from "./BossIntro";
 import { gradedChecksForConcepts } from "@/lib/checks";
-import { shuffleOptions, itemKey } from "@/lib/shuffle";
+import { shuffleOptions, checkpointItemKey } from "@/lib/shuffle";
 import { buildsForConcept } from "@/lib/build";
 import { CheckHost } from "./checks/CheckHost";
 import { ArchitectBuilder } from "./checks/ArchitectBuilder";
@@ -72,7 +72,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   // identical order. Combined with the full answer reveal below, that made the
   // whole 35-checkpoint gate memorisable in two passes.
   const displayOptions = item
-    ? shuffleOptions(item.options, itemKey(`${checkpoint.id}:a${attempt}`, idx, item.stem.en))
+    ? shuffleOptions(item.options, checkpointItemKey(checkpoint.id, attempt, idx, item.stem.en))
     : [];
   // Human-facing gate: "miss at most one" reads truer than a percent at n≤5.
   const gateLabel = { en: "one miss allowed", es: "se permite un error" };

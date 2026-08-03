@@ -19,12 +19,13 @@
 // authored JSON, because the authored order is not what the learner sees. Testing
 // the JSON would let a future refactor drop the shuffle and still pass.
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   CHECKS, gradeCheck, gradedChecksForConcepts, practiceChecksForLesson,
   type CheckResponse,
 } from "@/lib/checks";
 import { CHECKPOINTS as SPINE_CHECKPOINTS } from "@/lib/curriculum";
-import { shuffleOptions, itemKey } from "@/lib/shuffle";
+import { shuffleOptions, checkpointItemKey } from "@/lib/shuffle";
 import { LESSONS } from "@/lib/lessons";
 import {
   displayForCloze, displayForMatch, displayForCategorize, displayForOrder,
@@ -228,14 +229,37 @@ describe("a retry is a different exam, not a recital", () => {
   // tests the harness. The property is pure, so it is asserted exactly.
   const SPINE = SPINE_CHECKPOINTS;
 
+  it("the component passes its attempt state into the shuffle key", () => {
+    // WHAT THIS GUARDS, and why it reads source rather than behaviour.
+    //
+    // The test below proves `checkpointItemKey` produces a different order per
+    // attempt. That is necessary and NOT sufficient: I verified by reverting
+    // `CheckpointPlayer` to pass a literal `0` instead of its `attempt` state, and
+    // every assertion in this file still passed. A pure test cannot observe a
+    // component's arguments, so it cannot tell a working wiring from a pinned one.
+    //
+    // The behavioural half lives in `tests/visual/` where a browser can retry a
+    // checkpoint. This static half catches the specific revert that slipped: a
+    // literal in the attempt position.
+    const src = readFileSync("src/components/CheckpointPlayer.tsx", "utf8");
+    const call = /checkpointItemKey\(\s*checkpoint\.id\s*,\s*([^,]+),/.exec(src);
+    expect(call, "CheckpointPlayer no longer calls checkpointItemKey").toBeTruthy();
+    const attemptArg = (call?.[1] ?? "").trim();
+    expect(attemptArg, "the attempt argument is a literal, so every retry repeats the same order")
+      .toBe("attempt");
+    // And the state it passes must actually advance on retry.
+    expect(/setAttempt\(\s*\(a\)\s*=>\s*a\s*\+\s*1\s*\)/.test(src),
+      "retry() does not advance the attempt counter").toBe(true);
+  });
+
   it("bumping the attempt changes the option order for essentially every item", () => {
     let changed = 0, total = 0;
     for (const cp of SPINE) {
       cp.items.forEach((item, idx) => {
         total++;
-        const a0 = shuffleOptions(item.options, itemKey(`${cp.id}:a0`, idx, item.stem.en))
+        const a0 = shuffleOptions(item.options, checkpointItemKey(cp.id, 0, idx, item.stem.en))
           .map((o) => o.originalIndex).join(",");
-        const a1 = shuffleOptions(item.options, itemKey(`${cp.id}:a1`, idx, item.stem.en))
+        const a1 = shuffleOptions(item.options, checkpointItemKey(cp.id, 1, idx, item.stem.en))
           .map((o) => o.originalIndex).join(",");
         if (a0 !== a1) changed++;
       });
@@ -250,7 +274,7 @@ describe("a retry is a different exam, not a recital", () => {
   it("the same attempt is still stable — SSR and hydration must agree", () => {
     for (const cp of SPINE.slice(0, 8)) {
       cp.items.forEach((item, idx) => {
-        const key = itemKey(`${cp.id}:a2`, idx, item.stem.en);
+        const key = checkpointItemKey(cp.id, 2, idx, item.stem.en);
         expect(shuffleOptions(item.options, key).map((o) => o.originalIndex))
           .toEqual(shuffleOptions(item.options, key).map((o) => o.originalIndex));
       });
@@ -275,7 +299,7 @@ describe("a retry is a different exam, not a recital", () => {
         const n = item.options.length;
         if (n < 3) return;
         for (let attempt = 0; attempt < 6; attempt++) {
-          const order = shuffleOptions(item.options, itemKey(`${cp.id}:a${attempt}`, idx, item.stem.en));
+          const order = shuffleOptions(item.options, checkpointItemKey(cp.id, attempt, idx, item.stem.en));
           const pos = order.findIndex((o) => o.option.correct);
           counts[pos]++;
           total++;
@@ -290,5 +314,110 @@ describe("a retry is a different exam, not a recital", () => {
     const minShare = Math.min(...counts.filter((c) => c > 0)) / total;
     expect(maxShare, `one position holds ${(100 * maxShare).toFixed(1)}% of correct answers`).toBeLessThan(0.42);
     expect(minShare, `one position holds only ${(100 * minShare).toFixed(1)}%`).toBeGreaterThan(0.05);
+  });
+});
+
+describe("exploit strategies beyond the four documented ones", () => {
+  // The four guarded exploits are the ones each mechanic's UI makes natural. A
+  // learner who has noticed the guard will try the next-most-obvious thing, so
+  // these measure the rest of the space. None needs to be zero — a strategy that
+  // happens to be right on a few items is chance, not a hole — but a strategy that
+  // works often would be one.
+  //
+  // A note on what makes a strategy REAL, because my own first attack script got
+  // this wrong and reported a 94/94 break that does not exist. `gradeCheck` for
+  // `order` compares the response to [0,1,…,n-1], and the response is expressed in
+  // AUTHORED indices. So "sort the display order array ascending" trivially yields
+  // the answer for any permutation — but a learner cannot execute it, because the
+  // authored index is not observable: `OrderPlayer` renders the display position
+  // (`pos + 1`) and the label, and the authored index appears only as a React
+  // `key`, which does not reach the DOM. A strategy is only real if it can be
+  // carried out from what is on screen.
+  const CEILING = 0.15;
+
+  it("no alternative strategy works on more than 15% of its mechanic", () => {
+    const results: { name: string; passed: number; total: number }[] = [];
+
+    // match: link the diagonal backwards.
+    results.push({
+      name: "match: reverse diagonal",
+      total: match.length,
+      passed: match.filter((item) => {
+        const d = displayForMatch(item);
+        const n = item.left.length;
+        return gradeCheck(item, d.leftOrder.map((al, row) => [al, d.rightOrder[n - 1 - row]] as [number, number]));
+      }).length,
+    });
+
+    // categorize: everything into one bucket, and alternating buckets.
+    for (const label of ["all-in-first", "alternating", "reverse-split"] as const) {
+      results.push({
+        name: `categorize: ${label}`,
+        total: categorize.length,
+        passed: categorize.filter((item) => {
+          const d = displayForCategorize(item);
+          const n = item.items.length;
+          const b = item.buckets.length;
+          const r = new Array(n).fill(0);
+          d.itemOrder.forEach((authored, slot) => {
+            r[authored] =
+              label === "all-in-first" ? d.bucketOrder[0]
+              : label === "alternating" ? d.bucketOrder[slot % b]
+              : Math.min(b - 1, Math.floor(((n - 1 - slot) * b) / n));
+          });
+          return gradeCheck(item, r);
+        }).length,
+      });
+    }
+
+    // cloze: fill the blanks right to left.
+    results.push({
+      name: "cloze: right-to-left",
+      total: cloze.length,
+      passed: cloze.filter((item) => {
+        const d = displayForCloze(item);
+        const nb = item.answers.length;
+        return gradeCheck(item, item.answers.map((_, b) => d.bankOrder[nb - 1 - b] ?? -1));
+      }).length,
+    });
+
+    // order: reverse the presented order, and rotate it either way.
+    for (const label of ["reversed", "rotate-left", "rotate-right"] as const) {
+      results.push({
+        name: `order: ${label}`,
+        total: order.length,
+        passed: order.filter((item) => {
+          const o = [...displayForOrder(item).itemOrder];
+          if (label === "reversed") o.reverse();
+          else if (label === "rotate-left") o.push(o.shift()!);
+          else o.unshift(o.pop()!);
+          return gradeCheck(item, o);
+        }).length,
+      });
+    }
+
+    const over = results.filter((r) => r.passed / r.total > CEILING);
+    expect(
+      over.map((r) => `${r.name} ${r.passed}/${r.total}`),
+      `strategies above ${CEILING * 100}%: these are exploitable patterns, not chance`,
+    ).toEqual([]);
+  });
+
+  it("the authored index is not recoverable from what an order tile renders", () => {
+    // The guard above only holds because a learner cannot see which authored index
+    // a tile carries. If `OrderPlayer` ever renders it — as a data attribute, an
+    // aria-label, or visible text — every order check becomes trivially solvable
+    // by sorting. This asserts the component does not expose it.
+    const src = readFileSync("src/components/checks/OrderPlayer.tsx", "utf8");
+    const renderBody = src.slice(src.indexOf("return ("));
+    // `key={itemIdx}` is fine: React keys never reach the DOM.
+    const withoutKeys = renderBody.replace(/key=\{[^}]*\}/g, "");
+    const leaks = [
+      /data-[a-z-]+=\{\s*itemIdx/,          // a data attribute carrying it
+      /aria-[a-z-]+=\{[^}]*itemIdx/,        // an aria attribute carrying it
+      /\{\s*itemIdx\s*\+\s*1\s*\}/,         // rendered as a 1-based number
+      /\{\s*itemIdx\s*\}(?!\s*\])/,         // rendered bare
+    ].filter((re) => re.test(withoutKeys));
+    expect(leaks.map(String), "OrderPlayer exposes the authored index").toEqual([]);
   });
 });
