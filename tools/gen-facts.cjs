@@ -284,6 +284,106 @@ const ROUTING = (() => {
   };
 })();
 
+/**
+ * The engagement / retention / evaluation systems section 33-38 specify, measured
+ * against what the source actually implements.
+ *
+ * The temptation in these docs is to describe the SPEC and let the reader assume it
+ * shipped. So each capability below resolves to a boolean derived from the source, and
+ * the docs print "absent" where the answer is false. `savedContent` is the clearest
+ * case: section 33.1 defines a nine-field `saved_item` schema, and grep for it across
+ * src/ returns nothing.
+ */
+const SYSTEMS = (() => {
+  const files = [];
+  const walk = (dir) => {
+    for (const e of fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${e.name}`;
+      if (e.isDirectory()) walk(rel);
+      else if (/\.tsx?$/.test(e.name)) files.push(rel);
+    }
+  };
+  walk("src");
+  const joined = files.map(src).join("\n");
+  const review = src("src/lib/review.ts");
+  const daily = src("src/lib/daily.ts");
+  const scoring = src("src/lib/scoring.ts");
+
+  // Section 33.2 names eight inputs an adaptive queue should combine.
+  //
+  // Each predicate below asks whether the SCHEDULER reads that signal, which is not the
+  // same as whether the signal exists anywhere. Two of these were wrong on the first
+  // pass and both errors flattered the implementation:
+  //
+  //   - "weak prerequisites" matched /prerequisite/ in daily.ts, which is there because
+  //     the brief refuses to serve a concept whose prerequisites are unread. That gates
+  //     what comes NEXT; it does not surface a shaky prerequisite for review. Different
+  //     mechanism, opposite direction.
+  //   - "unreviewed for too long" reused the same `dueConcepts` probe as "concepts near
+  //     forgetting", so one implemented feature counted as two. It is the same ladder.
+  //
+  // Both now resolve to false, which drops the honest score from 3/8 to 1/8.
+  const queueSources = {
+    "concepts near forgetting": /dueConcepts/.test(daily),
+    "recent mistakes": /responseLog/.test(daily),
+    "correct but low confidence": /confidence/.test(daily) || /confidence/.test(review),
+    "wrong but high confidence": /confidence/.test(daily) || /confidence/.test(review),
+    "saved concepts": /saved/i.test(daily),
+    // Would require reading past wrong answers per prerequisite slug, not gating on read.
+    "weak prerequisites": /prerequisiteStrength|weakPrereq/.test(daily),
+    "knowledge the active module needs": /moduleId/.test(daily),
+    // A distinct signal from the interval ladder: last-seen age regardless of schedule.
+    "unreviewed for too long": /lastSeen|staleAfter/.test(daily),
+  };
+
+  return {
+    spacedReview: {
+      exists: fs.existsSync(path.join(ROOT, "src/lib/review.ts")),
+      intervals: (review.match(/export const INTERVALS = \[([^\]]+)\]/) || [, ""])[1]
+        .split(",").map((s) => s.trim()).filter(Boolean),
+      grades: (review.match(/export type Grade =([^;]+);/) || [, ""])[1]
+        .split("|").map((s) => s.trim().replace(/"/g, "")).filter(Boolean),
+      easeRange: [
+        (review.match(/EASE_MIN = ([\d.]+)/) || [, "?"])[1],
+        (review.match(/EASE_MAX = ([\d.]+)/) || [, "?"])[1],
+      ],
+      pure: /PURE module: no Date, no randomness/.test(review),
+    },
+    reviewQueue: {
+      dailyCap: Number((daily.match(/REVIEW_CAP = (\d+)/) || [, 0])[1]),
+      sourcesImplemented: Object.values(queueSources).filter(Boolean).length,
+      sourcesSpecified: Object.keys(queueSources).length,
+      sources: queueSources,
+    },
+    confidence: {
+      // Captured on assessment items, and used for the confident-wrong band cap and the
+      // calibration gap — but NOT read by the review scheduler.
+      captured: /confidence: Confidence/.test(src("src/lib/types.ts")),
+      usedForBandCap: /confidence === "high"/.test(scoring),
+      usedForCalibrationGap: /calibrationGap/.test(scoring),
+      usedByReviewQueue: /confidence/.test(review) || /confidence/.test(daily),
+      onChecks: /confidence/.test(src("src/components/checks/CheckHost.tsx")),
+    },
+    savedContent: {
+      // Section 33.1. Absent entirely.
+      exists: /saved_item|savedItems|SavedItem|bookmarks?\b/.test(joined),
+      objectTypesSpecified: 10,
+    },
+    interviewMode: {
+      // Section 35. A view over existing items exists as a generated inventory; the
+      // product surface does not.
+      inventoryExists: exists("docs/transformation/interview-bank.json"),
+      routeExists: /interview/i.test(joined),
+      tracks: exists("docs/transformation/interview-bank.json")
+        ? JSON.parse(src("docs/transformation/interview-bank.json")).tracks.length : 0,
+    },
+    streak: {
+      forgiving: /loss aversion/.test(daily),
+      exists: /export function markDay/.test(daily),
+    },
+  };
+})();
+
 const facts = {
   generatedBy: "tools/gen-facts.cjs",
   note: "GENERATED. Every count in docs/transformation/*.md must come from here; tests/facts.test.ts enforces it.",
@@ -318,6 +418,7 @@ const facts = {
   validation: VALIDATION,
   analytics: ANALYTICS,
   routing: ROUTING,
+  systems: SYSTEMS,
   glossary: (() => {
     if (!exists("content/glossary.en.json")) return null;
     const g = JSON.parse(src("content/glossary.en.json"));
