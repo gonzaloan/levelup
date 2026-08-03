@@ -36,11 +36,23 @@ function slotCenter(slot: number): { x: number; y: number } {
 }
 
 export function ArchitectBuilder({
-  challenge, locale, mode = "formative", onResult,
+  challenge, locale, mode = "formative", onResult, revealSpec,
 }: {
   challenge: BuildChallenge;
   locale: Locale;
   mode?: Mode;
+  /**
+   * May the criterion list be shown? It states the target topology in words
+   * (`Include "cache"`, `Connect lb → app`), so it IS the answer key.
+   *
+   * Defaults to formative-only, and `/build` overrides it to FALSE: all six
+   * challenges are also graded steps at a checkpoint, so a formative page printing
+   * the full list handed over every gate's answer at zero cost — cheaper than the
+   * 21-to-108 commit hill-climb the graded count allows. A pool split is the right
+   * end state and needs more challenges than gates; six challenges for six gates
+   * cannot be split, so the disclosure is what changes.
+   */
+  revealSpec?: boolean;
   onResult?: (correct: boolean) => void;
 }) {
   const track = challenge.track;
@@ -61,6 +73,9 @@ export function ArchitectBuilder({
     [placed, edges]
   );
   const grade = useMemo(() => gradeBuild(challenge, response), [challenge, response]);
+  // "Is this scored" and "may the spec be shown" are different questions — the same
+  // split `CheckHost` needed for its per-element feedback.
+  const showSpec = revealSpec ?? mode === "formative";
   const nodeBySlot = useMemo(() => new Map(placed.map((p) => [p.slot, p])), [placed]);
   const posOf = (instId: string) => {
     const p = placed.find((x) => x.instId === instId);
@@ -237,6 +252,12 @@ export function ArchitectBuilder({
             {grade.correct
               ? `✓ ${t({ en: "Sound architecture", es: "Arquitectura sólida" }, locale)}`
               : `${t({ en: "Not quite", es: "Casi" }, locale)} · ${grade.passed}/${grade.total}`}
+            {/* The pass count is a hill-climbing signal — commit, read it, add an
+                edge, read it again recovers the topology in 21 to 108 commits. It is
+                worth that cost to keep, because with no feedback at all the learner
+                cannot tell a near-miss from a wrong shape. What matters is that it
+                renders ONCE: it used to appear here AND in the withheld-spec line
+                below, which is two renderings of one signal. */}
           </p>
           {/* The criterion labels ARE the answer: gradeBuild builds them as
               `Include "cache"`, `Connect lb → api`, `Avoid client → db`. They used
@@ -246,7 +267,7 @@ export function ArchitectBuilder({
 
               Graded mode gets the count only. Formative mode keeps the full list,
               because there the criteria are the teaching. */}
-          {mode === "formative" ? (
+          {showSpec ? (
             <ul className="arch-crits">
               {grade.criteria.map((c, i) => (
                 <li key={i} data-ok={c.ok ? "true" : "false"}>
@@ -261,15 +282,15 @@ export function ArchitectBuilder({
           ) : (
             <p className="text-sm" style={{ color: "var(--text-2)" }}>
               {t({
-                en: `${grade.passed} of ${grade.total} criteria met.`,
-                es: `${grade.passed} de ${grade.total} criterios cumplidos.`,
+                en: "Which criteria are still unmet stays hidden — the concept pane explains the shape.",
+                es: "Cuáles criterios siguen sin cumplirse queda oculto: el panel del concepto explica la forma.",
               }, locale)}
             </p>
           )}
           {/* `explain` is the reference architecture's rationale — it names the
               components. Shown when formative, or when the learner got it right;
               withheld on a graded miss, for the same reason the criteria are. */}
-          {(mode === "formative" || grade.correct) && (
+          {(showSpec || grade.correct) && (
             <p style={{ fontSize: "var(--t-sm)", color: "var(--text)", marginTop: "var(--s-3)", borderTop: "1px solid var(--hairline)", paddingTop: "var(--s-3)" }}>
               {t(challenge.explain, locale)}
             </p>

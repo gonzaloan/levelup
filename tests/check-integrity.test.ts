@@ -25,6 +25,9 @@ import {
   type CheckResponse,
 } from "@/lib/checks";
 import { CHECKPOINTS as SPINE_CHECKPOINTS } from "@/lib/curriculum";
+import { checkpointClearThreshold, checkpointMaxMisses } from "@/lib/scoring";
+import { MAX_CHECKPOINT_ATTEMPTS } from "@/lib/store";
+import { buildsForConcept } from "@/lib/build";
 import { shuffleOptions, checkpointItemKey } from "@/lib/shuffle";
 import { LESSONS } from "@/lib/lessons";
 import {
@@ -449,20 +452,25 @@ describe("exploit strategies beyond the four documented ones", () => {
 
 describe("a zero-knowledge learner cannot clear a checkpoint", () => {
   // THE DOMINANT ATTACK is not positional, and shuffling cannot touch it: options
-  // are identified by their TEXT, so a learner remembers which text they already
-  // ruled out even though its position changed. On attempt J they choose among
-  // n-(J-1) remaining texts, which reaches certainty on attempt 4 for the 155
-  // 4-option items.
+  // are identified by their TEXT, so a learner remembers what they ruled out even
+  // when it moves. On attempt J they choose among n-(J-1) remaining texts.
   //
   // Measured before the fix: 23 of 35 checkpoints exceeded a 5% clear rate somewhere
-  // in attempts 1-6, worst 30.6%. Two changes bound it — `MAX_ATTEMPTS = 2`, and the
-  // 0.85 floor `store.ts` already documented as this project's mastery threshold but
-  // which `(n-1)/n` undercut on every short checkpoint.
+  // in attempts 1-6, worst 30.6%. Three things bound it — `MAX_CHECKPOINT_ATTEMPTS`,
+  // PERSISTED so a reload cannot reset it, and the 0.85 floor that `(n-1)/n` undercut
+  // on every short checkpoint.
   //
-  // This test computes the real number with a Poisson-binomial over the actual
-  // option counts, rather than asserting a property and hoping.
-  const MAX_ATTEMPTS = 2;
-  const clearThreshold = (n: number) => (n <= 1 ? 1 : Math.max(0.85, (n - 1) / n));
+  // THIS TEST IMPORTS the functions the component calls, and feeds them TOTAL STEPS.
+  // Its first version redeclared its own `clearThreshold` and passed
+  // `cp.items.length`, which differs from `totalSteps` for all 35 checkpoints — so
+  // deleting the 0.85 floor left it passing. A test that restates the implementation
+  // measures the restatement.
+  const gradedFor = (cp: (typeof SPINE_CHECKPOINTS)[number]) => gradedChecksForConcepts(cp.coversConcepts).slice(0, 2);
+  const totalStepsOf = (cp: (typeof SPINE_CHECKPOINTS)[number]) =>
+    cp.items.length + gradedFor(cp).length + (buildsForConcept ? countBuild(cp) : 0);
+  function countBuild(cp: (typeof SPINE_CHECKPOINTS)[number]): number {
+    return cp.coversConcepts.some((s) => buildsForConcept(s).length > 0) ? 1 : 0;
+  }
 
   /** P(at least total-k correct) for independent per-item probabilities. */
   function pAtMostKMisses(ps: number[], k: number): number {
@@ -478,42 +486,62 @@ describe("a zero-knowledge learner cannot clear a checkpoint", () => {
   }
 
   it("stays under 8% on every checkpoint, across every allowed attempt", () => {
-    const worst: { id: string; p: number; attempt: number }[] = [];
+    const worst: string[] = [];
     for (const cp of SPINE_CHECKPOINTS) {
-      const n = cp.items.length;
-      const maxMiss = Math.floor(n * (1 - clearThreshold(n)) + 1e-9);
-      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-        // Elimination: n - (attempt-1) texts remain plausible.
-        const ps = cp.items.map((it) => 1 / Math.max(1, it.options.length - (attempt - 1)));
+      const total = totalStepsOf(cp);
+      const maxMiss = checkpointMaxMisses(total);
+      for (let attempt = 1; attempt <= MAX_CHECKPOINT_ATTEMPTS; attempt++) {
+        // Elimination on the MCQs; the graded checks and build are blind, and are
+        // modelled generously at 1/6 so this bound cannot be met by their weakness.
+        const ps = [
+          ...cp.items.map((it) => 1 / Math.max(1, it.options.length - (attempt - 1))),
+          ...new Array(total - cp.items.length).fill(1 / 6),
+        ];
         const p = pAtMostKMisses(ps, maxMiss);
-        if (p > 0.08) worst.push({ id: cp.id, p, attempt });
+        if (p > 0.08) worst.push(`${cp.id} a${attempt} ${(100 * p).toFixed(1)}%`);
       }
     }
-    // 8%, not 5%: the residual is `chk-technical-depth-l7` at 6.3%, which is 4 items
-    // of 3 options — on attempt 2 that is a 1-in-2 per item with no miss allowed, and
-    // no threshold fixes a checkpoint that short. The lasting fix is more items, and
-    // that is recorded rather than tuned away. The bar is set where it catches a
-    // REGRESSION without pretending the floor is already where it should be.
-    expect(worst.map((w) => `${w.id} a${w.attempt} ${(100 * w.p).toFixed(1)}%`),
-      "a checkpoint became guessable").toEqual([]);
+    // 8%, not 5%: the residual is `chk-technical-depth-l7` — 4 items of 3 options, so
+    // on attempt 2 that is a coin flip per item with no miss allowed. No threshold
+    // fixes a checkpoint that short; more items does. The bar catches a REGRESSION
+    // without pretending the floor is where it should be.
+    expect(worst, "a checkpoint became guessable").toEqual([]);
   });
 
-  it("the gate honours the 0.85 mastery threshold store.ts documents", () => {
-    // 9 of 35 checkpoints used to clear below it, because (n-1)/n is 0.75 at 4 steps.
+  it("the gate honours the 0.85 threshold store.ts documents, at TOTAL steps", () => {
+    // 9 of 35 used to clear below it, because (n-1)/n is 0.75 at 4 steps.
     const below = SPINE_CHECKPOINTS
-      .map((cp) => ({ id: cp.id, t: clearThreshold(cp.items.length) }))
+      .map((cp) => ({ id: cp.id, t: checkpointClearThreshold(totalStepsOf(cp)) }))
       .filter((x) => x.t < 0.85);
     expect(below.map((b) => `${b.id} ${b.t}`), "a checkpoint clears below 0.85").toEqual([]);
   });
 
-  it("the retry cap is real, and the component enforces it", () => {
-    const src = readFileSync("src/components/CheckpointPlayer.tsx", "utf8");
-    expect(src, "MAX_ATTEMPTS is gone").toMatch(/const MAX_ATTEMPTS = (\d+)/);
-    const cap = Number(/const MAX_ATTEMPTS = (\d+)/.exec(src)![1]);
-    expect(cap, "a cap above 3 lets elimination exhaust a 4-option item").toBeLessThanOrEqual(3);
-    expect(src, "the retry button is not gated on the cap").toMatch(/attempt \+ 1 < MAX_ATTEMPTS/);
-    // And the gate label must not promise a miss the threshold does not allow.
-    expect(src, "the gate label is hardcoded rather than derived from the threshold")
-      .toMatch(/const maxMiss = Math\.floor\(totalSteps \* \(1 - clear\)/);
+  it("the attempt cap is PERSISTED, not component state", () => {
+    // It was `useState(0)`, so an F5 — or the link from /practice — handed out another
+    // independently-scoring attempt, and recordCheckpoint keeps the max score. Within
+    // six reloads 28 of 35 checkpoints cleared above 5% and five above 95%.
+    const store = readFileSync("src/lib/store.ts", "utf8");
+    expect(store, "Progress does not persist per-checkpoint attempts").toMatch(/checkpointAttempts:\s*Record<string, number>/);
+    expect(store, "recordCheckpoint does not refuse to score past the cap").toMatch(/const overCap = spent >= maxAttempts/);
+    expect(store, "a run past the cap still writes a score").toMatch(/checkpointScores: overCap/);
+
+    const player = readFileSync("src/components/CheckpointPlayer.tsx", "utf8");
+    // Two separate assertions rather than one multi-line regex: the seed must come
+    // from the store, and it must not be a bare `useState(0)`.
+    expect(player, "the player does not seed its attempt from the store")
+      .toMatch(/checkpointAttemptsSpent\(checkpoint\.id\)/);
+    expect(player, "the attempt is still a plain useState(0)")
+      .not.toMatch(/const \[attempt, setAttempt\] = useState\(0\)/);
+
+    const backup = readFileSync("src/lib/backup.ts", "utf8");
+    expect(backup, "a backup round-trip resets the cap").toMatch(/checkpointAttempts: numRecord/);
+  });
+
+  it("the component consumes the shared threshold rather than its own copy", () => {
+    const player = readFileSync("src/components/CheckpointPlayer.tsx", "utf8");
+    expect(player, "CheckpointPlayer declares its own threshold again").not.toMatch(/function clearThreshold/);
+    expect(player).toMatch(/checkpointClearThreshold\(totalSteps\)/);
+    expect(player, "the gate label is not derived from the shared miss budget")
+      .toMatch(/checkpointMaxMisses\(totalSteps\)/);
   });
 });

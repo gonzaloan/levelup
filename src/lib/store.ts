@@ -20,6 +20,14 @@ export interface Progress {
   conceptsRead: string[];           // curriculum concept slugs the learner has opened
   checkpointsCleared: string[];     // checkpoint ids cleared at the mastery gate
   checkpointScores: Record<string, number>; // checkpointId -> best score 0..1
+  /**
+   * checkpointId -> attempts spent. PERSISTED, because the cap that bounds
+   * guess-the-answer-by-elimination was React state and a page reload reset it to
+   * zero: within six reloads 28 of 35 checkpoints cleared above 5% and five above
+   * 95%. `gauntlets` already stored `attempts`; this is that pattern applied where
+   * it actually gates.
+   */
+  checkpointAttempts: Record<string, number>;
   signal: number;                   // "XP" as competence feedback
   cadence: { enabled: boolean; weeks: string[] }; // opt-in, forgiving
   archetype?: string;
@@ -52,6 +60,7 @@ const EMPTY: Progress = {
   conceptsRead: [],
   checkpointsCleared: [],
   checkpointScores: {},
+  checkpointAttempts: {},
   signal: 0,
   cadence: { enabled: false, weeks: [] },
   reviews: {},
@@ -163,22 +172,44 @@ export interface CheckpointOutcome {
   progress: Progress;
   newlyCleared: boolean;
   score: number;
+  /** Attempts spent INCLUDING this one, read from the store rather than component state. */
+  attemptsSpent: number;
+  /** True when the cap was already spent, so this run did not score. */
+  overCap: boolean;
 }
 
 // A checkpoint clears at ≥0.85 (Bloom mastery-learning threshold, per the
 // pedagogy research). Records the best score; only the first clear awards Signal.
-export function recordCheckpoint(id: string, score: number, threshold = 0.85): CheckpointOutcome {
+export function recordCheckpoint(
+  id: string, score: number, threshold = 0.85, maxAttempts = MAX_CHECKPOINT_ATTEMPTS,
+): CheckpointOutcome {
   const before = load();
   const already = before.checkpointsCleared.includes(id);
-  const cleared = score >= threshold;
+  const spent = before.checkpointAttempts[id] ?? 0;
+  // Past the cap, the run does not score. Without this the cap was advisory: it
+  // lived in React state, so a reload handed out another independently-scoring
+  // attempt, and `Math.max` meant every extra attempt could only help.
+  const overCap = spent >= maxAttempts;
+  const cleared = score >= threshold && !overCap;
   const newlyCleared = cleared && !already;
   const progress = update((p) => ({
     ...p,
-    checkpointScores: { ...p.checkpointScores, [id]: Math.max(score, p.checkpointScores[id] ?? 0) },
+    checkpointAttempts: { ...p.checkpointAttempts, [id]: spent + 1 },
+    checkpointScores: overCap
+      ? p.checkpointScores
+      : { ...p.checkpointScores, [id]: Math.max(score, p.checkpointScores[id] ?? 0) },
     checkpointsCleared: newlyCleared ? [...p.checkpointsCleared, id] : p.checkpointsCleared,
     signal: p.signal + (newlyCleared ? 30 : 0),
   }));
-  return { progress, newlyCleared, score };
+  return { progress, newlyCleared, score, attemptsSpent: spent + 1, overCap };
+}
+
+/** How many scoring attempts a checkpoint allows. See CheckpointPlayer. */
+export const MAX_CHECKPOINT_ATTEMPTS = 2;
+
+/** Attempts already spent on a checkpoint, for seeding the player on mount. */
+export function checkpointAttemptsSpent(id: string, p: Progress = load()): number {
+  return p.checkpointAttempts[id] ?? 0;
 }
 
 // Record a Gauntlet attempt. Keeps the best score, counts attempts, and marks

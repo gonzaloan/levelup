@@ -3,16 +3,21 @@
 // scenario, assemble the system, get graded. Formative here (free retry, no
 // gating); the same builder appears graded inside checkpoints.
 //
-// ALL SIX builds are also graded steps at a checkpoint, so this page is practice
-// for material the gate later grades. A pool split — the fix used for checks —
-// would empty this page, so instead the disclosure is asymmetric: graded mode shows
-// only "N of M criteria met" and withholds both the criterion labels (which state
-// the target topology in words) and the reference rationale. Practising here builds
-// judgment; it no longer hands over a spec to recite.
+// ALL SIX builds are also graded steps at a checkpoint, so this page is practice for
+// material the gate later grades — and a pool split, the fix used for checks, cannot
+// help while the two sets are identical.
 //
-// The honest end state is more builds than gates, so the two can be disjoint. Six
-// challenges over 178 concepts is the real gap, and it is recorded in
-// tools/coverage-baseline.json.
+// So this page passes `revealSpec={false}`. Gating on `mode` alone was not enough:
+// this page is formative, and a formative page printing the criterion list — which
+// states the target topology in words — handed over every gate's answer at zero cost,
+// cheaper than the 21-to-108 commit hill-climb the graded count allows. Unscored is
+// not the same as unguarded.
+//
+// A learner still gets the pass count, the reference rationale once they are right,
+// and free retries. What they no longer get is a spec to copy.
+//
+// The honest end state is more challenges than gates. Six over 178 concepts is the
+// real gap and it is recorded in tools/coverage-baseline.json.
 import { useState } from "react";
 import { t, type Locale } from "@/i18n/config";
 import { BUILDS } from "@/lib/build";
@@ -42,7 +47,7 @@ export function BuildGallery({ locale }: { locale: Locale }) {
       </aside>
       <div className="build-stage card" style={{ padding: "var(--s-5)" }}>
         {/* key remounts the builder cleanly when switching scenarios */}
-        <ArchitectBuilder key={active.id} challenge={active} locale={locale} mode="formative" />
+        <ArchitectBuilder key={active.id} challenge={active} locale={locale} mode="formative" revealSpec={false} />
       </div>
     </div>
   );

@@ -188,3 +188,28 @@ export function scoreAxis(
 export function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
+
+
+/**
+ * The checkpoint mastery gate, as a score threshold.
+ *
+ * Lives here rather than inline in `CheckpointPlayer` so a test can assert the
+ * function the component actually calls. The first version of that test redeclared
+ * its own copy AND fed it `items.length` where the component feeds `totalSteps` —
+ * which differ for all 35 checkpoints — so deleting the 0.85 floor broke nothing.
+ *
+ * `(n-1)/n` alone is 0.75 at four steps, and 9 of the 35 checkpoints have four MCQ
+ * items, so nine gates cleared below the 0.85 Bloom threshold `store.ts` documents
+ * as this project's standard. The floor is that documented number, applied.
+ *
+ * @param n TOTAL graded steps — MCQ items plus appended checks plus the build.
+ */
+export function checkpointClearThreshold(n: number): number {
+  if (n <= 1) return 1;
+  return Math.max(0.85, (n - 1) / n);
+}
+
+/** How many steps a learner may miss and still clear, at `n` total steps. */
+export function checkpointMaxMisses(n: number): number {
+  return Math.floor(n * (1 - checkpointClearThreshold(n)) + 1e-9);
+}

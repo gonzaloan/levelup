@@ -168,6 +168,9 @@ export function parseBackup(text: string): ImportResult {
     conceptsRead: strArray(p.conceptsRead),
     checkpointsCleared: strArray(p.checkpointsCleared),
     checkpointScores: numRecord(p.checkpointScores),
+    // Attempts spent per checkpoint. Restored so a backup round-trip cannot reset
+    // the cap — which would reintroduce the bypass by a slower route than F5.
+    checkpointAttempts: numRecord(p.checkpointAttempts),
     signal: Math.max(0, num(p.signal)),
     cadence: isObj(p.cadence)
       ? { enabled: p.cadence.enabled === true, weeks: strArray(p.cadence.weeks) }

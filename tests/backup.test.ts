@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
 import {
   BACKUP_VERSION,
   backupFilename,
@@ -168,5 +169,43 @@ describe("import repairs what it can, and says so", () => {
     if (!r.ok) return;
     expect(r.progress.conceptsRead).toEqual(["a"]);
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+});
+
+describe("the checkpoint attempt cap survives persistence", () => {
+  // The cap that bounds guess-by-elimination was React state, so an F5 reset it and
+  // handed out another independently-scoring attempt. `recordCheckpoint` keeps the max
+  // score, so every extra attempt could only help the guesser: within six reloads 28
+  // of 35 checkpoints cleared above 5% and five above 95%.
+  //
+  // The vitest env is node with no `localStorage` (see vitest.config.ts), so this
+  // tests the SHAPE the fix depends on rather than driving the store: the field
+  // exists on Progress, the scoring boundary consults it, and the backup restores it.
+  // Behaviour through real storage is covered by the browser suite.
+  const store = readFileSync("src/lib/store.ts", "utf8");
+
+  it("Progress persists a per-checkpoint attempt count", () => {
+    expect(store, "the count is not persisted, so a reload resets the cap")
+      .toMatch(/checkpointAttempts:\s*Record<string, number>/);
+    // It must be in EMPTY too, or an older save deserialises without it.
+    expect(store, "checkpointAttempts has no default for older saves")
+      .toMatch(/checkpointAttempts: \{\},/);
+  });
+
+  it("recordCheckpoint refuses to score past the cap", () => {
+    expect(store, "the cap is not consulted at the scoring boundary")
+      .toMatch(/const overCap = spent >= maxAttempts/);
+    expect(store, "a run past the cap can still raise the best score")
+      .toMatch(/checkpointScores: overCap/);
+    expect(store, "a run past the cap can still clear the gate")
+      .toMatch(/const cleared = score >= threshold && !overCap/);
+    expect(store, "the attempt count is not incremented")
+      .toMatch(/checkpointAttempts: \{ \.\.\.p\.checkpointAttempts, \[id\]: spent \+ 1 \}/);
+  });
+
+  it("a backup restores the attempt count", () => {
+    const backup = readFileSync("src/lib/backup.ts", "utf8");
+    expect(backup, "a backup round-trip resets the cap, reopening the bypass by a slower route")
+      .toMatch(/checkpointAttempts: numRecord\(p\.checkpointAttempts\)/);
   });
 });

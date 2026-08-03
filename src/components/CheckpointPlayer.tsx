@@ -11,7 +11,8 @@ import Link from "next/link";
 import { t, type Locale } from "@/i18n/config";
 import { m } from "@/i18n/messages";
 import { AXIS_BY_ID } from "@/lib/axes";
-import { recordCheckpoint } from "@/lib/store";
+import { checkpointClearThreshold, checkpointMaxMisses } from "@/lib/scoring";
+import { recordCheckpoint, checkpointAttemptsSpent, MAX_CHECKPOINT_ATTEMPTS } from "@/lib/store";
 import { fireReward } from "./Reward";
 import { BossIntro, BossHealth } from "./BossIntro";
 import { gradedChecksForConcepts } from "@/lib/checks";
@@ -27,19 +28,10 @@ import type { Checkpoint, CheckpointItem } from "@/lib/types";
 // derived from the item count so the store (which records a 0..1 score) stays
 // simple: clearing needs (n-1)/n correct. At the 4–5 item clusters here that is
 // 0.75–0.8 — mastery-oriented and honest, not a silent perfect-100% demand.
-function clearThreshold(n: number): number {
-  if (n <= 1) return 1;
-  // "Miss at most one" is a weak bar on a short checkpoint: at 4 steps it is 75%,
-  // and 9 of the 35 checkpoints have 4 MCQ items. `store.ts` documents 0.85 as the
-  // Bloom mastery threshold this project uses, and 9 checkpoints cleared below it.
-  //
-  // Measured with the elimination attack at attempt 2, the worst checkpoint goes
-  // from 31.3% to 6.3% by applying the documented floor. At 4 steps that means
-  // "miss none", which is a real tightening — and the honest reading is that a
-  // 4-item checkpoint is too short to allow a miss, not that the floor is harsh.
-  // The lasting fix is more items; this stops the shortest gates being the weakest.
-  return Math.max(0.85, (n - 1) / n);
-}
+// The gate threshold and the miss budget both live in `lib/scoring.ts`, so the test
+// that certifies them consumes the same functions this component calls. When they
+// were declared here, the test redeclared its own copy and fed it a different
+// argument, and deleting the 0.85 floor broke nothing.
 
 /**
  * Attempts allowed per sitting, before the gate sends you back to the concepts.
@@ -61,7 +53,7 @@ function clearThreshold(n: number): number {
  * material it is the correct next step, which is why the cap and the pedagogy point
  * the same way.
  */
-const MAX_ATTEMPTS = 2;
+const MAX_ATTEMPTS = MAX_CHECKPOINT_ATTEMPTS;
 
 export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; checkpoint: Checkpoint }) {
   const axis = AXIS_BY_ID[checkpoint.axisId];
@@ -74,7 +66,18 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   const [finalScore, setFinalScore] = useState(0);
   // Which attempt this is. It seeds the option shuffle, so retrying re-orders
   // every item instead of replaying a memorised sequence. See `retry()`.
-  const [attempt, setAttempt] = useState(0);
+  // Seeded from the STORE, not from zero.
+  //
+  // This was `useState(0)`, which made the cap advisory: a page reload — or the link
+  // from /practice — remounted at attempt 0 and handed out another
+  // independently-scoring run, and `recordCheckpoint` keeps the max score, so every
+  // extra attempt could only help. Measured with the bypass: within six reloads 28
+  // of 35 checkpoints cleared above 5% and five above 95%.
+  //
+  // `useState` with an initialiser rather than a plain value, because `load()`
+  // touches localStorage and must not run during the static render.
+  const [attempt, setAttempt] = useState(() =>
+    typeof window === "undefined" ? 0 : checkpointAttemptsSpent(checkpoint.id));
 
   const items = checkpoint.items;
   // Graded novel-mechanic checks for this checkpoint's concepts (up to 2),
@@ -97,7 +100,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   const item: CheckpointItem | undefined = inMcq ? items[idx] : undefined;
   const gradedCheck = idx >= checksStart && idx < buildStart ? gradedChecks[idx - checksStart] : undefined;
   const buildStep = gradedBuild && idx >= buildStart ? gradedBuild : undefined;
-  const clear = clearThreshold(totalSteps);
+  const clear = checkpointClearThreshold(totalSteps);
   // Display order for the current MCQ's options, stable per item.
   // The attempt number is part of the key: without it, `itemKey` is a pure
   // function of stable inputs, so every retry presented all 183 items in an
@@ -110,7 +113,7 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
   // The label has to match the arithmetic: at 4 steps the 0.85 floor allows no
   // miss, and printing "one miss allowed" there would be a lie the learner
   // discovers at the worst moment.
-  const maxMiss = Math.floor(totalSteps * (1 - clear) + 1e-9);
+  const maxMiss = checkpointMaxMisses(totalSteps);
   const gateLabel = maxMiss >= 1
     ? { en: `${maxMiss === 1 ? "one miss" : `${maxMiss} misses`} allowed`, es: maxMiss === 1 ? "se permite un error" : `se permiten ${maxMiss} errores` }
     : { en: "no misses", es: "sin errores" };
