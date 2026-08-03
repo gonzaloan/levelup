@@ -19,7 +19,7 @@ Section 33 asks the platform to estimate six things about a learner. Measured ag
 | Question | Answerable | From |
 |---|---|---|
 | Which concepts they know | yes | `conceptsRead`, `checkpointScores` |
-| Which they can apply | partly | `checkpointScores` — a graded gate is application; 6 Build challenges are the stronger signal and cover 3% of concepts |
+| Which they can apply | partly | `checkpointScores` — a graded gate is application; 10 Build challenges are the stronger signal and cover 6% of concepts |
 | Which they are forgetting | yes | `reviews` — the 7-rung interval ladder |
 | Which they get wrong **with confidence** | **no** | Captured in `responseLog.confidence` and used for the band cap and calibration gap, but **the review scheduler never reads it** |
 | What kind of practice they need | partly | Mechanic is chosen by content authoring, not by learner history |

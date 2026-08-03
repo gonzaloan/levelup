@@ -21,7 +21,7 @@ has for each of its 178 concepts.
 | **Worked example** | Follow one concrete case end to end | 178 | 100% |
 | **Practice** | Answer a scored check with feedback | 178 | 100% |
 | **Recall** | Retrieve from memory, unprompted | 178 | 100% |
-| **Build** | Construct the thing, not pick it | 6 | 3% |
+| **Build** | Construct the thing, not pick it | 10 | 6% |
 | **Explain** | Articulate it in their own words | 0 | 0% |
 | **Transfer** | Apply it in a second, unlike context | 0 | 0% |
 
@@ -41,13 +41,13 @@ the whole reason for asking.
 
 24 concepts have one. This is a content gap, not an engine gap.
 
-### Build — 6 of 178
+### Build — 10 of 178
 
 `BuildChallenge` grades a constructed graph — required components present, required
 edges present, known anti-pattern edges absent — with partial credit. The mechanism is
 real and `/build` serves it.
 
-6 challenges exist. Two consequences follow, and only the first is obvious:
+10 challenges exist. Two consequences follow, and only the first is obvious:
 most concepts have no constructive check, and the pool is too small for graded and
 practice sets to be disjoint the way `poolFor()` splits the 368 checks.
 

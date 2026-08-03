@@ -43,6 +43,6 @@ migration has to be undone.
 
 ## Not migrated
 
-- **154 concepts have no Predict step** and 172 have no Build challenge. The engines exist; the content does not.
+- **154 concepts have no Predict step** and 168 have no Build challenge. The engines exist; the content does not.
 - **Explain and Transfer do not exist** — see `target-learning-model.md`.
 - **No analytics migration**, because there is no analytics.

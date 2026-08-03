@@ -3,8 +3,16 @@ import { test, expect } from "@playwright/test";
 // Visual + interaction smoke for the new Climb progression view and Build Lab.
 test("climb view renders the ladder with a you-are-here header", async ({ page }) => {
   await page.goto("/en/learn/");
-  // The Climb is the default tab.
+  // The Climb is no longer the default tab — `ROUTES_ENABLED` makes the route picker
+  // the landing view, and this test's comment said otherwise for two commits while
+  // asserting the old behaviour. The Climb is still reachable and still correct; it
+  // has to be selected, which is what the route model changed.
+  //
+  // Written as a click rather than deleted, because `climb.ts` and its 9 unit tests are
+  // untouched and the tab is a shipped surface. A test that only passes on the default
+  // tab stops covering a view the moment a default changes.
   await expect(page.getByRole("tab", { name: "The Climb" })).toBeVisible();
+  await page.getByRole("tab", { name: "The Climb" }).click();
   await expect(page.getByText("You are here")).toBeVisible();
   // L3 stage is in progress; a higher stage is locked.
   await expect(page.locator('.stage[data-status="current"]').first()).toBeVisible();

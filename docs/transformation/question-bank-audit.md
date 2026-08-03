@@ -4,9 +4,9 @@
 
 ## Scope
 
-662 items: every scored thing the platform can serve —
+666 items: every scored thing the platform can serve —
 183 checkpoint MCQs, 105 mid-lesson items, 368
-mechanic checks, 6 build challenges.
+mechanic checks, 10 build challenges.
 
 ## Findings
 
@@ -45,6 +45,6 @@ Now 26 of 26.
 
 ## Open
 
-- **6 build challenges** is too few for the graded/practice split to be disjoint the way `poolFor()` splits the 368 checks.
+- **10 build challenges** is too few for the graded/practice split to be disjoint the way `poolFor()` splits the 368 checks.
 - **60 of 101 categorize keys are even sweeps in authored order.** Recorded as content defects in ADR-011, because widening the display guard would forbid the entire permutation space at three pairs.
 - **No IRT calibration.** Difficulty is author-assigned and provisional; `responseLog` is collected for the future.

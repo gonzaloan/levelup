@@ -14,7 +14,7 @@ versions to two learners.** Anything resembling a canary has to be client-side.
 ## Gate before any deploy
 
 ```bash
-npm run verify        # 6 steps: typecheck, lint, 10 validators, 3 self-tests, 336 tests
+npm run verify        # 6 steps: typecheck, lint, 12 validators, 3 self-tests, 336 tests
 npx playwright test --workers=1   # 89 browser tests
 npm run build         # must produce the full page set
 ```
@@ -33,7 +33,7 @@ stored progress changes meaning.
 
 **Stage 3 — content depth.** The gaps in `target-learning-model.md`:
 154 concepts still need a Predict step,
-172 need a Build challenge. Each is additive and
+168 need a Build challenge. Each is additive and
 independently shippable.
 
 ## Rollback

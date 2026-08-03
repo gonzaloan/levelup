@@ -6,7 +6,7 @@
 
 ## Totals
 
-**470 learner-facing units** across 7 content types.
+**474 learner-facing units** across 7 content types.
 
 | Current type | Units |
 |---|---|
@@ -16,19 +16,19 @@
 | checkpoint | 35 |
 | reference-architecture | 14 |
 | legacy-module | 14 |
-| build-challenge | 6 |
+| build-challenge | 10 |
 
 ## Where each unit is headed
 
 | Target route | Units |
 |---|---|
 | shared-foundations | 260 |
+| ai-architect | 109 |
 | staff-engineer | 105 |
-| ai-architect | 105 |
 
 | Recommended action | Units |
 |---|---|
-| KEEP | 225 |
+| KEEP | 229 |
 | REWRITE | 151 |
 | CONVERT_TO_SHARED_FOUNDATION | 80 |
 | CONVERT_TO_PRACTICE | 14 |

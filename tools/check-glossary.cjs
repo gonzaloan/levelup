@@ -17,6 +17,15 @@
  *  3. USAGE HONESTY — the `usage` block must agree with a fresh measurement. It is
  *     generated, so a mismatch means someone hand-edited the JSON, and a hand-edited
  *     count is how a glossary starts lying.
+ *
+ *     `npm run content:check` runs gen-glossary.cjs immediately before this script, so
+ *     in the pipeline a stale count is regenerated rather than reported. That is
+ *     deliberate: the counts go stale on ANY content edit, and telling an author who
+ *     added a lesson to go run a second command teaches them to distrust the gate. The
+ *     hand-edit case is still covered — selftest-glossary.cjs invokes THIS script
+ *     directly with no regeneration, and one of its 24 checks corrupts a count and
+ *     requires the failure. So the detection lives where a person cannot route around
+ *     it, and the pipeline stays quiet about a difference it can fix itself.
  *  4. SELF-CONSISTENCY — a term marked `translate: false` must not have its own
  *     canonical form in its `avoid` list, and `spanish_usage` must equal the canonical
  *     form exactly when `translate: false`.

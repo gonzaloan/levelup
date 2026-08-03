@@ -4,14 +4,14 @@
 
 ## The pool
 
-662 scored items across four surfaces.
+666 scored items across four surfaces.
 
 | Surface | Count | Scored | Reveals detail |
 |---|---:|---|---|
 | Checkpoint MCQ | 183 | yes | total only |
 | Mid-lesson quiz | 105 | **no** — formative by design | yes |
 | Mechanic checks | 368 | when graded | practice only |
-| Build challenges | 6 | yes | practice only |
+| Build challenges | 10 | yes | practice only |
 
 Mechanics: 80 cloze, 101 categorize, 94 order, 93 match.
 
@@ -44,7 +44,7 @@ not a clear.
 
 ## Known limits
 
-- **6 Build challenges** across 178 concepts, so constructive assessment covers 3%.
+- **10 Build challenges** across 178 concepts, so constructive assessment covers 6%.
 - **No free-text grading** — see `target-learning-model.md` on why Explain is unbuilt.
 - **No item response calibration.** `responseLog` is collected for future IRT work; author-assigned difficulty is still provisional.
 - **60 of 101 categorize keys are even sweeps in authored order.** Widening the display guard further would forbid 100% of the permutation space at 3 pairs, so these are recorded as content defects (ADR-011) rather than papered over with a stricter shuffle.

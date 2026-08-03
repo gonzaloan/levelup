@@ -5,16 +5,16 @@
 ## What was audited
 
 The 4 tracks section 35.1 names, fed from the existing pool of
-662 items. No new content was authored.
+666 items. No new content was authored.
 
 | Track | Usable items | Rubric | Follow-ups | Records what it lacks |
 |---|---:|---|---|---|
-| ai-architecture | 46 | **no** | **no** | 4 items |
+| ai-architecture | 50 | **no** | **no** | 4 items |
 | system-design | 108 | **no** | **no** | 4 items |
 | aws-architecture | 63 | **no** | **no** | 4 items |
 | staff-engineer | 157 | **no** | **no** | 4 items |
 
-Total usable: 374.
+Total usable: 378.
 
 ## Findings
 
@@ -28,7 +28,7 @@ each carries a non-empty `missing` list. This is the audit's most important outp
 `hasRubric: true` would have been trivially easy to emit and would have made the
 inventory worthless.
 
-**Track sizes are uneven.** `staff-engineer` has 157 usable items and `ai-architecture` has 46. A timed set drawn uniformly would over-sample the staff track, so any implementation must draw per track rather than from the union.
+**Track sizes are uneven.** `staff-engineer` has 157 usable items and `ai-architecture` has 50. A timed set drawn uniformly would over-sample the staff track, so any implementation must draw per track rather than from the union.
 
 **Items are reused, not tagged.** No item was authored *as* an interview question, so the
 bank is a projection based on domain and mechanic. An item that reads well in a lesson may
@@ -38,4 +38,4 @@ read oddly as an interview prompt, and nothing currently detects that.
 
 - **Do not copy items into an interview file.** A duplicate drifts from its original, and then two answers to the same question disagree.
 - **Do not claim a rubric that is self-scored.** A self-graded rubric is a reflection tool; labelling it a measurement is the dishonesty.
-- **Do not present the 374 items as interview-calibrated.** They are lesson items filtered by topic.
+- **Do not present the 378 items as interview-calibrated.** They are lesson items filtered by topic.
