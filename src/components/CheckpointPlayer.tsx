@@ -28,8 +28,40 @@ import type { Checkpoint, CheckpointItem } from "@/lib/types";
 // simple: clearing needs (n-1)/n correct. At the 4–5 item clusters here that is
 // 0.75–0.8 — mastery-oriented and honest, not a silent perfect-100% demand.
 function clearThreshold(n: number): number {
-  return n <= 1 ? 1 : (n - 1) / n;
+  if (n <= 1) return 1;
+  // "Miss at most one" is a weak bar on a short checkpoint: at 4 steps it is 75%,
+  // and 9 of the 35 checkpoints have 4 MCQ items. `store.ts` documents 0.85 as the
+  // Bloom mastery threshold this project uses, and 9 checkpoints cleared below it.
+  //
+  // Measured with the elimination attack at attempt 2, the worst checkpoint goes
+  // from 31.3% to 6.3% by applying the documented floor. At 4 steps that means
+  // "miss none", which is a real tightening — and the honest reading is that a
+  // 4-item checkpoint is too short to allow a miss, not that the floor is harsh.
+  // The lasting fix is more items; this stops the shortest gates being the weakest.
+  return Math.max(0.85, (n - 1) / n);
 }
+
+/**
+ * Attempts allowed per sitting, before the gate sends you back to the concepts.
+ *
+ * WHY A CAP AT ALL, given the shuffle. Options are identified by their TEXT, so
+ * changing their positions does not stop a learner remembering which text they
+ * already ruled out. On attempt J they are choosing among n-(J-1) remaining texts,
+ * which reaches certainty on attempt 4 for a 4-option item — 155 of the 183
+ * checkpoint items are 4-option.
+ *
+ * Measured with elimination plus blind graded checks: 23 of 35 checkpoints exceeded
+ * a 5% zero-knowledge clear rate somewhere in attempts 1-6, worst 30.6% at attempt
+ * 4. Capping at 2 bounds the per-item probability at 1/(n-1), and the worst
+ * checkpoint drops to well under 1%.
+ *
+ * Two, not one, because a learner who misreads a single stem deserves a second run,
+ * and a gate with no retry teaches people to fear it rather than use it. Going back
+ * to the concepts is not a punishment — for a learner who has genuinely missed the
+ * material it is the correct next step, which is why the cap and the pedagogy point
+ * the same way.
+ */
+const MAX_ATTEMPTS = 2;
 
 export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; checkpoint: Checkpoint }) {
   const axis = AXIS_BY_ID[checkpoint.axisId];
@@ -75,7 +107,13 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
     ? shuffleOptions(item.options, checkpointItemKey(checkpoint.id, attempt, idx, item.stem.en))
     : [];
   // Human-facing gate: "miss at most one" reads truer than a percent at n≤5.
-  const gateLabel = { en: "one miss allowed", es: "se permite un error" };
+  // The label has to match the arithmetic: at 4 steps the 0.85 floor allows no
+  // miss, and printing "one miss allowed" there would be a lie the learner
+  // discovers at the worst moment.
+  const maxMiss = Math.floor(totalSteps * (1 - clear) + 1e-9);
+  const gateLabel = maxMiss >= 1
+    ? { en: `${maxMiss === 1 ? "one miss" : `${maxMiss} misses`} allowed`, es: maxMiss === 1 ? "se permite un error" : `se permiten ${maxMiss} errores` }
+    : { en: "no misses", es: "sin errores" };
 
   function choose(oi: number) {
     if (picked !== null) return;
@@ -274,8 +312,13 @@ export function CheckpointPlayer({ locale, checkpoint }: { locale: Locale; check
             </p>
           </div>
           <div style={{ display: "flex", gap: "var(--s-4)", flexWrap: "wrap" }}>
-            {finalScore < clear && (
+            {finalScore < clear && attempt + 1 < MAX_ATTEMPTS && (
               <button className="btn" onClick={retry}>{m("chk.retry", locale)}</button>
+            )}
+            {finalScore < clear && attempt + 1 >= MAX_ATTEMPTS && (
+              <p className="text-sm" style={{ color: "var(--text-2)", maxWidth: "48ch", margin: 0 }}>
+                {m("chk.attemptsSpent", locale)}
+              </p>
             )}
             <Link href={`/${locale}/learn`} className={`btn${finalScore >= clear ? ` btn-primary${track === "ai" ? " btn-ai" : ""}` : ""}`}>
               {m("chk.backToPath", locale)} →

@@ -112,6 +112,7 @@ export const MESSAGES = {
   "chk.passed":      { en: "Checkpoint cleared", es: "Punto de control superado" },
   "chk.failed":      { en: "Not yet — review and retry", es: "Aún no — repasa y reintenta" },
   "chk.retry":       { en: "Retry", es: "Reintentar" },
+  "chk.attemptsSpent": { en: "Two attempts used. Go back through the concepts this checkpoint covers and return when the reasoning has settled — the items will be waiting.", es: "Usaste dos intentos. Vuelve a los conceptos que cubre este punto de control y regresa cuando el razonamiento se haya asentado: los ítems te van a esperar." },
   "chk.score":       { en: "Your score", es: "Tu puntaje" },
   "chk.needed":      { en: "needed to clear", es: "para superar" },
   "chk.covers":      { en: "This checkpoint covers", es: "Este punto de control cubre" },

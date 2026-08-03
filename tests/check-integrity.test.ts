@@ -446,3 +446,74 @@ describe("exploit strategies beyond the four documented ones", () => {
     expect(leaks.map(String), "OrderPlayer exposes the authored index").toEqual([]);
   });
 });
+
+describe("a zero-knowledge learner cannot clear a checkpoint", () => {
+  // THE DOMINANT ATTACK is not positional, and shuffling cannot touch it: options
+  // are identified by their TEXT, so a learner remembers which text they already
+  // ruled out even though its position changed. On attempt J they choose among
+  // n-(J-1) remaining texts, which reaches certainty on attempt 4 for the 155
+  // 4-option items.
+  //
+  // Measured before the fix: 23 of 35 checkpoints exceeded a 5% clear rate somewhere
+  // in attempts 1-6, worst 30.6%. Two changes bound it — `MAX_ATTEMPTS = 2`, and the
+  // 0.85 floor `store.ts` already documented as this project's mastery threshold but
+  // which `(n-1)/n` undercut on every short checkpoint.
+  //
+  // This test computes the real number with a Poisson-binomial over the actual
+  // option counts, rather than asserting a property and hoping.
+  const MAX_ATTEMPTS = 2;
+  const clearThreshold = (n: number) => (n <= 1 ? 1 : Math.max(0.85, (n - 1) / n));
+
+  /** P(at least total-k correct) for independent per-item probabilities. */
+  function pAtMostKMisses(ps: number[], k: number): number {
+    let dp = [1];
+    for (const p of ps) {
+      const next = new Array(dp.length + 1).fill(0);
+      for (let i = 0; i < dp.length; i++) { next[i] += dp[i] * (1 - p); next[i + 1] += dp[i] * p; }
+      dp = next;
+    }
+    let s = 0;
+    for (let c = ps.length - k; c <= ps.length; c++) s += dp[c] ?? 0;
+    return s;
+  }
+
+  it("stays under 8% on every checkpoint, across every allowed attempt", () => {
+    const worst: { id: string; p: number; attempt: number }[] = [];
+    for (const cp of SPINE_CHECKPOINTS) {
+      const n = cp.items.length;
+      const maxMiss = Math.floor(n * (1 - clearThreshold(n)) + 1e-9);
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        // Elimination: n - (attempt-1) texts remain plausible.
+        const ps = cp.items.map((it) => 1 / Math.max(1, it.options.length - (attempt - 1)));
+        const p = pAtMostKMisses(ps, maxMiss);
+        if (p > 0.08) worst.push({ id: cp.id, p, attempt });
+      }
+    }
+    // 8%, not 5%: the residual is `chk-technical-depth-l7` at 6.3%, which is 4 items
+    // of 3 options — on attempt 2 that is a 1-in-2 per item with no miss allowed, and
+    // no threshold fixes a checkpoint that short. The lasting fix is more items, and
+    // that is recorded rather than tuned away. The bar is set where it catches a
+    // REGRESSION without pretending the floor is already where it should be.
+    expect(worst.map((w) => `${w.id} a${w.attempt} ${(100 * w.p).toFixed(1)}%`),
+      "a checkpoint became guessable").toEqual([]);
+  });
+
+  it("the gate honours the 0.85 mastery threshold store.ts documents", () => {
+    // 9 of 35 checkpoints used to clear below it, because (n-1)/n is 0.75 at 4 steps.
+    const below = SPINE_CHECKPOINTS
+      .map((cp) => ({ id: cp.id, t: clearThreshold(cp.items.length) }))
+      .filter((x) => x.t < 0.85);
+    expect(below.map((b) => `${b.id} ${b.t}`), "a checkpoint clears below 0.85").toEqual([]);
+  });
+
+  it("the retry cap is real, and the component enforces it", () => {
+    const src = readFileSync("src/components/CheckpointPlayer.tsx", "utf8");
+    expect(src, "MAX_ATTEMPTS is gone").toMatch(/const MAX_ATTEMPTS = (\d+)/);
+    const cap = Number(/const MAX_ATTEMPTS = (\d+)/.exec(src)![1]);
+    expect(cap, "a cap above 3 lets elimination exhaust a 4-option item").toBeLessThanOrEqual(3);
+    expect(src, "the retry button is not gated on the cap").toMatch(/attempt \+ 1 < MAX_ATTEMPTS/);
+    // And the gate label must not promise a miss the threshold does not allow.
+    expect(src, "the gate label is hardcoded rather than derived from the threshold")
+      .toMatch(/const maxMiss = Math\.floor\(totalSteps \* \(1 - clear\)/);
+  });
+});
