@@ -397,7 +397,7 @@ arithmetic says why:
   n=5 only 8% — so it is satisfiable only on long lists, and **25 of the 95 match
   checks are 3×3**.
 - For **categorize**, the authored-order strategies never read the display order.
-  **63 of 105 categorize checks had an authored key that WAS an even sweep — now 0.** No
+  **63 of 105 categorize checks had an authored key that WAS an even sweep. Now 0.** No
   permutation of the tray changes that, because the strategy does not look at the tray.
 
 These are content properties wearing a display costume. Forcing the guard would either
@@ -427,7 +427,81 @@ The generalisable lesson: **when a guard becomes unsatisfiable, that is informat
 It means the defect is not in the layer being guarded.
 
 ### Affected content
-60 categorize checks with sweep-shaped keys; 24 3-pair match checks.
+63 categorize checks with sweep-shaped keys, all since reordered (0 remain); 25 3-pair match checks.
 
 ### Date
 2026-08-02
+
+---
+
+## ADR-012 — The platform stays static and model-free, so Explain is out of scope
+
+### Status
+**Accepted (enforced)** — `tools/check-static.cjs`, `tools/selftest-static.cjs`
+
+### Context
+
+Section 23 names nine learning stages. Eight are built. **Explain** — articulating a concept
+in your own words — is the ninth, and it needs free-text judgment, which needs one of three
+things:
+
+1. **A model call from the browser.** That means shipping a key in a public bundle. Anyone can
+   read it out of the JavaScript and spend it.
+2. **A model call from a server.** That means adding a backend: an API route, a runtime, a
+   secret store, a cost that scales with use, and a new security surface. The platform is a
+   static export served from S3 behind CloudFront — 236 HTML files, no server, progress in
+   `localStorage`.
+3. **Self-grading.** A text box and a "did you get it?" button.
+
+The third is the tempting one and it is the reason this ADR exists rather than a backlog item.
+A learner who has already read the correct answer cannot judge impartially whether their own
+words matched it; they mark themselves right. It would be a checkbox that looks like a
+measurement — and this repo ships 26 self-test cases specifically to keep gates from doing
+that.
+
+### Decision
+
+**Explain is out of scope, permanently, and the constraint that rules it out is enforced.**
+
+The owner's constraint is simplicity and no LLM in the web app. That is not a limitation
+working around Explain; it is a property worth more than Explain. A static site has no
+runtime cost, no key to leak, no backend to operate, no latency, and works offline after load.
+Trading that for one stage of nine — the one that cannot be graded honestly without a
+server — is a bad trade.
+
+`check-static.cjs` now fails the build on: a model SDK in `package.json`, an
+`src/app/api` directory, `"use server"`, a `runtime` export, `force-dynamic`, any
+`fetch`/`XMLHttpRequest`/`WebSocket`/`sendBeacon`, a credential-shaped literal, a
+non-`NEXT_PUBLIC_` env var, a missing `output: "export"`, and `Math.random()` in a
+rendered module.
+
+### Alternatives rejected
+
+- **Self-graded Explain.** Dishonest, per the above. Rejected on the same grounds the
+  interview-mode rubric was: labelling a reflection tool a measurement is the defect.
+- **Ship a rate-limited key.** Still public. Rate limiting bounds the bill, not the leak.
+- **A serverless function just for grading.** One route is still a backend: a deploy target, a
+  secret, an on-call surface, and the end of "a release is a directory of files".
+- **Peer review between learners.** Needs accounts, a database and moderation. Larger than the
+  platform it would be bolted onto.
+
+### Consequences
+
+The learning model is **8 of 9 stages, and that is the finished state** — not a gap awaiting
+work. `target-learning-model.md` says so, and `tests/facts.test.ts` fails if
+`coverage.explain` ever becomes non-zero, which forces this ADR to be revisited rather than
+letting a document silently go stale.
+
+What is genuinely lost: no stage detects the fluency illusion by making a learner produce
+prose. What partially covers it: the Predict step forces a commitment before the teaching,
+and 24 concepts have one; flashcards force unprompted retrieval; and the graded surfaces
+reveal nothing, so recognition cannot substitute for recall.
+
+The generalisable lesson: **a constraint that only lives in prose is one refactor from being
+false.** Three documents reason from "0 API routes". Now a gate does too.
+
+### Affected content
+None. This removes a planned stage rather than changing anything authored.
+
+### Date
+2026-08-04

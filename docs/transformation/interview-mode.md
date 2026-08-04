@@ -35,7 +35,7 @@ four tracks feedable and one that needs a different mechanism entirely.
 Section 35 wants an interviewer that adds constraints mid-answer, scores against a
 per-dimension rubric, and asks follow-ups. All three need free-text understanding, which
 needs a model call, which needs a server. This platform is a static export with
-0 API calls. Same wall as the Explain stage.
+0 API calls. Same wall as the Explain stage, and the same decision: ADR-012 rules both out rather than deferring them, because the static deployment is the property being protected.
 
 ## What is buildable without a server
 

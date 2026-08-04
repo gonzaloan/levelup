@@ -44,5 +44,5 @@ migration has to be undone.
 ## Not migrated
 
 - **154 concepts have no Predict step** and 168 have no Build challenge. The engines exist; the content does not.
-- **Explain and Transfer do not exist** — see `target-learning-model.md`.
+- **Explain is out of scope** (ADR-012) — free-text grading needs a server, and the static deployment is worth more than the stage. Enforced by `tools/check-static.cjs`.
 - **No analytics migration**, because there is no analytics.

@@ -741,6 +741,18 @@ describe("the generated docs agree with facts.json", () => {
     const cov = facts.learningModel.coverage;
     for (const [stage, n] of Object.entries(cov) as [string, number][]) {
       const label = stage === "worked" ? "Worked example" : stage[0].toUpperCase() + stage.slice(1);
+
+      // Explain carries no number BY DECISION (ADR-012): free-text grading needs a server,
+      // and the static deployment is worth more than the stage. Its row says "out of scope"
+      // instead, so asserting a digit here would force the doc back to presenting a closed
+      // decision as an open gap.
+      if (stage === "explain") {
+        expect(n, "Explain has coverage — ADR-012 must be reopened").toBe(0);
+        expect(body, "the Explain row should state the decision, not a count")
+          .toMatch(/\*\*Explain\*\*.*out of scope \(ADR-012\)/);
+        continue;
+      }
+
       const row = body.match(new RegExp(`\\*\\*${label}\\*\\*.*?\\|\\s*(\\d+)\\s*\\|`));
       expect(row, `${label} has no row in the stage table`).toBeTruthy();
       expect(Number(row![1]), `the ${label} count is stale`).toBe(n);

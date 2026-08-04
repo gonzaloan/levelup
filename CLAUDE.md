@@ -181,6 +181,17 @@ before making changes.
   is reserved for **decorative boss/hero art only** (never diagrams — they'd be wrong). Boss art is
   locally generated, project-owned (see `src/assets/README.md`); any third-party raster must be CC0.
 - **WCAG AA** contrast; keyboard + tap operable (checks/widgets use tap-to-place, not drag).
+- **Static and model-free. No LLM in the web app, ever** (ADR-012, enforced by
+  `tools/check-static.cjs` in `content:check`). Concretely forbidden: a model SDK in
+  `package.json`, an `src/app/api` directory, `"use server"`, a `runtime` export,
+  `force-dynamic`, any `fetch`/`XMLHttpRequest`/`WebSocket`/`sendBeacon`, a credential-shaped
+  literal, a non-`NEXT_PUBLIC_` env var, and `Math.random()` in a rendered module. Every check
+  is graded deterministically offline from bundled content.
+  - **Simplicity is the feature, not a limitation.** 12 dependencies, 0 network calls after
+    load, `localStorage` persistence, no key to leak, no backend to operate, works offline. A
+    capability that costs this — free-text grading is the standing example — is declined, not
+    deferred. `tools/selftest-static.cjs` (22 cases) proves the gate catches each violation
+    while still accepting vendor NAMES in content and prose about tokens.
 
 ## Working with multi-agent fleets (operational, hard-won)
 - Agents on AI-topic content get derailed by skills auto-triggering (Claude/model mentions) — in

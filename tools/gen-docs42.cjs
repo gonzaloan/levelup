@@ -199,7 +199,7 @@ not a clear.
 ## Known limits
 
 - **${c.builds} Build challenges** across ${lm.totalConcepts} concepts, so constructive assessment covers ${pct(lm.coverage.build, lm.totalConcepts)}%.
-- **No free-text grading** — see \`target-learning-model.md\` on why Explain is unbuilt.
+- **No free-text grading, by decision** — ADR-012. It needs a server, and the static export is worth more than the stage. Everything scored here is graded deterministically, offline, from bundled content.
 - **No item response calibration.** \`responseLog\` is collected for future IRT work; author-assigned difficulty is still provisional.
 - **Categorize is now clearable by no blind strategy at all** (was 63 of 105 via the even sweep, a 60% clear rate). The sweep ignores the display order, so no shuffle could touch it; fixed in CONTENT by reordering the authored items (\`tools/fix-categorize-sweeps.cjs\`). The first attempt at that fix interleaved them, which drove the sweep to zero and raised the ALTERNATING strategy from 12.4% to 72.4% — so the gate now asserts the maximum across every blind strategy, not one pattern.
 `;
@@ -238,7 +238,7 @@ four tracks feedable and one that needs a different mechanism entirely.
 Section 35 wants an interviewer that adds constraints mid-answer, scores against a
 per-dimension rubric, and asks follow-ups. All three need free-text understanding, which
 needs a model call, which needs a server. This platform is a static export with
-${an.fetchCallsToApi} API calls. Same wall as the Explain stage.
+${an.fetchCallsToApi} API calls. Same wall as the Explain stage, and the same decision: ADR-012 rules both out rather than deferring them, because the static deployment is the property being protected.
 
 ## What is buildable without a server
 
@@ -687,7 +687,8 @@ Measured against the nine stages in \`target-learning-model.md\`.
 - [ ] **Practice** — at least one check, even-indexed so \`poolFor()\` keeps it out of the graded pool.
 - [ ] **Recall** — flashcards.
 - [ ] **Build** — a constructive challenge, where one applies.
-- [ ] Explain / Transfer — currently unbuildable; note if this concept would need them.
+- [ ] **Transfer** — an item applying this concept in a domain it \`leansOn\`, or that leans on it. Skip if it has no cross-domain edge; inventing one is the unfounded claim \`merge-checks.cjs\` rejects.
+- Explain is **out of scope** (ADR-012), so there is nothing to note for it.
 
 ## Content requirements
 

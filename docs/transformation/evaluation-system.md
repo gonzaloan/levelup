@@ -45,6 +45,6 @@ not a clear.
 ## Known limits
 
 - **10 Build challenges** across 178 concepts, so constructive assessment covers 6%.
-- **No free-text grading** — see `target-learning-model.md` on why Explain is unbuilt.
+- **No free-text grading, by decision** — ADR-012. It needs a server, and the static export is worth more than the stage. Everything scored here is graded deterministically, offline, from bundled content.
 - **No item response calibration.** `responseLog` is collected for future IRT work; author-assigned difficulty is still provisional.
 - **Categorize is now clearable by no blind strategy at all** (was 63 of 105 via the even sweep, a 60% clear rate). The sweep ignores the display order, so no shuffle could touch it; fixed in CONTENT by reordering the authored items (`tools/fix-categorize-sweeps.cjs`). The first attempt at that fix interleaved them, which drove the sweep to zero and raised the ALTERNATING strategy from 12.4% to 72.4% — so the gate now asserts the maximum across every blind strategy, not one pattern.

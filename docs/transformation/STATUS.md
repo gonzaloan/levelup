@@ -27,9 +27,9 @@ document set are all built. What remains is content depth, not structure — see
 | explain | 0 | 0% |
 | transfer | 6 | 3% |
 
-Explain is the absent one, and it is blocked by the deployment model rather than by
-effort: free-text grading needs a server, and this is a static export with
-0 API routes.
+Explain is out of scope by decision (ADR-012), not pending: free-text grading needs a server,
+and this is a static export with 0 API routes and 0 network
+calls after load. `tools/check-static.cjs` fails the build if that changes.
 
 ## Content
 
@@ -53,8 +53,8 @@ note where the decision contradicts its own measurement.
 
 ## Verification
 
-- **11 content validators** in `npm run verify` (12 chain steps; one is a generator, not a gate)
-- **4 gate self-tests** — they attack the validators, which is where four of my own wrong rules were found
+- **12 content validators** in `npm run verify` (13 chain steps; one is a generator, not a gate)
+- **5 gate self-tests** — they attack the validators, which is where four of my own wrong rules were found
 - **357 unit tests** across 30 files
 - **110 Playwright tests** across 19 spec files
 - 5 ratchet baselines: `coverage-baseline.json`, `glossary-baseline.txt`, `match-spare-baseline.txt`, `prose-baseline.txt`, `trace-baseline.txt` — they may only shrink

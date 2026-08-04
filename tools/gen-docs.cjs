@@ -94,10 +94,10 @@ has for each of its ${lm.totalConcepts} concepts.
 | **Practice** | Answer a scored check with feedback | ${lm.coverage.practice} | ${pct(lm.coverage.practice)}% |
 | **Recall** | Retrieve from memory, unprompted | ${lm.coverage.recall} | ${pct(lm.coverage.recall)}% |
 | **Build** | Construct the thing, not pick it | ${lm.coverage.build} | ${pct(lm.coverage.build)}% |
-| **Explain** | Articulate it in their own words | ${lm.coverage.explain} | ${pct(lm.coverage.explain)}% |
+| **Explain** | Articulate it in their own words | — | out of scope (ADR-012) |
 | **Transfer** | Apply it in a second, unlike context | ${lm.coverage.transfer} | ${pct(lm.coverage.transfer)}% |
 
-${stageTally.full} stages cover every concept, ${stageTally.partial} ${stageTally.partial === 1 ? "is" : "are"} partial, and ${stageTally.none} ${stageTally.none === 1 ? "does" : "do"} not exist. The gaps are the useful part of this table.
+${stageTally.full} stages cover every concept and ${stageTally.partial} ${stageTally.partial === 1 ? "is" : "are"} partial. ${stageTally.none === 1 ? "One stage is" : `${stageTally.none} stages are`} deliberately out of scope — Explain needs free-text grading, which needs a server, and the static deployment is worth more than the stage (ADR-012). The partial rows are where the remaining work is.
 
 ### Predict — ${lm.coverage.predict} of ${lm.totalConcepts}
 
@@ -123,16 +123,33 @@ ${c.builds} challenges exist. Two consequences follow, and only the first is obv
 most concepts have no constructive check, and the pool is too small for graded and
 practice sets to be disjoint the way \`poolFor()\` splits the ${c.checks} checks.
 
-### Explain — ${lm.coverage.explain} of ${lm.totalConcepts}
+### Explain — out of scope, by decision (ADR-012)
 
-There is no free-text surface at all, and this is the one gap that cannot be closed with
-content alone.
+Not a gap. **Ruled out deliberately**, and the constraint that rules it out is enforced by
+\`tools/check-static.cjs\`.
 
-The reason it is still open: a self-graded text box is a checkbox, and an LLM-graded one
-needs a server. This platform is a static export with \`localStorage\`-only persistence
-and no API routes (\`fetchCallsToApi: ${an.fetchCallsToApi}\`), so grading free text would
-mean either shipping a key to the browser or abandoning the deployment model. The
-honest position is that Explain is unbuilt, not that flashcards cover it.
+Explain means articulating a concept in your own words, which needs free-text judgment, which
+needs one of three things: a model call from the browser (a key in a public bundle, readable
+by anyone), a model call from a server (a backend, a secret, a per-use cost, a new security
+surface), or self-grading. The third is the tempting one, and it is dishonest: a learner who
+has already read the correct answer cannot judge impartially whether their own words matched
+it. It would be a checkbox that looks like a measurement.
+
+The platform is a static export — ${r.pageRoutes} page routes, \`localStorage\` persistence,
+**${an.fetchCallsToApi} API routes and ${an.trackingCalls} network calls after load**. No
+runtime cost, no key to leak, no backend to operate, and it works offline once loaded. That is
+worth more than one stage of nine, so the trade was declined rather than deferred.
+
+The learning model is therefore **${stageTally.full + stageTally.partial} of
+${lm.totalConcepts === 0 ? 9 : Object.keys(lm.coverage).length} stages, and that is the
+finished shape.** \`tests/facts.test.ts\` fails if this ever becomes non-zero, which forces
+ADR-012 to be reopened instead of letting this page quietly go stale.
+
+What is genuinely lost: no stage catches the fluency illusion by making a learner produce
+prose. What partially covers it: Predict forces a commitment *before* the teaching
+(${lm.coverage.predict} concepts), flashcards force unprompted retrieval
+(${lm.coverage.recall}), and graded surfaces reveal nothing — so recognition cannot stand in
+for recall.
 
 ### Transfer — ${lm.coverage.transfer} of ${lm.totalConcepts}
 
@@ -449,7 +466,7 @@ migration has to be undone.
 ## Not migrated
 
 - **${lm.totalConcepts - lm.coverage.predict} concepts have no Predict step** and ${lm.totalConcepts - lm.coverage.build} have no Build challenge. The engines exist; the content does not.
-- **Explain and Transfer do not exist** — see \`target-learning-model.md\`.
+- **Explain is out of scope** (ADR-012) — free-text grading needs a server, and the static deployment is worth more than the stage. Enforced by \`tools/check-static.cjs\`.
 - **No analytics migration**, because there is no analytics.
 `;
 
@@ -475,9 +492,9 @@ document set are all built. What remains is content depth, not structure — see
 |---|---:|---:|
 ${Object.entries(lm.coverage).map(([k, n]) => `| ${k === "worked" ? "worked example" : k} | ${n} | ${pct(n)}% |`).join(NL)}
 
-Explain is the absent one, and it is blocked by the deployment model rather than by
-effort: free-text grading needs a server, and this is a static export with
-${an.fetchCallsToApi} API routes.
+Explain is out of scope by decision (ADR-012), not pending: free-text grading needs a server,
+and this is a static export with ${an.fetchCallsToApi} API routes and ${an.trackingCalls} network
+calls after load. \`tools/check-static.cjs\` fails the build if that changes.
 
 ## Content
 

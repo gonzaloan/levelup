@@ -22,10 +22,10 @@ has for each of its 178 concepts.
 | **Practice** | Answer a scored check with feedback | 178 | 100% |
 | **Recall** | Retrieve from memory, unprompted | 178 | 100% |
 | **Build** | Construct the thing, not pick it | 10 | 6% |
-| **Explain** | Articulate it in their own words | 0 | 0% |
+| **Explain** | Articulate it in their own words | — | out of scope (ADR-012) |
 | **Transfer** | Apply it in a second, unlike context | 6 | 3% |
 
-5 stages cover every concept, 3 are partial, and 1 does not exist. The gaps are the useful part of this table.
+5 stages cover every concept and 3 are partial. One stage is deliberately out of scope — Explain needs free-text grading, which needs a server, and the static deployment is worth more than the stage (ADR-012). The partial rows are where the remaining work is.
 
 ### Predict — 24 of 178
 
@@ -51,16 +51,33 @@ real and `/build` serves it.
 most concepts have no constructive check, and the pool is too small for graded and
 practice sets to be disjoint the way `poolFor()` splits the 380 checks.
 
-### Explain — 0 of 178
+### Explain — out of scope, by decision (ADR-012)
 
-There is no free-text surface at all, and this is the one gap that cannot be closed with
-content alone.
+Not a gap. **Ruled out deliberately**, and the constraint that rules it out is enforced by
+`tools/check-static.cjs`.
 
-The reason it is still open: a self-graded text box is a checkbox, and an LLM-graded one
-needs a server. This platform is a static export with `localStorage`-only persistence
-and no API routes (`fetchCallsToApi: 0`), so grading free text would
-mean either shipping a key to the browser or abandoning the deployment model. The
-honest position is that Explain is unbuilt, not that flashcards cover it.
+Explain means articulating a concept in your own words, which needs free-text judgment, which
+needs one of three things: a model call from the browser (a key in a public bundle, readable
+by anyone), a model call from a server (a backend, a secret, a per-use cost, a new security
+surface), or self-grading. The third is the tempting one, and it is dishonest: a learner who
+has already read the correct answer cannot judge impartially whether their own words matched
+it. It would be a checkbox that looks like a measurement.
+
+The platform is a static export — 21 page routes, `localStorage` persistence,
+**0 API routes and 0 network calls after load**. No
+runtime cost, no key to leak, no backend to operate, and it works offline once loaded. That is
+worth more than one stage of nine, so the trade was declined rather than deferred.
+
+The learning model is therefore **8 of
+9 stages, and that is the
+finished shape.** `tests/facts.test.ts` fails if this ever becomes non-zero, which forces
+ADR-012 to be reopened instead of letting this page quietly go stale.
+
+What is genuinely lost: no stage catches the fluency illusion by making a learner produce
+prose. What partially covers it: Predict forces a commitment *before* the teaching
+(24 concepts), flashcards force unprompted retrieval
+(178), and graded surfaces reveal nothing — so recognition cannot stand in
+for recall.
 
 ### Transfer — 6 of 178
 

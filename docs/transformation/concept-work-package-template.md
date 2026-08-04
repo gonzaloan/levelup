@@ -36,7 +36,8 @@ Measured against the nine stages in `target-learning-model.md`.
 - [ ] **Practice** — at least one check, even-indexed so `poolFor()` keeps it out of the graded pool.
 - [ ] **Recall** — flashcards.
 - [ ] **Build** — a constructive challenge, where one applies.
-- [ ] Explain / Transfer — currently unbuildable; note if this concept would need them.
+- [ ] **Transfer** — an item applying this concept in a domain it `leansOn`, or that leans on it. Skip if it has no cross-domain edge; inventing one is the unfounded claim `merge-checks.cjs` rejects.
+- Explain is **out of scope** (ADR-012), so there is nothing to note for it.
 
 ## Content requirements
 
