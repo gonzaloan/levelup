@@ -1,69 +1,94 @@
 {
-  "slug": "serving",
-  "primer": {
-    "whatItIs": {
-      "en": "Serving is running a trained model as a live service: accepting requests, dividing one GPU's memory and bandwidth among them, and returning tokens under a latency target you promised someone. Quality is fixed by then. Delivery is what you tune.",
-      "es": "El serving es ejecutar un modelo ya entrenado como servicio en vivo: aceptar peticiones, repartir la memoria y el ancho de banda de una GPU entre ellas y devolver tokens dentro de una latencia que le prometiste a alguien. La calidad ya está fijada. Lo que ajustas es la entrega."
+ "slug": "serving",
+ "primer": {
+  "whatItIs": {
+   "en": "Serving is running a trained model as a live service: accepting requests, dividing one GPU's memory and bandwidth among them, and returning tokens under a latency target you promised someone. Quality is fixed by then. Delivery is what you tune.",
+   "es": "El serving es ejecutar un modelo ya entrenado como servicio en vivo: aceptar peticiones, repartir la memoria y el ancho de banda de una GPU entre ellas y devolver tokens dentro de una latencia que le prometiste a alguien. La calidad ya está fijada. Lo que ajustas es la entrega."
+  },
+  "whyItExists": {
+   "en": "A GPU is fixed, and every request wants the same memory and bandwidth. On a 40 GB A100, a 13B model spends 26 GB on weights and leaves about 12 GB for KV cache — roughly ten concurrent sequences at a 1.5K-token context. Every technique below divides that budget.",
+   "es": "Una GPU es fija y cada petición quiere la misma memoria y el mismo ancho de banda. En una A100 de 40 GB, un modelo de 13B gasta 26 GB en pesos y deja unos 12 GB para KV cache — unas diez secuencias concurrentes con un contexto de 1,5K tokens. Cada técnica de abajo reparte ese presupuesto."
+  },
+  "axisOfChoice": {
+   "en": "Two dimensions: which of the three numbers you are protecting (time to first token, time between tokens, tokens per second per dollar), and what each technique gives up for it — GPU memory, memory bandwidth, spare compute, or answer quality.",
+   "es": "Dos dimensiones: cuál de los tres números estás protegiendo (tiempo al primer token, tiempo entre tokens, tokens por segundo por dólar), y qué cede cada técnica a cambio: memoria de GPU, ancho de banda de memoria, cómputo libre o calidad de la respuesta."
+  },
+  "families": [
+   {
+    "label": {
+     "en": "Cost model and targets",
+     "es": "Modelo de costo y objetivos"
     },
-    "whyItExists": {
-      "en": "A GPU is fixed, and every request wants the same memory and bandwidth. On a 40 GB A100, a 13B model spends 26 GB on weights and leaves about 12 GB for KV cache — roughly ten concurrent sequences at a 1.5K-token context. Every technique below divides that budget.",
-      "es": "Una GPU es fija y cada petición quiere la misma memoria y el mismo ancho de banda. En una A100 de 40 GB, un modelo de 13B gasta 26 GB en pesos y deja unos 12 GB para KV cache — unas diez secuencias concurrentes con un contexto de 1,5K tokens. Cada técnica de abajo reparte ese presupuesto."
+    "rule": {
+     "en": "You still cannot name which number is too slow, or what share of the card the weights and the per-token state already take. Tuning before that is guessing.",
+     "es": "Todavía no puedes nombrar cuál número va demasiado lento, ni qué parte de la tarjeta se llevan ya los pesos y el estado por token. Ajustar antes de eso es adivinar."
     },
-    "axisOfChoice": {
-      "en": "Two dimensions: which of the three numbers you are protecting (time to first token, time between tokens, tokens per second per dollar), and which scarce resource each technique gives up — GPU memory, memory bandwidth, or spare compute.",
-      "es": "Dos dimensiones: cuál de los tres números estás protegiendo (tiempo al primer token, tiempo entre tokens, tokens por segundo y por dólar) y cuál recurso escaso cede cada técnica — memoria de GPU, ancho de banda o cómputo libre."
-    },
-    "families": [
-      {
-        "label": { "en": "Cost model and targets", "es": "Modelo de costo y objetivos" },
-        "rule": {
-          "en": "You still cannot name which number is too slow, or what share of the card the weights and the per-token state already take. Tuning before that is guessing.",
-          "es": "Todavía no puedes nombrar cuál número va demasiado lento, ni qué parte de la tarjeta se llevan ya los pesos y el estado por token. Ajustar antes de eso es adivinar."
-        },
-        "entries": ["ttft-vs-itl-vs-throughput", "prefill-vs-decode", "kv-cache-memory-cost"]
-      },
-      {
-        "label": { "en": "Scheduling and admission", "es": "Planificación y admisión" },
-        "rule": {
-          "en": "Generated lengths differ across requests, or p99 latency and cost per token both have to move on hardware you already own.",
-          "es": "Las longitudes generadas varían entre peticiones, o la latencia p99 y el costo por token tienen que moverse con el hardware que ya tienes."
-        },
-        "entries": ["continuous-batching", "batch-size-as-the-latency-cost-lever"]
-      },
-      {
-        "label": { "en": "Memory reclamation", "es": "Recuperación de memoria" },
-        "rule": {
-          "en": "The scheduler is preempting requests, or the model barely fits on the card, so the win is holding more sequences resident in the same memory.",
-          "es": "El scheduler está expulsando peticiones, o el modelo apenas entra en la tarjeta, así que la ganancia está en mantener más secuencias residentes en la misma memoria."
-        },
-        "entries": ["paged-attention", "weight-quantization-vs-kv-cache-quantization"]
-      },
-      {
-        "label": { "en": "Single-request latency moves", "es": "Ajustes de latencia por petición" },
-        "rule": {
-          "en": "A person waits on one answer at low concurrency, so you either spend idle compute or start delivering output before the answer is finished.",
-          "es": "Una persona espera una sola respuesta con baja concurrencia, así que gastas cómputo que estaba ocioso o empiezas a entregar la salida antes de que la respuesta termine."
-        },
-        "entries": ["speculative-decoding", "streaming-responses"]
-      }
-    ],
-    "howToChoose": [
-      {
-        "en": "Which of the three numbers is your product judged on, given that a chat surface and a nightly extraction job land on opposite ends of the list?",
-        "es": "¿En cuál de los tres números se juzga tu producto, si una interfaz de chat y un job nocturno de extracción caen en extremos opuestos de la lista?"
-      },
-      {
-        "en": "Have you measured whether the card is prefill-bound or decode-bound, so you know if the answer is scheduling work or bandwidth you cannot buy back?",
-        "es": "¿Has medido si la tarjeta está limitada por prefill o por decode, para saber si la respuesta está en la planificación o en un ancho de banda que no puedes recuperar?"
-      },
-      {
-        "en": "Does the KV cache still have room at your current batch bound, or is the scheduler already preempting and recomputing requests?",
-        "es": "¿Todavía queda espacio en el KV cache con tu límite de batch actual, o el scheduler ya está expulsando y recalculando peticiones?"
-      },
-      {
-        "en": "Is one person waiting on a single answer, or are many requests in flight competing for the same card?",
-        "es": "¿Espera una sola persona una única respuesta, o hay muchas peticiones en vuelo compitiendo por la misma tarjeta?"
-      }
+    "entries": [
+     "ttft-vs-itl-vs-throughput",
+     "prefill-vs-decode",
+     "kv-cache-memory-cost"
     ]
-  }
+   },
+   {
+    "label": {
+     "en": "Scheduling and admission",
+     "es": "Planificación y admisión"
+    },
+    "rule": {
+     "en": "Generated lengths differ across requests, or p99 latency and cost per token both have to move on hardware you already own.",
+     "es": "Las longitudes generadas varían entre peticiones, o la latencia p99 y el costo por token tienen que moverse con el hardware que ya tienes."
+    },
+    "entries": [
+     "continuous-batching",
+     "batch-size-as-the-latency-cost-lever"
+    ]
+   },
+   {
+    "label": {
+     "en": "Memory reclamation",
+     "es": "Recuperación de memoria"
+    },
+    "rule": {
+     "en": "The scheduler is preempting requests, or the model barely fits on the card, so the win is holding more sequences resident in the same memory.",
+     "es": "El scheduler está expulsando peticiones, o el modelo apenas entra en la tarjeta, así que la ganancia está en mantener más secuencias residentes en la misma memoria."
+    },
+    "entries": [
+     "paged-attention",
+     "weight-quantization-vs-kv-cache-quantization"
+    ]
+   },
+   {
+    "label": {
+     "en": "Single-request latency moves",
+     "es": "Ajustes de latencia por petición"
+    },
+    "rule": {
+     "en": "A person waits on one answer at low concurrency, so you either spend idle compute or start delivering output before the answer is finished.",
+     "es": "Una persona espera una sola respuesta con baja concurrencia, así que gastas cómputo que estaba ocioso o empiezas a entregar la salida antes de que la respuesta termine."
+    },
+    "entries": [
+     "speculative-decoding",
+     "streaming-responses"
+    ]
+   }
+  ],
+  "howToChoose": [
+   {
+    "en": "Which of the three numbers is your product judged on, given that a chat surface and a nightly extraction job land on opposite ends of the list?",
+    "es": "¿En cuál de los tres números se juzga tu producto, si una interfaz de chat y un job nocturno de extracción caen en extremos opuestos de la lista?"
+   },
+   {
+    "en": "Have you measured whether the card is prefill-bound or decode-bound, so you know if the answer is scheduling work or bandwidth you cannot buy back?",
+    "es": "¿Has medido si la tarjeta está limitada por prefill o por decode, para saber si la respuesta está en la planificación o en un ancho de banda que no puedes recuperar?"
+   },
+   {
+    "en": "Does the KV cache still have room at your current batch bound, or is the scheduler already preempting and recomputing requests?",
+    "es": "¿Todavía queda espacio en el KV cache con tu límite de batch actual, o el scheduler ya está expulsando y recalculando peticiones?"
+   },
+   {
+    "en": "Is one person waiting on a single answer, or are many requests in flight competing for the same card?",
+    "es": "¿Espera una sola persona una única respuesta, o hay muchas peticiones en vuelo compitiendo por la misma tarjeta?"
+   }
+  ]
+ }
 }

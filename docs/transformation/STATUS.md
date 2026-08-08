@@ -43,7 +43,7 @@ calls after load. `tools/check-static.cjs` fails the build if that changes.
 
 ## Bilingual
 
-20045 English and 20045 Spanish strings — equal, with
+20046 English and 20046 Spanish strings — equal, with
 **0 empty prose fields**. The 7 empty strings
 are positional slots, not missing translations.
 
