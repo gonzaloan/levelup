@@ -57,12 +57,27 @@ export function scrollPlan(request: ScrollRequest): ScrollPlan {
     return { selector: ".cx-cluster .cx-cluster-title", clear: true };
   }
   // An id, from a caller that already validated the slug against ENTRY_BY_SLUG.
-  // Escaped via attribute selector rather than `#id`, because a slug is authored data
-  // and `querySelector` would throw on one containing a CSS-special character.
-  return { selector: `[id="${cssEscape(request)}"]`, clear: true };
+  //
+  // `CSS.escape` rather than a hand-rolled replace. The first version escaped quotes and
+  // backslashes, which is enough for every shipped slug (all 118 are `^[a-z0-9-]+$`, and
+  // `merge-codex.cjs` enforces that) but was sold in a comment as complete insurance and
+  // was not: a raw newline, carriage return or form feed still produced a selector that
+  // throws `SyntaxError` in Chromium, because a CSS string cannot contain an unescaped
+  // newline. `CSS.escape` handles all three and every other case, is available in every
+  // browser this project supports, and removes a hand-maintained escape list — which is
+  // the same trade the primer contract makes against per-locale blacklists.
+  return { selector: `#${cssEscapeSafe(request)}`, clear: true };
 }
 
-/** Minimal escaping for a value interpolated into an attribute selector. */
-function cssEscape(value: string): string {
-  return value.replace(/["\\]/g, "\\$&");
+/**
+ * `CSS.escape`, with a fallback for the non-browser path.
+ *
+ * `scrollPlan` is a pure module and gets unit-tested in node, where `CSS` does not
+ * exist. The fallback escapes the characters that can break a selector rather than
+ * pretending to be a full implementation, and it is never the branch a browser takes.
+ */
+function cssEscapeSafe(value: string): string {
+  const g = globalThis as { CSS?: { escape?: (s: string) => string } };
+  if (typeof g.CSS?.escape === "function") return g.CSS.escape(value);
+  return value.replace(/[^a-zA-Z0-9_-]/g, (ch) => `\\${ch.codePointAt(0)!.toString(16)} `);
 }

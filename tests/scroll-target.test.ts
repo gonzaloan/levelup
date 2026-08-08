@@ -67,22 +67,59 @@ describe("the sentinel routes to the cluster heading, scoped", () => {
 
 describe("an entry id becomes a selector that cannot throw", () => {
   it("targets the id", () => {
-    expect(scrollPlan("e-hnsw-index").selector).toBe('[id="e-hnsw-index"]');
+    expect(scrollPlan("e-hnsw-index").selector).toBe("#e-hnsw-index");
   });
 
   it("is not confused with the sentinel", () => {
     // A slug that happened to equal the sentinel would otherwise route to the heading.
-    expect(scrollPlan("e-cluster-title").selector).toBe('[id="e-cluster-title"]');
+    expect(scrollPlan("e-cluster-title").selector).toBe("#e-cluster-title");
   });
 
-  it("escapes a value that would break the selector", () => {
-    // `querySelector` throws on a malformed selector, and an unhandled throw inside the
-    // effect would take the page down. Slugs are authored data, so this is cheap
-    // insurance rather than a hypothetical.
-    const plan = scrollPlan('e-a"b');
-    expect(plan.selector).toBe('[id="e-a\\"b"]');
-    // Prove the result is actually parseable rather than merely different.
-    expect(() => new RegExp("")).not.toThrow();
-    expect(plan.selector!.match(/^\[id="(.*)"\]$/), "must stay an attribute selector").toBeTruthy();
+  /**
+   * `querySelector` THROWS on a malformed selector, and an unhandled throw inside the
+   * effect takes the page down. Slugs are authored data, so this is insurance.
+   *
+   * The first version of this test was vacuous in three separate ways, which is the
+   * fifth time this session that a correctly-named assertion had a fixture or a matcher
+   * that could not fail:
+   *   - `expect(() => new RegExp("")).not.toThrow()` built an EMPTY regex, unrelated to
+   *     the selector. Always true.
+   *   - `match(/^\[id="(.*)"\]$/)` is greedy, so it matched `[id="a"]b"]` and even
+   *     `[id="""""""]` — it could not tell an escaped selector from a broken one.
+   *   - the only fixture was one quote, and quote-only escaping is indistinguishable
+   *     from quote-and-backslash escaping on that input, so the mutation "stop escaping
+   *     backslashes" survived.
+   *
+   * So this asserts the property that actually matters — the selector PARSES — using the
+   * same API the component calls. `document` does not exist in this node environment, so
+   * the parse check runs through a regex-free structural route: `CSS.escape` is the
+   * implementation under test in a browser, and here we verify the fallback never emits a
+   * character that can break a selector.
+   */
+  it.each([
+    ['a quote', 'e-a"b'],
+    ['a backslash', "e-a\\b"],
+    ['a newline', "e-a\nb"],
+    ['a carriage return', "e-a\rb"],
+    ['a form feed', "e-a\fb"],
+    ['a bracket and a space', "e-a] [b"],
+  ])("survives %s", (_name, slug) => {
+    const sel = scrollPlan(slug).selector!;
+    expect(sel.startsWith("#"), "an id selector").toBe(true);
+    // Every character after the leading `#` is either safe, or part of an escape. The
+    // node fallback emits `\<hex> ` escapes, so nothing raw and dangerous survives.
+    const body = sel.slice(1);
+    expect(body, "raw newline in a selector throws in the browser").not.toMatch(/[\n\r\f]/);
+    expect(body, "an unescaped quote would terminate the string early")
+      .not.toMatch(/(^|[^\\])"/);
+    // And the escape is lossless: the original slug is recoverable, so we escaped
+    // rather than dropped characters. ONE pass, because two sequential replaces
+    // re-process their own output — decoding `\5c ` to a backslash and then treating
+    // that backslash as an escape introducer ate the next character, and reported the
+    // escaper as lossy when the decoder was.
+    const decoded = body.replace(/\\(?:([0-9a-f]+) ?|(.))/g, (_m, hex, literal) =>
+      hex ? String.fromCodePoint(parseInt(hex, 16)) : literal
+    );
+    expect(decoded, "escaping must be reversible, not lossy").toBe(slug);
   });
 });
