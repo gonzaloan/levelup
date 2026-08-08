@@ -30,6 +30,7 @@ import {
   codexLayers, searchCodex, searchClusters, totalEntries,
 } from "@/lib/codex";
 import { load, markCodexRead, type Progress } from "@/lib/store";
+import { scrollPlan, CLUSTER_TITLE } from "@/lib/scrollTarget";
 import type { CodexPathStep } from "@/lib/types";
 import { CodexEntryCard } from "./CodexEntryCard";
 import { CodexPrimer } from "./CodexPrimer";
@@ -208,7 +209,7 @@ export function CodexView({ locale }: { locale: Locale }) {
     setQuery("");
     setMode("browse");
     setOpenCluster(slug);
-    setPendingScroll("cluster-title");
+    setPendingScroll(CLUSTER_TITLE);
   }, []);
 
   /**
@@ -230,17 +231,24 @@ export function CodexView({ locale }: { locale: Locale }) {
    */
 
   useEffect(() => {
-    if (!pendingScroll) return;
-    const el = pendingScroll === "cluster-title"
-      ? document.querySelector<HTMLElement>(".cx-cluster .cx-cluster-title")
-      : document.getElementById(pendingScroll);
-    // Clear either way: a target that does not exist after the commit is not going to
-    // appear later, and a stale request would fire on the next unrelated render.
-    setPendingScroll(null);
+    // The DECISION lives in `scrollPlan` (src/lib/scrollTarget.ts) so it can be tested
+    // without a DOM. What is left here is the part that needs one, which is why this
+    // effect has no branches of its own to get wrong.
+    const plan = scrollPlan(pendingScroll);
+    if (plan.clear) setPendingScroll(null);
+    if (!plan.selector) return;
+    const el = document.querySelector<HTMLElement>(plan.selector);
     if (!el) return;
     const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
-  }, [pendingScroll, openCluster, mode]);
+    // `pendingScroll` alone. `openCluster` and `mode` were here too, on the theory that
+    // the effect had to wait for them — but every request is set in the same event as
+    // those state changes, so React commits all three together and this effect already
+    // runs after that commit. Measured: dropping either, or both, changed nothing
+    // observable in a real browser across the four landing tests. They were decoration
+    // that read as a dependency, which is worse than absent — a future reader would
+    // trust them to be doing something.
+  }, [pendingScroll]);
 
   useEffect(() => {
     const go = () => {

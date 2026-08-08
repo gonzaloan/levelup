@@ -256,18 +256,32 @@ describe("a family chip never points at an anchor that is not there", () => {
     // And the scroll must not depend on a hashchange event, because assigning a hash
     // its current value emits none.
     //
-    // Asserted as "a scroll happens outside the hashchange listener", NOT as
-    // "scrollIntoView appears within N characters of goToEntry". That proximity match
-    // is the second time a source assert here broke on a correct refactor: the scroll
-    // moved out of `goToEntry` into an effect keyed on the committed state, which fixed
-    // a real race (a cold deep link at 8x CPU throttle landed 0 of 15 times, because
-    // the old `requestAnimationFrame` ran before React committed and the lookup
-    // returned null). Pinning a line's neighbourhood punishes exactly the change that
-    // improves it, so this pins the PROPERTY instead.
-    expect(VIEW, "the scroll must live in an effect, not a guessed frame")
-      .toMatch(/useEffect\([\s\S]{0,600}scrollIntoView/);
-    expect(VIEW, "the scroll must not be a single requestAnimationFrame guess")
-      .not.toMatch(/requestAnimationFrame\([\s\S]{0,200}scrollIntoView/);
+    /**
+     * Asserted WITHOUT a character window, because two windows in a row were wrong.
+     *
+     * First a proximity match to `goToEntry` broke when the scroll correctly moved into
+     * an effect. Then the replacement's negative assertion — "no
+     * `requestAnimationFrame` within 200 characters of `scrollIntoView`" — was measured
+     * BLIND: reinstating the rAF leaves 513 characters between them, so the defect it
+     * existed to prohibit passed with the gate green. A hand-picked distance is a
+     * fixture, and it was the wrong fixture twice.
+     *
+     * The decision now lives in `src/lib/scrollTarget.ts` and is unit-tested there
+     * without a DOM (tests/scroll-target.test.ts). What is left to assert in source is
+     * only the WIRING, which needs no window: the component consumes the seam, and the
+     * whole file contains no rAF at all — a flat `not.toContain`, which cannot have a
+     * blind spot the way a windowed match can.
+     */
+    expect(VIEW, "the component must consume the scroll seam").toMatch(/scrollPlan\(/);
+    expect(VIEW, "the scroll must live in an effect").toMatch(/useEffect\([\s\S]*?scrollIntoView/);
+    // Comments stripped first: the file explains the rAF race in prose, and the third
+    // version of this assertion failed on its own history lesson. Same shape as the
+    // no-fold assertion above, and as the `analytics` gate that counted the word
+    // "plausible" in a comment as a tracking call — in this repo, a code assertion has
+    // to say it means CODE.
+    const code = VIEW.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    expect(code, "no requestAnimationFrame in code: it is what lost the race")
+      .not.toContain("requestAnimationFrame");
     expect(navigating, "the hash is a record, written without re-entering the listener")
       .toMatch(/history\.replaceState/);
     expect(navigating, "assigning location.hash reinstates the missed-event defect")

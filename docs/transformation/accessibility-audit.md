@@ -4,7 +4,7 @@
 
 ## What was measured
 
-141 TSX files, 27 stylesheets, both themes (Studio and Pixel),
+142 TSX files, 27 stylesheets, both themes (Studio and Pixel),
 both locales.
 
 | Signal | Count |
