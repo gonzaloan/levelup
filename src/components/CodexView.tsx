@@ -32,6 +32,7 @@ import {
 import { load, markCodexRead, type Progress } from "@/lib/store";
 import type { CodexPathStep } from "@/lib/types";
 import { CodexEntryCard } from "./CodexEntryCard";
+import { CodexPrimer } from "./CodexPrimer";
 import { CodexArchitectureCard } from "./CodexArchitectureCard";
 import { ARCHITECTURES } from "@/lib/codex";
 import { PageHeroArt } from "./PageHeroArt";
@@ -302,6 +303,17 @@ export function CodexView({ locale }: { locale: Locale }) {
                   <section key={c.slug} className="cx-cluster">
                     <h2 className="cx-cluster-title">{t(c.title, locale)}</h2>
                     <p className="cx-cluster-tagline">{t(c.tagline, locale)}</p>
+                    {/* The primer, between the tagline and the entries. This is the
+                        only place in the app where content is deliberately read
+                        top-down before anything else: a reader who does not yet own
+                        the cluster's vocabulary cannot use the entry list, and the
+                        tagline alone was one line of orientation for up to 18
+                        siblings. Optional in the render because the TYPE is optional
+                        (the schema stays additive); merge-codex.cjs is what
+                        guarantees every shipped cluster has one. */}
+                    {c.primer && (
+                      <CodexPrimer locale={locale} primer={c.primer} resolveTerm={termOf} />
+                    )}
                     <div className="cx-entries">
                       {c.entries.map((e) => (
                         <div key={e.slug} className="cx-entry-wrap">

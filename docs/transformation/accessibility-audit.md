@@ -4,12 +4,12 @@
 
 ## What was measured
 
-140 TSX files, 27 stylesheets, both themes (Studio and Pixel),
+141 TSX files, 27 stylesheets, both themes (Studio and Pixel),
 both locales.
 
 | Signal | Count |
 |---|---:|
-| Files using `aria-label` | 41 |
+| Files using `aria-label` | 42 |
 | Files using an explicit `role` | 30 |
 | `<img>`/`<Image>` with `alt` | 5 of 5 |
 | Files honouring reduced motion | 12 |

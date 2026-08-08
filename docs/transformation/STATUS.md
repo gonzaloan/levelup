@@ -43,7 +43,7 @@ calls after load. `tools/check-static.cjs` fails the build if that changes.
 
 ## Bilingual
 
-19882 English and 19882 Spanish strings — equal, with
+20045 English and 20045 Spanish strings — equal, with
 **0 empty prose fields**. The 7 empty strings
 are positional slots, not missing translations.
 
@@ -54,8 +54,8 @@ note where the decision contradicts its own measurement.
 ## Verification
 
 - **12 content validators** in `npm run verify` (13 chain steps; one is a generator, not a gate)
-- **5 gate self-tests** — they attack the validators, which is where four of my own wrong rules were found
-- **357 unit tests** across 30 files
+- **6 gate self-tests** — they attack the validators, which is where four of my own wrong rules were found
+- **427 unit tests** across 31 files
 - **110 Playwright tests** across 19 spec files
 - 5 ratchet baselines: `coverage-baseline.json`, `glossary-baseline.txt`, `match-spare-baseline.txt`, `prose-baseline.txt`, `trace-baseline.txt` — they may only shrink
 

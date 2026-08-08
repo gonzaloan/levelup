@@ -5,15 +5,15 @@
 ## What runs
 
 `npm run verify` is 6 steps: typecheck, lint, 12 content
-validators, 5 gate self-tests, the inventory generators, and 357
-unit tests across 30 files. Playwright adds 110 browser tests
+validators, 6 gate self-tests, the inventory generators, and 427
+unit tests across 31 files. Playwright adds 110 browser tests
 across 19 spec files.
 
 | Layer | Count | What it can catch |
 |---|---:|---|
 | Content validators | 12 | Duplicate ids, broken concept links, prerequisite cycles, missing translations, dead asset refs, uncovered domain×mechanic cells, contradictory axes figures, untraceable figures, prose defects, banned terminology |
-| Gate self-tests | 5 | Whether the validators above actually fail on the defects they exist for |
-| Unit tests | 357 | Route independence, check integrity, exploit families, scoring, a11y source properties, inventory agreement, glossary/doc drift |
+| Gate self-tests | 6 | Whether the validators above actually fail on the defects they exist for |
+| Unit tests | 427 | Route independence, check integrity, exploit families, scoring, a11y source properties, inventory agreement, glossary/doc drift |
 | Playwright | 110 | What a learner can actually see and reach in a browser |
 
 ## The self-tests are the load-bearing part
@@ -43,7 +43,7 @@ line to make a build pass is forbidden — it converts a defect into a permissio
 
 ## Bilingual integrity
 
-19882 English and 19882 Spanish strings: exactly equal, and
+20045 English and 20045 Spanish strings: exactly equal, and
 **0 empty prose fields**. The 7 empty strings
 that do exist are positional slots — a cloze sentence that opens with a blank, and one
 deliberate `kind: "none"` figure opt-out — not missing translations. The naive count

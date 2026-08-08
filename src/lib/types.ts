@@ -412,10 +412,53 @@ export interface CodexEntry {
   visual?: ConceptVisual;
 }
 
+/**
+ * One family within a cluster — a named group of entries and the condition that
+ * makes the group win.
+ *
+ * `entries` is a list of slugs rather than embedded entries because an entry has
+ * exactly one home (its cluster) and a family is a VIEW over that home. Embedding
+ * would give the same entry two sources of truth, and the first rename would
+ * desynchronize them silently.
+ */
+export interface CodexFamily {
+  label: I18nText;             // a noun phrase, never a sentence
+  rule: I18nText;              // when this family wins, as a checkable condition
+  entries: string[];           // slugs in THIS cluster; total partition, validated
+}
+
+/**
+ * The cluster primer — the level ABOVE the entries.
+ *
+ * Why this field exists (docs/curriculum/PRIMER-CONTRACT.md has the measurements):
+ * every entry in the Codex was individually well-formed and the reference was still
+ * hard to learn from, because a cluster oriented the reader with one line of tagline
+ * and then handed over up to 18 sibling techniques as a flat list. "RAG" appeared 126
+ * times in the data and was never defined; twelve chunking strategies shipped with
+ * nothing saying why a document must be cut at all.
+ *
+ * A reference organized for LOOKUP fails the reader who does not yet own the
+ * vocabulary they are looking up. The primer is the general-to-specific descent that
+ * gives them it: what the umbrella term is, why the family exists, the axis every
+ * member varies along, the families themselves, and the questions that pick one.
+ *
+ * Uniform excellence at the leaf does not compose into understanding at the root.
+ */
+export interface CodexPrimer {
+  whatItIs: I18nText;          // definition-first, umbrella term is the subject
+  whyItExists: I18nText;       // the problem, with a figure an entry below states
+  axisOfChoice: I18nText;      // the dimension every entry varies along, NAMED
+  families: CodexFamily[];     // a TOTAL partition of the cluster's entries
+  howToChoose: I18nText[];     // 2-5 checkable questions, each with its consequence
+}
+
 export interface CodexCluster {
   slug: string;
   title: I18nText;
   tagline: I18nText;           // one line: what this cluster lets you decide
+  /** The top-down orientation. Optional in the type ONLY so the schema stays
+   *  additive per the project's content rule; `merge-codex.cjs` requires it. */
+  primer?: CodexPrimer;
   entries: CodexEntry[];
 }
 

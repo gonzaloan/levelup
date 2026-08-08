@@ -233,6 +233,238 @@ function checkArchitecture(a, where) {
 }
 
 /** The whole codex: cross-entry invariants the per-entry checks can't see. */
+/**
+ * Shapes that are specific to an ORIENTATION section going wrong.
+ *
+ * These survive the shared word/phrase blocklist because none of them contains a
+ * banned word — they are structurally empty rather than badly worded, which is
+ * exactly why they need their own rule. See docs/curriculum/PRIMER-CONTRACT.md.
+ *
+ * "It depends" is banned only as a STEP or a whole field, never as a substring: a
+ * legitimate sentence reads "which one wins depends on whether the source has
+ * structure", and banning the substring would fire on correct content.
+ */
+const PRIMER_BANNED = [
+  [/\b(in this cluster|this cluster covers|this section covers|you will learn|we(?:'ll| will) cover)\b/i,
+   "a table of contents read aloud — say what the family IS"],
+  [/\bthere are many (?:approaches|ways|options|techniques|strategies)\b/i,
+   "true of everything, decides nothing"],
+  [/^\s*it\s+depends\b[\s.!]*$/i,
+   "name what it depends ON — that is the axis"],
+];
+
+/** Words, so a 45-word cap means what a reader would count. */
+const words = (s) => s.trim().split(/\s+/).filter(Boolean).length;
+
+/**
+ * Strip diacritics and lowercase, mirroring `fold()` in src/lib/codex.ts.
+ *
+ * Matching Spanish prose with accent-sensitive patterns is how a rule ends up
+ * catching `dimensión` and missing its own plural `dimensiones`. Folding first
+ * means one pattern list serves both locales.
+ */
+const fold = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+
+function checkPrimerText(v, where, maxWords) {
+  checkI18n(v, where, { min: 20 });
+  if (!isI18n(v)) return;
+  for (const loc of ["en", "es"]) {
+    const text = v[loc];
+    if (typeof text !== "string") continue;
+    // The cap is on EN only. Spanish runs reliably longer than English for the
+    // same content (~15-20% more words), so one shared cap would either let EN
+    // sprawl or reject correct Spanish. Capping the authored source language and
+    // letting the translation breathe is the honest version of this rule.
+    if (loc === "en" && words(text) > maxWords) {
+      bad(`${where}.en: ${words(text)} words, cap is ${maxWords}`);
+    }
+    for (const [re, why] of PRIMER_BANNED) {
+      if (re.test(text)) bad(`${where}.${loc}: ${why}`);
+    }
+  }
+}
+
+/**
+ * The cluster primer: the level above the entries.
+ *
+ * The load-bearing rule here is the TOTAL PARTITION (rule 2). A families list that
+ * omits an entry re-creates, one level up, the exact orphan defect the primer was
+ * written to remove — and it does it invisibly, because the cluster still renders
+ * and every family in it still looks complete. Absence is the class of defect this
+ * codebase has shipped most often, so it gets an explicit check rather than a
+ * well-formedness check.
+ */
+function checkPrimer(p, cw, clusterEntrySlugs) {
+  if (p === undefined || p === null) {
+    return bad(`${cw}.primer: missing — every cluster needs one (PRIMER-CONTRACT.md)`);
+  }
+
+  checkPrimerText(p.whatItIs, `${cw}.primer.whatItIs`, 45);
+  checkPrimerText(p.whyItExists, `${cw}.primer.whyItExists`, 60);
+  checkPrimerText(p.axisOfChoice, `${cw}.primer.axisOfChoice`, 50);
+
+  // Rule 3: a figure, in both locales. A primer that summarizes a cluster full of
+  // measured entries and states no number is an opinion about them.
+  if (isI18n(p.whyItExists)) {
+    for (const loc of ["en", "es"]) {
+      if (!/\d/.test(p.whyItExists[loc] ?? "")) {
+        bad(`${cw}.primer.whyItExists.${loc}: no digit — cite a figure an entry below states`);
+      }
+    }
+  }
+
+  /**
+   * Rule 4: the axis must NAME a dimension, not gesture at one.
+   *
+   * The mechanical proxy is an axis-naming marker: an interrogative or locative
+   * that introduces a dimension ("WHAT decides the boundary", "WHERE the control
+   * sits"), or a word that states one outright ("two dimensions", "trades recall
+   * for latency"). It cannot tell whether the axis is the RIGHT axis — reviewers
+   * do that.
+   *
+   * TWO ROUNDS OF THIS RULE WERE WRONG, and both fired on correct content, so
+   * they are recorded here rather than re-learned:
+   *
+   *   • The first version omitted `where` / `dónde`, which introduces a dimension
+   *     as well as `what` does. It rejected the security cluster's "Where the
+   *     control sits relative to the model: on the text going in, on the authority
+   *     the model holds, on the bytes coming out, or on a person who approves" —
+   *     which names a four-position axis about as explicitly as a sentence can.
+   *   • The Spanish branch matched the ACCENTED `dimensión` and therefore missed
+   *     its own unaccented plural `dimensiones`, rejecting the context-engineering
+   *     cluster's correct "Dos dimensiones: dónde vive un token…".
+   *
+   * Hence: fold diacritics before matching, and keep one list for both locales.
+   * Folding is what makes the Spanish side robust to exactly the accent pattern
+   * that broke it — the same reason `fold()` exists in src/lib/codex.ts.
+   */
+  if (isI18n(p.axisOfChoice)) {
+    const NAMES_AXIS = new RegExp([
+      // Interrogatives and locatives that introduce a dimension, EN + ES,
+      // matched post-fold so "qué"/"que" and "dónde"/"donde" both hit.
+      "\\b(what|which|whether|where|how much|how many|how far|how long)\\b",
+      "\\b(que|cual|cuales|cuant\\w*|donde|si)\\b",
+      // Words that state a dimension outright.
+      "\\b(axis|axes|dimensions?|spectrum|continuum)\\b",
+      "\\b(eje|ejes|dimension\\w*|espectro|continuo)\\b",
+      // Verbs of variation.
+      "\\b(decides?|varies|vary|ranges?|trades?|trading|shifts?|moves)\\b",
+      "\\b(decide|decides|varia\\w*|va de|cambia\\w*|intercambia\\w*|se ubica)\\b",
+      // An explicit two-sided contrast is itself a named axis.
+      "\\b(between|versus|vs\\.?)\\b",
+      "\\b(entre|frente a)\\b",
+    ].join("|"), "i");
+
+    for (const loc of ["en", "es"]) {
+      const text = fold(p.axisOfChoice[loc] ?? "");
+      if (!NAMES_AXIS.test(text)) {
+        bad(`${cw}.primer.axisOfChoice.${loc}: names no dimension the reader can apply`);
+      }
+    }
+  }
+
+  // ── Families: the total partition ──
+  const fams = p.families;
+  if (!Array.isArray(fams) || fams.length < 2) {
+    bad(`${cw}.primer.families: needs ≥2 — one family is not a grouping`);
+  }
+  const claimed = new Map();               // slug → family label, for the dup message
+  for (const [fi, f] of (fams ?? []).entries()) {
+    const fw = `${cw}.primer.families[${fi}]`;
+    checkI18n(f.label, `${fw}.label`, { min: 3, ...TERMISH });
+    checkI18n(f.rule, `${fw}.rule`, { min: 20 });
+
+    // Rule: a label is a noun phrase. A trailing period or a finite verb with a
+    // subject pronoun is the tell that an author wrote a sentence instead.
+    if (isI18n(f.label)) {
+      for (const loc of ["en", "es"]) {
+        const l = (f.label[loc] ?? "").trim();
+        if (/[.!?]$/.test(l)) bad(`${fw}.label.${loc}: a label is a noun phrase, not a sentence`);
+        if (words(l) > 6) bad(`${fw}.label.${loc}: ${words(l)} words — labels are short noun phrases`);
+      }
+    }
+
+    if (!Array.isArray(f.entries) || f.entries.length === 0) {
+      bad(`${fw}.entries: missing`);
+      continue;
+    }
+    for (const slug of f.entries) {
+      if (!clusterEntrySlugs.has(slug)) {
+        bad(`${fw}.entries: "${slug}" is not an entry in this cluster`);
+      } else if (claimed.has(slug)) {
+        bad(`${fw}.entries: "${slug}" already claimed by families[${claimed.get(slug)}]`);
+      } else {
+        claimed.set(slug, fi);
+      }
+    }
+  }
+  // THE check this function exists for. Listed explicitly and in full: "3 entries
+  // uncovered" sends someone hunting, a named list is fixable.
+  const missed = [...clusterEntrySlugs].filter((s) => !claimed.has(s));
+  if (missed.length) {
+    bad(`${cw}.primer.families: ${missed.length} entr${missed.length === 1 ? "y" : "ies"} in no family — ${missed.join(", ")}`);
+  }
+
+  /**
+   * Rule 6, as INFLATION rather than as "no family of one".
+   *
+   * The first version of this rule rejected any singleton family in a cluster of
+   * 4 or more, and it fired on correct content immediately: the honest carve of
+   * `vector-indexes` is exhaustive / in-memory-approximate / out-of-core, and two
+   * of those three genuinely have one member each, because that is how the index
+   * families actually divide. A taxonomy is not wrong for having an outlier.
+   *
+   * What the rule stops is structure that renames the entry list instead of
+   * grouping it: a family holding one entry has told the reader nothing the entry's
+   * own title did not.
+   *
+   * The rule is the strict one the contract states — no family of one in a cluster
+   * of 4 or more — and it is kept strict on EVIDENCE rather than on principle. The
+   * suspicion that it would reject a correct taxonomy came from a hypothetical
+   * 3-family carve of `vector-indexes` with two genuine singletons. Measured
+   * against real content instead, all 11 authored primers carve 107 entries with
+   * ZERO singleton families, and `vector-indexes` itself came out as a clean 2×2
+   * along storage fidelity — a better carve than the hypothetical, found because
+   * the rule forced the question. False-positive rate on shipped content: 0 of 11.
+   *
+   * If a cluster ever arrives where one entry genuinely stands alone, this rule
+   * becoming UNSATISFIABLE is the signal to look at the cluster, not to widen the
+   * rule: an entry that fits no family alongside any sibling is usually an entry in
+   * the wrong cluster. That is the lesson ADR-011 already records.
+   */
+  const famList = Array.isArray(fams) ? fams.filter((f) => Array.isArray(f.entries)) : [];
+  if (clusterEntrySlugs.size >= 4) {
+    for (const [fi, f] of famList.entries()) {
+      if (f.entries.length === 1) {
+        bad(
+          `${cw}.primer.families[${fi}](${f.label?.en ?? "?"}): a family of one is a rename, ` +
+          `not a grouping — group it with a sibling or move the entry`
+        );
+      }
+    }
+  }
+
+  // ── howToChoose ──
+  const steps = p.howToChoose;
+  if (!Array.isArray(steps) || steps.length < 2 || steps.length > 5) {
+    bad(`${cw}.primer.howToChoose: needs 2-5 steps`);
+  }
+  for (const [si, s] of (steps ?? []).entries()) {
+    const sw = `${cw}.primer.howToChoose[${si}]`;
+    checkPrimerText(s, sw, 45);
+    // Rule 5: a step is a question the reader can check about their OWN situation.
+    // Checked as "contains a question mark" — mechanical, and the reviewers judge
+    // whether the question is a good one.
+    if (isI18n(s)) {
+      for (const loc of ["en", "es"]) {
+        if (!/\?/.test(s[loc] ?? "")) {
+          bad(`${sw}.${loc}: not a question — a step the reader cannot check is not a step`);
+        }
+      }
+    }
+  }
+}
+
 function checkCodex(codex, ids, spine) {
   const seenEntry = new Map();
   const seenCluster = new Set();
@@ -245,6 +477,9 @@ function checkCodex(codex, ids, spine) {
     checkI18n(c.title, `${cw}.title`, TERMISH);
     checkI18n(c.tagline, `${cw}.tagline`, { min: 20 });
     if (!Array.isArray(c.entries) || c.entries.length < 3) bad(`${cw}.entries: needs ≥3`);
+    // The primer is validated against the cluster's OWN slug set, so a family
+    // cannot borrow an entry from a neighbouring cluster to look complete.
+    checkPrimer(c.primer, cw, new Set((c.entries ?? []).map((e) => e.slug)));
     for (const e of c.entries ?? []) {
       const ew = `${c.slug}/${e.slug}`;
       // A slug reused across clusters would make ENTRY_BY_SLUG lose one silently.
@@ -470,6 +705,24 @@ function main() {
         const i = codex.clusters.findIndex((c) => c.slug === data.slug);
         if (i >= 0) codex.clusters[i] = data; else codex.clusters.push(data);
         console.log(`  + ${path.basename(f)}: cluster "${data.slug}" with ${data.entries.length} entr(ies)`);
+      } else if (typeof data.slug === "string" && data.primer) {
+        /**
+         * A PRIMER-ONLY file: `{slug, primer}`, no entries.
+         *
+         * Primers are authored separately from entries because they are written
+         * LAST — a primer's families partition entries that must already exist,
+         * and its figure has to be one an entry below it actually states. Merging
+         * a primer onto an existing cluster rather than replacing the cluster is
+         * what makes that ordering safe: the entries are never in the primer
+         * author's hands, so a batch cannot drop one.
+         */
+        const target = codex.clusters.find((c) => c.slug === data.slug);
+        if (!target) {
+          bad(`${f}: primer for unknown cluster "${data.slug}" — merge its entries first`);
+          continue;
+        }
+        target.primer = data.primer;
+        console.log(`  + ${path.basename(f)}: primer → cluster "${data.slug}" (${data.primer.families?.length ?? 0} famil(ies))`);
       } else if (Array.isArray(data.entries)) {
         /**
          * A MICRO-BATCH: entries with no cluster of their own.
@@ -498,7 +751,7 @@ function main() {
         }
         console.log(`  + ${path.basename(f)}: ${data.entries.length} entr(ies) → cluster "${cluster.slug}"`);
       } else {
-        bad(`${f}: not a cluster ({slug,title,tagline,entries}), a micro-batch ({entries}), nor architectures ({architectures})`);
+        bad(`${f}: not a cluster ({slug,title,tagline,entries}), a primer ({slug,primer}), a micro-batch ({entries}), nor architectures ({architectures})`);
       }
     }
   }
@@ -525,7 +778,12 @@ function main() {
   if (check) { console.log("✓ shipped codex is valid"); return; }
   if (dry) { console.log("✓ dry run — nothing written."); return; }
 
-  fs.writeFileSync(CODEX, JSON.stringify(codex), "utf8");
+  // Indented, matching what is already committed and what merge-checks.cjs and
+  // merge-domain.cjs both do. Minifying saves nothing that matters — Next inlines
+  // and compresses this at build time — and it costs the ability to review a
+  // content change: the primer pass rewrote the file as ONE 846KB line, which
+  // renders every future diff on the Codex unreadable.
+  fs.writeFileSync(CODEX, JSON.stringify(codex, null, 1) + "\n", "utf8");
   console.log(`✓ wrote src/content/data/codex.json`);
 }
 
