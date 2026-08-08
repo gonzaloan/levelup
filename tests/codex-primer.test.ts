@@ -246,6 +246,64 @@ describe("an acronym the Codex leans on is expanded somewhere in it", () => {
   });
 });
 
+describe("one model's documented limit has one value across the Codex", () => {
+  // Found by attacking the primers' figures and landing on a defect in the ENTRIES:
+  // `fixed-size-chunking` cited text-embedding-3-small's input limit as 8,191 tokens
+  // and `embedding-vector-geometry` said 8192, in three of its own fields. Each entry
+  // was internally consistent and each cluster's primer agreed with its own cluster,
+  // so every existing gate passed — the disagreement only existed BETWEEN clusters,
+  // which is precisely where nothing was looking. OpenAI documents 8191, which is
+  // also what that entry's own `source` page states, so 8192 was simply wrong.
+  //
+  // Scoped to a figure that is a NAMED MODEL'S DOCUMENTED CONSTANT, because those are
+  // the only ones that must agree everywhere. A number that legitimately differs by
+  // context (a chunk size, a latency, an engine's default) would make this rule fire
+  // on correct content — 8192 still appears three times in the Codex for jina-v2's
+  // window, Bedrock's maxTokens ceiling and vLLM's max_num_batched_tokens, and all
+  // three are right.
+  const CONSTANTS: { model: RegExp; wrong: RegExp; right: string }[] = [
+    { model: /text-embedding-3/, wrong: /8192/, right: "8,191 / 8.191" },
+  ];
+
+  const entries = CLUSTERS.flatMap((c) => c.entries.map((e) => ({ cluster: c.slug, e })));
+
+  /**
+   * Every authored string inside a value, at any depth.
+   *
+   * The first version of this helper searched `JSON.stringify(entry)` with a
+   * `[^"]{0,80}` window around the figure, and it was BLIND — it passed with the
+   * real defect restored. A quote-excluding window cannot cross the `"` that
+   * separates two JSON fields, so the model name (in one field) and the wrong
+   * figure (in another field of the same entry) never landed in one run: 0 of 14
+   * candidate runs contained both. The regex also required `\d{4}`, which does not
+   * match the CORRECT form `8,191` at all, so the pattern was wrong twice over.
+   *
+   * Walking the object and testing each leaf string keeps the unit the same as the
+   * unit an author writes in: one field, one claim.
+   */
+  function strings(value: unknown, out: string[] = []): string[] {
+    if (typeof value === "string") out.push(value);
+    else if (Array.isArray(value)) for (const v of value) strings(v, out);
+    else if (value && typeof value === "object") for (const v of Object.values(value)) strings(v, out);
+    return out;
+  }
+
+  it.each(CONSTANTS.map((c) => [c.model.source, c] as const))(
+    "%s states one input limit everywhere",
+    (_name, spec) => {
+      const offenders = entries
+        .flatMap(({ cluster, e }) =>
+          strings(e)
+            // A field only makes the claim if it names the model AND states the
+            // wrong figure. Both in one field, which is the unit of an assertion.
+            .filter((s) => spec.model.test(s) && spec.wrong.test(s))
+            .map(() => `${cluster}/${e.slug}`)
+        );
+      expect([...new Set(offenders)], `should read ${spec.right}`).toEqual([]);
+    }
+  );
+});
+
 describe("the primer does not restate an entry", () => {
   // Contract rule 8, as the mechanically checkable half: a primer field that
   // duplicates an entry's definition verbatim is the level below wearing the
