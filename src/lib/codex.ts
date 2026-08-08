@@ -294,17 +294,24 @@ export function searchClusters(query: string): CodexClusterHit[] {
       // the only title words under 4 characters are "and", "y", "de" and "e", every
       // one of which this floor already rejects — and a redundant guard reads as a
       // guard that is doing something.
-      // `fold` is CORRECT here even though a sweep of 1,890 corpus words found no
+      // `fold` is CORRECT here even though a sweep of 2,389 corpus words found no
       // query whose result it changes today. Five title words carry accents at 4+
       // characters — Índices, Recuperación, Evaluación, Ingeniería, integración — and
-      // without folding, none of them would stem-match its own folded query
-      // ("Ingeniería".toLowerCase() does not start with "ingenieria"). It is
-      // unreachable only because those five queries each return 1 hit, far under the
-      // threshold, so the exemption is never consulted for them. That is a property of
-      // today's cluster count, not of the rule: a Codex with more clusters would reach
-      // the threshold and silence a Spanish title word. So this stays, unlike the
-      // redundant title-word floor that was removed above — that one was dominated by
-      // another guard in every possible case, this one is dominated by the DATA.
+      // without folding, none would stem-match its own folded query, because
+      // "Ingeniería".toLowerCase() does not start with "ingenieria".
+      //
+      // It is unreachable only because none of those five queries currently crosses
+      // the bound below, and the bound is a PREVALENCE test: it fires when a query
+      // matches more than two thirds of the primers. "recuperacion" already sits at
+      // 5 of 11 — 45% against a 67% ceiling — and retrieval is cross-cutting
+      // vocabulary, so it is the likeliest one to cross. If it did, it would be
+      // silenced and could not exempt itself by its own title.
+      //
+      // So this stays, unlike the title-word floor removed above. That one was
+      // dominated by another guard in EVERY possible input; this one is dominated
+      // only by today's figures. A guard that is right for English and wrong for
+      // Spanish, waiting on the data to grow, is the latent locale defect this pass
+      // already found twice.
       q.length >= 4 &&
       fold(title)
         .split(/[^a-z0-9]+/)
