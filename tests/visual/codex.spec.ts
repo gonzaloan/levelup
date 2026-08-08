@@ -355,3 +355,142 @@ test("the primer renders in the pixel theme too", async ({ page }) => {
   expect(style.left, "the left rail marks the primer as the level above").toBeGreaterThan(style.top);
   await page.screenshot({ path: "test-results/codex-primer-pixel.png", fullPage: true });
 });
+
+// ── The primer's two access surfaces ──────────────────────────────────────
+//
+// The primers shipped invisible to both surfaces a reader actually arrives on: the
+// search box, which indexed only entry fields (typing "context engineering" returned
+// ZERO results from a reference that had just defined it), and the reading path,
+// which is the front-to-back reader they were written for.
+//
+// These are Playwright rather than vitest because both are client state — search
+// results, mode switches, a <details>, and a chip whose target only exists after a
+// navigation. Source-reading cannot see any of it.
+
+test("searching a cluster's own name returns the cluster, with its primer", async ({ page }) => {
+  await page.goto("/en/codex/");
+  await page.locator("#cx-q").fill("context engineering");
+
+  const hit = page.locator(".cx-clusterhit");
+  await expect(hit).toHaveCount(1);
+  // The orientation itself, not just a title row — that is the point of the change.
+  await expect(hit.locator(".cx-primer-def")).toBeVisible();
+  await expect(hit.locator(".cx-primer-axis")).toBeVisible();
+  await expect(hit.locator(".cx-family").first()).toBeVisible();
+
+  // A cluster answer must be distinguishable from a technique answer.
+  await page.locator("#cx-q").fill("hnsw");
+  await expect(page.locator(".cx-hit .cx-entry").first()).toBeVisible();
+});
+
+test("a family chip from a SEARCH result lands on a real entry", async ({ page }) => {
+  // The regression this guards: in search mode the cluster's entries are not
+  // rendered, so the chip's `#e-<slug>` anchor resolved to nothing — measured 0
+  // targets on the page. Same class as the 80-of-92 dead cross-links this module
+  // shipped once: the link worked and the destination did not.
+  await page.goto("/en/codex/");
+  await page.locator("#cx-q").fill("context engineering");
+
+  const chip = page.locator(".cx-clusterhit .cx-famchip").first();
+  const href = (await chip.getAttribute("href"))!;
+  expect(href).toMatch(/^#e-/);
+  // Precondition: the target genuinely is NOT on the page yet. If this ever stops
+  // being true the test still passes, but it would no longer be testing anything.
+  await expect(page.locator(href)).toHaveCount(0);
+
+  await chip.click();
+  // Left search, opened the cluster, and scrolled to the entry now that it exists.
+  await expect(page.locator(".cx-clusterhit")).toHaveCount(0);
+  await expect(page.locator(href)).toBeVisible();
+  await expect(page.locator(`${href} .cx-def`)).toBeVisible();
+});
+
+test("the reading path defines every family before the climb", async ({ page }) => {
+  await page.goto("/en/codex/");
+  await page.getByRole("tab", { name: /reading path|ruta de lectura/i }).click();
+
+  const fold = page.locator(".cx-path-families");
+  await expect(fold).toBeVisible();
+  // Closed by default: the spine must stay the first thing on screen.
+  await expect(fold.locator(".cx-path-deflist")).toBeHidden();
+  await fold.locator("summary").click();
+
+  const rows = fold.locator(".cx-path-deflist > div");
+  await expect(rows).toHaveCount(11);
+  // Every line is a real sentence, not an empty or truncated fragment.
+  for (const text of await fold.locator(".cx-path-deflist dd").allInnerTexts()) {
+    expect(text.trim().length, `a family definition is too short: "${text}"`).toBeGreaterThan(40);
+    expect(text.trim()).toMatch(/[.!?]$/);
+  }
+
+  // A term takes you into that cluster, in browse, with its primer showing.
+  await fold.locator(".cx-path-defterm").nth(3).click();
+  await expect(page.locator(".cx-primer .cx-primer-def")).toBeVisible();
+  await expect(page.locator(".cx-entry").first()).toBeVisible();
+});
+
+test("cluster search works in Spanish and in the pixel theme", async ({ page }) => {
+  await page.goto("/es/codex/");
+  await page.locator("#cx-q").fill("ingenieria de contexto");   // unaccented on purpose
+  const hit = page.locator(".cx-clusterhit");
+  await expect(hit).toHaveCount(1);
+  await expect(hit.locator(".cx-primer-def")).toBeVisible();
+
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "pixel"));
+  await expect(hit.locator(".cx-primer")).toBeVisible();
+  const radius = await hit.locator(".cx-primer").evaluate((el) => getComputedStyle(el).borderRadius);
+  expect(radius).toBe("0px");
+});
+
+// ── Landing, not just state ───────────────────────────────────────────────
+//
+// Two defects an access review found in the primer's own navigation, both of the
+// same shape: the state changed and the reader did not move. They are Playwright
+// because scroll position is the assertion, and nothing else can see it.
+
+test("clicking the SAME family chip twice still lands both times", async ({ page }) => {
+  // The first version set `location.hash` and relied on `hashchange` to scroll.
+  // Assigning a hash the value it already holds emits no event, so the second click
+  // switched cluster and never scrolled — measured with the target 1212px below the
+  // fold at 1280px and 1791px at 360px, viewport parked mid-primer.
+  await page.goto("/en/codex/");
+  const search = async () => {
+    await page.locator("#cx-q").fill("context engineering");
+    await expect(page.locator(".cx-clusterhit")).toHaveCount(1);
+  };
+
+  await search();
+  const chip = page.locator(".cx-clusterhit .cx-famchip").first();
+  const href = (await chip.getAttribute("href"))!;
+  await chip.click();
+  await expect(page.locator(href)).toBeInViewport();
+
+  // Back to search and click the very same chip: the hash already points there.
+  await search();
+  await page.locator(".cx-clusterhit .cx-famchip").first().click();
+  await expect(page.locator(href), "the second click must land too").toBeInViewport();
+});
+
+test("'Open this cluster' puts the cluster's heading on screen", async ({ page }) => {
+  // The button sits below a full primer, so changing cluster without scrolling left
+  // the heading 693px above the viewport at 1280px and 1558px at 360px. A button
+  // that promises to open something has to show you the thing it opened.
+  for (const width of [1280, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/en/codex/");
+    await page.locator("#cx-q").fill("security");
+    await page.locator(".cx-openbtn").first().click();
+    const title = page.locator(".cx-cluster .cx-cluster-title");
+    await expect(title, `heading off-screen at ${width}px`).toBeInViewport();
+  }
+});
+
+test("a path-mode glossary term lands on its cluster heading", async ({ page }) => {
+  // Same rule, same fix, different caller — it sits below the spine's intro.
+  await page.goto("/en/codex/");
+  await page.getByRole("tab", { name: /reading path|ruta de lectura/i }).click();
+  await page.locator(".cx-path-families summary").click();
+  await page.locator(".cx-path-defterm").nth(5).click();
+  await expect(page.locator(".cx-cluster .cx-cluster-title")).toBeInViewport();
+  await expect(page.locator(".cx-primer .cx-primer-def")).toBeVisible();
+});

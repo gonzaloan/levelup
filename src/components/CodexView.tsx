@@ -23,11 +23,11 @@
  * horizontal scrolling: a wide roadmap on a desktop canvas guarantees the right
  * half is never looked at, and on a 390px phone it is simply unusable.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { t, type Locale } from "@/i18n/config";
 import {
   CLUSTERS, ENTRIES, ENTRY_BY_SLUG, CLUSTER_BY_SLUG, CLUSTER_OF,
-  codexLayers, searchCodex, totalEntries,
+  codexLayers, searchCodex, searchClusters, totalEntries,
 } from "@/lib/codex";
 import { load, markCodexRead, type Progress } from "@/lib/store";
 import type { CodexPathStep } from "@/lib/types";
@@ -57,6 +57,13 @@ const COPY = {
   searchHint: { en: "Type a term — accents optional", es: "Escribe un término; los acentos son opcionales" },
   noHits: { en: "Nothing matches that yet.", es: "Todavía nada coincide con eso." },
   clusters: { en: "Clusters", es: "Grupos" },
+  /** Singular, for the common case of one cluster matching a family name. */
+  cluster: { en: "Cluster", es: "Grupo" },
+  openCluster: { en: "Open this cluster", es: "Abrir este grupo" },
+  familiesDefined: {
+    en: "what each family is, in one line",
+    es: "qué es cada familia, en una línea",
+  },
   entries: { en: "entries", es: "entradas" },
   /** Singular. "1 entries" shipped on the deepest band, which has exactly one. */
   entry: { en: "entry", es: "entrada" },
@@ -80,6 +87,22 @@ const COPY = {
     es: "El Códice todavía no tiene entradas.",
   },
 } as const;
+
+/**
+ * Sentence 1 of an authored field.
+ *
+ * The primer contract's rule 1 guarantees `whatItIs` opens with the definition, so
+ * the first sentence IS the umbrella defined — deriving it beats authoring a second
+ * short version that could drift from the long one.
+ *
+ * Splits on a period followed by a space and a capital, so a decimal ("about 0.9
+ * recall") or an abbreviation does not cut the sentence in half. Falls back to the
+ * whole string when there is only one sentence.
+ */
+function firstSentence(text: string): string {
+  const m = /^(.+?[.!?])(?:\s+[A-ZÁÉÍÓÚÑ¿¡])/.exec(text.trim());
+  return m ? m[1] : text.trim();
+}
 
 /**
  * Group a band's entries by cluster, preserving the authored cluster order.
@@ -134,26 +157,67 @@ export function CodexView({ locale }: { locale: Locale }) {
    * The scroll is deferred a frame: the cluster has to render before its anchor
    * exists to scroll to.
    */
+  /**
+   * Open the cluster an entry lives in and scroll to it.
+   *
+   * Extracted from the `hashchange` listener because a CLICK must not depend on the
+   * event firing, and it does not: assigning `location.hash` a value it already
+   * holds is a no-op, so no `hashchange` is emitted. A reader who clicked the same
+   * family chip twice, or who arrived on `#e-<slug>` from a lesson cross-link and
+   * then searched, got the mode and cluster switched and no scroll — measured with
+   * the target 1212px below the fold at 1280px and 1791px at 360px, viewport parked
+   * mid-primer. The link worked and the destination did not, which is the class this
+   * module's own comments cite (80 of 92 cross-links, once).
+   *
+   * So callers invoke this directly and the hash is only a RECORD of where we went,
+   * written with `replaceState` so it never re-enters through the listener.
+   */
+  const goToEntry = useCallback((slug: string) => {
+    if (!slug || !ENTRY_BY_SLUG.has(slug)) return;
+    const cluster = CLUSTER_OF.get(slug);
+    if (!cluster) return;
+    setMode("browse");
+    setQuery("");            // a live search filter would hide the target
+    setOpenCluster(cluster);
+    // Deferred a frame: the cluster has to render before its anchor exists.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`e-${slug}`);
+      if (!el) return;
+      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    });
+  }, []);
+
+  /**
+   * Open a cluster and land the reader on its heading.
+   *
+   * The scroll is the point. Both callers are BELOW the fold — the "Open this
+   * cluster" button sits under a full primer in a search result, and a path-mode
+   * glossary term sits under the spine's intro — so setting the cluster alone left
+   * the reader mid-primer with the destination's title off-screen above them
+   * (measured 693px above at 1280px, 1558px at 360px). Changing state is not
+   * arriving.
+   */
+  const openClusterAt = useCallback((slug: string) => {
+    setQuery("");
+    setMode("browse");
+    setOpenCluster(slug);
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLElement>(".cx-cluster .cx-cluster-title");
+      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+      el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+    });
+  }, []);
+
   useEffect(() => {
     const go = () => {
       const slug = decodeURIComponent(window.location.hash.replace(/^#e-/, ""));
-      if (!slug || !ENTRY_BY_SLUG.has(slug)) return;
-      const cluster = CLUSTER_OF.get(slug);
-      if (!cluster) return;
-      setMode("browse");
-      setQuery("");            // a live search filter would hide the target
-      setOpenCluster(cluster);
-      requestAnimationFrame(() => {
-        const el = document.getElementById(`e-${slug}`);
-        if (!el) return;
-        const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-        el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
-      });
+      goToEntry(slug);
     };
     go();
     window.addEventListener("hashchange", go);
     return () => window.removeEventListener("hashchange", go);
-  }, []);
+  }, [goToEntry]);
 
   // "/" focuses search — the reference-tool convention. Ignored while the caret
   // is already in a field, so typing a slash into the query still works.
@@ -170,6 +234,8 @@ export function CodexView({ locale }: { locale: Locale }) {
   }, []);
 
   const hits = useMemo(() => searchCodex(query), [query]);
+  /** Clusters whose primer matches — the broader answer, rendered above the entries. */
+  const clusterHits = useMemo(() => searchClusters(query), [query]);
   const layers = useMemo(() => codexLayers(), []);
   const termOf = (slug: string) => {
     const e = ENTRY_BY_SLUG.get(slug);
@@ -221,11 +287,65 @@ export function CodexView({ locale }: { locale: Locale }) {
 
       {query.trim().length >= 2 ? (
         <div className="cx-results">
-          {hits.length === 0 ? (
+          {hits.length === 0 && clusterHits.length === 0 ? (
             <p className="prose">{t(COPY.noHits, locale)}</p>
           ) : (
             <>
+              {/* CLUSTER hits first, and visually distinct from entry hits.
+                  A reader who typed a family name ("context engineering", "agent
+                  pattern") wants the orientation, not the twelve techniques under
+                  it — and before this existed they got "Nothing matches that yet",
+                  because the search indexed only entry fields. First because it is
+                  the broader answer: if the query named a family, the family is
+                  what they asked for and the entries are the detail. */}
+              {clusterHits.length > 0 && (
+                <div className="cx-clusterhits">
+                  <p className="eyebrow">
+                    {clusterHits.length} {t(clusterHits.length === 1 ? COPY.cluster : COPY.clusters, locale).toLowerCase()}
+                  </p>
+                  {clusterHits.map(({ cluster }) => (
+                    <section key={cluster.slug} className="cx-clusterhit">
+                      <h3 className="cx-cluster-title">{t(cluster.title, locale)}</h3>
+                      <p className="cx-cluster-tagline">{t(cluster.tagline, locale)}</p>
+                      {cluster.primer && (
+                        <CodexPrimer
+                          locale={locale}
+                          primer={cluster.primer}
+                          resolveTerm={termOf}
+                          /* In SEARCH mode the cluster's entries are not rendered, so
+                             `#e-<slug>` resolves to nothing (measured: 0 targets). So
+                             the chip calls the navigation DIRECTLY rather than setting
+                             the hash and hoping `hashchange` fires — it does not fire
+                             when the hash already holds that value, which left a
+                             second click on the same chip parked mid-primer with the
+                             target 1212px below the fold. The hash is then only a
+                             record of where we went. */
+                          onChipClick={(slug) => {
+                            goToEntry(slug);
+                            history.replaceState(null, "", `#e-${slug}`);
+                          }}
+                        />
+                      )}
+                      {/* Into the cluster itself, since the chips above are
+                          in-page anchors that only resolve in browse mode. */}
+                      <button
+                        className="cx-openbtn"
+                        /* Changing state is not arriving. This button sits below a
+                           full primer, so switching cluster without scrolling left
+                           the reader at scrollY ~1200 with the new cluster's heading
+                           693px ABOVE the viewport — the button promises "open this
+                           cluster" and the destination's title was off-screen. */
+                        onClick={() => { openClusterAt(cluster.slug); }}
+                      >
+                        {t(COPY.openCluster, locale)} · {cluster.entries.length} {t(COPY.entries, locale)}
+                      </button>
+                    </section>
+                  ))}
+                </div>
+              )}
+              {hits.length > 0 && (
               <p className="eyebrow">{hits.length} {t(COPY.entries, locale)}</p>
+              )}
               {hits.map(({ entry, clusterSlug }) => (
                 <div key={entry.slug} className="cx-hit">
                   <p className="eyebrow cx-hit-cluster">
@@ -312,7 +432,14 @@ export function CodexView({ locale }: { locale: Locale }) {
                         (the schema stays additive); merge-codex.cjs is what
                         guarantees every shipped cluster has one. */}
                     {c.primer && (
-                      <CodexPrimer locale={locale} primer={c.primer} resolveTerm={termOf} />
+                      <CodexPrimer
+                        locale={locale}
+                        primer={c.primer}
+                        resolveTerm={termOf}
+                        /* Browse mode renders this cluster's entries, so the in-page
+                           anchor is real and the native jump is the right behaviour. */
+                        onChipClick={() => "anchor"}
+                      />
                     )}
                     <div className="cx-entries">
                       {c.entries.map((e) => (
@@ -337,6 +464,46 @@ export function CodexView({ locale }: { locale: Locale }) {
           {mode === "path" && (
             <section className="cx-path">
               <p className="prose cx-path-intro">{t(COPY.pathIntro, locale)}</p>
+
+              {/* THE FAMILIES, DEFINED, BEFORE THE CLIMB.
+                  This mode is for reading the Codex front to back, which is exactly
+                  the reader the primers were written for — and they were missing
+                  here, visible only in browse. Repeating a full primer per band
+                  would be noise: a cluster reappears in several bands, and the
+                  spine's own point is that depth is the vertical axis.
+                  So the path gets the ONE line each primer opens with. A climber who
+                  meets `late-chunking` in layer 2 has already been told what chunking
+                  is, and the band groups below name the cluster, so the two connect.
+                  A native <details>, closed by default, because a reader returning to
+                  the path mid-climb does not need the glossary again — and because
+                  the spine itself must stay the first thing on screen. */}
+              <details className="cx-path-families">
+                <summary>
+                  {CLUSTERS.length} {t(COPY.clusters, locale).toLowerCase()} · {t(COPY.familiesDefined, locale)}
+                </summary>
+                <dl className="cx-path-deflist">
+                  {CLUSTERS.filter((c) => c.primer).map((c) => (
+                    <div key={c.slug}>
+                      <dt>
+                        <button
+                          className="cx-path-defterm"
+                          /* Same landing rule as the search button: this sits below
+                             the spine's intro, so switching cluster without a scroll
+                             leaves the destination heading above the viewport. */
+                          onClick={() => { openClusterAt(c.slug); }}
+                        >
+                          {t(c.title, locale)}
+                        </button>
+                      </dt>
+                      {/* The umbrella definition only — sentence 1 of `whatItIs`,
+                          which the contract guarantees IS the definition. Split on
+                          the sentence end so this cannot drift from the field. */}
+                      <dd>{firstSentence(t(c.primer!.whatItIs, locale))}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+
               {/* Bottom-up: layer 0 (nothing required) renders LAST so it sits at
                   the foot of the spine, which is where "start here" belongs in a
                   climb metaphor the rest of the app already uses. */}

@@ -20,7 +20,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { CLUSTERS } from "../src/lib/codex";
+import { CLUSTERS, searchCodex, searchClusters } from "../src/lib/codex";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p: string) => readFileSync(path.join(ROOT, p), "utf8");
@@ -209,6 +209,324 @@ describe("every howToChoose step is a question in both locales", () => {
       expect(s.en, `${slug}: EN step is not a question`).toMatch(/\?/);
       expect(s.es, `${slug}: ES step is not a question`).toMatch(/\?/);
     }
+  });
+});
+
+describe("a family chip never points at an anchor that is not there", () => {
+  /**
+   * `CodexPrimer` renders each chip as an in-page `#e-<slug>` anchor, which is only
+   * real where that cluster's entries are rendered. Putting the primer into SEARCH
+   * results broke that silently: measured 0 targets on the page for
+   * `#e-context-window-as-budget`. It is the same defect this module shipped once
+   * before — 80 of 92 cross-links pointed at absent anchors, the link "worked" and
+   * the destination did not.
+   *
+   * The structural fix is that `onChipClick` is a REQUIRED prop: a caller that
+   * cannot guarantee the anchor exists must say what happens instead, so forgetting
+   * is a type error rather than a dead link. These assertions guard that the seam
+   * stays required and that both call sites keep answering — vitest is node-only
+   * here, so this reads source; Playwright drives the actual click.
+   */
+  const PRIMER_SRC = read("src/components/CodexPrimer.tsx");
+
+  it("the chip behaviour is a required prop, not an optional one", () => {
+    // `onChipClick?:` would let a future call site fall back to the dead anchor.
+    expect(PRIMER_SRC).toMatch(/onChipClick:\s*\(slug: string\)\s*=>/);
+    expect(PRIMER_SRC, "an optional prop reinstates the defect").not.toMatch(/onChipClick\?:/);
+  });
+
+  it("prevents the native jump unless the caller asks for it", () => {
+    expect(PRIMER_SRC).toMatch(/onChipClick\(slug\)\s*!==\s*"anchor"[\s\S]{0,40}preventDefault/);
+  });
+
+  it("every call site passes it, and the search one does not claim the anchor", () => {
+    const sites = [...VIEW.matchAll(/<CodexPrimer[\s\S]*?\/>/g)].map((m) => m[0]);
+    expect(sites.length, "expected the browse and search call sites").toBe(2);
+    for (const s of sites) expect(s, `a call site omits onChipClick:\n${s}`).toMatch(/onChipClick=/);
+    // Exactly one may return "anchor" — browse, which renders the entries. The other
+    // must navigate instead, which is what setMode/setOpenCluster do.
+    const anchoring = sites.filter((s) => /"anchor"/.test(s));
+    expect(anchoring.length, "only browse mode may use the in-page anchor").toBe(1);
+    // The search site must NAVIGATE. Asserted as "it calls the shared navigation
+    // helper", not as a list of the state setters: the first version of this matched
+    // `setOpenCluster` inline and broke when the fix correctly moved that into
+    // `goToEntry` — a test coupled to the implementation it was meant to outlive.
+    const navigating = sites.find((s) => !/"anchor"/.test(s))!;
+    expect(navigating, "the search call site must navigate to the entry").toMatch(/goToEntry\(/);
+    // And `goToEntry` must not depend on a hashchange event to do the scrolling,
+    // because assigning a hash its current value emits none. It scrolls directly and
+    // records the location with replaceState.
+    expect(VIEW, "goToEntry must scroll on its own").toMatch(/goToEntry[\s\S]{0,900}scrollIntoView/);
+    expect(navigating, "the hash is a record, written without re-entering the listener")
+      .toMatch(/history\.replaceState/);
+    expect(navigating, "assigning location.hash reinstates the missed-event defect")
+      .not.toMatch(/location\.hash\s*=/);
+  });
+});
+
+describe("a cluster's own name finds it in the Codex's own search", () => {
+  /**
+   * The defect this guards is the primer layer repeating, one level up, the very
+   * failure it was built to fix.
+   *
+   * `searchCodex` indexes `term`, `definition` and `whenToUse` of ENTRIES. So the
+   * primers — 11 sections whose whole job is to define the umbrella term — shipped
+   * INVISIBLE to the search box. Measured on the shipped data before `searchClusters`
+   * existed: "context engineering", "agent pattern" and "vector index" each returned
+   * ZERO results. A reader typed a cluster's own name and the reference that had just
+   * defined it answered "Nothing matches that yet".
+   *
+   * That is worse than it sounds, because `CodexView` puts the search box ABOVE the
+   * mode switch on the stated grounds that "I already know the word I want" is the
+   * most common arrival. The orientation went into the one place the most common
+   * arrival could not reach.
+   */
+  it.each(CLUSTERS.map((c) => [c.slug, c.title.en, c.title.es] as const))(
+    "%s is findable by its own title",
+    (slug, en, es) => {
+      for (const [locale, title] of [["en", en], ["es", es]] as const) {
+        const hits = searchClusters(title);
+        expect(
+          hits.map((h) => h.cluster.slug),
+          `searching the ${locale} title "${title}" must surface ${slug}`
+        ).toContain(slug);
+      }
+    }
+  );
+
+  it("finds a cluster by a term only its PRIMER contains", () => {
+    // The point of indexing the primer rather than just the title. Each probe is a
+    // phrase that appears in a primer's whatItIs/axisOfChoice and is NOT the title,
+    // so a title-only index would fail every one of them.
+    const PROBES: [string, string][] = [
+      ["retrieval-augmented generation", "evaluation"],
+      ["tools and credentials", "security"],
+    ];
+    for (const [q, slug] of PROBES) {
+      // Assert the probe actually tests what it claims. The first version of this
+      // used "untrusted content", which lives in an ENTRY rather than in the
+      // security primer — so it was testing the entry index while claiming to test
+      // the primer one, and failed for the right reason on a wrong fixture.
+      const cluster = CLUSTERS.find((c) => c.slug === slug)!;
+      const p = cluster.primer!;
+      const inPrimer = [p.whatItIs.en, p.axisOfChoice.en].join(" ").toLowerCase().includes(q.toLowerCase());
+      expect(inPrimer, `"${q}" is not in ${slug}'s primer — the probe is wrong, not the code`).toBe(true);
+      const inTitle = CLUSTERS.some((c) => `${c.title.en} ${c.title.es}`.toLowerCase().includes(q.toLowerCase()));
+      expect(inTitle, `"${q}" is in a title, so it does not test the primer index`).toBe(false);
+      expect(
+        searchClusters(q).map((h) => h.cluster.slug),
+        `"${q}" appears in ${slug}'s primer and must find it`
+      ).toContain(slug);
+    }
+  });
+
+  it("ranks a title match above a primer mention", () => {
+    /**
+     * The fixture must be a query where the tiers genuinely COMPETE.
+     *
+     * The first version used "chunking", which returns exactly ONE hit — no other
+     * cluster's primer contains the word. With one hit, `hits[0]` is the answer
+     * whatever the scores are, so the assertion was vacuous: an adversarial pass
+     * showed it survived every ranking mutation, including ranking titles BELOW
+     * primer mentions and flattening all five tiers to the same number. It was
+     * proving a property of its own arithmetic, which is the exact class CLAUDE.md
+     * records as having shipped here before.
+     *
+     * "agent" is a live fixture: `agent-patterns` matches on title, and three other
+     * clusters match on their primers only.
+     */
+    const hits = searchClusters("agent");
+    expect(hits.length, "the fixture must have competitors or it proves nothing")
+      .toBeGreaterThan(1);
+    expect(hits[0].cluster.slug, "the cluster TITLED agent-patterns must rank first")
+      .toBe("agent-patterns");
+    // And the ordering is by score, not incidental: every later hit scores strictly
+    // lower than the title match, and the list is non-increasing throughout.
+    expect(hits[0].score).toBeGreaterThan(hits[1].score);
+    for (let i = 1; i < hits.length; i++) {
+      expect(hits[i - 1].score, `hits are not sorted by score at index ${i}`)
+        .toBeGreaterThanOrEqual(hits[i].score);
+    }
+  });
+
+  it("ranks EN and ES titles identically", () => {
+    // Spanish is authored here, not translated, so ranking it below English is a
+    // defect. It was one: the index concatenated `title.en + title.es` into a single
+    // haystack, which made the exact-match tier unreachable (you would have had to
+    // type both languages) and capped the ES title at the `includes` tier because it
+    // sits mid-string. Measured before the fix: "Vector indexes" 80, "Índices
+    // vectoriales" 60, for 9 of 11 clusters.
+    for (const c of CLUSTERS) {
+      const en = searchClusters(c.title.en);
+      const es = searchClusters(c.title.es);
+      expect(en[0]?.cluster.slug, `EN title of ${c.slug} must find it`).toBe(c.slug);
+      expect(es[0]?.cluster.slug, `ES title of ${c.slug} must find it`).toBe(c.slug);
+      expect(es[0].score, `${c.slug}: ES title scores below EN`).toBe(en[0].score);
+      // A full title typed exactly is the strongest possible signal.
+      expect(en[0].score, `${c.slug}: an exact title should reach the top tier`).toBe(100);
+    }
+  });
+
+  it("breaks ties by editorial cluster order, never alphabetically", () => {
+    // `searchClusters` documents this, and the claim was unguarded: an adversarial
+    // pass reversed the tie-break, swapped it for localeCompare, and deleted the
+    // .sort() outright — all three survived. CLUSTERS is the reference's table of
+    // contents and that order must survive into the results.
+    const hits = searchClusters("model");
+    const tied = hits.filter((h) => h.score === hits[hits.length - 1].score);
+    expect(tied.length, "need several hits at one score to observe a tie").toBeGreaterThan(2);
+    const order = new Map(CLUSTERS.map((c, i) => [c.slug, i]));
+    const positions = tied.map((h) => order.get(h.cluster.slug)!);
+    expect(positions, "tied hits must follow the authored cluster order")
+      .toEqual([...positions].sort((a, b) => a - b));
+    // And prove it is NOT alphabetical, or the assertion above could pass by luck.
+    const alpha = [...tied].map((h) => h.cluster.slug).sort();
+    expect(tied.map((h) => h.cluster.slug), "the tie-break happens to be alphabetical — pick a better fixture")
+      .not.toEqual(alpha);
+  });
+
+  it("stays quiet on a query that matches nothing", () => {
+    expect(searchClusters("zzzznotathing")).toEqual([]);
+    expect(searchClusters("a"), "under 2 chars returns nothing, like searchCodex").toEqual([]);
+  });
+
+  it("refuses a query that matches most of the reference", () => {
+    // The complementary bound, and the one that was missing: a search answering
+    // everything is as useless as one answering nothing. Measured before the fix,
+    // "the", "and" and "de" each returned ALL 11 clusters, rendering the whole table
+    // of contents above the entry results the reader probably wanted.
+    //
+    // The English and Spanish function words are listed together on purpose: two
+    // earlier versions of this rule each blocked one language's and let the other's
+    // through ("and"/"de" are whole words of real titles; "to"/"se"/"con" are
+    // prefixes of them).
+    for (const q of ["the", "and", "de", "of", "la", "to", "in", "es", "se", "con", "que", "para", "una", "del"]) {
+      expect(searchClusters(q), `"${q}" matches most primers and must be refused`).toEqual([]);
+    }
+    // The rule must not be a blanket cap: a real term that legitimately hits many
+    // clusters still answers, because it NAMES one of them.
+    const many = searchClusters("model");
+    expect(many.length, "a real topic may match many clusters and must survive").toBeGreaterThan(3);
+    expect(many[0].cluster.slug).toBe("model-strategy");
+  });
+
+  it("the over-match bound is symmetric across locales", () => {
+    /**
+     * The defect this guards was introduced BY the bound above, and it reintroduced
+     * the original complaint for one language only: `searchClusters("modelo")`
+     * returned NOTHING while "model" returned its cluster.
+     *
+     * Cause: the exemption was "a title equals the query or starts with it", and 10
+     * of 11 Spanish titles open with a different word than their English pair —
+     * "Model strategy" is "Estrategia de modelos" — because Spanish leads with the
+     * generic noun. So a Spanish content word almost never reached that tier. The
+     * exemption is now a content-word stem match, which is locale-shaped rather than
+     * English-shaped.
+     *
+     * Derived from the shipped titles rather than a hardcoded list, so a new cluster
+     * is covered the day it lands.
+     */
+    for (const c of CLUSTERS) {
+      const words = (s: string) =>
+        s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase()
+          .split(/[^a-z0-9]+/).filter((w) => w.length >= 5);
+      for (const [locale, title] of [["en", c.title.en], ["es", c.title.es]] as const) {
+        for (const w of words(title)) {
+          expect(
+            searchClusters(w).length,
+            `${c.slug}: the ${locale} title word "${w}" returns nothing — the bound is not symmetric`
+          ).toBeGreaterThan(0);
+          // And the singular of a plural title word must work too, which is the exact
+          // case that failed: "modelo" against "modelos".
+          if (w.endsWith("s")) {
+            expect(
+              searchClusters(w.slice(0, -1)).length,
+              `${c.slug}: "${w.slice(0, -1)}" (singular of "${w}") returns nothing`
+            ).toBeGreaterThan(0);
+          }
+        }
+      }
+    }
+  });
+
+  it("scores a title PREFIX above a title substring", () => {
+    /**
+     * The prefix tier, asserted on the SCORE rather than on an ordering.
+     *
+     * A mutation dropping tier 80 to 10 survived every ordering assertion, and the
+     * reason is structural: both of a cluster's titles feed one `Math.max`, so a
+     * query that prefixes the EN title almost always also appears inside the ES one
+     * ("agent" prefixes "Agent patterns" and sits inside "patrones de agentes").
+     * Demoting the prefix tier therefore just falls through to `includes`, and the
+     * cluster keeps its position. The tier is real and useful — it is what puts a
+     * cluster you named ahead of one that merely contains the word — but it is only
+     * observable as a value, so that is what this checks.
+     */
+    // "ranking" is inside `retrieval-ranking`'s titles but prefixes neither, so it
+    // pins the substring tier; "retrieval" prefixes the EN title, so it pins prefix.
+    const substring = searchClusters("ranking").find((h) => h.cluster.slug === "retrieval-ranking")!;
+    const prefix = searchClusters("retrieval").find((h) => h.cluster.slug === "retrieval-ranking")!;
+    expect(substring, "fixture gone: retrieval-ranking must match both queries").toBeTruthy();
+    expect(prefix).toBeTruthy();
+    expect(prefix.score, "a title the query PREFIXES must outscore one that merely contains it")
+      .toBeGreaterThan(substring.score);
+    // And an exact title beats both, which the tier ladder promises.
+    const exact = searchClusters("Retrieval and ranking")[0];
+    expect(exact.cluster.slug).toBe("retrieval-ranking");
+    expect(exact.score).toBeGreaterThan(prefix.score);
+  });
+
+  it("sorts by score before breaking ties", () => {
+    // Deleting the `b.score - a.score` clause survived the tie-break assertions,
+    // because those only inspect hits that are already tied. This pins the primary
+    // key: a lower-scoring hit must never precede a higher-scoring one.
+    for (const q of ["agent", "model", "retrieval", "context"]) {
+      const scores = searchClusters(q).map((h) => h.score);
+      expect(scores.length, `"${q}" needs several hits to observe the ordering`).toBeGreaterThan(1);
+      expect(scores, `"${q}" is not ordered by score`).toEqual([...scores].sort((a, b) => b - a));
+      // And the set genuinely contains more than one score, or the check is vacuous.
+      expect(new Set(scores).size, `"${q}" is a single-tier fixture and proves nothing`)
+        .toBeGreaterThan(1);
+    }
+  });
+
+  it("exempts a query LONGER than the title word, not just shorter", () => {
+    // The stem match runs both directions and only one of them was covered: a
+    // mutation reducing it to `w.startsWith(q)` survived every other assertion.
+    // Both directions carry real queries — "modelo" is shorter than the title's
+    // "modelos", and "vectores" is longer than the title's "vector", which is the
+    // Spanish plural of an English-singular title word.
+    // Each fixture must have hits to spare, or the exemption is never consulted and
+    // the assertion tests nothing. "contextos" was the first attempt and is wrong for
+    // that reason: no text in the Codex contains that string, so it returns [] whether
+    // the exemption fires or not — a fixture that fails for a reason unrelated to the
+    // rule it is aimed at.
+    for (const q of ["vectores", "agentes"]) {
+      expect(
+        searchClusters(q).length,
+        `"${q}" is a longer form of a title word and must still name its cluster`
+      ).toBeGreaterThan(0);
+    }
+    // And the direction must not be a free-for-all: a longer query that merely SHARES
+    // a prefix with a title word is not that cluster's name.
+    expect(searchClusters("modelling-a-thing"), "a long unrelated query must not exempt").toEqual([]);
+  });
+
+  it("derives the over-match threshold from the cluster count", () => {
+    // CLAUDE.md: "derive counts from the spine, never hardcode them." An adversarial
+    // pass found that replacing `(CLUSTERS.length * 2) / 3` with the literal 7.34
+    // broke no test, so the derivation had no guard.
+    const src = read("src/lib/codex.ts");
+    expect(src, "the bound must scale with the cluster count").toMatch(
+      /hits\.length\s*>\s*\(CLUSTERS\.length\s*\*\s*2\)\s*\/\s*3/
+    );
+  });
+
+  it("does not replace entry search — both surfaces still answer", () => {
+    // `searchClusters` is additive. An entry-level query must still reach entries,
+    // or fixing the cluster gap would have broken the case that already worked.
+    const entryHits = searchCodex("hnsw");
+    expect(entryHits.map((h) => h.entry.slug)).toContain("hnsw-index");
   });
 });
 

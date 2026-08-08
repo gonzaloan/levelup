@@ -169,3 +169,143 @@ export function searchCodex(query: string): CodexHit[] {
   }
   return hits.sort((a, b) => b.score - a.score || a.entry.slug.localeCompare(b.entry.slug));
 }
+
+/**
+ * A cluster whose PRIMER matches the query — a different kind of answer.
+ *
+ * Why this exists as its own function and its own type rather than more rows in
+ * `searchCodex`: the two answer different questions. An entry hit says "here is the
+ * technique you named"; a cluster hit says "here is the family you named, what it
+ * is, and the axis you are choosing along". Merging them into one ranked list would
+ * put a 250-word orientation section in a row shaped for a technique, and the
+ * reader could not tell which kind of thing they were looking at.
+ *
+ * It exists at all because the primers shipped INVISIBLE to the search box, which
+ * is the same defect one level up from the one they were written to fix. Measured
+ * on the shipped data before this: "context engineering", "agent pattern" and
+ * "vector index" each returned ZERO results, because `searchCodex` indexes only
+ * `term`, `definition` and `whenToUse` of entries — so typing a cluster's own name
+ * got "Nothing matches that yet" from a reference that had just defined it. And the
+ * search box sits ABOVE the mode switch precisely because "I already know the word
+ * I want" is the most common arrival.
+ */
+export interface CodexClusterHit { cluster: CodexCluster; score: number; }
+
+export function searchClusters(query: string): CodexClusterHit[] {
+  const q = fold(query.trim());
+  if (q.length < 2) return [];
+  const hits: CodexClusterHit[] = [];
+  for (const c of CLUSTERS) {
+    /**
+     * Each title scored SEPARATELY, not as one concatenated string.
+     *
+     * The first version folded `${title.en} ${title.es}` into a single haystack,
+     * which had two consequences an adversarial pass measured: the `=== q` tier was
+     * unreachable (you would have had to type both languages at once — "vector
+     * indexes indices vectoriales"), and the Spanish title was systematically
+     * demoted, because it sits mid-string so it could only ever reach the `includes`
+     * tier. Measured: "Vector indexes" scored 80, "Índices vectoriales" scored 60,
+     * for 9 of 11 clusters. In a product where Spanish is authored rather than
+     * translated, ranking it below English is a defect, not a detail.
+     */
+    const titles = [fold(c.title.en), fold(c.title.es)];
+    // The primer's two orienting fields. `whatItIs` names the umbrella, and
+    // `axisOfChoice` names the dimension — between them they hold the vocabulary a
+    // reader who does not know the term would actually type. The families' labels
+    // come along because a reader may know a family name and not the cluster's.
+    const p = c.primer;
+    const primer = p
+      ? fold([
+          p.whatItIs.en, p.whatItIs.es,
+          p.axisOfChoice.en, p.axisOfChoice.es,
+          ...p.families.flatMap((f) => [f.label.en, f.label.es]),
+        ].join(" "))
+      : "";
+    // Also the tagline, which is what the cluster said before primers existed.
+    const tagline = fold(`${c.tagline.en} ${c.tagline.es}`);
+
+    // Best tier any single title reaches, so EN and ES are ranked identically.
+    let score = 0;
+    for (const title of titles) {
+      if (title === q) score = Math.max(score, 100);
+      else if (title.startsWith(q)) score = Math.max(score, 80);
+      else if (title.includes(q)) score = Math.max(score, 60);
+    }
+    if (score === 0 && primer.includes(q)) score = 40;
+    else if (score === 0 && tagline.includes(q)) score = 20;
+    if (score > 0) hits.push({ cluster: c, score });
+  }
+
+  /**
+   * A body match that hits MOST of the reference is not an answer.
+   *
+   * Measured: "the", "and" and "de" each matched all 11 primers, so the whole table
+   * of contents rendered as "cluster hits" above the entry results — a search that
+   * answers everything is as useless as one that answers nothing, and here it also
+   * buried the entry hits the reader probably wanted. Title matches are exempt: if
+   * every cluster were literally called the query, that IS the answer.
+   *
+   * Two thirds rather than a stopword list, because a stopword list is a second
+   * thing to maintain per locale and would still miss the next common word. The
+   * threshold describes the defect directly: a term this widespread is vocabulary,
+   * not a topic.
+   *
+   * THE EXEMPTION IS A WHOLE WORD OF A TITLE, and getting there took two wrong
+   * versions, both of which failed by locale rather than by logic:
+   *
+   *   1. Any title match (`score >= 60`) exempted too much: "de" is a substring of
+   *      five Spanish titles ("ingeniería DE contexto") and "and" of four English
+   *      ones, so the very queries the rule exists to stop stayed exempt.
+   *   2. A strong match (`>= 80`, i.e. the title equals the query or starts with it)
+   *      exempted too little, and asymmetrically. 10 of 11 Spanish titles open with a
+   *      different word than their English pair — "Model strategy" is "Estrategia de
+   *      modelos", "Vector indexes" is "Índices vectoriales" — because Spanish leads
+   *      with the generic noun. So a Spanish content word almost never reaches
+   *      `startsWith`. Measured: `searchClusters("modelo")` returned NOTHING while
+   *      "model" returned its cluster. That is the original defect — a cluster's own
+   *      name does not find it — reintroduced for one locale only, in the same breath
+   *      as fixing the EN/ES ranking asymmetry above.
+   *
+   * A word-boundary test on the title handles both: "modelo" and "modelos" are words
+   * of "estrategia de modelos" and stay exempt, while "to", "se", "con", "de" and
+   * "and" are sub-words of the titles they appear in and are refused. It asks the
+   * question the rule means — does this query NAME a cluster — instead of a proxy for
+   * it that happens to be English-shaped.
+   */
+  const namesACluster = hits.some(({ cluster }) =>
+    [cluster.title.en, cluster.title.es].some((title) =>
+      // A STEM match against the title's words, so a Spanish singular finds its
+      // plural title: "modelo" must reach "Estrategia de modelos" the way "model"
+      // reaches "Model strategy".
+      //
+      // ONE direction, `w.startsWith(q)`. The reverse (`q.startsWith(w)`, a query
+      // longer than the title word) was here first and was DEAD CODE: a mutation
+      // deleting it survived every assertion, and searching for a query that needed
+      // it found none — every candidate either has too few hits for the bound to fire
+      // at all, or is already exempt in the forward direction. Kept the branch out
+      // rather than writing a test for a case the data cannot produce, since a test
+      // whose fixture cannot occur is the vacuous kind this pass already found once.
+      //
+      // ONE floor, on the query, at 4 characters. It is what stops a short function
+      // word from exempting itself: "and" and "de" are whole words of real titles
+      // ("Retrieval and ranking", "Estrategia de modelos") and "to"/"se"/"con" are
+      // prefixes of "tools"/"serving"/"context", so without it fourteen of them
+      // returned all 11 clusters. A second floor on the title words was redundant —
+      // the only title words under 4 characters are "and", "y", "de" and "e", every
+      // one of which this floor already rejects — and a redundant guard reads as a
+      // guard that is doing something.
+      q.length >= 4 &&
+      fold(title)
+        .split(/[^a-z0-9]+/)
+        .some((w) => w.startsWith(q))
+    )
+  );
+  if (!namesACluster && hits.length > (CLUSTERS.length * 2) / 3) return [];
+  // Ties break by the editorial cluster order, never alphabetically: CLUSTERS is
+  // the reference's table of contents and it should survive into the results.
+  const rank = new Map(CLUSTERS.map((c, i) => [c.slug, i]));
+  return hits.sort(
+    (a, b) => b.score - a.score ||
+      (rank.get(a.cluster.slug) ?? 999) - (rank.get(b.cluster.slug) ?? 999)
+  );
+}

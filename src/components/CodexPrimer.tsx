@@ -32,10 +32,19 @@
  * the level. An entry's position is "what does this cost"; a cluster's is "what
  * are you actually choosing between".
  *
- * Family entries render as ANCHOR CHIPS into the entry list below, so the primer
- * doubles as the cluster's table of contents — the grouping is not just told to
- * the reader, it is the navigation. The label resolution is passed in rather than
- * looked up here, because the parent already owns the index.
+ * Family entries render as CHIPS into the entry list, so the primer doubles as the
+ * cluster's table of contents — the grouping is not just told to the reader, it is
+ * the navigation. The label resolution is passed in rather than looked up here,
+ * because the parent already owns the index.
+ *
+ * WHAT A CHIP DOES IS THE CALLER'S DECISION, and it must be, because the entries a
+ * chip points at are only on the page in BROWSE mode. Rendered in a search result
+ * the same `#e-<slug>` anchor resolved to nothing: measured 0 targets on the page
+ * for `#e-context-window-as-budget`. That is the exact defect class this module has
+ * already shipped once — 80 of 92 cross-links pointed at anchors that were not
+ * there, and the link "worked" while the destination did not. So `onChipClick` is
+ * required rather than optional: a caller that cannot guarantee the anchor exists
+ * has to say what happens instead, and the type makes forgetting impossible.
  */
 import { t, type Locale } from "@/i18n/config";
 import { ProseBlocks, blocksFrom } from "./lesson/Prose";
@@ -62,12 +71,20 @@ function Field({ text, className }: { text: string; className?: string }) {
 }
 
 export function CodexPrimer({
-  locale, primer, resolveTerm,
+  locale, primer, resolveTerm, onChipClick,
 }: {
   locale: Locale;
   primer: Primer;
   /** Slug → human term. The parent owns the index, so a rename can't dead-link. */
   resolveTerm: (slug: string) => string;
+  /**
+   * What clicking a family chip does. REQUIRED, not optional — see the note above:
+   * only the caller knows whether `#e-<slug>` is on the page, and a default would
+   * silently reinstate the dead anchor. Return `"anchor"` to let the in-page jump
+   * happen (browse mode), or handle it yourself and return nothing (search mode,
+   * where the entries are not rendered and the chip must navigate first).
+   */
+  onChipClick: (slug: string) => "anchor" | void;
 }) {
   return (
     <section className="cx-primer" aria-label={t(LABEL.whatItIs, locale)}>
@@ -102,8 +119,18 @@ export function CodexPrimer({
                 {f.entries.map((slug) => (
                   /* A plain <a> to the in-page anchor, matching the prerequisite
                      chips on an entry card. Next's <Link> would be a client-side
-                     navigation to the same page, which does not move the reader. */
-                  <a key={slug} href={`#e-${slug}`} className="cx-famchip">
+                     navigation to the same page, which does not move the reader.
+                     The caller decides whether that anchor is reachable; when it
+                     says it is not, the default jump is prevented so the reader
+                     never lands on nothing. */
+                  <a
+                    key={slug}
+                    href={`#e-${slug}`}
+                    className="cx-famchip"
+                    onClick={(e) => {
+                      if (onChipClick(slug) !== "anchor") e.preventDefault();
+                    }}
+                  >
                     {resolveTerm(slug)}
                   </a>
                 ))}
