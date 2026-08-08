@@ -212,6 +212,50 @@ describe("every howToChoose step is a question in both locales", () => {
   });
 });
 
+describe("an enumerated taxonomy has an entry per member", () => {
+  /**
+   * A KNOWN GAP, recorded as a failing-if-it-worsens ratchet rather than papered over.
+   *
+   * `rag-failure-taxonomy.howItWorks` names seven failure points (FP1..FP7) and the
+   * cluster ships six entries — FP7 "incomplete" has none. Both adversarial reviewers
+   * found this independently, and both concluded it is a CONTENT gap rather than a
+   * primer defect: the primer claims nothing false (its rule says "each of these",
+   * not "the seven"), and no primer can manufacture a missing entry. Weakening the
+   * primer to hide it would be the wrong repair.
+   *
+   * So the assertion is on the COUNT, pinned at what ships. It documents the hole at
+   * the place someone will next touch this cluster, and it fails if a seventh member
+   * gets enumerated without an entry — while turning green the moment
+   * `rag-incomplete-answer` is authored, at which point KNOWN_MISSING drops to 0.
+   *
+   * A plain "every FP has an entry" test would fail today and get skipped, which
+   * teaches nothing. A ratchet is the shape this repo already uses for prose and
+   * trace baselines: it can only shrink.
+   */
+  const KNOWN_MISSING = 1;   // FP7 incomplete — drop to 0 when its entry lands
+
+  it("the RAG failure taxonomy is short exactly the entries we know about", () => {
+    const entries = CLUSTERS.flatMap((c) => c.entries);
+    const taxonomy = entries.find((e) => e.slug === "rag-failure-taxonomy");
+    expect(taxonomy, "rag-failure-taxonomy is gone — this ratchet needs rewriting").toBeTruthy();
+
+    // Count the FPn labels the taxonomy itself enumerates, rather than hardcoding 7:
+    // if the source it summarizes adds a failure point, the denominator moves with it.
+    const enumerated = new Set(
+      [...taxonomy!.howItWorks.en.matchAll(/\bFP(\d+)\b/g)].map((m) => m[1])
+    );
+    const authored = entries.filter((e) => /^rag-(missing|missed|not-|wrong|incorrect)/.test(e.slug));
+
+    expect(enumerated.size, "the taxonomy should enumerate its members as FP1..FPn").toBeGreaterThan(1);
+    expect(
+      enumerated.size - authored.length,
+      `${enumerated.size} failure points enumerated, ${authored.length} with entries — ` +
+      `expected exactly ${KNOWN_MISSING} missing (FP7 incomplete). If this grew, an ` +
+      `enumerated failure point shipped without an entry; if it shrank, lower KNOWN_MISSING.`
+    ).toBe(KNOWN_MISSING);
+  });
+});
+
 describe("an acronym the Codex leans on is expanded somewhere in it", () => {
   // The contract's HEADLINE example, and it survived the first primer pass: "RAG"
   // appeared 126 times across codex.json, six entry slugs start with `rag-`, and
