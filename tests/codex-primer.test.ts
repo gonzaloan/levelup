@@ -253,10 +253,21 @@ describe("a family chip never points at an anchor that is not there", () => {
     // `goToEntry` — a test coupled to the implementation it was meant to outlive.
     const navigating = sites.find((s) => !/"anchor"/.test(s))!;
     expect(navigating, "the search call site must navigate to the entry").toMatch(/goToEntry\(/);
-    // And `goToEntry` must not depend on a hashchange event to do the scrolling,
-    // because assigning a hash its current value emits none. It scrolls directly and
-    // records the location with replaceState.
-    expect(VIEW, "goToEntry must scroll on its own").toMatch(/goToEntry[\s\S]{0,900}scrollIntoView/);
+    // And the scroll must not depend on a hashchange event, because assigning a hash
+    // its current value emits none.
+    //
+    // Asserted as "a scroll happens outside the hashchange listener", NOT as
+    // "scrollIntoView appears within N characters of goToEntry". That proximity match
+    // is the second time a source assert here broke on a correct refactor: the scroll
+    // moved out of `goToEntry` into an effect keyed on the committed state, which fixed
+    // a real race (a cold deep link at 8x CPU throttle landed 0 of 15 times, because
+    // the old `requestAnimationFrame` ran before React committed and the lookup
+    // returned null). Pinning a line's neighbourhood punishes exactly the change that
+    // improves it, so this pins the PROPERTY instead.
+    expect(VIEW, "the scroll must live in an effect, not a guessed frame")
+      .toMatch(/useEffect\([\s\S]{0,600}scrollIntoView/);
+    expect(VIEW, "the scroll must not be a single requestAnimationFrame guess")
+      .not.toMatch(/requestAnimationFrame\([\s\S]{0,200}scrollIntoView/);
     expect(navigating, "the hash is a record, written without re-entering the listener")
       .toMatch(/history\.replaceState/);
     expect(navigating, "assigning location.hash reinstates the missed-event defect")

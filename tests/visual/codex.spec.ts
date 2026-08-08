@@ -448,6 +448,59 @@ test("cluster search works in Spanish and in the pixel theme", async ({ page }) 
 // same shape: the state changed and the reader did not move. They are Playwright
 // because scroll position is the assertion, and nothing else can see it.
 
+/** The sticky header's height. Anything at a smaller `top` is hidden behind it. */
+const NAV_H = 61;
+
+/**
+ * Did the reader actually ARRIVE at this element?
+ *
+ * `toBeInViewport()` is not enough, and trusting it is how the second version of this
+ * defect shipped: `openClusterAt` scrolled the cluster heading to `top: 0`, which is
+ * inside the viewport and 100% behind the 61px sticky header — the word "Chunking" sat
+ * under the logo and the tagline was the first readable line. The assertion passed at
+ * 1280, 768 and 360. A geometric miss of 693px became a geometric miss of 37px, and
+ * the test could not tell the difference.
+ *
+ * So this asserts the two things a reader depends on: the top edge is below the header,
+ * and the element is genuinely hit-testable at its own centre (which catches occlusion
+ * by any future chrome, not just this header).
+ */
+async function assertArrived(page: Page, selector: string, where: string) {
+  // WAIT FOR THE SCROLL TO SETTLE FIRST. The app scrolls with `behavior: "smooth"`
+  // outside reduced-motion, so measuring immediately catches the animation mid-flight
+  // — the first version of this helper read `top: -303px` on a target that lands
+  // correctly at 76px. Poll `scrollY` until it stops changing rather than sleeping a
+  // fixed amount, so the check is not a race on a slow machine.
+  await page.waitForFunction(() => {
+    const w = window as unknown as { __lastY?: number; __still?: number };
+    const y = Math.round(window.scrollY);
+    if (w.__lastY === y) { w.__still = (w.__still ?? 0) + 1; } else { w.__still = 0; w.__lastY = y; }
+    return (w.__still ?? 0) >= 3;
+  }, undefined, { timeout: 10_000 });
+  await page.evaluate(() => {
+    const w = window as unknown as { __lastY?: number; __still?: number };
+    w.__lastY = undefined; w.__still = 0;   // reset, so a later call re-measures
+  });
+
+  const geom = await page.locator(selector).evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    // Hit-test just INSIDE the top edge, not the centre. An entry card is taller than
+    // the viewport, so its centre point is off-screen and `elementFromPoint` returned
+    // null — the helper reported "occluded by <?>" on an element that had arrived
+    // perfectly. The top edge is also the part that matters: it is what the sticky
+    // header covers, and what the reader needs to see to know where they are.
+    const x = Math.min(r.left + r.width / 2, window.innerWidth - 1);
+    const y = Math.min(r.top + 4, window.innerHeight - 1);
+    const hit = document.elementFromPoint(x, y);
+    return {
+      top: Math.round(r.top),
+      occluder: hit && (hit === el || el.contains(hit) || hit.contains(el)) ? null : (hit?.tagName ?? "nothing"),
+    };
+  });
+  expect(geom.top, `${where}: top ${geom.top}px is under the sticky header`).toBeGreaterThanOrEqual(NAV_H);
+  expect(geom.occluder, `${where}: occluded by <${geom.occluder}>`).toBeNull();
+}
+
 test("clicking the SAME family chip twice still lands both times", async ({ page }) => {
   // The first version set `location.hash` and relied on `hashchange` to scroll.
   // Assigning a hash the value it already holds emits no event, so the second click
@@ -463,12 +516,12 @@ test("clicking the SAME family chip twice still lands both times", async ({ page
   const chip = page.locator(".cx-clusterhit .cx-famchip").first();
   const href = (await chip.getAttribute("href"))!;
   await chip.click();
-  await expect(page.locator(href)).toBeInViewport();
+  await assertArrived(page, href, "first chip click");
 
   // Back to search and click the very same chip: the hash already points there.
   await search();
   await page.locator(".cx-clusterhit .cx-famchip").first().click();
-  await expect(page.locator(href), "the second click must land too").toBeInViewport();
+  await assertArrived(page, href, "second chip click");
 });
 
 test("'Open this cluster' puts the cluster's heading on screen", async ({ page }) => {
@@ -480,8 +533,7 @@ test("'Open this cluster' puts the cluster's heading on screen", async ({ page }
     await page.goto("/en/codex/");
     await page.locator("#cx-q").fill("security");
     await page.locator(".cx-openbtn").first().click();
-    const title = page.locator(".cx-cluster .cx-cluster-title");
-    await expect(title, `heading off-screen at ${width}px`).toBeInViewport();
+    await assertArrived(page, ".cx-cluster .cx-cluster-title", `open-btn @${width}px`);
   }
 });
 
@@ -491,6 +543,6 @@ test("a path-mode glossary term lands on its cluster heading", async ({ page }) 
   await page.getByRole("tab", { name: /reading path|ruta de lectura/i }).click();
   await page.locator(".cx-path-families summary").click();
   await page.locator(".cx-path-defterm").nth(5).click();
-  await expect(page.locator(".cx-cluster .cx-cluster-title")).toBeInViewport();
+  await assertArrived(page, ".cx-cluster .cx-cluster-title", "path glossary term");
   await expect(page.locator(".cx-primer .cx-primer-def")).toBeVisible();
 });

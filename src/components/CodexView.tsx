@@ -130,6 +130,8 @@ export function CodexView({ locale }: { locale: Locale }) {
   const [openCluster, setOpenCluster] = useState<string>(CLUSTERS[0]?.slug ?? "");
   const [query, setQuery] = useState("");
   const [progress, setProgress] = useState<Progress | null>(null);
+  /** A scroll requested by a click, performed after React commits (see the effect). */
+  const [pendingScroll, setPendingScroll] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -179,13 +181,8 @@ export function CodexView({ locale }: { locale: Locale }) {
     setMode("browse");
     setQuery("");            // a live search filter would hide the target
     setOpenCluster(cluster);
-    // Deferred a frame: the cluster has to render before its anchor exists.
-    requestAnimationFrame(() => {
-      const el = document.getElementById(`e-${slug}`);
-      if (!el) return;
-      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-      el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
-    });
+    // The scroll happens in the effect below, AFTER React commits the cluster.
+    setPendingScroll(`e-${slug}`);
   }, []);
 
   /**
@@ -202,12 +199,39 @@ export function CodexView({ locale }: { locale: Locale }) {
     setQuery("");
     setMode("browse");
     setOpenCluster(slug);
-    requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLElement>(".cx-cluster .cx-cluster-title");
-      const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-      el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
-    });
+    setPendingScroll("cluster-title");
   }, []);
+
+  /**
+   * Perform a requested scroll AFTER React has committed the new cluster.
+   *
+   * Both helpers above used to guess one `requestAnimationFrame` and call
+   * `getElementById` inside it. That guess loses under load: on a cold deep link at
+   * 4x CPU throttle the frame ran before the commit, the lookup returned null, and
+   * `if (!el) return` swallowed the scroll silently. Measured over 60 cold loads —
+   * 1x: 15/15 landed, 4x: 2/15, 8x: 0/15, 20x: 0/15 — with zero `scrollIntoView`
+   * calls in every failure. A 4x throttle is an ordinary mid-range phone, so this was
+   * the original 80-of-92 dead-destination defect returning for real users on slow
+   * hardware.
+   *
+   * An effect keyed on the target plus the state it waits for cannot lose that race:
+   * React runs it after the DOM is updated, so the element exists by construction.
+   * This is the "extract the seam instead of guessing a frame" move that CLAUDE.md
+   * already records for tests, applied to a render.
+   */
+
+  useEffect(() => {
+    if (!pendingScroll) return;
+    const el = pendingScroll === "cluster-title"
+      ? document.querySelector<HTMLElement>(".cx-cluster .cx-cluster-title")
+      : document.getElementById(pendingScroll);
+    // Clear either way: a target that does not exist after the commit is not going to
+    // appear later, and a stale request would fire on the next unrelated render.
+    setPendingScroll(null);
+    if (!el) return;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
+  }, [pendingScroll, openCluster, mode]);
 
   useEffect(() => {
     const go = () => {
