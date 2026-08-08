@@ -224,6 +224,19 @@ const FIXTURES = [
       };
     }, "noun phrase, not a sentence"],
 
+  // A Spanish label that is a SENTENCE but carries no full stop.
+  //
+  // This fixture exists because relaxing the label word cap for Spanish opened
+  // exactly this hole, and nothing else caught it: the only other label rule is the
+  // trailing-period check, and a sentence without one walks straight past it. The
+  // Spanish cap is looser than the English one (9 vs 6, since Spanish genuinely
+  // needs the extra articles) but it is not absent, and this is the case that
+  // proves the difference.
+  ["a Spanish label that is a sentence with no full stop",
+    (p) => {
+      p.primer.families[1].label.es = "Puedes dejar que todo el índice viva fuera de la memoria residente";
+    }, "labels are short noun phrases"],
+
   // ── Word caps ──
   ["whatItIs over the 45-word cap",
     (p) => {

@@ -42,6 +42,6 @@ inverted poles looks fine.
 
 ## Gap
 
-**No visual regression baseline.** 110 Playwright tests assert structure and
+**No visual regression baseline.** 114 Playwright tests assert structure and
 reachability; none compare pixels. A CSS regression that preserves the DOM passes
 everything.

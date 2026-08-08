@@ -55,8 +55,8 @@ note where the decision contradicts its own measurement.
 
 - **12 content validators** in `npm run verify` (13 chain steps; one is a generator, not a gate)
 - **6 gate self-tests** — they attack the validators, which is where four of my own wrong rules were found
-- **427 unit tests** across 31 files
-- **110 Playwright tests** across 19 spec files
+- **429 unit tests** across 31 files
+- **114 Playwright tests** across 19 spec files
 - 5 ratchet baselines: `coverage-baseline.json`, `glossary-baseline.txt`, `match-spare-baseline.txt`, `prose-baseline.txt`, `trace-baseline.txt` — they may only shrink
 
 ## Systems section 33-38 specifies
@@ -72,7 +72,7 @@ note where the decision contradicts its own measurement.
 
 ## Risks
 
-1. **No visual regression baseline.** 110 browser tests assert structure, not pixels. A CSS regression that keeps the DOM intact passes everything. Highest residual risk.
+1. **No visual regression baseline.** 114 browser tests assert structure, not pixels. A CSS regression that keeps the DOM intact passes everything. Highest residual risk.
 2. **A gate that fires on correct content trains people to bypass it.** Several of mine did during this work — most recently a glossary that banned `rendimiento` (meaning *performance*) as a calque of throughput. Every gate now ships with correct-content fixtures. Managed, not closed.
 3. **The ratchets can be gamed by adding baseline lines.** None was added in this work; content was fixed instead, and one line was deleted when a figure became traceable.
 4. **154 concepts have no Predict step and 168 have no Build challenge.** The engines exist; the content does not.

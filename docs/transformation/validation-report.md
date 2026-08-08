@@ -5,16 +5,16 @@
 ## What runs
 
 `npm run verify` is 6 steps: typecheck, lint, 12 content
-validators, 6 gate self-tests, the inventory generators, and 427
-unit tests across 31 files. Playwright adds 110 browser tests
+validators, 6 gate self-tests, the inventory generators, and 429
+unit tests across 31 files. Playwright adds 114 browser tests
 across 19 spec files.
 
 | Layer | Count | What it can catch |
 |---|---:|---|
 | Content validators | 12 | Duplicate ids, broken concept links, prerequisite cycles, missing translations, dead asset refs, uncovered domain×mechanic cells, contradictory axes figures, untraceable figures, prose defects, banned terminology |
 | Gate self-tests | 6 | Whether the validators above actually fail on the defects they exist for |
-| Unit tests | 427 | Route independence, check integrity, exploit families, scoring, a11y source properties, inventory agreement, glossary/doc drift |
-| Playwright | 110 | What a learner can actually see and reach in a browser |
+| Unit tests | 429 | Route independence, check integrity, exploit families, scoring, a11y source properties, inventory agreement, glossary/doc drift |
+| Playwright | 114 | What a learner can actually see and reach in a browser |
 
 ## The self-tests are the load-bearing part
 
@@ -29,7 +29,7 @@ was wrong at least once, and reading its output would not have revealed it:
 - An attack script reported all 94 order checks broken by "sort ascending". That sorts the array of *authored* indices, which trivially yields `[0..n-1]`; a learner cannot execute it, because the index is a React key and never reaches the DOM.
 - Three tests passed against a **fully restored defect**, because each rebuilt the thing it should have observed.
 - A rule scanning raw source flagged its own explanatory comment. Twice.
-- `it(` counted **0 of 110** Playwright tests, because Playwright uses `test(`.
+- `it(` counted **0 of 114** Playwright tests, because Playwright uses `test(`.
 
 Every one of those was found by attacking the gate, never by reading its output. That is
 why `gates:selftest` runs in `verify`.

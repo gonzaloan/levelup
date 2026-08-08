@@ -374,13 +374,28 @@ function checkPrimer(p, cw, clusterEntrySlugs) {
     checkI18n(f.label, `${fw}.label`, { min: 3, ...TERMISH });
     checkI18n(f.rule, `${fw}.rule`, { min: 20 });
 
-    // Rule: a label is a noun phrase. A trailing period or a finite verb with a
-    // subject pronoun is the tell that an author wrote a sentence instead.
+    // Rule: a label is a noun phrase. A trailing period is the tell that an author
+    // wrote a sentence instead, and that check applies to both locales.
+    //
+    // The WORD CAP is per-locale, not shared. Spanish needs more words than English
+    // for the same noun phrase — it spends them on articles and prepositions that
+    // English compounds away ("Digest instead of the full trace" is 6, and its
+    // correct translation "Resumen en vez de la traza completa" is 7). A shared
+    // 6-word cap rejects that correct Spanish.
+    //
+    // But DROPPING the cap for Spanish was worse, and was caught by attacking the
+    // relaxed rule rather than by reading its output: with no cap, the 13-word
+    // sentence "Puedes dejar que todo el historial viva fuera de la ventana de
+    // contexto" merged cleanly, because the only other label rule is the trailing
+    // period and a sentence without one slips past it. So Spanish gets a LOOSER cap,
+    // not an absent one — 9 words, which is 6 plus the roughly 20-40% Spanish
+    // routinely needs, and still far below any sentence.
+    const LABEL_CAP = { en: 6, es: 9 };
     if (isI18n(f.label)) {
       for (const loc of ["en", "es"]) {
         const l = (f.label[loc] ?? "").trim();
         if (/[.!?]$/.test(l)) bad(`${fw}.label.${loc}: a label is a noun phrase, not a sentence`);
-        if (words(l) > 6) bad(`${fw}.label.${loc}: ${words(l)} words — labels are short noun phrases`);
+        if (words(l) > LABEL_CAP[loc]) bad(`${fw}.label.${loc}: ${words(l)} words — labels are short noun phrases (cap ${LABEL_CAP[loc]})`);
       }
     }
 

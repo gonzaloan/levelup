@@ -91,9 +91,19 @@ primer: {
 
 6. **NO FAMILY OF ONE, unless the cluster has fewer than 4 entries.** A family with a
    single member is a rename, not a grouping, and it inflates the appearance of
-   structure without adding any.
+   structure without adding any. Measured: all 11 primers carve 107 entries with zero
+   singleton families, so this rule costs nothing on real content. If it ever becomes
+   unsatisfiable for a cluster, that is a signal about the CLUSTER — an entry that fits
+   no family alongside any sibling is usually an entry in the wrong cluster (ADR-011).
 
 7. **ONE em-dash and ONE semicolon per field, maximum.** Same as the spine.
+
+   **Word caps are measured on the AUTHORED source language (EN), not on both.**
+   Spanish runs 20-40% longer than English for the same content, so a shared cap
+   either lets English sprawl or rejects correct Spanish. Family labels are the one
+   exception with a Spanish cap of its own (9 words vs 6): dropping the Spanish cap
+   entirely let a 13-word Spanish sentence through, because the only other label rule
+   is the trailing full stop and a sentence without one slips past it.
 
 8. **THE PRIMER MAY NOT RESTATE AN ENTRY.** It is the level above. If a sentence in the
    primer would be at home inside an entry's `definition` or `cost`, it belongs there

@@ -260,3 +260,98 @@ test("the Codex renders in the pixel theme too", async ({ page }) => {
   expect(radius).toBe("0px");
   await page.screenshot({ path: "test-results/codex-pixel.png", fullPage: true });
 });
+
+// ── The cluster primer ────────────────────────────────────────────────────
+//
+// The primer is the level ABOVE the entries, and it exists because 107 well-formed
+// entries did not add up to a teachable reference: a cluster oriented the reader
+// with one line of tagline and then handed over up to 18 sibling techniques.
+//
+// vitest cannot cover any of what follows. It is node-only in this project (no
+// jsdom by design), so it can prove the JSX contains a field and the JSON is
+// well-formed — not that the descent is ABOVE the entries on screen, not that it
+// is visible without interaction, and not that a family chip actually moves the
+// reader to the entry it names. Those are the three things that make the primer
+// work, so they are asserted here against a real browser.
+
+for (const locale of ["en", "es"]) {
+  test(`the cluster primer orients before the entries (${locale})`, async ({ page }) => {
+    await page.goto(`/${locale}/codex/`);
+
+    const primer = page.locator(".cx-primer");
+    await expect(primer).toBeVisible();
+
+    // All five parts of the descent, with NO interaction. The whole design
+    // position is that a primer does not fold: an entry is consulted, so hiding
+    // its mechanism is right, but a primer is what a lost reader needs and a fold
+    // is what a lost reader does not open.
+    await expect(primer.locator(".cx-primer-def")).toBeVisible();
+    await expect(primer.locator(".cx-primer-why")).toBeVisible();
+    await expect(primer.locator(".cx-primer-axis")).toBeVisible();
+    await expect(primer.locator(".cx-family").first()).toBeVisible();
+    await expect(primer.locator(".cx-choose li").first()).toBeVisible();
+
+    // ABOVE the entries, geometrically. A primer that rendered after the entry
+    // list would satisfy every data gate and orient nobody — the reader would meet
+    // 12 techniques first and the explanation of them last.
+    const pTop = await primer.evaluate((el) => el.getBoundingClientRect().top);
+    const eTop = await page.locator(".cx-entry").first().evaluate((el) => el.getBoundingClientRect().top);
+    expect(pTop, "the primer must sit above the entries it orients").toBeLessThan(eTop);
+
+    // The families are a TOTAL partition, so the chips must account for every
+    // entry rendered in this cluster. This is the load-bearing content property,
+    // checked here in the rendered DOM rather than only in the JSON.
+    const chips = await primer.locator(".cx-famchip").count();
+    const entries = await page.locator(".cx-entry").count();
+    expect(chips, "every entry in the cluster needs a chip in exactly one family").toBe(entries);
+
+    // More than one family, or the grouping is a rename of the entry list.
+    expect(await primer.locator(".cx-family").count()).toBeGreaterThan(1);
+
+    for (const w of WIDTHS) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await noHorizontalScroll(page, `codex primer @${w}`);
+      // The definition must survive the narrowest viewport: it is the sentence a
+      // reader who does not own the vocabulary depends on.
+      await expect(primer.locator(".cx-primer-def")).toBeVisible();
+    }
+    await page.screenshot({ path: `test-results/codex-primer-${locale}.png`, fullPage: true });
+  });
+}
+
+test("a family chip navigates to the entry it names", async ({ page }) => {
+  // The primer doubles as the cluster's table of contents, so a chip is
+  // NAVIGATION, not decoration. This module has already shipped the failure this
+  // guards: 80 of 92 cross-links pointed at anchors that were not on the page —
+  // the link worked and the destination did not.
+  await page.goto("/en/codex/");
+  const chip = page.locator(".cx-primer .cx-famchip").first();
+  const href = await chip.getAttribute("href");
+  expect(href, "a chip must point at an entry anchor").toMatch(/^#e-/);
+
+  const slug = href!.replace(/^#e-/, "");
+  const target = page.locator(`#e-${slug}`);
+  await expect(target, `#e-${slug} must exist on the page the chip is on`).toHaveCount(1);
+
+  await chip.click();
+  // The entry is in the viewport after the jump, and it is a real entry card.
+  await expect(target).toBeVisible();
+  await expect(target.locator(".cx-def")).toBeVisible();
+});
+
+test("the primer renders in the pixel theme too", async ({ page }) => {
+  await page.goto("/en/codex/");
+  await page.evaluate(() => document.documentElement.setAttribute("data-theme", "pixel"));
+  const primer = page.locator(".cx-primer");
+  await expect(primer).toBeVisible();
+  await expect(primer.locator(".cx-primer-def")).toBeVisible();
+  // Pixel is zero-radius by identity, and the primer keeps the thicker left rail
+  // that distinguishes it from an entry card once both are hard-shadowed frames.
+  const style = await primer.evaluate((el) => {
+    const s = getComputedStyle(el);
+    return { radius: s.borderRadius, left: parseFloat(s.borderLeftWidth), top: parseFloat(s.borderTopWidth) };
+  });
+  expect(style.radius).toBe("0px");
+  expect(style.left, "the left rail marks the primer as the level above").toBeGreaterThan(style.top);
+  await page.screenshot({ path: "test-results/codex-primer-pixel.png", fullPage: true });
+});
