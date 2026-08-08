@@ -462,17 +462,28 @@ describe("a cluster's own name finds it in the Codex's own search", () => {
      * cluster you named ahead of one that merely contains the word — but it is only
      * observable as a value, so that is what this checks.
      */
-    // "ranking" is inside `retrieval-ranking`'s titles but prefixes neither, so it
-    // pins the substring tier; "retrieval" prefixes the EN title, so it pins prefix.
-    const substring = searchClusters("ranking").find((h) => h.cluster.slug === "retrieval-ranking")!;
-    const prefix = searchClusters("retrieval").find((h) => h.cluster.slug === "retrieval-ranking")!;
-    expect(substring, "fixture gone: retrieval-ranking must match both queries").toBeTruthy();
-    expect(prefix).toBeTruthy();
+    /**
+     * The fixture must be a query that prefixes ONE of a cluster's titles and sits
+     * mid-string in the OTHER, because that is the only shape that observes the
+     * `Math.max` across the two titles.
+     *
+     * "retrieval" was the first choice and does not: it appears only in
+     * `retrieval-ranking`'s English title, so replacing `Math.max` with a plain
+     * assignment left the score at 80 and the mutation survived. "agent" is one of
+     * exactly four queries that do — it prefixes "Agent patterns" and sits inside
+     * "patrones de agentes", so a last-wins assignment silently demotes it 80 → 60.
+     * (The others are model, context and vector.) Fourth time this session that a
+     * correctly-written assertion had a fixture which could not exercise its branch.
+     */
+    const prefix = searchClusters("agent").find((h) => h.cluster.slug === "agent-patterns")!;
+    const substring = searchClusters("patterns").find((h) => h.cluster.slug === "agent-patterns")!;
+    expect(prefix, "fixture gone: agent-patterns must match 'agent'").toBeTruthy();
+    expect(substring, "fixture gone: agent-patterns must match 'patterns'").toBeTruthy();
     expect(prefix.score, "a title the query PREFIXES must outscore one that merely contains it")
       .toBeGreaterThan(substring.score);
     // And an exact title beats both, which the tier ladder promises.
-    const exact = searchClusters("Retrieval and ranking")[0];
-    expect(exact.cluster.slug).toBe("retrieval-ranking");
+    const exact = searchClusters("Agent patterns")[0];
+    expect(exact.cluster.slug).toBe("agent-patterns");
     expect(exact.score).toBeGreaterThan(prefix.score);
   });
 
@@ -490,27 +501,21 @@ describe("a cluster's own name finds it in the Codex's own search", () => {
     }
   });
 
-  it("exempts a query LONGER than the title word, not just shorter", () => {
-    // The stem match runs both directions and only one of them was covered: a
-    // mutation reducing it to `w.startsWith(q)` survived every other assertion.
-    // Both directions carry real queries — "modelo" is shorter than the title's
-    // "modelos", and "vectores" is longer than the title's "vector", which is the
-    // Spanish plural of an English-singular title word.
-    // Each fixture must have hits to spare, or the exemption is never consulted and
-    // the assertion tests nothing. "contextos" was the first attempt and is wrong for
-    // that reason: no text in the Codex contains that string, so it returns [] whether
-    // the exemption fires or not — a fixture that fails for a reason unrelated to the
-    // rule it is aimed at.
-    for (const q of ["vectores", "agentes"]) {
-      expect(
-        searchClusters(q).length,
-        `"${q}" is a longer form of a title word and must still name its cluster`
-      ).toBeGreaterThan(0);
-    }
-    // And the direction must not be a free-for-all: a longer query that merely SHARES
-    // a prefix with a title word is not that cluster's name.
-    expect(searchClusters("modelling-a-thing"), "a long unrelated query must not exempt").toEqual([]);
-  });
+  /**
+   * DELETED: "exempts a query LONGER than the title word, not just shorter".
+   *
+   * It described a branch the code does not have. The stem match ran both directions
+   * at one point; measuring showed the reverse (`q.startsWith(w)`) was not merely
+   * dead but actively wrong — its only reachable effect was exempting function words
+   * via the 1-2 character title words "de", "e" and "y", which is the defect the
+   * over-match bound exists to stop. The branch was removed; the test outlived it.
+   *
+   * Its fixtures could not fail either way ("vectores" 2 hits, "agentes" 1 hit, both
+   * far under the 7.33 threshold, so the exemption was never consulted) — the same
+   * vacuity its own comment warned about for "contextos". A test that cannot fail and
+   * documents a branch that does not exist is worse than no test: it reports coverage
+   * of both.
+   */
 
   it("derives the over-match threshold from the cluster count", () => {
     // CLAUDE.md: "derive counts from the spine, never hardcode them." An adversarial

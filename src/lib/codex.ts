@@ -294,6 +294,17 @@ export function searchClusters(query: string): CodexClusterHit[] {
       // the only title words under 4 characters are "and", "y", "de" and "e", every
       // one of which this floor already rejects — and a redundant guard reads as a
       // guard that is doing something.
+      // `fold` is CORRECT here even though a sweep of 1,890 corpus words found no
+      // query whose result it changes today. Five title words carry accents at 4+
+      // characters — Índices, Recuperación, Evaluación, Ingeniería, integración — and
+      // without folding, none of them would stem-match its own folded query
+      // ("Ingeniería".toLowerCase() does not start with "ingenieria"). It is
+      // unreachable only because those five queries each return 1 hit, far under the
+      // threshold, so the exemption is never consulted for them. That is a property of
+      // today's cluster count, not of the rule: a Codex with more clusters would reach
+      // the threshold and silence a Spanish title word. So this stays, unlike the
+      // redundant title-word floor that was removed above — that one was dominated by
+      // another guard in every possible case, this one is dominated by the DATA.
       q.length >= 4 &&
       fold(title)
         .split(/[^a-z0-9]+/)

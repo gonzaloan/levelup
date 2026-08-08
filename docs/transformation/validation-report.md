@@ -5,7 +5,7 @@
 ## What runs
 
 `npm run verify` is 6 steps: typecheck, lint, 12 content
-validators, 6 gate self-tests, the inventory generators, and 457
+validators, 6 gate self-tests, the inventory generators, and 456
 unit tests across 31 files. Playwright adds 121 browser tests
 across 19 spec files.
 
@@ -13,7 +13,7 @@ across 19 spec files.
 |---|---:|---|
 | Content validators | 12 | Duplicate ids, broken concept links, prerequisite cycles, missing translations, dead asset refs, uncovered domain×mechanic cells, contradictory axes figures, untraceable figures, prose defects, banned terminology |
 | Gate self-tests | 6 | Whether the validators above actually fail on the defects they exist for |
-| Unit tests | 457 | Route independence, check integrity, exploit families, scoring, a11y source properties, inventory agreement, glossary/doc drift |
+| Unit tests | 456 | Route independence, check integrity, exploit families, scoring, a11y source properties, inventory agreement, glossary/doc drift |
 | Playwright | 121 | What a learner can actually see and reach in a browser |
 
 ## The self-tests are the load-bearing part
