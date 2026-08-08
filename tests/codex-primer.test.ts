@@ -212,6 +212,40 @@ describe("every howToChoose step is a question in both locales", () => {
   });
 });
 
+describe("an acronym the Codex leans on is expanded somewhere in it", () => {
+  // The contract's HEADLINE example, and it survived the first primer pass: "RAG"
+  // appeared 126 times across codex.json, six entry slugs start with `rag-`, and
+  // the phrase "retrieval-augmented generation" appeared ZERO times in codex.json
+  // OR lessons.json. A reader who does not already own the vocabulary met the
+  // acronym as a bare label 126 times and was never told what it stands for.
+  //
+  // Asserted against the whole Codex rather than one field, because WHERE it is
+  // expanded is an editorial choice (it landed in the evaluation cluster's
+  // `Named failure points` family rule, next to the six `rag-` entries) while
+  // WHETHER it is expanded is not.
+  const ACRONYMS: [string, RegExp, RegExp][] = [
+    ["RAG", /\bRAG\b/, /retrieval-augmented generation/i],
+  ];
+
+  const blob = JSON.stringify(
+    JSON.parse(readFileSync(path.join(ROOT, "src/content/data/codex.json"), "utf8"))
+  );
+
+  it.each(ACRONYMS)("%s is expanded at least once", (name, short, long) => {
+    // Only require the expansion if the Codex actually uses the acronym — a rule
+    // that fires on an acronym nobody wrote would be firing on nothing.
+    if (!short.test(blob)) return;
+    expect(long.test(blob), `${name} is used but never expanded anywhere in the Codex`).toBe(true);
+  });
+
+  it("expands RAG in Spanish too, not only in English", () => {
+    // An expansion that exists only in `en` leaves the Spanish reader exactly
+    // where the English one was — which is the defect, not half of it.
+    const es = /generaci[óo]n aumentada por recuperaci[óo]n/i;
+    expect(es.test(blob), "RAG is expanded only in English").toBe(true);
+  });
+});
+
 describe("the primer does not restate an entry", () => {
   // Contract rule 8, as the mechanically checkable half: a primer field that
   // duplicates an entry's definition verbatim is the level below wearing the
