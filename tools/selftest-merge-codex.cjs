@@ -237,6 +237,20 @@ const FIXTURES = [
       p.primer.families[1].label.es = "Puedes dejar que todo el índice viva fuera de la memoria residente";
     }, "labels are short noun phrases"],
 
+  // Sentence 1 of `whatItIs` truncated by an abbreviation.
+  //
+  // The path-mode glossary renders that first sentence ALONE as the cluster's
+  // definition, deriving it by splitting on ". Capital" — so "Use e.g. HNSW." yields
+  // "Use e.g." and the reader gets two words where a definition belongs. No shipped
+  // field trips it because rule 1 requires the umbrella defined and definitions do not
+  // open with abbreviations, which is exactly why the gate belongs here: it holds the
+  // property at author time instead of asking a regex in the renderer to be clever.
+  ["whatItIs whose first sentence is truncated by an abbreviation",
+    (p) => {
+      p.primer.whatItIs.en = "A vector index is e.g. The arrangement of stored vectors that decides which of them a similarity query may skip, and at what precision.";
+      p.primer.whatItIs.es = "Un índice vectorial es p. ej. La disposición de los vectores almacenados que decide cuáles puede saltarse una consulta y con qué precisión.";
+    }, "too short to define the umbrella"],
+
   // ── Word caps ──
   ["whatItIs over the 45-word cap",
     (p) => {

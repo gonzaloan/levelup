@@ -300,6 +300,35 @@ function checkPrimer(p, cw, clusterEntrySlugs) {
   }
 
   checkPrimerText(p.whatItIs, `${cw}.primer.whatItIs`, 45);
+
+  /**
+   * Sentence 1 of `whatItIs` must be long enough to BE a definition.
+   *
+   * The path-mode glossary in `CodexView.tsx` renders that first sentence alone as the
+   * cluster's one-line definition, deriving it with a regex that splits on ". Capital".
+   * An abbreviation at a break site would cut it short — "Use e.g. HNSW." yields "Use
+   * e.g." — and the reason no shipped field trips that is structural: rule 1 requires
+   * this field to open with the umbrella defined, and definitions do not open with
+   * abbreviations.
+   *
+   * The check lives HERE rather than as a hardened regex in the renderer, because this
+   * is the tool that already owns the contract and it fails at author time instead of
+   * shipping half a sentence. It also catches the general defect (a truncated or
+   * stub-like opener) rather than one locale's abbreviation list. Shortest shipped
+   * first sentence is 96 characters, so 40 leaves real headroom.
+   */
+  if (isI18n(p.whatItIs)) {
+    const firstSentence = (t) => {
+      const m = /^(.+?[.!?])(?:\s+[A-ZÁÉÍÓÚÑ¿¡])/.exec(t.trim());
+      return (m ? m[1] : t.trim());
+    };
+    for (const loc of ["en", "es"]) {
+      const s = firstSentence(p.whatItIs[loc] ?? "");
+      if (s.length < 40) {
+        bad(`${cw}.primer.whatItIs.${loc}: sentence 1 is ${s.length} chars ("${s}") — too short to define the umbrella, and the path glossary renders it alone`);
+      }
+    }
+  }
   checkPrimerText(p.whyItExists, `${cw}.primer.whyItExists`, 60);
   checkPrimerText(p.axisOfChoice, `${cw}.primer.axisOfChoice`, 50);
 

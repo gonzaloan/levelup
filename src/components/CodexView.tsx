@@ -96,8 +96,17 @@ const COPY = {
  * short version that could drift from the long one.
  *
  * Splits on a period followed by a space and a capital, so a decimal ("about 0.9
- * recall") or an abbreviation does not cut the sentence in half. Falls back to the
- * whole string when there is only one sentence.
+ * recall") does not cut the sentence. Falls back to the whole string when there is
+ * only one sentence — true of 6 of the 22 shipped fields, which are single sentences.
+ *
+ * An abbreviation at a break site WOULD cut it ("Use e.g. HNSW." → "Use e.g."), and an
+ * earlier version of this comment claimed otherwise. No shipped field contains one, and
+ * the reason is structural rather than luck: the primer contract's rule 1 requires
+ * `whatItIs` to open with the umbrella DEFINED, and a definition does not open with an
+ * abbreviation. That is why hardening the regex is the wrong trade — an abbreviation
+ * blacklist is per-locale ("e.g." / "p. ej."), needs maintaining, and would be a guard
+ * with no fixture that can occur. `merge-codex.cjs` is where the insurance belongs, and
+ * it now rejects a `whatItIs` whose first sentence is too short to be a definition.
  */
 function firstSentence(text: string): string {
   const m = /^(.+?[.!?])(?:\s+[A-ZÁÉÍÓÚÑ¿¡])/.exec(text.trim());
