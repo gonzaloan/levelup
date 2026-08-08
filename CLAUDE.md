@@ -152,6 +152,35 @@ before making changes.
   `cost` as a bound and a `cheaperFirst` with its winning condition — an entry that cannot is one we
   do not understand well enough to ship. The reading path is a topological order DERIVED from the
   entry DAG (`codexPath()`, longest-chain depth), never hand-ordered.
+- **Uniform excellence at the LEAF does not compose into understanding at the ROOT — every cluster
+  needs a `primer`.** All 107 entries passed every gate and the reference was still hard to learn
+  from: a cluster oriented the reader with ONE line of tagline and then handed over up to 18 sibling
+  techniques as a flat list, 49 of 107 entries were DAG roots so they all arrived as peers, and the
+  umbrella term was never defined — "RAG" appeared 126 times in the data and "retrieval-augmented
+  generation" appeared ZERO times in `codex.json` OR `lessons.json`. A reference organized for
+  LOOKUP fails the reader who does not yet own the vocabulary they are looking up.
+  `docs/curriculum/PRIMER-CONTRACT.md` is the gate: umbrella definition → the forcing problem with a
+  figure an entry below states → the AXIS every member varies along → the FAMILIES as a **total
+  partition** → the ordered questions that pick one. Nothing in a primer folds (an entry is
+  consulted, so hiding its mechanism is right; a primer is what a lost reader needs, and a fold is
+  what a lost reader does not open).
+  **The axis is the field that fails.** Four of five rejected primers failed the same way: the
+  families carved the cluster correctly and the axis did not describe that carve, so a reader
+  trusting `axisOfChoice` as their classifier was misrouted. To review one, take the axis and try to
+  place a specific entry with it — `tools-integration` named two dimensions for three families,
+  leaving `mcp-primitives` unplaceable. The total-partition rule is enforced because a families list
+  that quietly drops an entry re-creates the orphan defect **one level up**, invisibly.
+  **Word caps are measured on the authored source language (EN), not both** — Spanish runs 20-40%
+  longer, so a shared cap either lets EN sprawl or rejects correct ES. Family labels are the
+  exception with a looser ES cap of their own (9 vs 6): dropping the ES cap entirely let a 13-word
+  Spanish sentence through, since the only other label rule is the trailing full stop.
+- **A figure can be right inside every entry and still wrong across the Codex.** `check-trace.cjs`
+  traces a figure to its concept and `merge-codex.cjs` validates an entry against itself; neither
+  compares two entries. `fixed-size-chunking` cited text-embedding-3's limit as 8,191 tokens while
+  `embedding-vector-geometry` said 8192 in three of its own fields, and every gate was green because
+  each entry was internally consistent. `tests/codex-primer.test.ts` guards named models' documented
+  constants only — 8192 is still correct three times over for jina-v2's window, Bedrock's `maxTokens`
+  and vLLM's `max_num_batched_tokens`, so a rule about the bare number would fire on correct content.
 - **Derive counts and maps from the spine, never hardcode them.** Adding the 7th domain broke five
   places that had literal `"six domains"`, a hardcoded domain→axis map with a silent `?? 1` fallback
   (every Cloud lesson rendered as "Technical Depth"), a `DOMAIN_ORDER.indexOf` sort that put the

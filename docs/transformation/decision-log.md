@@ -505,3 +505,119 @@ None. This removes a planned stage rather than changing anything authored.
 
 ### Date
 2026-08-04
+
+## ADR-013 — A reference needs a level above its entries, and the axis is the field that fails
+
+### Status
+**Accepted (enforced)** — `docs/curriculum/PRIMER-CONTRACT.md`, `tools/merge-codex.cjs`,
+`tools/selftest-merge-codex.cjs` (22 defect classes), `tests/codex-primer.test.ts`
+
+### Context
+
+The Codex shipped 107 entries that every gate called well-formed: the six-part anatomy complete,
+`cost` stated as a bound, `cheaperFirst` named with its winning condition. `merge-codex.cjs`
+passed. The defect was not in any entry.
+
+Measured on the shipped data:
+
+- **11 of 11 clusters oriented the reader with ONE line of tagline**, then handed over between 4
+  and 18 sibling techniques as a flat list.
+- **49 of 107 entries had no prerequisites**, so they were all layer 0 on the reading path. True
+  of the DAG, false of the learning.
+- **The umbrella term was never defined.** `"RAG"` appeared 126 times in `codex.json`;
+  `"retrieval-augmented generation"` appeared **0 times in `codex.json` and 0 in `lessons.json`**.
+  Six entry slugs begin `rag-`, and `rag-failure-taxonomy` enumerated its seven failure points to
+  a reader who was never told what the thing is. Twelve chunking strategies shipped with nothing
+  saying why a document must be cut at all.
+- **Nothing stated the axis of choice.** The twelve chunking entries vary along two dimensions
+  (what decides the boundary; whether context is restored). A reader who cannot name those
+  dimensions reads twelve entries as twelve unrelated facts.
+
+This is a distinct failure class from the one `REWRITE-CONTRACT.md` addresses. That contract fixed
+the CONCEPT — prose with no structure, no number, no named cost. Every rule in it was satisfied
+here and the reference was still hard to learn from, because **a reference organized for LOOKUP
+fails the reader who does not yet own the vocabulary they are looking up.** An entry answers "what
+does X cost". Someone arriving at a cluster is asking something earlier: what is this family, why
+does it exist, and which axis am I choosing along.
+
+Uniform excellence at the leaf does not compose into understanding at the root.
+
+### Decision
+
+**Every cluster carries a `primer`, and it is a gate rather than a style note.**
+
+The primer is the general-to-specific descent, in this order: `whatItIs` (the umbrella, defined,
+definition-first) → `whyItExists` (the forcing problem, with a figure an entry below actually
+states) → `axisOfChoice` (the dimension every member varies along, NAMED) → `families` (a **total
+partition** of the cluster's entries, each with a rule for when the family wins) → `howToChoose`
+(2-5 ordered questions the reader can check about their own situation).
+
+**Nothing in a primer folds.** This is deliberately the opposite of the entry card, which hides its
+mechanism behind a `<details>`: an entry is CONSULTED, so hiding detail is right, but a primer is
+what a lost reader needs and a fold is exactly what a lost reader does not open.
+
+It is a gate because the last contract shipped as prose in a doc and was adopted in **1 of 178
+concepts**. `merge-codex.cjs` enforces every mechanically checkable rule and
+`selftest-merge-codex.cjs` proves it catches 22 defect classes while accepting real correct
+content.
+
+### What this pass established
+
+**The load-bearing rule is the TOTAL PARTITION.** A families list that quietly drops an entry
+re-creates the orphan defect ONE LEVEL UP, and does it invisibly — the cluster still renders and
+every family in it still looks complete. "Absence is invisible to schema validators" is the most
+expensive lesson in this repo's history; this is that lesson at a new altitude.
+
+**The AXIS is the field that fails.** Six primers passed the learner review and five failed; four
+of the five failed the same way — the families carved the cluster correctly and the axis did not
+describe that carve, so a reader trusting `axisOfChoice` as their classifier was misrouted or
+stranded. `tools-integration` named two dimensions for three families, leaving all of `Wiring and
+protocol` (3 of 8 entries) unplaceable, and the primer had already NAMED that family, so the
+author knew the dimension existed. To review a primer, take its axis and try to place a specific
+entry with it.
+
+**Three rules in this pass were wrong, and each was found by attacking the rule rather than
+reading its green output:**
+
+1. "The axis names a dimension" omitted `where`/`dónde`, rejecting security's correct "Where the
+   control sits relative to the model...". Its Spanish branch matched the accented `dimensión` and
+   so missed its own unaccented plural `dimensiones`. Fixed by folding diacritics.
+2. "No family of one" was SUSPECTED of rejecting a correct taxonomy, so it was measured rather than
+   assumed: all 11 primers carve 107 entries with zero singleton families, and `vector-indexes`
+   came out a clean 2x2 along storage fidelity — a better carve than the hypothetical that
+   prompted the doubt, found because the rule forced the question. Kept strict on evidence.
+3. The family-label word cap was shared across locales and rejected the correct Spanish "Resumen
+   en vez de la traza completa" (7 words vs a 6-word cap). But DROPPING the Spanish cap was worse
+   and was only caught by attacking the relaxed rule: a 13-word Spanish sentence then merged
+   cleanly, because the only other label rule is the trailing full stop. Spanish gets a looser cap
+   (9), not an absent one.
+
+**A figure can be right inside every entry and still wrong across the Codex.** Attacking the
+primers' numbers verified all 38 against an entry in the same cluster — and turned up a defect in
+the ENTRIES: `fixed-size-chunking` cited text-embedding-3's input limit as 8,191 tokens while
+`embedding-vector-geometry` said 8192 in three of its own fields. Every gate was green because each
+entry was internally consistent and each primer agreed with its own cluster; the disagreement
+existed only BETWEEN clusters, where nothing was looking. The guard added for it is scoped to a
+named model's documented constant, because 8192 remains correct three times over (jina-v2's window,
+Bedrock's `maxTokens`, vLLM's `max_num_batched_tokens`) and a rule about the bare number would fire
+on correct content.
+
+**Word caps are measured on the authored source language.** Spanish runs 20-40% longer than English
+for the same content, so one shared cap either lets English sprawl or rejects correct Spanish.
+
+### Consequences
+
+Adding a cluster now costs a primer, and adding an entry to a cluster costs a decision about which
+family it joins — the merge refuses an entry in no family. That is the intended cost: an entry
+nobody can place in the cluster's own taxonomy is usually an entry in the wrong cluster.
+
+The gate cannot check whether a definition is good, whether the axis is the RIGHT axis, or whether
+the families carve where a practitioner would. That judgment stays with reviewers, which is why
+this pass ran two independent ones with different lenses.
+
+### Affected content
+`src/content/data/codex.json` — 11 primers, 36 families, 107 of 107 entries grouped. No entry's own
+fields were changed except the text-embedding-3 limit correction above.
+
+### Date
+2026-08-07
