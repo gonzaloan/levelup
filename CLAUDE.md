@@ -170,6 +170,21 @@ before making changes.
   place a specific entry with it — `tools-integration` named two dimensions for three families,
   leaving `mcp-primitives` unplaceable. The total-partition rule is enforced because a families list
   that quietly drops an entry re-creates the orphan defect **one level up**, invisibly.
+  **A REPAIR ROUND IS NOT FREE — re-verify the fix, not just the finding.** Across three adversarial
+  rounds on these 11 primers, 20 defects were found and **6 were introduced by earlier repairs**: a
+  clause added to admit one member excluded another. `families[1]` in agent-patterns gained a
+  termination clause and lost `routing`; a hedge added to reach one reader made the rule true of
+  `orchestrator-worker`; removing an over-broad disjunct from chunking's count-driven rule excluded
+  `recursive-character-splitting`, whose trigger is the opposite of what remained. Walk **every
+  member and the nearest non-member** after editing a rule — reading the rule alone catches none of
+  these. The same applies per locale: one bilingual fix landed correctly in EN and put the false
+  claim straight back in ES, where nothing mechanical was looking.
+  **Not every family is placed by the axis, and that is correct.** Each cluster's FIRST family is a
+  measurement pre-family — `context-engineering`'s `Window limits and prices` holds a capacity, a
+  measured phenomenon and a caching mechanism; `embeddings`' `The vector and its budget` is the same
+  shape. Its own rule says the reader is not choosing between techniques yet. Do not "fix" an axis so
+  that it classifies these too; the rule places them, and forcing the axis to would push something
+  wrong into the family.
   **Word caps are measured on the authored source language (EN), not both** — Spanish runs 20-40%
   longer, so a shared cap either lets EN sprawl or rejects correct ES. Family labels are the
   exception with a looser ES cap of their own (9 vs 6): dropping the ES cap entirely let a 13-word
