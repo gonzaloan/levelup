@@ -179,6 +179,29 @@ before making changes.
   member and the nearest non-member** after editing a rule — reading the rule alone catches none of
   these. The same applies per locale: one bilingual fix landed correctly in EN and put the false
   claim straight back in ES, where nothing mechanical was looking.
+  **A PRIMER THE READER CANNOT REACH IS THE SAME DEFECT ONE LEVEL UP.** The 11 primers shipped
+  invisible to both surfaces a reader actually arrives on. `searchCodex` indexes entry
+  `term`/`definition`/`whenToUse`, so typing a cluster's own name returned ZERO results —
+  measured on "context engineering", "agent pattern", "vector index" — from a reference that had
+  just defined them, and the search box sits ABOVE the mode switch precisely because "I already
+  know the word I want" is the most common arrival. The `path` mode, which is the front-to-back
+  reader a primer serves best, showed none of it. `searchClusters()` and the path's `<details>`
+  glossary exist for that; a family chip in a search result also needs `onChipClick`, because
+  `#e-<slug>` resolves to nothing where the entries are not rendered.
+  **CHANGING STATE IS NOT ARRIVING, and `toBeInViewport()` cannot tell the difference.** Two
+  landing defects shipped behind green tests: a button that switched cluster without scrolling
+  (destination heading 693px above the viewport), then a scroll that landed at `top: 0`, fully
+  behind the 61px sticky header. `.cx-cluster-title` needed the `scroll-margin-top: 76px` that
+  `.cx-entry` and `.cx-arch` already carried. Assert the geometry a reader depends on — top edge
+  below the header, an upper bound so something is on screen, hit-testable, and `toBeVisible()` —
+  and wait for smooth scroll to settle with a time floor, because it has 112-176ms plateaus that a
+  3-equal-samples poll can lock onto.
+  **A guessed `requestAnimationFrame` loses the race on a slow phone.** Scroll-after-navigate ran
+  one frame early, before React committed, so `getElementById` returned null and the scroll was
+  swallowed: 15/15 cold deep links landed at 1x CPU, 2/15 at 4x, 0/15 at 8x. Use a pending-target
+  state consumed by an effect keyed on the committed state — the element then exists by
+  construction rather than by timing. Verified with a pre-fix control: 21 of 36 fail on the old
+  build, 0 of 36 on the new.
   **Not every family is placed by the axis, and that is correct.** Each cluster's FIRST family is a
   measurement pre-family — `context-engineering`'s `Window limits and prices` holds a capacity, a
   measured phenomenon and a caching mechanism; `embeddings`' `The vector and its budget` is the same

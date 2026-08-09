@@ -621,3 +621,83 @@ fields were changed except the text-embedding-3 limit correction above.
 
 ### Date
 2026-08-07
+
+## ADR-014 — A guard is a fixture problem before it is a logic problem
+
+### Status
+**Accepted** — `tests/scroll-target.test.ts`, `assertArrived()` in `tests/visual/codex.spec.ts`,
+`searchClusters()` in `src/lib/codex.ts`
+
+### Context
+
+ADR-013 added a primer to every Codex cluster. Asked afterwards whether that was the best
+option, the honest answer was that the diagnosis was right and the delivery had a hole: the
+primers were invisible to the two surfaces a reader arrives on. Typing a cluster's own name
+into the Codex's own search returned ZERO results — "context engineering", "agent pattern",
+"vector index" — and the reading path, the front-to-back reader a primer serves best, showed
+none of it. That is the same defect ADR-013 was written to fix, one level up.
+
+Fixing it took five rounds with two adversarial reviewers, and the reviews found more than the
+implementation did. What is worth recording is not the fixes; it is the pattern that produced
+them.
+
+### The pattern
+
+**Five times in one session, a correctly-written assertion had a fixture that could not fail.**
+Same signature every time: the property named was the right property, the assertion was well
+formed, and the input chosen was the one member of its class that could not exercise the branch.
+
+1. `"chunking"` returns exactly one cluster hit, so `hits[0]` was the answer whatever the scores
+   were — the ranking test survived flattening every tier to the same number.
+2. `"contextos"` matches no text in the Codex at all, so the exemption it tested was never
+   consulted; it failed for a reason unrelated to the rule.
+3. Two reverse-stem fixtures sat far under the over-match threshold, so that branch never ran.
+4. `"retrieval"` appears only in one title of its cluster, so `Math.max` across the two titles
+   was never observed and a last-wins assignment survived.
+5. An escape test asserted `new RegExp("")` does not throw (a constant), matched
+   `/^\[id="(.*)"\]$/` greedily (matches anything), and used a single quote as its only input —
+   which is byte-identical under quote-only and quote-plus-backslash escaping.
+
+None was visible by reading the test. Every one was visible by reverting the thing it protected.
+
+**And three source-regex guards were wrong or blind in a row**, all guarding the same code: a
+proximity match to a function name broke when the code correctly moved; its replacement looked
+200 characters ahead when the real distance was 513, so the defect it existed to prohibit passed;
+and a `not.toContain` tripped over the comment explaining the history. A hand-picked distance is
+itself a fixture.
+
+### Decision
+
+**Write the assertion, then choose the input that can fail it — and prove it by reverting.** A
+test is not done when it passes; it is done when it has been observed failing for the reason it
+names. Mutation is cheap: revert the fix, run the test, restore.
+
+**Prefer a seam to a source regex.** CLAUDE.md already said "either extract the seam or assert the
+wiring in source"; source had three chances here and lost all three. `scrollPlan()` in
+`src/lib/scrollTarget.ts` is the shape that worked — a pure function, unit-tested without a DOM,
+with the component keeping only the call it cannot avoid. What remains in source is a flat
+`not.toContain` over comment-stripped code, which cannot have a window's blind spot.
+
+**Assert the property, not the shape.** "No `requestAnimationFrame` in this file" survives
+refactors that "no rAF within N characters of `scrollIntoView`" does not. "The escape is
+reversible" survives a rewrite that "the selector matches this exact string" does not.
+
+### Consequences
+
+Mutation testing is now the expected close-out for a new guard in this repo, not an optional
+extra. It found 15 survivors out of 36 on the first pass over `searchClusters`, and every one
+that mattered was a fixture rather than a logic error.
+
+The tooling needs the same scepticism as the gate. Three harness errors produced false
+conclusions in this session: a backup written to one path and read from another (so no mutation
+ever applied and everything reported SURVIVED), a stale `out/` giving a 24/25 that had nothing to
+do with the source, and a decoder whose two sequential replaces re-processed their own output and
+blamed the code under test. A tool that audits a gate needs its own audit.
+
+Two guards were kept deliberately despite being unreachable, and the distinction is the one worth
+carrying: `fold(title)` in the exemption is dominated by today's DATA (five accented title words
+exist; one already sits at 45% of a 67% ceiling), while a second word-length floor was dominated
+by another guard in EVERY possible input. The first stays, the second went.
+
+### Date
+2026-08-08
