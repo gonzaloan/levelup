@@ -472,15 +472,28 @@ async function assertArrived(page: Page, selector: string, where: string) {
   // correctly at 76px. Poll `scrollY` until it stops changing rather than sleeping a
   // fixed amount, so the check is not a race on a slow machine.
   await page.waitForFunction(() => {
-    const w = window as unknown as { __lastY?: number; __still?: number };
+    const w = window as unknown as { __lastY?: number; __still?: number; __t0?: number };
     const y = Math.round(window.scrollY);
     if (w.__lastY === y) { w.__still = (w.__still ?? 0) + 1; } else { w.__still = 0; w.__lastY = y; }
-    return (w.__still ?? 0) >= 3;
+    // A MINIMUM settle time as well as three equal samples. Smooth scrolling has
+    // intermediate plateaus — a review measured 112-176ms of unchanging `scrollY`
+    // mid-flight, including one genuine direction reversal — and three fast samples can
+    // land inside one. That is the most likely cause of a 3-in-19 serial flake on the
+    // double-click test, which always reported "occluded" on the second click. 250ms is
+    // longer than the longest plateau measured and shorter than the animation.
+    w.__t0 ??= performance.now();
+    return (w.__still ?? 0) >= 3 && performance.now() - w.__t0 > 250;
   }, undefined, { timeout: 10_000 });
   await page.evaluate(() => {
-    const w = window as unknown as { __lastY?: number; __still?: number };
-    w.__lastY = undefined; w.__still = 0;   // reset, so a later call re-measures
+    const w = window as unknown as { __lastY?: number; __still?: number; __t0?: number };
+    w.__lastY = undefined; w.__still = 0; w.__t0 = undefined;   // reset, so a later call re-measures
   });
+
+  // Must be genuinely visible, not merely positioned. This is one of the two gaps a
+  // review found in the first version: `visibility: hidden` on the landed heading kept
+  // `top` at 76 and made `elementFromPoint` return the ANCESTOR, which the old
+  // `hit.contains(el)` clause accepted — so an invisible target "arrived".
+  await expect(page.locator(selector), `${where}: target is not visible`).toBeVisible();
 
   const geom = await page.locator(selector).evaluate((el) => {
     const r = el.getBoundingClientRect();
@@ -494,10 +507,20 @@ async function assertArrived(page: Page, selector: string, where: string) {
     const hit = document.elementFromPoint(x, y);
     return {
       top: Math.round(r.top),
-      occluder: hit && (hit === el || el.contains(hit) || hit.contains(el)) ? null : (hit?.tagName ?? "nothing"),
+      viewportH: window.innerHeight,
+      // `el.contains(hit)` only: a child of the target at that point is the target
+      // arriving. The reverse — an ANCESTOR at that point — means the target itself is
+      // not painting there, which is the invisible-arrival case above.
+      occluder: hit && (hit === el || el.contains(hit)) ? null : (hit?.tagName ?? "nothing"),
     };
   });
   expect(geom.top, `${where}: top ${geom.top}px is under the sticky header`).toBeGreaterThanOrEqual(NAV_H);
+  // The other gap: `top` was bounded below by the header and not above by the viewport.
+  // A reinstated defect measured `top: 892` in a 900px viewport — 8px of a 1382px card
+  // on screen, no occluder, both assertions passing. Caught then only by luck of which
+  // element the clamped probe hit.
+  expect(geom.top, `${where}: top ${geom.top}px leaves nothing on screen`)
+    .toBeLessThan(geom.viewportH - 40);
   expect(geom.occluder, `${where}: occluded by <${geom.occluder}>`).toBeNull();
 }
 
