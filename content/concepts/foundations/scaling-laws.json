@@ -1,0 +1,89 @@
+{
+  "id": "scaling-laws",
+  "domain": "foundations",
+  "level": "advanced",
+  "title": { "en": "Scaling laws & Chinchilla", "es": "Scaling laws y Chinchilla" },
+  "aliases": ["Chinchilla", "compute-optimal", "Kaplan scaling laws", "6ND", "tokens per parameter", "overtraining", "test-time compute"],
+  "tldr": {
+    "en": "Loss falls predictably as a power law in parameters, data and compute. Chinchilla's compute-optimal mix is ~20 tokens per parameter, but labs overtrain small models because inference, not training, dominates lifetime cost.",
+    "es": "La loss baja de forma predecible como ley de potencia en parámetros, datos y cómputo. La mezcla óptima de Chinchilla es ~20 tokens por parámetro, pero los labs sobreentrenan modelos chicos porque la inferencia, no el entrenamiento, domina el costo total."
+  },
+  "analogy": {
+    "en": "A bigger brain and more books both help a student, with diminishing returns. Chinchilla is the best brain-versus-books split for a fixed tuition budget; overtraining drills a smaller student far longer because they're cheaper to employ for years.",
+    "es": "Un cerebro más grande y más libros ayudan a un estudiante, con rendimientos decrecientes. Chinchilla es el mejor reparto cerebro-libros para una colegiatura fija; sobreentrenar es hacer estudiar mucho más a un alumno más chico porque contratarlo saldrá más barato durante años."
+  },
+  "explain": {
+    "en": "**Scaling laws** are empirical fits showing that a language model's loss falls as a smooth **power law** as you scale parameters (N), training tokens (D) and compute (C), across many orders of magnitude. That makes training predictable: fit small runs, then extrapolate before paying for the big one.\n\nTraining compute is roughly **C ≈ 6·N·D FLOPs** (2ND forward, 4ND backward). For a fixed C, how do you split it?\n\n- **Kaplan et al. (2020)**: mostly into parameters. GPT-3 (175B params, 300B tokens, ~1.7 tokens/param) followed that.\n- **Chinchilla (Hoffmann et al., 2022)** corrected it: grow N and D *equally*, about **20 tokens per parameter**. Chinchilla 70B on 1.4T tokens beat the 4× larger Gopher (280B) at the same compute.\n\nBut Chinchilla minimizes *training* compute only. Every served token costs ~2N FLOPs, so for a model used billions of times a smaller, **overtrained** model wins: Llama 3 8B saw ~15T tokens, ~1,875 per parameter, and was still improving.\n\nTwo caveats to say out loud: power laws mean **diminishing returns** (each fixed loss gain costs a multiple of compute), and lower loss doesn't map linearly to your task. The newest axis is **test-time compute**: [[reasoning-models]] spend more tokens thinking per query, a second scaling curve paid at inference.",
+    "es": "Las **scaling laws** son ajustes empíricos que muestran que la loss de un modelo de lenguaje baja como una **ley de potencia** suave al escalar parámetros (N), tokens de entrenamiento (D) y cómputo (C), a lo largo de muchos órdenes de magnitud. Eso vuelve predecible el entrenamiento: ajustas corridas chicas y extrapolas antes de pagar la grande.\n\nEl cómputo de entrenamiento es aproximadamente **C ≈ 6·N·D FLOPs** (2ND en el forward, 4ND en el backward). Con un C fijo, ¿cómo lo repartes?\n\n- **Kaplan et al. (2020)**: casi todo a parámetros. GPT-3 (175B parámetros, 300B tokens, ~1.7 tokens por parámetro) siguió esa receta.\n- **Chinchilla (Hoffmann et al., 2022)** lo corrigió: N y D deben crecer *por igual*, unos **20 tokens por parámetro**. Chinchilla 70B con 1.4T tokens superó a Gopher (280B), 4× más grande, con el mismo cómputo.\n\nPero Chinchilla solo minimiza el cómputo de *entrenamiento*. Cada token servido cuesta ~2N FLOPs, así que para un modelo que se usará miles de millones de veces gana uno más chico y **sobreentrenado**: Llama 3 8B vio ~15T tokens, ~1,875 por parámetro, y seguía mejorando.\n\nDos advertencias que conviene decir en voz alta: una ley de potencia implica **rendimientos decrecientes** (cada mejora fija de loss cuesta un múltiplo del cómputo), y una loss menor no se traduce linealmente en tu tarea. El eje más nuevo es el **cómputo en inferencia** (test-time compute): los [[reasoning-models]] gastan más tokens pensando por consulta, una segunda curva de escalamiento que se paga al servir."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  C[\"Training budget<br/>C = 6 N D\"] --> S{How to split}\n  S -->|Kaplan 2020| K[\"Big N, few tokens<br/>GPT-3: ~2 tok/param\"]\n  S -->|Chinchilla 2022| O[\"N and D equal<br/>~20 tok/param\"]\n  S -->|Inference-aware| V[\"Small N, huge D<br/>Llama 3 8B: ~1,875\"]\n  O --> L[Lowest training loss]\n  V --> I[\"Cheap per token<br/>~2N FLOPs\"]\n  I --> T[\"Budget for<br/>test-time compute\"]",
+    "caption": {
+      "en": "Same compute, three answers: the right split depends on whether you count only training or also every token you will serve.",
+      "es": "Mismo cómputo, tres respuestas: el reparto correcto depende de si cuentas solo el entrenamiento o también cada token que vas a servir."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Back-of-envelope: training FLOPs and the Chinchilla split", "es": "Cálculo rápido: FLOPs de entrenamiento y el reparto de Chinchilla" },
+    "source": "def train_flops(n_params, n_tokens):\n    return 6 * n_params * n_tokens  # ~2ND forward + ~4ND backward\n\ndef chinchilla_optimal(compute, tokens_per_param=20):\n    # C = 6 * N * (20 * N)  ->  N = sqrt(C / 120)\n    n = (compute / (6 * tokens_per_param)) ** 0.5\n    return n, tokens_per_param * n\n\nRUNS = {  # (parameters, training tokens) as published\n    \"GPT-3 175B\": (175e9, 300e9),\n    \"Chinchilla 70B\": (70e9, 1.4e12),\n    \"Llama 3 8B\": (8e9, 15e12),\n    \"Llama 3.1 405B\": (405e9, 15.6e12),\n}\n\nfor name, (n, d) in RUNS.items():\n    c = train_flops(n, d)\n    n_opt, d_opt = chinchilla_optimal(c)\n    print(f\"{name}: {c:.1e} FLOPs, {d / n:,.0f} tok/param -> \"\n          f\"Chinchilla: {n_opt / 1e9:.0f}B on {d_opt / 1e12:.1f}T\")\n# GPT-3 175B: 3.2e+23 FLOPs, 2 tok/param -> Chinchilla: 51B on 1.0T\n# Chinchilla 70B: 5.9e+23 FLOPs, 20 tok/param -> Chinchilla: 70B on 1.4T\n# Llama 3 8B: 7.2e+23 FLOPs, 1,875 tok/param -> Chinchilla: 77B on 1.5T\n# Llama 3.1 405B: 3.8e+25 FLOPs, 39 tok/param -> Chinchilla: 562B on 11.2T\n\n# Inference cost per generated token is ~2N FLOPs: 16 GFLOPs (8B) vs 154 (77B)"
+  },
+  "example": {
+    "en": "You have ~7×10^23 FLOPs (6 × 8B × 15T). Chinchilla-optimal spends it on a ~77B model trained on ~1.5T tokens; Meta spent it on Llama 3 8B over 15T tokens. The 77B model would likely reach lower loss, but every generated token costs ~154 GFLOPs instead of ~16, and it needs ~154 GB of bf16 weights instead of 16 GB, so several GPUs instead of one. The gap is ~138 GFLOPs per token: past ~5T served tokens, the inference savings alone exceed the entire training budget. That's the argument of Sardana et al.: once you count expected inference, the optimal model is smaller and trained longer.",
+    "es": "Tienes ~7×10^23 FLOPs (6 × 8B × 15T). Lo óptimo según Chinchilla es gastarlos en un modelo de ~77B entrenado con ~1.5T tokens; Meta los gastó en Llama 3 8B con 15T tokens. El de 77B probablemente llegaría a una loss menor, pero cada token generado cuesta ~154 GFLOPs en vez de ~16, y necesita ~154 GB de pesos en bf16 en lugar de 16 GB, o sea varias GPUs en vez de una. La diferencia es de ~138 GFLOPs por token: pasados ~5T tokens servidos, el ahorro en inferencia por sí solo supera todo el presupuesto de entrenamiento. Ese es el argumento de Sardana et al.: cuando cuentas la inferencia esperada, el modelo óptimo es más chico y se entrena más tiempo."
+  },
+  "pros": [
+    { "en": "Predict a big run's loss from small pilot runs before committing millions of dollars.", "es": "Predicen la loss de una corrida grande a partir de corridas piloto chicas, antes de comprometer millones de dólares." },
+    { "en": "Give a defensible split between parameters and data instead of guesswork.", "es": "Dan un reparto defendible entre parámetros y datos en lugar de adivinar." },
+    { "en": "Explain the market: why small overtrained open models rival much larger older ones.", "es": "Explican el mercado: por qué modelos abiertos chicos y sobreentrenados compiten con modelos viejos mucho más grandes." }
+  ],
+  "cons": [
+    { "en": "Empirical fits: exponents shift with data quality, architecture and tokenizer.", "es": "Son ajustes empíricos: los exponentes cambian con la calidad de los datos, la arquitectura y el tokenizer." },
+    { "en": "They predict loss, not specific capabilities; jumps on downstream tasks are hard to forecast.", "es": "Predicen la loss, no capacidades concretas; los saltos en tareas downstream son difíciles de pronosticar." },
+    { "en": "They assume fresh data keeps coming; high-quality text is finite and repeated epochs lose value.", "es": "Suponen que siempre habrá datos nuevos; el texto de alta calidad es finito y repetir épocas pierde valor." }
+  ],
+  "whenToUse": {
+    "en": "Budgeting a training or continued-pretraining run; explaining why a small open model rivals a big old one; arguing compute vs data vs inference trade-offs in model selection and capacity planning.",
+    "es": "Para presupuestar una corrida de entrenamiento o de continued pretraining; explicar por qué un modelo abierto chico compite con uno grande y viejo; argumentar trade-offs entre cómputo, datos e inferencia al elegir modelos y planificar capacidad."
+  },
+  "whenNotToUse": {
+    "en": "Don't use loss curves to promise a specific capability or benchmark score, and don't apply 20 tokens per parameter to a model you'll serve at scale: that rule ignores inference cost.",
+    "es": "No uses curvas de loss para prometer una capacidad o un puntaje de benchmark concreto, y no apliques 20 tokens por parámetro a un modelo que servirás a escala: esa regla ignora el costo de inferencia."
+  },
+  "numbers": [
+    { "en": "Training ≈ 6·N·D FLOPs; inference ≈ 2·N FLOPs per token.", "es": "Entrenamiento ≈ 6·N·D FLOPs; inferencia ≈ 2·N FLOPs por token." },
+    { "en": "Chinchilla-optimal: ~20 tokens per parameter (70B on 1.4T tokens).", "es": "Óptimo según Chinchilla: ~20 tokens por parámetro (70B con 1.4T tokens)." },
+    { "en": "GPT-3: ~1.7 tokens/param; Llama 3 8B: ~1,875 tokens/param (15T tokens).", "es": "GPT-3: ~1.7 tokens por parámetro; Llama 3 8B: ~1,875 tokens por parámetro (15T tokens)." },
+    { "en": "Llama 3.1 405B: ~3.8×10^25 FLOPs on 15.6T tokens.", "es": "Llama 3.1 405B: ~3.8×10^25 FLOPs con 15.6T tokens." },
+    { "en": "Kaplan's loss-vs-compute exponent is ~0.05: 10× more compute cuts loss by only ~11%.", "es": "El exponente de loss contra cómputo de Kaplan es ~0.05: 10× más cómputo reduce la loss apenas ~11%." }
+  ],
+  "pitfalls": [
+    { "en": "Quoting \"20 tokens per parameter\" as the right way to train any model; it's optimal for training compute only.", "es": "Citar \"20 tokens por parámetro\" como la forma correcta de entrenar cualquier modelo; solo es óptimo para el cómputo de entrenamiento." },
+    { "en": "Reading lower pretraining loss as \"better at my task\" without a downstream eval.", "es": "Interpretar una loss de pretraining menor como \"mejor para mi tarea\" sin un eval downstream." },
+    { "en": "Using total parameters in 6ND for an MoE; compute scales with active parameters.", "es": "Usar los parámetros totales en 6ND para un MoE; el cómputo escala con los parámetros activos." },
+    { "en": "Ignoring the data limit: beyond ~4 epochs, repeated tokens add much less than fresh ones (Muennighoff et al., 2023).", "es": "Ignorar el límite de datos: después de ~4 épocas, los tokens repetidos aportan mucho menos que los nuevos (Muennighoff et al., 2023)." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Chinchilla says ~20 tokens per parameter. Why did Meta train an 8B model on 15T tokens?", "es": "Chinchilla dice ~20 tokens por parámetro. ¿Por qué Meta entrenó un modelo de 8B con 15T tokens?" },
+      "a": {
+        "en": "Because Chinchilla optimizes the wrong objective for a product. It minimizes loss for a fixed training budget, but training happens once while inference cost scales with parameters on every token served. An 8B model costs ~16 GFLOPs per token versus ~154 for the 77B model the same compute would train Chinchilla-style. Overtraining spends extra training compute per unit of quality and pays it back in serving cost, latency and fitting on one GPU. Meta also reported the 8B was still improving at 15T tokens.",
+        "es": "Porque Chinchilla optimiza el objetivo equivocado para un producto. Minimiza la loss con un presupuesto fijo de entrenamiento, pero el entrenamiento ocurre una vez, mientras que el costo de inferencia escala con los parámetros en cada token servido. Un modelo de 8B cuesta ~16 GFLOPs por token contra ~154 del modelo de 77B que ese mismo cómputo entrenaría al estilo Chinchilla. Sobreentrenar gasta más cómputo de entrenamiento por unidad de calidad y lo recupera en costo de serving, latencia y en caber en una sola GPU. Además, Meta reportó que el 8B seguía mejorando con 15T tokens."
+      }
+    },
+    {
+      "q": { "en": "Is scaling hitting a wall?", "es": "¿El escalamiento está chocando contra un muro?" },
+      "a": {
+        "en": "I separate the axes. Pretraining still follows power laws, but returns diminish: each step needs ~10× compute, and high-quality data is getting scarce. So gains shifted to post-training and test-time compute: reasoning models trained with RL on verifiable tasks, which spend more tokens per query, made big jumps on math and code. For architecture decisions that means quality per dollar now depends on how much thinking we buy per request, so I treat reasoning effort as a cost knob and route it per task.",
+        "es": "Separo los ejes. El pretraining sigue leyes de potencia, pero con rendimientos decrecientes: cada paso exige ~10× más cómputo y los datos de alta calidad escasean. Por eso las mejoras se movieron al post-training y al cómputo en inferencia: los modelos de razonamiento entrenados con RL en tareas verificables, que gastan más tokens por consulta, dieron saltos grandes en matemáticas y código. Para decisiones de arquitectura, eso significa que la calidad por dólar ahora depende de cuánto razonamiento compramos por request, así que trato el esfuerzo de razonamiento como una perilla de costo y lo ruteo por tarea."
+      }
+    }
+  ],
+  "related": ["llm-training-pipeline", "reasoning-models", "moe", "distillation", "token-economics", "model-selection"],
+  "sources": [
+    { "title": "Kaplan et al. — Scaling Laws for Neural Language Models", "url": "https://arxiv.org/abs/2001.08361" },
+    { "title": "Hoffmann et al. — Training Compute-Optimal Large Language Models (Chinchilla)", "url": "https://arxiv.org/abs/2203.15556" },
+    { "title": "Sardana et al. — Beyond Chinchilla-Optimal: Accounting for Inference in LM Scaling Laws", "url": "https://arxiv.org/abs/2401.00448" },
+    { "title": "Snell et al. — Scaling LLM Test-Time Compute Optimally", "url": "https://arxiv.org/abs/2408.03314" }
+  ]
+}

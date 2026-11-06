@@ -1,0 +1,88 @@
+{
+  "id": "contextual-retrieval",
+  "domain": "rag",
+  "level": "advanced",
+  "title": { "en": "Contextual retrieval", "es": "Contextual retrieval (recuperación contextual)" },
+  "aliases": ["contextual embeddings", "contextual BM25", "chunk contextualization", "context-enriched chunks", "situated chunks", "Anthropic contextual retrieval"],
+  "tldr": {
+    "en": "At indexing time, an LLM writes 50–100 tokens situating each chunk in its document; you prepend them before embedding and BM25. Anthropic cut top-20 retrieval failures 35–67%, at no query-time cost.",
+    "es": "Al indexar, un LLM escribe 50–100 tokens que sitúan cada chunk dentro de su documento y los antepones antes del embedding y de BM25. Anthropic redujo 35–67% las fallas de recuperación en el top 20, sin costo al consultar."
+  },
+  "analogy": {
+    "en": "A page torn out of a report that says \"revenue grew 3%\" is useless. Staple a sticky note reading \"ACME, Q2 2023 filing\" to it, and anyone can file it and find it again.",
+    "es": "Una hoja arrancada de un reporte que dice \"los ingresos crecieron 3%\" no sirve de mucho. Engrápale una nota que diga \"ACME, reporte del Q2 2023\" y cualquiera podrá archivarla y volver a encontrarla."
+  },
+  "explain": {
+    "en": "Contextual retrieval repairs **chunks that lost their context** when the document was split. A chunk reading *\"The company's revenue grew by 3% over the previous quarter\"* names neither the company nor the quarter, so neither its embedding nor [[bm25]] can match *\"ACME Q2 2023 revenue growth\"*.\n\nThe fix, published by Anthropic in 2024, runs once, at **indexing time**:\n\n1. For each chunk, send the **whole document plus the chunk** to a cheap LLM: *\"give a short succinct context to situate this chunk within the overall document\"*.\n2. It returns ~50–100 tokens, e.g. *\"From ACME's Q2 2023 SEC filing; previous quarter revenue was $314M.\"*\n3. **Prepend** that context to the chunk and index the result in both the vector store (*contextual embeddings*) and the BM25 index (*contextual BM25*).\n\nQuery time does not change, so latency doesn't either. The cost is one LLM call per chunk, each re-reading the full document; [[prompt-caching]] makes that cheap, because the document is cached once and every chunk reads it from cache.\n\nStore the generated context **next to** the original text, not instead of it: you cite and show the real chunk, and you can regenerate contexts when you change the prompt or model.",
+    "es": "Contextual retrieval repara **chunks que perdieron su contexto** al dividir el documento. Un chunk que dice *\"Los ingresos de la empresa crecieron 3% respecto al trimestre anterior\"* no nombra ni la empresa ni el trimestre, así que ni su embedding ni [[bm25]] pueden coincidir con *\"crecimiento de ingresos de ACME en el Q2 2023\"*.\n\nLa solución, publicada por Anthropic en 2024, se ejecuta una sola vez, **al indexar**:\n\n1. Para cada chunk, envía **el documento completo más el chunk** a un LLM barato: *\"da un contexto breve y conciso que sitúe este chunk dentro del documento completo\"*.\n2. Devuelve ~50–100 tokens, por ejemplo *\"Del reporte de ACME ante la SEC del Q2 2023; los ingresos del trimestre anterior fueron $314M.\"*\n3. **Antepón** ese contexto al chunk e indexa el resultado tanto en el vector store (*contextual embeddings*) como en el índice BM25 (*contextual BM25*).\n\nEl tiempo de consulta no cambia, así que la latencia tampoco. El costo es una llamada al LLM por chunk, y cada una vuelve a leer el documento completo; [[prompt-caching]] lo abarata, porque el documento se cachea una vez y cada chunk lo lee desde la caché.\n\nGuarda el contexto generado **junto al** texto original, no en su lugar: así citas y muestras el chunk real, y puedes regenerar los contextos cuando cambies el prompt o el modelo."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[Full document] --> C[Chunker]\n  C --> K[Chunk i]\n  D -.->|cached prefix| G[\"LLM: situate chunk<br/>(cheap model)\"]\n  K --> G\n  G --> X[\"Context + chunk\"]\n  X --> E[Embed]\n  X --> B[BM25 tokenize]\n  E --> V[(Vector index)]\n  B --> L[(BM25 index)]\n  Q[User query] --> H[\"Hybrid search<br/>+ rerank\"]\n  V --> H\n  L --> H",
+    "caption": {
+      "en": "One cached document feeds an LLM call per chunk; the context-prefixed chunk goes into both indexes, and queries run unchanged.",
+      "es": "Un documento cacheado alimenta una llamada al LLM por chunk; el chunk con su contexto entra a ambos índices y las consultas no cambian."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Contextualize chunks against a cached document", "es": "Contextualizar chunks contra un documento en caché" },
+    "source": "import anthropic\n\nclient = anthropic.Anthropic()\nMODEL = \"claude-haiku-4-5\"  # any cheap, fast model: the task is short and easy\n\n# Prompt from Anthropic's contextual retrieval post\nINSTRUCTION = (\n    \"Here is the chunk we want to situate within the whole document\\n\"\n    \"<chunk>\\n{chunk}\\n</chunk>\\n\"\n    \"Please give a short succinct context to situate this chunk within the \"\n    \"overall document for the purposes of improving search retrieval of the \"\n    \"chunk. Answer only with the succinct context and nothing else.\"\n)\n\ndef situate(doc: str, chunk: str) -> str:\n    resp = client.messages.create(\n        model=MODEL,\n        max_tokens=150,\n        messages=[{\"role\": \"user\", \"content\": [\n            # Same document for every chunk -> written to cache once, then read cheaply\n            {\"type\": \"text\", \"text\": f\"<document>\\n{doc}\\n</document>\",\n             \"cache_control\": {\"type\": \"ephemeral\"}},\n            {\"type\": \"text\", \"text\": INSTRUCTION.format(chunk=chunk)},\n        ]}],\n    )\n    return resp.content[0].text.strip()\n\ndef index_document(doc_id: str, doc: str) -> None:\n    for i, chunk in enumerate(split_into_chunks(doc, tokens=800)):\n        context = situate(doc, chunk)       # first call writes the cache\n        text = f\"{context}\\n\\n{chunk}\"       # this is what gets indexed\n        vector_store.upsert(id=f\"{doc_id}:{i}\", vector=embed(text),\n                            payload={\"chunk\": chunk, \"context\": context})\n        bm25_index.add(id=f\"{doc_id}:{i}\", text=text)  # contextual BM25 too"
+  },
+  "example": {
+    "en": "A financial-research bot indexes 1,000 SEC filings of ~8K tokens each: 8M document tokens, ~10,000 chunks of 800 tokens. Contextualizing them costs ~$8 one-time at Anthropic's 2024 estimate (~$1.02 per million document tokens with caching). Before, *\"ACME revenue growth Q2 2023\"* missed the chunk *\"revenue grew by 3%\"* because \"ACME\" and \"Q2 2023\" appeared only on the filing's cover page. After, both terms sit in the prepended context, so BM25 matches them exactly and the embedding lands in the right neighborhood.",
+    "es": "Un bot de análisis financiero indexa 1,000 reportes ante la SEC de ~8K tokens cada uno: 8M de tokens de documentos y ~10,000 chunks de 800 tokens. Contextualizarlos cuesta ~$8 una sola vez según la estimación de Anthropic de 2024 (~$1.02 por millón de tokens de documento con caché). Antes, *\"crecimiento de ingresos de ACME Q2 2023\"* no encontraba el chunk *\"los ingresos crecieron 3%\"* porque \"ACME\" y \"Q2 2023\" solo aparecían en la portada del reporte. Ahora ambos términos están en el contexto antepuesto: BM25 los encuentra de forma exacta y el embedding cae en el vecindario correcto."
+  },
+  "pros": [
+    { "en": "Large recall gains with no change to the query path and no added query latency.", "es": "Grandes mejoras de recall sin cambiar el camino de consulta y sin latencia extra al consultar." },
+    { "en": "Helps both embeddings and BM25, and stacks with reranking (−35% → −49% → −67% failures).", "es": "Ayuda tanto a los embeddings como a BM25, y se suma al reranking (−35% → −49% → −67% de fallas)." },
+    { "en": "One-time cost that prompt caching makes small.", "es": "Un costo único que el prompt caching vuelve pequeño." }
+  ],
+  "cons": [
+    { "en": "One LLM call per chunk: slower ingestion, and a full re-run whenever you re-chunk or change the prompt.", "es": "Una llamada al LLM por chunk: ingesta más lenta y una corrida completa cada vez que cambias el chunking o el prompt." },
+    { "en": "Indexed text grows ~12% (100 tokens on an 800-token chunk).", "es": "El texto indexado crece ~12% (100 tokens sobre un chunk de 800)." },
+    { "en": "A wrong generated context silently mis-indexes its chunk.", "es": "Un contexto generado incorrecto indexa mal su chunk sin que nadie lo note." },
+    { "en": "Documents longer than the model's window must be split into sections first.", "es": "Los documentos más largos que la ventana del modelo hay que dividirlos primero en secciones." }
+  ],
+  "whenToUse": {
+    "en": "Long documents whose chunks depend on surrounding context (filings, contracts, manuals, policies), where \"the company\", \"this section\" or \"the previous quarter\" lose their referent once split.",
+    "es": "Documentos largos cuyos chunks dependen del contexto que los rodea (reportes financieros, contratos, manuales, políticas), donde \"la empresa\", \"esta sección\" o \"el trimestre anterior\" pierden su referente al dividirlos."
+  },
+  "whenNotToUse": {
+    "en": "Knowledge bases under ~200K tokens (put everything in a cached prompt instead), short self-contained items like FAQs or tickets, or when prepending title and section headers already closes the gap.",
+    "es": "Bases de conocimiento de menos de ~200K tokens (mejor mete todo en un prompt cacheado), elementos cortos y autocontenidos como FAQs o tickets, o cuando anteponer el título y los encabezados de sección ya cierra la brecha."
+  },
+  "numbers": [
+    { "en": "Top-20 retrieval failure rate in Anthropic's tests: 5.7% baseline → 3.7% with contextual embeddings (−35%).", "es": "Tasa de fallas de recuperación en el top 20 en las pruebas de Anthropic: 5.7% base → 3.7% con contextual embeddings (−35%)." },
+    { "en": "Adding contextual BM25: 2.9% (−49%); adding reranking on top: 1.9% (−67%).", "es": "Sumando contextual BM25: 2.9% (−49%); sumando además reranking: 1.9% (−67%)." },
+    { "en": "Generated context: ~50–100 tokens per chunk.", "es": "Contexto generado: ~50–100 tokens por chunk." },
+    { "en": "~$1.02 per million document tokens, one-time, with prompt caching (Claude 3 Haiku pricing, 2024); scale by your model's price.", "es": "~$1.02 por millón de tokens de documento, una sola vez, con prompt caching (precios de Claude 3 Haiku, 2024); escálalo según el precio de tu modelo." },
+    { "en": "Under ~200K tokens (~500 pages) of knowledge, skip retrieval and send it all with caching.", "es": "Con menos de ~200K tokens (~500 páginas) de conocimiento, sáltate la recuperación y envía todo con caché." }
+  ],
+  "pitfalls": [
+    { "en": "Firing every chunk of a document in parallel before the first call has written the cache: all of them pay full price. Warm up with one call, then fan out.", "es": "Lanzar todos los chunks de un documento en paralelo antes de que la primera llamada escriba la caché: todos pagan precio completo. Calienta la caché con una llamada y luego paraleliza." },
+    { "en": "Letting the default 5-minute cache TTL expire between chunks of the same document.", "es": "Dejar que expire el TTL de caché por defecto de 5 minutos entre chunks del mismo documento." },
+    { "en": "Citing or displaying the generated context as if it were source text; a model wrote it and it can be wrong.", "es": "Citar o mostrar el contexto generado como si fuera texto fuente; lo escribió un modelo y puede estar mal." },
+    { "en": "Skipping the free baseline: prepend title and section path first, and measure recall@20 before paying for LLM calls.", "es": "Saltarse la línea base gratuita: antepón primero el título y la ruta de secciones, y mide el recall@20 antes de pagar llamadas al LLM." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How is contextual retrieval different from just prepending the document title?", "es": "¿En qué se diferencia contextual retrieval de simplemente anteponer el título del documento?" },
+      "a": {
+        "en": "Title prepending is the free baseline and I'd ship it first, together with the section path. It answers \"which document\" but not chunk-specific references. Contextual retrieval writes a context per chunk: not just \"ACME 10-Q\" but \"Q2 2023 revenue section; prior quarter $314M\". It costs one LLM call per chunk at index time and nothing at query time. I'd measure recall@20 with headers only, read the misses, and pay for contextual retrieval when they are chunks whose referent lives elsewhere in the document.",
+        "es": "Anteponer el título es la línea base gratuita y la lanzaría primero, junto con la ruta de secciones. Resuelve \"de qué documento viene\", pero no las referencias propias de cada chunk. Contextual retrieval escribe un contexto por chunk: no solo \"10-Q de ACME\", sino \"sección de ingresos del Q2 2023; trimestre anterior $314M\". Cuesta una llamada al LLM por chunk al indexar y nada al consultar. Mediría el recall@20 solo con encabezados, revisaría los fallos y pagaría contextual retrieval cuando sean chunks cuyo referente vive en otra parte del documento."
+      }
+    },
+    {
+      "q": { "en": "Your corpus is 50M tokens. What does contextual retrieval cost, and what's the trap?", "es": "Tu corpus tiene 50M de tokens. ¿Cuánto cuesta contextual retrieval y cuál es la trampa?" },
+      "a": {
+        "en": "At Anthropic's estimate of ~$1 per million document tokens with caching, about $50 one-time; a few times more with pricier newer models, still small next to engineering time. The trap is that the estimate assumes cache hits. If I fire all chunks of a document before the first call writes the cache, or let the 5-minute TTL lapse, every call pays full input price on the whole document, several times the budget. So I warm the cache with one call per document, then fan out its chunks, and parallelize across documents.",
+        "es": "Con la estimación de Anthropic de ~$1 por millón de tokens de documento con caché, unos $50 una sola vez; varias veces más con modelos nuevos más caros, pero sigue siendo poco frente al tiempo de ingeniería. La trampa es que la estimación supone aciertos de caché. Si lanzo todos los chunks de un documento antes de que la primera llamada escriba la caché, o dejo vencer el TTL de 5 minutos, cada llamada paga precio completo de entrada por el documento entero, varias veces el presupuesto. Así que caliento la caché con una llamada por documento, luego paralelizo sus chunks y también paralelizo entre documentos."
+      }
+    }
+  ],
+  "related": ["chunking", "bm25", "hybrid-search", "reranking", "prompt-caching", "embedding-models"],
+  "sources": [
+    { "title": "Anthropic — Introducing Contextual Retrieval", "url": "https://www.anthropic.com/news/contextual-retrieval" },
+    { "title": "Anthropic — Prompt caching (docs)", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching" }
+  ]
+}

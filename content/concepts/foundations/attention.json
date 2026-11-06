@@ -1,0 +1,89 @@
+{
+  "id": "attention",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Self-attention", "es": "Self-attention (autoatención)" },
+  "aliases": ["self-attention", "scaled dot-product attention", "multi-head attention", "MHA", "GQA", "MQA", "causal mask", "QKV"],
+  "tldr": {
+    "en": "Each token builds a query, key and value; it scores its query against every earlier token's key, softmaxes the scores and takes a weighted sum of values. Cost grows O(n²) with context length.",
+    "es": "Cada token arma una query, una key y un value; compara su query con la key de cada token anterior, aplica softmax a los puntajes y suma los values ponderados. El costo crece O(n²) con el largo del contexto."
+  },
+  "analogy": {
+    "en": "A meeting: each person (token) asks a question, everyone shows a name tag saying what they know, and you listen mostly to people whose tag matches your question, but only to those who spoke before you.",
+    "es": "Una reunión: cada persona (token) hace una pregunta, todos muestran una etiqueta con lo que saben y escuchas sobre todo a quienes tienen la etiqueta que coincide con tu pregunta, pero solo a los que hablaron antes que tú."
+  },
+  "explain": {
+    "en": "**Self-attention** is how a token gathers information from the other tokens in its sequence. Each token vector `x` is projected three ways:\n\n- **Query** `q = x·W_Q`: what am I looking for?\n- **Key** `k = x·W_K`: what do I contain?\n- **Value** `v = x·W_V`: what do I pass on if selected?\n\nFor all tokens at once: `Attention(Q,K,V) = softmax(QKᵀ/√d)·V`. Each query is dotted with every key, scaled by √d (head dimension) so large dot products don't saturate the softmax, turned into weights that sum to 1, and used to average the values.\n\nA **causal mask** sets scores for future positions to −∞ before the softmax, so token *i* sees only tokens ≤ *i*. That lets training predict every position in parallel without cheating.\n\n**Multi-head** attention runs h smaller attentions in parallel (e.g., 32 heads × 128 dims = 4,096), each tracking a different relation, then concatenates and projects them.\n\n**Cost:** the score matrix is n×n, so compute grows **O(n²)** with sequence length. During generation, past keys and values live in the [[kv-cache]], which grows linearly and dominates memory at long context. **MQA** shares one K/V head across all query heads; **GQA** shares one per group (Llama 3 8B: 8 K/V heads for 32 query heads), cutting the cache 4× with little quality loss.",
+    "es": "La **self-attention** es la forma en que un token reúne información de los demás tokens de su secuencia. Cada vector de token `x` se proyecta de tres maneras:\n\n- **Query** `q = x·W_Q`: ¿qué estoy buscando?\n- **Key** `k = x·W_K`: ¿qué contengo?\n- **Value** `v = x·W_V`: ¿qué entrego si me eligen?\n\nPara todos los tokens a la vez: `Attention(Q,K,V) = softmax(QKᵀ/√d)·V`. Cada query se multiplica (producto punto) por cada key, se escala por √d (la dimensión del head) para que los productos grandes no saturen el softmax, se convierte en pesos que suman 1 y se usa para promediar los values.\n\nUna **máscara causal** pone en −∞ los puntajes de las posiciones futuras antes del softmax, así el token *i* solo ve los tokens ≤ *i*. Eso permite entrenar prediciendo todas las posiciones en paralelo sin hacer trampa.\n\nLa atención **multi-head** corre h atenciones más chicas en paralelo (p. ej., 32 heads × 128 dimensiones = 4,096), cada una siguiendo una relación distinta, y luego las concatena y las proyecta.\n\n**Costo:** la matriz de puntajes es n×n, así que el cómputo crece **O(n²)** con el largo de la secuencia. Al generar, las keys y values de los tokens pasados se guardan en el [[kv-cache]], que crece linealmente y domina la memoria con contextos largos. **MQA** comparte un solo head de K/V entre todos los heads de query; **GQA** comparte uno por grupo (Llama 3 8B: 8 heads de K/V para 32 de query), lo que reduce el cache 4× con poca pérdida de calidad."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  TX[Token vectors X] --> Q[\"Q = X·Wq\"]\n  TX --> K[\"K = X·Wk\"]\n  TX --> V[\"V = X·Wv\"]\n  Q --> S[\"Scores QKᵀ / √d\"]\n  K --> S\n  S --> M[\"Causal mask<br/>future = −∞\"]\n  M --> SM[Softmax per row]\n  SM --> WS[Weighted sum of V]\n  V --> WS\n  WS --> C[\"Concat heads, project Wo\"]\n  K -.->|kept during decode| KV[(KV cache)]\n  V -.-> KV",
+    "caption": {
+      "en": "One head scores every query against every key (n×n), hides the future, then averages values; K and V are cached for decoding.",
+      "es": "Un head compara cada query con cada key (n×n), oculta el futuro y promedia los values; K y V se guardan en cache para el decode."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Scaled dot-product attention with a causal mask in NumPy", "es": "Scaled dot-product attention con máscara causal en NumPy" },
+    "source": "import numpy as np\n\ndef softmax(x, axis=-1):\n    x = x - x.max(axis=axis, keepdims=True)  # subtract max for numerical stability\n    e = np.exp(x)\n    return e / e.sum(axis=axis, keepdims=True)\n\ndef causal_attention(Q, K, V):\n    \"\"\"Q, K, V: (seq_len, d_head). Returns output (seq_len, d_head) and weights.\"\"\"\n    n, d = Q.shape\n    scores = Q @ K.T / np.sqrt(d)                     # (n, n): every query vs every key -> O(n^2)\n    future = np.triu(np.ones((n, n), dtype=bool), k=1) # True above the diagonal\n    scores = np.where(future, -np.inf, scores)        # mask BEFORE softmax so rows still sum to 1\n    weights = softmax(scores, axis=-1)\n    return weights @ V, weights\n\nrng = np.random.default_rng(0)\nn, d_model, d_head = 5, 16, 8\nX = rng.normal(size=(n, d_model))                    # 5 token vectors\nW_q, W_k, W_v = (rng.normal(size=(d_model, d_head)) for _ in range(3))\n\nout, w = causal_attention(X @ W_q, X @ W_k, X @ W_v)\nprint(out.shape)       # (5, 8)\nprint(np.round(w, 2))  # lower-triangular: token 0 attends only to itself\n\n# Multi-head = run h of these on separate projections, concat, multiply by W_o.\n# In production use torch.nn.functional.scaled_dot_product_attention (fused kernels)."
+  },
+  "example": {
+    "en": "You serve Llama 3 8B in bf16 with 8k-token conversations. KV cache per token = 2 (K and V) × 32 layers × 8 KV heads × 128 dims × 2 bytes = 128 KiB, so one 8k sequence holds 1 GiB. On an 80 GB GPU with ~16 GB of weights, that leaves room for roughly 60 concurrent sequences. With full multi-head attention (32 KV heads) the cache would be 4 GiB per sequence and you'd fit ~15. GQA is a 4× concurrency win decided at model-design time, so check the KV-head count when you choose a model.",
+    "es": "Sirves Llama 3 8B en bf16 con conversaciones de 8k tokens. KV cache por token = 2 (K y V) × 32 capas × 8 heads de KV × 128 dimensiones × 2 bytes = 128 KiB, así que una secuencia de 8k ocupa 1 GiB. En una GPU de 80 GB con ~16 GB de pesos, queda espacio para unas 60 secuencias concurrentes. Con atención multi-head completa (32 heads de KV) el cache sería de 4 GiB por secuencia y cabrían ~15. GQA da 4× más concurrencia y se decide al diseñar el modelo, así que revisa cuántos heads de KV tiene cuando elijas uno."
+  },
+  "pros": [
+    { "en": "Direct path between any two tokens, regardless of distance.", "es": "Camino directo entre cualquier par de tokens, sin importar la distancia." },
+    { "en": "Pure matrix multiplies: highly parallel on GPUs during training and prefill.", "es": "Solo multiplicaciones de matrices: muy paralelo en GPUs durante el entrenamiento y el prefill." },
+    { "en": "Content-based routing: what each token reads is decided per input, not fixed by position.", "es": "Enrutamiento por contenido: lo que lee cada token se decide según la entrada, no queda fijo por la posición." }
+  ],
+  "cons": [
+    { "en": "O(n²) compute and, naively, O(n²) memory for the score matrix.", "es": "Cómputo O(n²) y, en una implementación ingenua, memoria O(n²) para la matriz de puntajes." },
+    { "en": "KV cache grows linearly with context × batch and caps concurrency.", "es": "El KV cache crece linealmente con contexto × batch y limita la concurrencia." },
+    { "en": "Each new token reads the whole KV cache, so long contexts slow down decoding.", "es": "Cada token nuevo lee todo el KV cache, así que los contextos largos hacen más lento el decode." }
+  ],
+  "whenToUse": {
+    "en": "Know it cold to reason about long-context cost, KV cache sizing, GQA/MQA when picking a model, and kernels such as FlashAttention or paged attention in your serving stack.",
+    "es": "Domínala para razonar sobre el costo de contextos largos, el tamaño del KV cache, GQA/MQA al elegir un modelo y kernels como FlashAttention o paged attention en tu stack de serving."
+  },
+  "whenNotToUse": {
+    "en": "Don't hand-roll it for production: use fused kernels (PyTorch scaled_dot_product_attention, FlashAttention). Hand-written attention is for learning and research.",
+    "es": "No la implementes a mano para producción: usa kernels fusionados (scaled_dot_product_attention de PyTorch, FlashAttention). La atención escrita a mano es para aprender e investigar."
+  },
+  "numbers": [
+    { "en": "Score matrix per head per layer: n² entries; 32k tokens ≈ 1.07B entries.", "es": "Matriz de puntajes por head y por capa: n² entradas; 32k tokens ≈ 1,070 millones de entradas." },
+    { "en": "Doubling context ≈ 4× attention FLOPs but only 2× KV cache.", "es": "Duplicar el contexto ≈ 4× FLOPs de atención, pero solo 2× de KV cache." },
+    { "en": "KV cache per token = 2 × layers × KV heads × head_dim × bytes; Llama 3 8B in bf16 ≈ 128 KiB.", "es": "KV cache por token = 2 × capas × heads de KV × head_dim × bytes; Llama 3 8B en bf16 ≈ 128 KiB." },
+    { "en": "GQA in Llama 3 8B: 32 query heads share 8 K/V heads, a 4× smaller cache than MHA.", "es": "GQA en Llama 3 8B: 32 heads de query comparten 8 heads de K/V, un cache 4× más chico que con MHA." },
+    { "en": "Typical head dimension: 64–128.", "es": "Dimensión típica de un head: 64–128." }
+  ],
+  "pitfalls": [
+    { "en": "Believing FlashAttention makes attention linear: it removes O(n²) memory and IO, but FLOPs stay quadratic.", "es": "Creer que FlashAttention vuelve lineal la atención: elimina la memoria y el IO O(n²), pero los FLOPs siguen siendo cuadráticos." },
+    { "en": "Masking after the softmax (zeroing weights) instead of −∞ before it: rows no longer sum to 1.", "es": "Aplicar la máscara después del softmax (poniendo pesos en cero) en vez de −∞ antes: las filas ya no suman 1." },
+    { "en": "Forgetting the causal mask in training code: loss looks great because the model reads the answer, and inference is garbage.", "es": "Olvidar la máscara causal en el código de entrenamiento: la loss se ve excelente porque el modelo lee la respuesta, y en inferencia sale basura." },
+    { "en": "Reading attention weights as an explanation of the decision; they are one signal among many layers.", "es": "Leer los pesos de atención como la explicación de la decisión; son una señal entre muchas capas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why is attention O(n²), and what do we do about it in production?", "es": "¿Por qué la atención es O(n²) y qué hacemos al respecto en producción?" },
+      "a": {
+        "en": "Every query is scored against every key, so one head in one layer builds an n×n matrix: 32k tokens is ~1B scores. FlashAttention fixes the memory side by computing in tiles and never materializing that matrix, but the FLOPs stay quadratic. Sliding-window or sparse attention and state-space hybrids cut the FLOPs at some quality cost. In serving, though, the bigger pain at long context is usually the KV cache, which grows linearly and limits batch size, so I look first at GQA models, paged attention and KV-cache quantization.",
+        "es": "Cada query se compara con cada key, así que un head en una capa arma una matriz n×n: 32k tokens son ~1,000 millones de puntajes. FlashAttention resuelve el lado de la memoria calculando por bloques sin materializar esa matriz, pero los FLOPs siguen siendo cuadráticos. La atención con ventana deslizante o dispersa y los híbridos state-space recortan los FLOPs a cambio de algo de calidad. Pero en serving, el dolor mayor con contextos largos suele ser el KV cache, que crece linealmente y limita el tamaño del batch, así que primero miro modelos con GQA, paged attention y cuantización del KV cache."
+      }
+    },
+    {
+      "q": { "en": "MHA vs MQA vs GQA: what's the trade-off?", "es": "MHA vs MQA vs GQA: ¿cuál es el trade-off?" },
+      "a": {
+        "en": "It's about how many key/value heads you keep. MHA has one K/V head per query head: best quality, largest cache. MQA shares a single K/V head across all query heads: smallest cache and fastest decode, but measurable quality loss. GQA sits in between; Llama 3 8B uses 8 K/V heads for 32 query heads, a 4× smaller cache at near-MHA quality. The GQA paper also showed an existing MHA checkpoint can be converted by uptraining with ~5% of the original pre-training compute. For a serving-heavy product, I prefer a GQA model.",
+        "es": "Se trata de cuántos heads de key/value conservas. MHA tiene un head de K/V por cada head de query: la mejor calidad y el cache más grande. MQA comparte un solo head de K/V entre todos los heads de query: el cache más chico y el decode más rápido, pero con una pérdida de calidad medible. GQA queda en el medio; Llama 3 8B usa 8 heads de K/V para 32 de query, un cache 4× más chico con calidad cercana a MHA. El paper de GQA también mostró que un checkpoint MHA existente se puede convertir con uptraining usando ~5% del cómputo de preentrenamiento original. Para un producto con mucho serving, prefiero un modelo con GQA."
+      }
+    }
+  ],
+  "related": ["transformer", "kv-cache", "flash-attention", "paged-attention", "context-window", "gpu-memory-math"],
+  "sources": [
+    { "title": "Vaswani et al. — Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762" },
+    { "title": "Ainslie et al. — GQA: Training Generalized Multi-Query Transformer Models from Multi-Head Checkpoints", "url": "https://arxiv.org/abs/2305.13245" },
+    { "title": "Shazeer — Fast Transformer Decoding: One Write-Head is All You Need (MQA)", "url": "https://arxiv.org/abs/1911.02150" },
+    { "title": "Dao et al. — FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness", "url": "https://arxiv.org/abs/2205.14135" }
+  ]
+}

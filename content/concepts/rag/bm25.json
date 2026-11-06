@@ -1,0 +1,89 @@
+{
+  "id": "bm25",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Lexical search & BM25", "es": "Búsqueda léxica y BM25" },
+  "aliases": ["BM25", "Okapi BM25", "keyword search", "full-text search", "TF-IDF", "sparse retrieval", "inverted index", "Lucene"],
+  "tldr": {
+    "en": "BM25 ranks documents by how often they contain your query's words, rewarding rare words and discounting long documents. Decades old, no model, and still better than embeddings at exact terms: IDs, error codes, product names.",
+    "es": "BM25 ordena documentos según cuántas veces contienen las palabras de tu consulta, premiando las palabras raras y castigando los documentos largos. Tiene décadas, no usa modelos y sigue ganándoles a los embeddings en términos exactos: IDs, códigos de error, nombres de productos."
+  },
+  "analogy": {
+    "en": "The index at the back of a textbook: look up the rare word, jump straight to the pages that use it. Brilliant for \"ERR_1043\", useless when the book says \"automobile\" and you looked up \"car\".",
+    "es": "El índice al final de un libro de texto: buscas la palabra rara y saltas directo a las páginas que la usan. Genial para \"ERR_1043\", inútil cuando el libro dice \"automóvil\" y tú buscaste \"carro\"."
+  },
+  "explain": {
+    "en": "BM25 scores a document by the query words it contains. An **inverted index** maps each term to the documents that contain it, so only documents sharing a word get scored: no model, no GPU.\n\nFor each query term, three ingredients combine:\n\n- **Inverse document frequency (IDF)**: rare terms count more. Matching `0x80070005` is strong evidence; matching \"error\" is noise.\n- **Term frequency with saturation**: repeats help, with diminishing returns. `k1` (default 1.2) sets how fast it saturates, so the 10th mention adds far less than the 2nd.\n- **Length normalization**: `b` (default 0.75) discounts long documents, which match words by chance.\n\n`score = Σ IDF(t) · tf·(k1+1) / (tf + k1·(1 − b + b·len/avg_len))`\n\nIt wins where embeddings blur: IDs, error codes, SKUs, function names, legal citations, brand-new jargon the embedding model never saw. It loses on meaning (\"cancel my plan\" does not match \"terminate subscription\") and it depends on tokenization, stemming and stopwords for each language.\n\n**Lucene**, under Elasticsearch, OpenSearch and Solr, uses BM25 by default; Tantivy is the Rust equivalent. Postgres `ts_rank` is *not* BM25: it ignores IDF.",
+    "es": "BM25 puntúa un documento según las palabras de la consulta que contiene. Un **índice invertido** asocia cada término con los documentos donde aparece, así que solo se puntúan los documentos que comparten alguna palabra: sin modelo y sin GPU.\n\nPara cada término de la consulta se combinan tres ingredientes:\n\n- **Frecuencia inversa de documento (IDF)**: los términos raros pesan más. Que coincida `0x80070005` es una señal fuerte; que coincida \"error\" es ruido.\n- **Frecuencia del término con saturación**: las repeticiones ayudan, pero cada vez menos. `k1` (1.2 por defecto) define qué tan rápido se satura, así que la décima mención suma mucho menos que la segunda.\n- **Normalización por longitud**: `b` (0.75 por defecto) castiga los documentos largos, que coinciden con palabras por pura casualidad.\n\n`score = Σ IDF(t) · tf·(k1+1) / (tf + k1·(1 − b + b·len/avg_len))`\n\nGana donde los embeddings se vuelven borrosos: IDs, códigos de error, SKUs, nombres de funciones, citas legales y jerga nueva que el modelo de embeddings nunca vio. Pierde en significado (\"cancelar mi plan\" no coincide con \"dar de baja la suscripción\") y depende de la tokenización, el stemming y las stopwords de cada idioma.\n\n**Lucene**, la base de Elasticsearch, OpenSearch y Solr, usa BM25 por defecto; Tantivy es el equivalente en Rust. El `ts_rank` de Postgres *no* es BM25: ignora la IDF."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[Documents] --> T[\"Analyze: tokenize,<br/>lowercase, stem\"]\n  T --> I[(\"Inverted index<br/>term → doc ids\")]\n  Q[\"Query: error 0x80070005\"] --> QT[Analyze query]\n  QT --> L[Look up postings]\n  I --> L\n  L --> S[\"BM25 score<br/>(IDF, TF, length)\"]\n  S --> K[Top-k documents]",
+    "caption": {
+      "en": "Only documents that share a term with the query are scored. The same analyzer must run at index time and at query time.",
+      "es": "Solo se puntúan los documentos que comparten algún término con la consulta. El mismo analizador debe correr al indexar y al consultar."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "BM25 that keeps error codes intact", "es": "BM25 que respeta los códigos de error" },
+    "source": "import re\nfrom rank_bm25 import BM25Okapi\n\ndocs = [\n    \"Error E1043: payment gateway timeout after 30 s\",\n    \"How to reset your password\",\n    \"Payment failed? Check your card details\",\n    \"E1044 means the card was declined by the issuer\",\n]\n\ndef tokenize(text: str) -> list[str]:\n    # Keep codes like e1043 as one token: embeddings tend to blur them\n    return re.findall(r\"[a-z0-9]+\", text.lower())\n\n# Lucene's defaults; rank_bm25 would default k1 to 1.5\nbm25 = BM25Okapi([tokenize(d) for d in docs], k1=1.2, b=0.75)\n\nquery = \"E1043 timeout\"\nscores = bm25.get_scores(tokenize(query))\nfor score, doc in sorted(zip(scores, docs), reverse=True)[:2]:\n    print(f\"{score:.2f}  {doc}\")\n# Only the E1043 doc scores; the E1044 doc gets 0, though to an embedding the codes look alike"
+  },
+  "example": {
+    "en": "An IT help desk has 200k tickets. A user pastes *\"error 0x80070005 when installing updates\"*. Vector search returns generic \"access denied\" articles: semantically close, wrong fix. BM25 finds `0x80070005` in only 37 tickets, so its IDF ≈ 8.6, versus ≈ 0.7 for \"error\", which appears in half the corpus. The 37 exact matches jump to the top, and in a hybrid setup the vector leg still contributes the paraphrased tickets that never quote the code.",
+    "es": "Una mesa de ayuda de TI tiene 200k tickets. Un usuario pega *\"error 0x80070005 al instalar actualizaciones\"*. La búsqueda vectorial devuelve artículos genéricos de \"acceso denegado\": cercanos en significado, pero con la solución equivocada. BM25 encuentra `0x80070005` en solo 37 tickets, así que su IDF ≈ 8.6, contra ≈ 0.7 de \"error\", que aparece en la mitad del corpus. Las 37 coincidencias exactas suben al principio y, en un esquema híbrido, la parte vectorial sigue aportando los tickets parafraseados que nunca citan el código."
+  },
+  "pros": [
+    { "en": "Nails exact matches: IDs, error codes, SKUs, names, rare jargon.", "es": "Acierta en coincidencias exactas: IDs, códigos de error, SKUs, nombres y jerga poco común." },
+    { "en": "No model, no GPU, no embedding drift; indexing is cheap and incremental.", "es": "Sin modelo, sin GPU y sin drift de embeddings; indexar es barato e incremental." },
+    { "en": "Explainable: you can show which terms matched and why a document scored.", "es": "Es explicable: puedes mostrar qué términos coincidieron y por qué un documento obtuvo su puntaje." },
+    { "en": "Handles brand-new vocabulary on day one, with no retraining.", "es": "Maneja vocabulario nuevo desde el primer día, sin reentrenar nada." }
+  ],
+  "cons": [
+    { "en": "No semantics: misses synonyms and paraphrases (\"cancel\" versus \"terminate my plan\").", "es": "No entiende significado: se le escapan sinónimos y paráfrasis (\"cancelar\" frente a \"dar de baja mi plan\")." },
+    { "en": "Quality hinges on tokenization, stemming and stopwords, configured per language.", "es": "La calidad depende de la tokenización, el stemming y las stopwords, configurados por idioma." },
+    { "en": "Weak on long conversational questions where few words carry the intent.", "es": "Rinde poco con preguntas largas y conversacionales donde pocas palabras cargan la intención." }
+  ],
+  "whenToUse": {
+    "en": "Always as one leg of [[hybrid-search]]. On its own when queries are keyword-shaped: codes, identifiers, names, legal or medical terms, logs.",
+    "es": "Siempre como una de las dos patas de [[hybrid-search]]. Por sí solo cuando las consultas son de palabras clave: códigos, identificadores, nombres, términos legales o médicos, logs."
+  },
+  "whenNotToUse": {
+    "en": "As the only retriever for conversational questions, cross-lingual search or paraphrase-heavy corpora: pair it with dense vectors.",
+    "es": "Como único recuperador para preguntas conversacionales, búsqueda entre idiomas o corpus llenos de paráfrasis: combínalo con vectores densos."
+  },
+  "numbers": [
+    { "en": "Lucene, Elasticsearch and OpenSearch defaults: k1 = 1.2, b = 0.75.", "es": "Valores por defecto en Lucene, Elasticsearch y OpenSearch: k1 = 1.2, b = 0.75." },
+    { "en": "BM25 has been Lucene's default similarity since Lucene 6.0 (2016).", "es": "BM25 es la similitud por defecto de Lucene desde Lucene 6.0 (2016)." },
+    { "en": "IDF ≈ ln(1 + (N − n + 0.5)/(n + 0.5)): a term in 37 of 200k docs ≈ 8.6; in half the docs ≈ 0.7.", "es": "IDF ≈ ln(1 + (N − n + 0.5)/(n + 0.5)): un término en 37 de 200k documentos ≈ 8.6; en la mitad de los documentos ≈ 0.7." },
+    { "en": "BEIR (18 datasets, 2021): out of domain, BM25 was a strong zero-shot baseline that many dense retrievers of the time failed to beat.", "es": "BEIR (18 datasets, 2021): fuera de dominio, BM25 fue una línea base zero-shot fuerte que muchos recuperadores densos de esa época no lograron superar." }
+  ],
+  "pitfalls": [
+    { "en": "Calling Postgres `ts_rank` BM25: it has no IDF. Use a BM25 extension such as ParadeDB's pg_search, or a Lucene-based engine.", "es": "Llamar BM25 al `ts_rank` de Postgres: no tiene IDF. Usa una extensión BM25, como pg_search de ParadeDB, o un motor basado en Lucene." },
+    { "en": "Default analyzers that split or mangle identifiers like `v2.3.1` or `ERR-1043`. Test your real codes through the analyzer.", "es": "Analizadores por defecto que parten o deforman identificadores como `v2.3.1` o `ERR-1043`. Pasa tus códigos reales por el analizador y revisa el resultado." },
+    { "en": "English stemming and stopwords applied to Spanish or mixed-language content.", "es": "Aplicar stemming y stopwords de inglés a contenido en español o en varios idiomas." },
+    { "en": "Comparing or adding raw BM25 scores across queries: they are unbounded and not probabilities.", "es": "Comparar o sumar puntajes BM25 crudos entre consultas: no están acotados y no son probabilidades." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "If embeddings understand meaning, why keep BM25?", "es": "Si los embeddings entienden el significado, ¿para qué mantener BM25?" },
+      "a": {
+        "en": "Because the failure modes are complementary. An embedding compresses a chunk into ~1,000 dimensions, and rare exact tokens, like an error code, a SKU or a customer's name, get blurred into \"something similar\". BM25 rewards exactly those rare tokens through IDF. The queries users complain about most are often exact-match ones, so I run both and fuse them with RRF. It is cheap, needs no GPU, and when someone asks why a document ranked, I can show the matched terms.",
+        "es": "Porque sus modos de falla se complementan. Un embedding comprime un chunk en ~1,000 dimensiones, y los tokens exactos y raros, como un código de error, un SKU o el nombre de un cliente, se vuelven \"algo parecido\". BM25 premia justo esos tokens raros gracias a la IDF. Las consultas de las que más se quejan los usuarios suelen ser de coincidencia exacta, así que corro ambos y los fusiono con RRF. Es barato, no necesita GPU y, cuando alguien pregunta por qué un documento quedó arriba, puedo mostrar los términos que coincidieron."
+      }
+    },
+    {
+      "q": { "en": "What do k1 and b do, and would you tune them?", "es": "¿Qué hacen k1 y b, y los ajustarías?" },
+      "a": {
+        "en": "k1 controls term-frequency saturation: at 0 frequency is ignored, and higher values let repeated terms keep adding score; Lucene uses 1.2. b controls length normalization, from 0 (none) to 1 (full); the default is 0.75. I rarely tune them first: analyzers, synonyms and field boosts, like title over body, move results more. If I do tune them, it is on a labeled query set with nDCG@10, for example lowering b when long documents are genuinely more relevant.",
+        "es": "k1 controla la saturación de la frecuencia del término: con 0 la frecuencia se ignora, y valores más altos dejan que los términos repetidos sigan sumando; Lucene usa 1.2. b controla la normalización por longitud, de 0 (ninguna) a 1 (completa); por defecto vale 0.75. Casi nunca los ajusto primero: los analizadores, los sinónimos y el peso por campo, como título sobre cuerpo, mueven más los resultados. Si los ajusto, lo hago con un conjunto de consultas etiquetadas y nDCG@10; por ejemplo, bajo b cuando los documentos largos de verdad son más relevantes."
+      }
+    }
+  ],
+  "related": ["hybrid-search", "embedding-models", "vector-databases", "query-transformation", "chunking", "indexes"],
+  "sources": [
+    { "title": "Elasticsearch — Similarity module (BM25)", "url": "https://www.elastic.co/guide/en/elasticsearch/reference/current/index-modules-similarity.html" },
+    { "title": "Thakur et al. — BEIR: A Heterogeneous Benchmark for Zero-shot Evaluation of Information Retrieval Models", "url": "https://arxiv.org/abs/2104.08663" },
+    { "title": "rank_bm25 — BM25 implementations in Python", "url": "https://github.com/dorianbrown/rank_bm25" },
+    { "title": "Wikipedia — Okapi BM25", "url": "https://en.wikipedia.org/wiki/Okapi_BM25" }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "id": "sampling",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Decoding & sampling (temperature, top-p)", "es": "Decoding y sampling (temperatura, top-p)" },
+  "aliases": ["temperature", "top-p", "nucleus sampling", "top-k", "min-p", "greedy decoding", "logits", "softmax"],
+  "tldr": {
+    "en": "The model scores every token; decoding picks one. Use low temperature for facts, code and tool calls, higher temperature with top-p or min-p for variety. Even temperature 0 isn't bit-for-bit reproducible.",
+    "es": "El modelo puntúa cada token y el decoding elige uno. Usa temperatura baja para datos, código y tool calls, y una más alta con top-p o min-p para variedad. Ni siquiera la temperatura 0 es reproducible bit a bit."
+  },
+  "analogy": {
+    "en": "A radio DJ picking the next song: greedy always plays the #1 hit, temperature sets how often a deep cut sneaks in, and top-p only allows the songs that together make up 90% of requests.",
+    "es": "Un DJ de radio eligiendo la siguiente canción: greedy siempre pone el éxito #1, la temperatura decide qué tan seguido se cuela una rareza y top-p solo permite las canciones que juntas suman el 90% de las peticiones."
+  },
+  "explain": {
+    "en": "Decoding is how a model turns its output into text, one token at a time. At each step the model emits a **logit** (raw score) for every token in its vocabulary (~128k for Llama 3); **softmax** turns them into probabilities, and a *decoding strategy* picks one.\n\n- **Greedy**: always take the top token. Deterministic in theory, repetitive on open-ended text.\n- **Temperature** divides the logits by T before softmax. T < 1 sharpens the distribution, T > 1 flattens it; T → 0 becomes greedy.\n- **Top-k** keeps only the k most likely tokens.\n- **Top-p (nucleus)** keeps the smallest set whose probabilities sum to p (e.g. 0.9), so the pool shrinks when the model is confident and widens when it isn't.\n- **Min-p** keeps tokens with at least `min_p × p(top token)`; it stays coherent at high temperatures.\n\n**Temperature 0 is not fully deterministic.** Floating-point addition isn't associative, and inference kernels change their reduction order with batch size, so your logits depend on who else is in the batch. MoE routing can depend on the batch too, and near-ties flip the argmax. Treat outputs as a distribution and design for [[nondeterminism]].",
+    "es": "El decoding es cómo un modelo convierte su salida en texto, un token a la vez. En cada paso el modelo produce un **logit** (puntaje crudo) para cada token de su vocabulario (~128k en Llama 3); **softmax** los convierte en probabilidades y una *estrategia de decoding* elige uno.\n\n- **Greedy**: siempre toma el token más probable. Determinista en teoría, repetitivo en texto abierto.\n- **Temperatura** divide los logits entre T antes del softmax. T < 1 concentra la distribución, T > 1 la aplana; T → 0 equivale a greedy.\n- **Top-k** conserva solo los k tokens más probables.\n- **Top-p (nucleus)** conserva el conjunto más pequeño cuyas probabilidades suman p (p. ej., 0.9): el grupo se achica cuando el modelo está seguro y se abre cuando duda.\n- **Min-p** conserva los tokens con al menos `min_p × p(mejor token)`; se mantiene coherente con temperaturas altas.\n\n**La temperatura 0 no es del todo determinista.** La suma en punto flotante no es asociativa y los kernels de inferencia cambian el orden de reducción según el tamaño del batch, así que tus logits dependen de quién más va en ese batch. El ruteo de un MoE también puede depender del batch, y los casi empates cambian el argmax. Trata las salidas como una distribución y diseña pensando en el [[nondeterminism]]."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  H[Final hidden state] --> L[\"Logits<br/>one per vocab token\"]\n  L --> T[Divide by temperature]\n  T --> S[Softmax]\n  S --> F[\"Truncate<br/>top-k, top-p, min-p\"]\n  F --> R[Renormalize and sample]\n  L -.->|greedy| G[argmax]\n  R --> A[Append token, repeat]\n  G --> A",
+    "caption": {
+      "en": "Every generated token goes through this loop; sampling settings only reshape the distribution before the pick.",
+      "es": "Cada token generado pasa por este ciclo; los parámetros de sampling solo reforman la distribución antes de elegir."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "What temperature, top-p and min-p do to a softmax", "es": "Qué le hacen temperatura, top-p y min-p a un softmax" },
+    "source": "import numpy as np\n\nlogits = np.array([4.0, 3.0, 2.0, 0.5])  # raw scores for 4 candidate tokens\n\ndef softmax(x, T=1.0):\n    z = x / T                    # temperature rescales the logits\n    p = np.exp(z - z.max())      # subtract max for numerical stability\n    return p / p.sum()\n\nfor T in (0.2, 0.7, 1.0, 1.5):\n    print(T, softmax(logits, T).round(3))\n# 0.2 [0.993 0.007 0.    0.   ]   <- practically greedy\n# 0.7 [0.767 0.184 0.044 0.005]\n# 1.0 [0.652 0.24  0.088 0.02 ]   <- the model's own distribution\n# 1.5 [0.534 0.274 0.141 0.052]   <- the tail gains mass\n\ndef nucleus(p, top_p=0.9):       # smallest set with mass >= top_p\n    order = np.argsort(p)[::-1]\n    keep = order[: np.searchsorted(np.cumsum(p[order]), top_p) + 1]\n    q = np.zeros_like(p)\n    q[keep] = p[keep]\n    return q / q.sum()\n\ndef min_p_filter(p, min_p=0.1):  # cutoff scales with the top token's prob\n    q = np.where(p >= min_p * p.max(), p, 0.0)\n    return q / q.sum()\n\nrng = np.random.default_rng(42)  # seeded: reproducible on one machine\np = nucleus(softmax(logits, T=0.7))\ntoken = rng.choice(len(p), p=p)  # sample from the truncated distribution\ngreedy = int(np.argmax(logits))  # what \"temperature 0\" means in practice"
+  },
+  "example": {
+    "en": "Logits `[4.0, 3.0, 2.0, 0.5]`: at T=1 the top token gets 65%; at T=0.2 it gets 99.3% (practically greedy); at T=1.5 it drops to 53% and the weakest token climbs from 2% to 5%. In one product that becomes three settings:\n\n- Ticket classifier and JSON extraction: T=0 plus [[structured-outputs]]; you want the same label every run.\n- Marketing-copy brainstorm: T≈0.9, top_p=0.95; you want five *different* drafts.\n- [[self-consistency]] vote on a math question: 5 samples at T≈0.7, then majority; diversity is the point.",
+    "es": "Logits `[4.0, 3.0, 2.0, 0.5]`: con T=1 el token principal recibe 65%; con T=0.2 recibe 99.3% (prácticamente greedy); con T=1.5 baja a 53% y el token más débil sube de 2% a 5%. En un mismo producto eso se traduce en tres configuraciones:\n\n- Clasificador de tickets y extracción a JSON: T=0 más [[structured-outputs]]; quieres la misma etiqueta en cada corrida.\n- Lluvia de ideas para textos de marketing: T≈0.9, top_p=0.95; quieres cinco borradores *distintos*.\n- Votación con [[self-consistency]] en un problema de matemáticas: 5 muestras con T≈0.7 y luego mayoría; la diversidad es el objetivo."
+  },
+  "pros": [
+    { "en": "One knob trades consistency for diversity, with no retraining.", "es": "Una sola perilla intercambia consistencia por diversidad, sin reentrenar." },
+    { "en": "Truncation (top-p, min-p) cuts the low-probability tail where nonsense tokens live.", "es": "El truncamiento (top-p, min-p) corta la cola de baja probabilidad, donde viven los tokens sin sentido." },
+    { "en": "Sampling several times at T>0 enables self-consistency, best-of-n and diverse synthetic data.", "es": "Muestrear varias veces con T>0 habilita self-consistency, best-of-n y datos sintéticos diversos." }
+  ],
+  "cons": [
+    { "en": "Higher temperature raises the odds of off-path tokens: broken formats and made-up details.", "es": "Una temperatura más alta aumenta la probabilidad de tokens fuera de rumbo: formatos rotos y detalles inventados." },
+    { "en": "Greedy or T=0 on open-ended text tends to loop and repeat itself.", "es": "Greedy o T=0 en texto abierto tiende a entrar en bucles y repetirse." },
+    { "en": "Settings don't transfer: T=0.7 means different things across models, and some reasoning APIs don't let you set it.", "es": "La configuración no es portable: T=0.7 significa cosas distintas en cada modelo, y algunas APIs de razonamiento ni siquiera te dejan ajustarla." }
+  ],
+  "whenToUse": {
+    "en": "Low (0–0.3): extraction, classification, code, tool calls, evals. Higher (0.7–1.0) with top-p 0.9–0.95 or min-p ~0.05–0.1: brainstorming, creative writing, diverse samples for voting or synthetic data.",
+    "es": "Baja (0–0.3): extracción, clasificación, código, tool calls y evals. Más alta (0.7–1.0) con top-p 0.9–0.95 o min-p ~0.05–0.1: lluvia de ideas, escritura creativa y muestras diversas para votación o datos sintéticos."
+  },
+  "whenNotToUse": {
+    "en": "Don't raise temperature to fix bland answers; fix the prompt. Don't rely on T=0 for reproducibility, audits or cache keys; store the outputs. Don't tune temperature and top-p at the same time.",
+    "es": "No subas la temperatura para arreglar respuestas sosas: arregla el prompt. No confíes en T=0 para reproducibilidad, auditorías o llaves de caché: guarda las salidas. No ajustes temperatura y top-p al mismo tiempo."
+  },
+  "numbers": [
+    { "en": "OpenAI API temperature range 0–2 (default 1); Anthropic API 0–1 (default 1).", "es": "Rango de temperatura en la API de OpenAI: 0–2 (default 1); en la de Anthropic: 0–1 (default 1)." },
+    { "en": "Common truncation settings: top_p 0.9–0.95; min_p 0.05–0.1.", "es": "Valores comunes de truncamiento: top_p 0.9–0.95; min_p 0.05–0.1." },
+    { "en": "Thinking Machines: 1,000 runs of one prompt at T=0 on Qwen3-235B gave 80 distinct completions; batch-invariant kernels made them identical.", "es": "Thinking Machines: 1,000 corridas del mismo prompt con T=0 en Qwen3-235B dieron 80 completions distintas; con kernels invariantes al batch salieron idénticas." },
+    { "en": "Vocabulary scored at every step: ~128k tokens (Llama 3) to ~200k (OpenAI o200k).", "es": "Vocabulario puntuado en cada paso: ~128k tokens (Llama 3) a ~200k (o200k de OpenAI)." }
+  ],
+  "pitfalls": [
+    { "en": "Assuming T=0 means identical outputs, then building caching, tests or audits on that.", "es": "Asumir que T=0 da salidas idénticas y montar caché, tests o auditorías sobre esa idea." },
+    { "en": "Tuning temperature and top_p together; providers recommend changing one, not both.", "es": "Ajustar temperatura y top_p a la vez; los proveedores recomiendan cambiar uno, no ambos." },
+    { "en": "Running JSON or code generation at T≈1 and blaming the model for broken syntax.", "es": "Generar JSON o código con T≈1 y culpar al modelo por la sintaxis rota." },
+    { "en": "Comparing models in an eval at different sampling settings and reading the gap as model quality.", "es": "Comparar modelos en un eval con configuraciones de sampling distintas y atribuir la diferencia a la calidad del modelo." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why can the same prompt at temperature 0 give different answers?", "es": "¿Por qué el mismo prompt con temperatura 0 puede dar respuestas distintas?" },
+      "a": {
+        "en": "Because temperature 0 only means argmax; the logits themselves aren't bit-stable. Floating-point addition isn't associative, and servers choose kernels and reduction orders by batch size, so my request's numbers depend on what else is batched with it. When two tokens are nearly tied, a tiny difference flips the pick and the rest of the text diverges. MoE routing and silent model updates add more. So I store outputs I must reproduce, evaluate over several runs, and pay for batch-invariant kernels only if bitwise determinism is a real requirement.",
+        "es": "Porque temperatura 0 solo significa argmax; los logits en sí no son estables bit a bit. La suma en punto flotante no es asociativa y los servidores eligen kernels y orden de reducción según el tamaño del batch, así que los números de mi request dependen de qué más va en ese batch. Cuando dos tokens están casi empatados, una diferencia mínima cambia la elección y el resto del texto diverge. El ruteo de MoE y las actualizaciones silenciosas del modelo suman más variación. Por eso guardo las salidas que necesito reproducir, evalúo sobre varias corridas y solo pago kernels invariantes al batch si el determinismo bit a bit es un requisito real."
+      }
+    },
+    {
+      "q": { "en": "What sampling settings would you pick for a tool-calling agent versus a copywriting feature?", "es": "¿Qué configuración de sampling elegirías para un agente que llama herramientas y para una función de copywriting?" },
+      "a": {
+        "en": "For tool calls and extraction I want the mode of the distribution: temperature 0–0.2, plus structured outputs or constrained decoding so the format can't break; variety there is just risk. For copywriting I want diversity without the junk tail: temperature ~0.8–1.0 with top-p 0.95 or min-p 0.05, generating several candidates and ranking them. In both cases I pin the settings per feature in config, version them with the prompt, and run evals with exactly the production settings.",
+        "es": "Para tool calls y extracción quiero la moda de la distribución: temperatura 0–0.2, más structured outputs o decoding restringido para que el formato no se rompa; ahí la variedad solo es riesgo. Para copywriting quiero diversidad sin la cola de basura: temperatura ~0.8–1.0 con top-p 0.95 o min-p 0.05, generando varios candidatos y rankeándolos. En ambos casos fijo la configuración por función en un config, la versiono junto con el prompt y corro los evals exactamente con la configuración de producción."
+      }
+    }
+  ],
+  "related": ["nondeterminism", "structured-outputs", "self-consistency", "hallucinations", "speculative-decoding", "tokens"],
+  "sources": [
+    { "title": "Holtzman et al. — The Curious Case of Neural Text Degeneration (nucleus sampling)", "url": "https://arxiv.org/abs/1904.09751" },
+    { "title": "Nguyen et al. — Turning Up the Heat: Min-p Sampling", "url": "https://arxiv.org/abs/2407.01082" },
+    { "title": "Thinking Machines — Defeating Nondeterminism in LLM Inference", "url": "https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/" },
+    { "title": "Hugging Face — How to generate text: decoding methods", "url": "https://huggingface.co/blog/how-to-generate" }
+  ]
+}

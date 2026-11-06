@@ -1,0 +1,88 @@
+{
+  "id": "planning",
+  "domain": "agents",
+  "level": "advanced",
+  "title": { "en": "Planning (plan-and-execute)", "es": "Planificación (plan-and-execute)" },
+  "aliases": ["plan-and-execute", "plan-and-solve", "ReWOO", "LLMCompiler", "planner-executor", "task decomposition", "to-do list", "replanning"],
+  "tldr": {
+    "en": "A strong model writes an explicit step-by-step plan first; the steps are executed (often by a cheaper model with tools), and the agent replans only when a step fails or new facts appear.",
+    "es": "Un modelo fuerte escribe primero un plan explícito paso a paso; los pasos se ejecutan (a menudo con un modelo más barato y herramientas) y el agente solo replanifica cuando un paso falla o aparecen hechos nuevos."
+  },
+  "analogy": {
+    "en": "A contractor drafts the renovation schedule before any wall comes down. Crews follow it step by step, and when they find a rotten beam the schedule is revised, not thrown away.",
+    "es": "Un contratista arma el cronograma de la remodelación antes de tirar una sola pared. Las cuadrillas lo siguen paso a paso y, si encuentran una viga podrida, el cronograma se ajusta en vez de tirarse a la basura."
+  },
+  "explain": {
+    "en": "**Planning** (plan-and-execute) splits an agent into roles. A **planner** writes an explicit, ordered list of steps for the whole task up front; an **executor** carries them out one by one, often with a cheaper model and its own short tool loop. When a step fails or reveals something new, a **replanner** revises the remaining steps from the evidence.\n\nContrast with [[react]], which interleaves *think → act → observe* and decides only the next action each turn. ReAct adapts instantly but pays a full-context LLM call per step and can wander; plan-and-execute commits to a route and adapts at checkpoints.\n\nVariants worth naming:\n\n- **ReWOO**: the planner writes every tool call with placeholders (`#E1`, `#E2`), workers fill them without calling the LLM again, and a solver writes the answer. One planning call instead of one per step.\n- **LLMCompiler**: the plan is a DAG, so independent tool calls run in parallel.\n- **To-do lists in coding agents**: Claude Code's `TodoWrite` or Cursor's to-dos are a lightweight, *living* plan the model rewrites as it goes and the user can see and correct.\n\nWhat you buy: fewer calls to the expensive model, a plan a human can review before anything runs, and steerability. What you risk: **stale plans** executed after reality changed, and **over-planning** a two-step task.",
+    "es": "La **planificación** (plan-and-execute) divide al agente en roles. Un **planner** escribe por adelantado una lista explícita y ordenada de pasos para toda la tarea; un **executor** los ejecuta uno por uno, a menudo con un modelo más barato y su propio ciclo corto de herramientas. Cuando un paso falla o revela algo nuevo, un **replanner** corrige los pasos que faltan a partir de la evidencia.\n\nCompáralo con [[react]], que intercala *pensar → actuar → observar* y solo decide la siguiente acción en cada turno. ReAct se adapta al instante, pero paga una llamada al LLM con todo el contexto por cada paso y puede divagar; plan-and-execute se compromete con una ruta y se adapta en puntos de control.\n\nVariantes que conviene nombrar:\n\n- **ReWOO**: el planner escribe todas las llamadas a herramientas con variables (`#E1`, `#E2`), los workers las resuelven sin volver a llamar al LLM y un solver redacta la respuesta. Una sola llamada de planificación en vez de una por paso.\n- **LLMCompiler**: el plan es un DAG, así que las llamadas independientes corren en paralelo.\n- **Listas de pendientes en agentes de código**: el `TodoWrite` de Claude Code o los to-dos de Cursor son un plan liviano y *vivo* que el modelo reescribe sobre la marcha y que el usuario puede ver y corregir.\n\nLo que ganas: menos llamadas al modelo caro, un plan que una persona puede revisar antes de que algo se ejecute, y más control. Lo que arriesgas: **planes obsoletos** que se ejecutan aunque la realidad ya cambió, y **sobreplanificar** una tarea de dos pasos."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  G[User goal] --> P[\"Planner<br/>strong model\"]\n  P --> L[(\"Plan / to-do list\")]\n  L -->|next step| E[\"Executor<br/>cheap model + tools\"]\n  E --> C{Step passed?}\n  C -->|more steps| L\n  C -->|all done| S[\"Solver<br/>final answer\"]\n  C -->|failed| R[\"Replan with evidence\"]\n  R --> P",
+    "caption": {
+      "en": "The expensive model plans and replans; a cheap model executes. Replanning happens only at step boundaries, driven by a failed check.",
+      "es": "El modelo caro planifica y replanifica; uno barato ejecuta. Solo se replanifica entre pasos y a partir de una verificación fallida."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Plan once, execute cheaply, replan on failure", "es": "Planifica una vez, ejecuta barato, replanifica si falla" },
+    "source": "from openai import OpenAI\nfrom pydantic import BaseModel\n\nclient = OpenAI()\nPLANNER = \"gpt-4.1\"         # strong model: plans and replans\nEXECUTOR = \"gpt-4.1-mini\"   # cheap model: one step at a time\nMAX_REPLANS = 2\n\nclass Step(BaseModel):\n    id: int\n    action: str      # e.g. \"fetch PO for invoice INV-7\"\n    done_when: str   # verifiable exit check, not \"looks fine\"\n\nclass Plan(BaseModel):\n    steps: list[Step]\n\ndef make_plan(goal: str, progress: str = \"\") -> Plan:\n    r = client.responses.parse(model=PLANNER, text_format=Plan, input=(\n        f\"Goal: {goal}\\nDone so far:\\n{progress}\\nWrite 3-10 remaining steps.\"))\n    return r.output_parsed\n\ndef run(goal: str) -> list[str]:\n    done: list[str] = []\n    plan = make_plan(goal)\n    for _ in range(MAX_REPLANS + 1):\n        for step in plan.steps:\n            out = execute_step(EXECUTOR, step, done)  # small ReAct loop scoped to one step\n            if not out.ok:  # replan from evidence; keep finished work\n                plan = make_plan(goal, \"\\n\".join(done) + f\"\\nFAILED {step.action}: {out.error}\")\n                break\n            done.append(f\"{step.action} -> {out.summary}\")\n        else:\n            return done\n    raise RuntimeError(\"Still failing after replans: escalate to a human\")"
+  },
+  "example": {
+    "en": "A finance-ops agent reconciles 12 vendor invoices against purchase orders. Version 1 was pure ReAct on a frontier model: ~45 calls per run, each re-reading a growing transcript, ~$1.80 per run, and it sometimes re-checked the same invoice. Version 2 is plan-and-execute: one frontier call writes a 13-step plan (one step per invoice plus a summary), a mini model runs each step with a small fresh context, and the ops lead sees the plan before any payment is touched. Invoice #7 has no PO, so the replanner inserts an *\"email vendor\"* step. Cost falls to ~$0.35 per run.",
+    "es": "Un agente de finanzas concilia 12 facturas de proveedores contra órdenes de compra. La versión 1 era ReAct puro sobre un modelo frontier: ~45 llamadas por ejecución, cada una releyendo un historial creciente, ~$1.80 por ejecución, y a veces revisaba dos veces la misma factura. La versión 2 es plan-and-execute: una llamada al modelo frontier escribe un plan de 13 pasos (uno por factura más un resumen), un modelo mini ejecuta cada paso con un contexto pequeño y limpio, y el responsable de operaciones ve el plan antes de que se toque cualquier pago. La factura #7 no tiene orden de compra, así que el replanner agrega un paso *\"escribir al proveedor\"*. El costo baja a ~$0.35 por ejecución."
+  },
+  "pros": [
+    { "en": "Fewer calls to the expensive model: plan once, execute steps with a cheap one.", "es": "Menos llamadas al modelo caro: planificas una vez y ejecutas los pasos con uno barato." },
+    { "en": "A visible plan that a human or a policy can approve before side effects.", "es": "Un plan visible que una persona o una política puede aprobar antes de cualquier efecto secundario." },
+    { "en": "Easier debugging: a failure points to one step, not a 40-turn transcript.", "es": "Depurar es más fácil: una falla apunta a un paso, no a un historial de 40 turnos." },
+    { "en": "Independent steps can run in parallel when the plan is a DAG.", "es": "Los pasos independientes pueden correr en paralelo cuando el plan es un DAG." }
+  ],
+  "cons": [
+    { "en": "The planner commits before seeing any tool result, so plans go stale.", "es": "El planner se compromete antes de ver cualquier resultado de herramienta, así que los planes se vuelven obsoletos." },
+    { "en": "Extra latency and tokens on tasks that only needed one or two tool calls.", "es": "Latencia y tokens extra en tareas que solo necesitaban una o dos llamadas a herramientas." },
+    { "en": "Replanning policy (when, how often, what to keep) is new logic you must test.", "es": "La política de replanificación (cuándo, cada cuánto, qué conservar) es lógica nueva que tienes que probar." }
+  ],
+  "whenToUse": {
+    "en": "Multi-step tasks with a predictable shape (reconciliations, migrations, research reports, multi-file code changes) where cost matters or a human must approve the plan before side effects.",
+    "es": "Tareas de varios pasos con una forma predecible (conciliaciones, migraciones, reportes de investigación, cambios de código en varios archivos) donde importa el costo o una persona debe aprobar el plan antes de los efectos secundarios."
+  },
+  "whenNotToUse": {
+    "en": "Tasks of one to three tool calls, or exploratory ones (debugging, open-ended browsing) where every observation changes the next move. A plain ReAct loop is simpler there.",
+    "es": "Tareas de una a tres llamadas a herramientas, o exploratorias (depurar, navegar sin rumbo fijo), donde cada observación cambia la siguiente jugada. Ahí un ciclo ReAct simple es mejor."
+  },
+  "numbers": [
+    { "en": "ReWOO (Xu et al., 2023): ~5× token efficiency and +4% accuracy on HotpotQA versus interleaved reasoning.", "es": "ReWOO (Xu et al., 2023): ~5× de eficiencia en tokens y +4% de precisión en HotpotQA frente al razonamiento intercalado." },
+    { "en": "LLMCompiler (Kim et al., 2023): up to 3.7× lower latency and 6.7× lower cost than ReAct by running the plan's DAG in parallel.", "es": "LLMCompiler (Kim et al., 2023): hasta 3.7× menos latencia y 6.7× menos costo que ReAct al ejecutar en paralelo el DAG del plan." },
+    { "en": "Rule of thumb: 3–10 steps per plan, each with a \"done when\" check; cap replans at 2–3, then escalate.", "es": "Regla práctica: 3–10 pasos por plan, cada uno con una verificación de \"terminado cuando\"; limita las replanificaciones a 2–3 y luego escala." }
+  ],
+  "pitfalls": [
+    { "en": "Never replanning, so step 6 runs against data that step 2 already changed.", "es": "No replanificar nunca, así que el paso 6 corre sobre datos que el paso 2 ya cambió." },
+    { "en": "Over-planning: a 25-step plan for a 3-step task, full of steps the planner cannot know yet.", "es": "Sobreplanificar: un plan de 25 pasos para una tarea de 3, lleno de pasos que el planner todavía no puede conocer." },
+    { "en": "Vague steps with no exit check, so the executor cannot tell success from failure.", "es": "Pasos vagos sin verificación de salida, así que el executor no distingue el éxito de la falla." },
+    { "en": "Replanning from scratch on every hiccup, throwing away finished work and looping.", "es": "Replanificar desde cero ante cada tropiezo, descartando el trabajo terminado y entrando en ciclos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "ReAct or plan-and-execute: how do you choose?", "es": "¿ReAct o plan-and-execute? ¿Cómo eliges?" },
+      "a": {
+        "en": "It depends on how predictable the task is and how expensive the model is. If the shape is known up front, like reconciling 12 invoices or migrating 30 files, I plan once with a strong model and execute with a cheap one: fewer big-model calls, and a plan a human can approve before side effects. If each observation changes the next move, like debugging, I use ReAct. In practice I often combine them: a living to-do list on top, a short ReAct loop inside each step.",
+        "es": "Depende de qué tan predecible sea la tarea y de cuánto cueste el modelo. Si la forma se conoce de antemano, como conciliar 12 facturas o migrar 30 archivos, planifico una vez con un modelo fuerte y ejecuto con uno barato: menos llamadas al modelo grande y un plan que una persona aprueba antes de los efectos secundarios. Si cada observación cambia la siguiente jugada, como al depurar, uso ReAct. En la práctica suelo combinarlos: una lista de pendientes viva arriba y un ciclo ReAct corto dentro de cada paso."
+      }
+    },
+    {
+      "q": { "en": "The plan turns out to be wrong halfway through. What does your agent do?", "es": "A mitad de camino el plan resulta estar mal. ¿Qué hace tu agente?" },
+      "a": {
+        "en": "Each step carries a verifiable \"done when\" check, so failure is detected, not guessed. On failure I replan with the evidence: finished steps, the error, what changed. I keep completed work instead of starting over. I cap replans at two or three, then the agent stops and escalates rather than burning tokens. For side-effecting steps I re-check preconditions right before running them, because the plan was written against a world that may have moved.",
+        "es": "Cada paso tiene una verificación de \"terminado cuando\", así que la falla se detecta, no se adivina. Ante una falla replanifico con la evidencia: pasos terminados, el error y lo que cambió. Conservo el trabajo completado en vez de empezar de cero. Limito las replanificaciones a dos o tres; después el agente se detiene y escala en lugar de quemar tokens. En los pasos con efectos secundarios vuelvo a verificar las precondiciones justo antes de ejecutarlos, porque el plan se escribió sobre un mundo que pudo haber cambiado."
+      }
+    }
+  ],
+  "related": ["react", "orchestrator-workers", "prompt-chaining", "agent-reliability", "human-in-the-loop", "model-routing"],
+  "sources": [
+    { "title": "Xu et al. — ReWOO: Decoupling Reasoning from Observations for Efficient Augmented Language Models (2023)", "url": "https://arxiv.org/abs/2305.18323" },
+    { "title": "Kim et al. — An LLM Compiler for Parallel Function Calling (2023)", "url": "https://arxiv.org/abs/2312.04511" },
+    { "title": "Wang et al. — Plan-and-Solve Prompting (2023)", "url": "https://arxiv.org/abs/2305.04091" },
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" }
+  ]
+}

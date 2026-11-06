@@ -1,0 +1,87 @@
+{
+  "id": "citations-grounding",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Citations & grounding", "es": "Citas y grounding" },
+  "aliases": ["grounded generation", "source attribution", "attribution", "citation accuracy", "faithfulness", "abstention", "quote extraction", "Citations API"],
+  "tldr": {
+    "en": "Answer only from retrieved chunks, tag every claim with the ids of the chunks that support it, verify those citations in code, and abstain when the context doesn't contain the answer.",
+    "es": "Responde solo con los chunks recuperados, marca cada afirmación con los ids de los chunks que la respaldan, verifica esas citas en código y abstente cuando el contexto no contiene la respuesta."
+  },
+  "analogy": {
+    "en": "A good analyst's memo: every number has a footnote to the exact page, and when the data isn't there, the memo says \"unknown\" instead of guessing.",
+    "es": "El memo de un buen analista: cada número tiene una nota al pie con la página exacta, y cuando el dato no está, el memo dice \"desconocido\" en lugar de adivinar."
+  },
+  "explain": {
+    "en": "**Grounding** means every claim in the answer is supported by the retrieved context, not by the model's memory. **Citations** make that checkable: each claim points at the chunk it came from.\n\nHow to build it:\n\n1. **Label the context.** Give each chunk a stable id (`[S1]` or `doc_id:chunk`) and keep title, URL and span in your own lookup table.\n2. **Constrain the output.** *\"Answer only from the sources; cite ids after each claim; if they don't contain the answer, say so.\"* Better: **structured output** (`claims: [{text, source_ids, quote}]`) or a provider feature that returns exact spans (Anthropic Citations, OpenAI file-search annotations, Gemini grounding metadata).\n3. **Quote first** on long contexts: extract verbatim quotes, then answer from them. Less drift, trivial to check.\n4. **Verify in code.** Every cited id must exist in *this* request's context; every quote must appear in its chunk. For high stakes, an NLI model or [[llm-as-judge]] checks that the claim is *entailed*. Drop or flag what fails.\n5. **Abstain.** *\"I couldn't find this in the docs\"* beats a fluent guess; track the abstention rate.\n6. **Show sources** in the UI: links and highlighted spans.\n\nThe common failure is not a missing citation but a real citation that doesn't support the claim. Measure citation precision and [[groundedness]] in [[rag-evaluation]].",
+    "es": "**Grounding** significa que cada afirmación de la respuesta está respaldada por el contexto recuperado, no por la memoria del modelo. Las **citas** lo vuelven verificable: cada afirmación apunta al chunk del que salió.\n\nCómo construirlo:\n\n1. **Etiqueta el contexto.** Dale a cada chunk un id estable (`[S1]` o `doc_id:chunk`) y guarda título, URL y fragmento en tu propia tabla de consulta.\n2. **Restringe la salida.** *\"Responde solo con las fuentes; cita los ids después de cada afirmación; si no contienen la respuesta, dilo.\"* Mejor aún: **salida estructurada** (`claims: [{text, source_ids, quote}]`) o una función del proveedor que devuelva fragmentos exactos (Anthropic Citations, anotaciones de file search de OpenAI, grounding metadata de Gemini).\n3. **Primero las citas textuales** en contextos largos: extrae citas literales y luego responde a partir de ellas. Menos deriva y verificación trivial.\n4. **Verifica en código.** Cada id citado debe existir en el contexto de *esta* solicitud; cada cita debe aparecer en su chunk. Si hay mucho en juego, un modelo NLI o un [[llm-as-judge]] comprueba que la afirmación se *desprende* del texto. Descarta o marca lo que falle.\n5. **Abstente.** *\"No encontré esto en la documentación\"* es mejor que una suposición fluida; mide la tasa de abstención.\n6. **Muestra las fuentes** en la UI: enlaces y fragmentos resaltados.\n\nLa falla común no es la cita ausente, sino una cita real que no respalda la afirmación. Mide la precisión de las citas y el [[groundedness]] en [[rag-evaluation]]."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  R[Retrieved chunks] --> LB[\"Label S1..Sn\"]\n  LB --> G[\"LLM: claims + ids<br/>+ quotes\"]\n  G -->|no support| AB[Abstain]\n  G --> V{\"Ids exist?<br/>Quote matches?\"}\n  V -->|no| X[Drop claim]\n  V -->|yes| E{\"Entailed?<br/>(NLI or judge)\"}\n  E -->|no| X\n  E -->|yes| UI[\"Answer + source links\"]",
+    "caption": {
+      "en": "Generation proposes citations; deterministic checks and an optional entailment step decide which claims survive.",
+      "es": "La generación propone citas; las verificaciones deterministas y un paso opcional de implicación deciden qué afirmaciones sobreviven."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Structured citations, verified in code", "es": "Citas estructuradas, verificadas en código" },
+    "source": "from openai import OpenAI\nfrom pydantic import BaseModel\n\nclient = OpenAI()\nMODEL = \"gpt-4.1\"  # any model with structured outputs\n\nclass Claim(BaseModel):\n    text: str\n    source_ids: list[str]   # e.g. [\"S2\"]\n    quote: str              # verbatim span copied from a cited source\n\nclass Answer(BaseModel):\n    answerable: bool        # explicit abstention channel\n    claims: list[Claim]\n\nSYSTEM = (\"Answer ONLY from the sources. For each claim give its source ids and \"\n          \"an exact quote copied from one of them. If the sources do not contain \"\n          \"the answer, set answerable=false and return no claims.\")\n\ndef answer(question: str, chunks: dict[str, str]) -> Answer:\n    context = \"\\n\\n\".join(f\"[{sid}] {text}\" for sid, text in chunks.items())\n    resp = client.responses.parse(model=MODEL, text_format=Answer, input=[\n        {\"role\": \"system\", \"content\": SYSTEM},\n        {\"role\": \"user\", \"content\": f\"Sources:\\n{context}\\n\\nQuestion: {question}\"},\n    ])\n    return verify(resp.output_parsed, chunks)\n\ndef verify(ans: Answer, chunks: dict[str, str]) -> Answer:\n    norm = lambda s: \" \".join(s.split())  # whitespace-insensitive match\n    kept = [c for c in ans.claims\n            if c.source_ids and all(s in chunks for s in c.source_ids)  # no invented ids\n            and any(norm(c.quote) in norm(chunks[s]) for s in c.source_ids)]\n    # High stakes: add an NLI / judge check that each quote entails its claim\n    # Nothing verifiable survived -> abstain instead of guessing\n    return Answer(answerable=bool(kept), claims=kept)"
+  },
+  "example": {
+    "en": "An insurance assistant is asked *\"Does my policy cover water damage from a burst pipe?\"*. Context: S1 (coverage), S2 (exclusions), S3 (claims process). The model answers: sudden pipe bursts are covered [S1]; seepage over 14 days or more is excluded [S2]; and *\"claims are paid within 10 days\"* [S4]. Verification drops the third claim: S4 isn't in the context and its quote matches nothing. Asked *\"Does it cover floods?\"*, no chunk mentions floods, so it answers *\"I couldn't find anything about floods in your policy documents\"* and links the full policy instead of guessing.",
+    "es": "A un asistente de seguros le preguntan *\"¿Mi póliza cubre daños por agua si revienta una tubería?\"*. Contexto: S1 (cobertura), S2 (exclusiones), S3 (proceso de reclamos). El modelo responde: la rotura súbita de tuberías está cubierta [S1]; la filtración durante 14 días o más está excluida [S2]; y *\"los reclamos se pagan en 10 días\"* [S4]. La verificación descarta la tercera afirmación: S4 no está en el contexto y su cita no coincide con nada. Ante *\"¿Cubre inundaciones?\"*, ningún chunk menciona inundaciones, así que responde *\"No encontré nada sobre inundaciones en los documentos de tu póliza\"* y enlaza la póliza completa en lugar de adivinar."
+  },
+  "pros": [
+    { "en": "Auditable answers: users and reviewers can click through to the exact source.", "es": "Respuestas auditables: usuarios y revisores pueden ir directo a la fuente exacta." },
+    { "en": "Cheap code checks catch invented ids and fabricated quotes before the user sees them.", "es": "Verificaciones baratas en código detectan ids inventados y citas fabricadas antes de que el usuario las vea." },
+    { "en": "Abstention turns silent hallucinations into visible \"don't know\" answers you can count and trace to retrieval gaps.", "es": "La abstención convierte alucinaciones silenciosas en respuestas visibles de \"no sé\" que puedes contar y rastrear hasta huecos de recuperación." }
+  ],
+  "cons": [
+    { "en": "A real citation isn't proof of support; entailment checks add a model call and latency.", "es": "Una cita real no prueba que respalde la afirmación; verificar la implicación agrega una llamada a un modelo y latencia." },
+    { "en": "Strict grounding raises refusals; tune it to the cost of a wrong answer versus no answer.", "es": "Un grounding estricto aumenta los rechazos; ajústalo según cuánto cuesta una respuesta errónea frente a ninguna respuesta." },
+    { "en": "Quotes add output tokens, and you can't verify a claim until it has finished streaming.", "es": "Las citas textuales agregan tokens de salida, y no puedes verificar una afirmación hasta que termina de transmitirse." }
+  ],
+  "whenToUse": {
+    "en": "Any RAG where people act on answers (support, legal, medical, finance, internal policy) or where you must audit why the system said something. Abstention is mandatory when a wrong answer costs more than no answer.",
+    "es": "Cualquier RAG donde la gente actúe según las respuestas (soporte, legal, salud, finanzas, políticas internas) o donde debas auditar por qué el sistema dijo algo. La abstención es obligatoria cuando una respuesta errónea cuesta más que ninguna."
+  },
+  "whenNotToUse": {
+    "en": "Creative writing, brainstorming or open chat where the model's own knowledge is the point. On low-stakes, latency-critical paths, skip per-claim entailment but keep the cheap id check.",
+    "es": "Escritura creativa, lluvia de ideas o chat abierto, donde el conocimiento propio del modelo es justamente lo que buscas. En flujos de bajo riesgo y latencia crítica, omite la verificación de implicación por afirmación, pero conserva la verificación barata de ids."
+  },
+  "numbers": [
+    { "en": "Liu et al. (2023), auditing 4 generative search engines: only ~51.5% of generated sentences were fully supported by their citations.", "es": "Liu et al. (2023), al auditar 4 buscadores generativos: solo ~51.5% de las oraciones generadas estaban totalmente respaldadas por sus citas." },
+    { "en": "Same study: only ~74.5% of citations actually supported the sentence they were attached to.", "es": "Mismo estudio: solo ~74.5% de las citas respaldaban de verdad la oración a la que estaban asociadas." },
+    { "en": "Citation precision = citations that support their claim ÷ all citations; citation recall = fully supported claims ÷ all claims.", "es": "Precisión de citas = citas que respaldan su afirmación ÷ todas las citas; recall de citas = afirmaciones totalmente respaldadas ÷ todas las afirmaciones." },
+    { "en": "Anthropic reported its built-in Citations beat custom prompt-based citing by up to 15% in recall accuracy (internal evals, 2025).", "es": "Anthropic reportó que su función Citations superó a las citas armadas con prompts hasta en 15% de precisión de recall (evaluaciones internas, 2025)." }
+  ],
+  "pitfalls": [
+    { "en": "Trusting citation markers without checking the ids exist in this request; models invent [S7] or reuse ids from earlier turns.", "es": "Confiar en las marcas de cita sin verificar que los ids existan en esta solicitud; los modelos inventan [S7] o reutilizan ids de turnos anteriores." },
+    { "en": "Renumbering chunks every turn, so [S2] in the history now points to a different chunk; use stable ids.", "es": "Renumerar los chunks en cada turno, de modo que el [S2] del historial ahora apunta a otro chunk; usa ids estables." },
+    { "en": "Treating \"cites a real chunk\" as \"grounded\": check support with a quote match or entailment.", "es": "Tratar \"cita un chunk real\" como \"está fundamentado\": verifica el respaldo con coincidencia de cita o implicación." },
+    { "en": "No abstention path, or never measuring it: the model fills the gap from its priors.", "es": "No tener camino de abstención o nunca medirlo: el modelo llena el hueco con lo que ya sabe." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you stop your RAG system from hallucinating?", "es": "¿Cómo evitas que tu sistema RAG alucine?" },
+      "a": {
+        "en": "I can't eliminate it, so I make it rare and detectable. Rare: better retrieval, a prompt that restricts answers to the sources with an explicit \"not found\" path, and quote-first extraction on long contexts. Detectable: each claim carries chunk ids and a verbatim quote; code checks that the ids exist in this request and the quote appears in the chunk, and for high-stakes flows an NLI model or judge checks entailment. Unsupported claims are dropped or flagged. Then I track citation precision, groundedness and abstention rate on a golden set, and treat wrong abstentions as retrieval bugs.",
+        "es": "No puedo eliminarlo, así que lo vuelvo raro y detectable. Raro: mejor recuperación, un prompt que limita las respuestas a las fuentes con un camino explícito de \"no encontrado\" y extracción de citas primero en contextos largos. Detectable: cada afirmación lleva ids de chunks y una cita literal; el código verifica que los ids existan en esta solicitud y que la cita aparezca en el chunk, y en flujos de alto riesgo un modelo NLI o un juez verifica la implicación. Las afirmaciones sin respaldo se descartan o se marcan. Luego mido precisión de citas, groundedness y tasa de abstención sobre un golden set, y trato las abstenciones equivocadas como bugs de recuperación."
+      }
+    },
+    {
+      "q": { "en": "The model cites a real source, but the source doesn't say that. How do you catch it at scale?", "es": "El modelo cita una fuente real, pero la fuente no dice eso. ¿Cómo lo detectas a escala?" },
+      "a": {
+        "en": "That's the dominant failure: in Liu et al.'s audit only ~75% of citations supported their sentence, and an existence check misses every one of those cases. I layer three checks. A verbatim-quote requirement, so a fabricated quote fails string matching for free. Provider citation features that return exact spans, which guarantee the quote is real, though not that it supports the claim. And an entailment check, a small NLI model or LLM judge, online for high-stakes answers and on a sample offline. Citation precision per release goes on the dashboard.",
+        "es": "Es la falla dominante: en la auditoría de Liu et al. solo ~75% de las citas respaldaban su oración, y una verificación de existencia no detecta ninguno de esos casos. Combino tres capas. Exigir una cita literal, así una cita fabricada falla la comparación de texto sin costo. Funciones de citas del proveedor que devuelven fragmentos exactos, lo que garantiza que la cita es real, aunque no que respalde la afirmación. Y una verificación de implicación, con un modelo NLI pequeño o un LLM como juez, en línea para respuestas de alto riesgo y sobre una muestra offline. La precisión de citas por release va al dashboard."
+      }
+    }
+  ],
+  "related": ["groundedness", "rag-evaluation", "hallucinations", "structured-outputs", "llm-as-judge", "case-enterprise-rag"],
+  "sources": [
+    { "title": "Liu et al. — Evaluating Verifiability in Generative Search Engines", "url": "https://arxiv.org/abs/2304.09848" },
+    { "title": "Gao et al. — Enabling Large Language Models to Generate Text with Citations (ALCE)", "url": "https://arxiv.org/abs/2305.14627" },
+    { "title": "Anthropic — Citations (docs)", "url": "https://docs.anthropic.com/en/docs/build-with-claude/citations" }
+  ]
+}

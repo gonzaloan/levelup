@@ -1,0 +1,88 @@
+{
+  "id": "chunking",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Chunking strategies", "es": "Estrategias de chunking" },
+  "aliases": ["chunk size", "chunk overlap", "text splitting", "RecursiveCharacterTextSplitter", "semantic chunking", "parent-child retrieval", "small-to-big", "late chunking"],
+  "tldr": {
+    "en": "Split documents into retrievable pieces that are each about one thing yet carry enough context to answer; chunk size is a precision-vs-context trade-off you settle with evals, not defaults.",
+    "es": "Divide los documentos en piezas recuperables que traten de una sola cosa pero tengan contexto suficiente para responder; el tamaño del chunk es un trade-off entre precisión y contexto que se decide con evaluaciones, no con valores por defecto."
+  },
+  "analogy": {
+    "en": "Cutting a textbook into index cards: one card per sentence loses the context, one card per chapter hides the fact you need. You want one idea per card, with the chapter title written on top.",
+    "es": "Recortar un libro de texto en fichas: una ficha por oración pierde el contexto y una ficha por capítulo esconde el dato que buscas. Quieres una idea por ficha, con el título del capítulo escrito arriba."
+  },
+  "explain": {
+    "en": "Chunking splits parsed documents into the units you embed, retrieve and paste into the prompt. Each chunk gets **one** vector, so size is a trade-off:\n\n- **Small** (~100–200 tokens): sharp embeddings and precise matches, but the chunk may lack the context to answer (\"it grew 4%\" — what did?).\n- **Large** (1,000+ tokens): rich context, but the vector averages several topics and matches none of them well, and it burns prompt tokens.\n\nStrategies, in the order I'd try them:\n\n1. **Fixed-size with overlap**: e.g. 300–800 tokens, 10–20% overlap so a sentence cut at a boundary survives whole in one chunk. Baseline.\n2. **Recursive**: split on paragraphs, then lines, sentences, words, only as far as needed to fit. The sensible default.\n3. **Structure-aware**: split on headings, sections and table boundaries; prepend the heading path (\"Policies > On-call > Mexico\"). Needs good [[document-parsing]].\n4. **Semantic**: cut where similarity between adjacent sentences drops. More compute; reported gains over fixed-size are inconsistent.\n5. **Parent-child (small-to-big)**: match on small chunks, hand the LLM their parent section.\n6. **Late chunking**: embed the whole document with a long-context model, then pool token vectors per chunk, so each chunk keeps its surroundings.\n\nPick with [[rag-evaluation]] on your own questions; [[contextual-retrieval]] attacks the same lost-context problem.",
+    "es": "El chunking divide los documentos parseados en las unidades que conviertes en embeddings, recuperas y pegas en el prompt. Cada chunk tiene **un solo** vector, así que el tamaño es un trade-off:\n\n- **Chico** (~100–200 tokens): embeddings nítidos y coincidencias precisas, pero puede faltarle contexto para responder (\"creció 4%\": ¿qué cosa?).\n- **Grande** (1,000+ tokens): mucho contexto, pero el vector promedia varios temas y no representa bien a ninguno; además gasta tokens del prompt.\n\nEstrategias, en el orden en que las probaría:\n\n1. **Tamaño fijo con solapamiento**: p. ej. 300–800 tokens con 10–20% de overlap, para que una oración cortada en el borde quede completa en algún chunk. Es la línea base.\n2. **Recursivo**: corta por párrafos, luego líneas, oraciones y palabras, solo hasta donde haga falta para que quepa. El default sensato.\n3. **Por estructura**: corta en títulos, secciones y bordes de tablas, y antepone la ruta de títulos (\"Políticas > Guardias > México\"). Requiere un buen [[document-parsing]].\n4. **Semántico**: corta donde cae la similitud entre oraciones vecinas. Más cómputo; las mejoras reportadas frente al tamaño fijo son inconsistentes.\n5. **Padre-hijo (small-to-big)**: busca sobre chunks chicos y entrégale al LLM la sección padre.\n6. **Late chunking**: genera el embedding del documento completo con un modelo de contexto largo y luego agrupa los vectores de tokens por chunk, así cada chunk conserva su entorno.\n\nElige con [[rag-evaluation]] sobre tus propias preguntas; [[contextual-retrieval]] ataca el mismo problema de contexto perdido."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[Parsed document] --> P[\"Parents by heading<br/>~2k tokens\"]\n  P --> C[\"Children, recursive<br/>~300 tokens\"]\n  C --> E[Embed children]\n  E --> I[(Vector index)]\n  Q[User query] --> I\n  I -->|top child hits| F[Fetch parent sections]\n  P -.->|parent id| F\n  F --> L[LLM prompt]",
+    "caption": {
+      "en": "Small-to-big: small child chunks give precise matches; their parent sections give the LLM enough context to answer.",
+      "es": "Small-to-big: los chunks hijos chicos dan coincidencias precisas; sus secciones padre le dan al LLM contexto suficiente para responder."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A recursive, token-aware splitter with overlap", "es": "Un splitter recursivo por tokens, con solapamiento" },
+    "source": "import tiktoken\n\nenc = tiktoken.get_encoding(\"cl100k_base\")  # use your embedding model's tokenizer\nSEPARATORS = [\"\\n\\n\", \"\\n\", \". \", \" \"]  # paragraphs -> lines -> sentences -> words\n# Production equivalent: langchain_text_splitters.RecursiveCharacterTextSplitter\n\ndef ntok(text: str) -> int:\n    return len(enc.encode(text))\n\ndef split(text: str, max_tokens: int = 500, seps=SEPARATORS) -> list[str]:\n    if ntok(text) <= max_tokens:\n        return [text]\n    if not seps:  # nothing left to split on: hard cut by tokens\n        ids = enc.encode(text)\n        return [enc.decode(ids[i:i + max_tokens]) for i in range(0, len(ids), max_tokens)]\n    sep, finer = seps[0], seps[1:]\n    chunks, buf = [], \"\"\n    for piece in text.split(sep):\n        merged = buf + sep + piece if buf else piece\n        if ntok(merged) <= max_tokens:\n            buf = merged  # greedily pack small pieces up to the limit\n            continue\n        if buf:\n            chunks.append(buf)\n        if ntok(piece) <= max_tokens:\n            buf = piece\n        else:  # one piece is still too big: recurse with finer separators\n            chunks += split(piece, max_tokens, finer)\n            buf = \"\"\n    return chunks + [buf] if buf else chunks\n\ndef add_overlap(chunks: list[str], overlap: int = 75) -> list[str]:\n    # Prefix each chunk with the previous one's tail so boundary sentences survive\n    tails = [enc.decode(enc.encode(c)[-overlap:]) for c in chunks[:-1]]\n    return chunks[:1] + [t + \" \" + c for t, c in zip(tails, chunks[1:])]"
+  },
+  "example": {
+    "en": "An internal wiki chunked at 2,000 tokens returns the right page for *\"What's the on-call pay in Mexico?\"*, but the answer is one line in a table covering eight countries, so the vector is dominated by the others and the chunk ranks #12. Re-chunking at ~400 tokens with the heading path prepended (*\"Compensation > On-call > Mexico\"*) moves it to #1. Now *\"Summarize the on-call policy\"* gets fragments, so the team switches to parent-child: match on 400-token children, send the 2,000-token parent section.",
+    "es": "Una wiki interna dividida en chunks de 2,000 tokens devuelve la página correcta para *\"¿Cuánto se paga la guardia en México?\"*, pero la respuesta es una línea de una tabla con ocho países, así que el vector lo dominan los demás y el chunk queda en el puesto 12. Al volver a dividir en ~400 tokens anteponiendo la ruta de títulos (*\"Compensación > Guardias > México\"*), sube al puesto 1. Ahora *\"Resume la política de guardias\"* recibe fragmentos, así que el equipo pasa a padre-hijo: busca sobre hijos de 400 tokens y envía la sección padre de 2,000."
+  },
+  "pros": [
+    { "en": "Cheap lever: re-chunking costs a re-embed, often a few dollars, and can move recall a lot.", "es": "Palanca barata: volver a dividir cuesta un re-embedding, a menudo unos pocos dólares, y puede mover mucho el recall." },
+    { "en": "Structure-aware chunks give clean citations (section, page) and self-explanatory context.", "es": "Los chunks por estructura dan citas limpias (sección, página) y un contexto que se explica solo." },
+    { "en": "Parent-child gets precise matching and full context at the same time.", "es": "Padre-hijo logra coincidencias precisas y contexto completo al mismo tiempo." }
+  ],
+  "cons": [
+    { "en": "No universal size: the optimum depends on documents, queries and embedding model.", "es": "No hay un tamaño universal: el óptimo depende de los documentos, las consultas y el modelo de embeddings." },
+    { "en": "Every change means re-embedding and re-indexing the whole corpus.", "es": "Cada cambio implica volver a generar embeddings y reindexar todo el corpus." },
+    { "en": "Semantic and late chunking add compute and complexity for gains you must prove on your data.", "es": "El chunking semántico y el late chunking suman cómputo y complejidad por mejoras que debes demostrar con tus datos." }
+  ],
+  "whenToUse": {
+    "en": "Whenever documents are longer than what you want to retrieve, which is nearly always. Invest more when documents are long, structured (manuals, policies, contracts) or mix many topics per page.",
+    "es": "Siempre que los documentos sean más largos que lo que quieres recuperar, o sea, casi siempre. Invierte más cuando son largos, estructurados (manuales, políticas, contratos) o mezclan muchos temas por página."
+  },
+  "whenNotToUse": {
+    "en": "Short self-contained items — FAQ entries, product records, tickets, chat messages — are already natural chunks: index each one whole instead of splitting it.",
+    "es": "Los elementos cortos y autocontenidos (entradas de FAQ, fichas de producto, tickets, mensajes de chat) ya son chunks naturales: indexa cada uno completo en vez de dividirlo."
+  },
+  "numbers": [
+    { "en": "Common starting point: 300–800 tokens per chunk with 10–20% overlap.", "es": "Punto de partida común: 300–800 tokens por chunk con 10–20% de solapamiento." },
+    { "en": "Parent-child: children ~100–400 tokens, parents ~1,000–2,000 tokens or a whole section.", "es": "Padre-hijo: hijos de ~100–400 tokens y padres de ~1,000–2,000 tokens o una sección completa." },
+    { "en": "Many open embedding models cap input at 512 tokens (some at 256); longer text is silently truncated.", "es": "Muchos modelos de embeddings abiertos limitan la entrada a 512 tokens (algunos a 256); el texto más largo se trunca sin aviso." },
+    { "en": "Anthropic's contextual retrieval prepends ~50–100 tokens of generated context to each chunk.", "es": "El contextual retrieval de Anthropic antepone ~50–100 tokens de contexto generado a cada chunk." }
+  ],
+  "pitfalls": [
+    { "en": "Splitting mid-table or mid-list so neither half can answer the question.", "es": "Cortar a mitad de una tabla o una lista, de modo que ninguna mitad responde la pregunta." },
+    { "en": "Sizing in characters while the embedding model's limit is in tokens, then losing the tail to truncation.", "es": "Medir el tamaño en caracteres cuando el límite del modelo de embeddings está en tokens, y perder el final por truncamiento." },
+    { "en": "Orphan chunks like \"The limit is 30 days\" with no product or policy named: prepend title and headings.", "es": "Chunks huérfanos como \"El límite es de 30 días\" sin decir qué producto o política: antepón el título y los encabezados." },
+    { "en": "Copying a size from a blog post instead of sweeping 2–3 sizes on your eval set.", "es": "Copiar un tamaño de un blog en vez de probar 2–3 tamaños con tu set de evaluación." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you pick a chunk size?", "es": "¿Cómo eliges el tamaño de los chunks?" },
+      "a": {
+        "en": "Empirically. I start with recursive, structure-aware splitting around 400–500 tokens, ~15% overlap and the heading path prepended. Then I sweep two or three sizes, say 250, 500 and 1,000, on a labelled set of real questions and compare recall@k and answer quality. Small chunks usually win on factoid questions, large ones on summaries and how-tos; if I need both, I use parent-child: retrieve small, return the parent. The trade-off I'm watching is match precision versus context in the prompt, and token cost.",
+        "es": "De forma empírica. Empiezo con un splitter recursivo que respeta la estructura, de unos 400–500 tokens, ~15% de solapamiento y la ruta de títulos antepuesta. Después pruebo dos o tres tamaños, por ejemplo 250, 500 y 1,000, sobre un set etiquetado de preguntas reales y comparo recall@k y calidad de respuesta. Los chunks chicos suelen ganar en preguntas puntuales y los grandes en resúmenes y guías paso a paso; si necesito ambos, uso padre-hijo: recupero chico y devuelvo el padre. El trade-off que vigilo es la precisión de la coincidencia frente al contexto en el prompt, y el costo en tokens."
+      }
+    },
+    {
+      "q": { "en": "What is late chunking, and when would it help?", "es": "¿Qué es el late chunking y cuándo ayuda?" },
+      "a": {
+        "en": "Normal chunking embeds each chunk in isolation, so a chunk saying \"its revenue grew 20%\" has lost who \"it\" is. Late chunking runs the whole document, up to the model's window (e.g. 8k tokens), through a long-context embedding model first, then mean-pools the token embeddings inside each chunk's span. Each vector is conditioned on its surroundings. It helps on documents full of back-references. The catch: you need token-level outputs, which most embedding APIs don't expose. Contextual retrieval gets a similar effect with an LLM-written prefix, at higher indexing cost.",
+        "es": "El chunking normal genera el embedding de cada chunk de forma aislada, así que un chunk que dice \"sus ingresos crecieron 20%\" perdió de quién habla. El late chunking primero pasa el documento completo, hasta la ventana del modelo (p. ej. 8k tokens), por un modelo de embeddings de contexto largo, y luego promedia los embeddings de los tokens dentro del tramo de cada chunk. Cada vector queda condicionado por su entorno. Ayuda en documentos llenos de referencias hacia atrás. La trampa: necesitas salidas a nivel de token, que la mayoría de las APIs de embeddings no exponen. Contextual retrieval logra un efecto parecido con un prefijo escrito por un LLM, a un costo de indexación mayor."
+      }
+    }
+  ],
+  "related": ["document-parsing", "embedding-models", "contextual-retrieval", "rag-evaluation", "rag", "context-window"],
+  "sources": [
+    { "title": "Pinecone — Chunking Strategies for LLM Applications", "url": "https://www.pinecone.io/learn/chunking-strategies/" },
+    { "title": "Günther et al. (2024) — Late Chunking: Contextual Chunk Embeddings Using Long-Context Embedding Models", "url": "https://arxiv.org/abs/2409.04701" },
+    { "title": "Chroma Research — Evaluating Chunking Strategies for Retrieval", "url": "https://research.trychroma.com/evaluating-chunking" },
+    { "title": "Anthropic — Introducing Contextual Retrieval", "url": "https://www.anthropic.com/news/contextual-retrieval" }
+  ]
+}

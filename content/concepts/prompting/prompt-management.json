@@ -1,0 +1,88 @@
+{
+  "id": "prompt-management",
+  "domain": "prompting",
+  "level": "core",
+  "title": { "en": "Prompts as code: versioning", "es": "Prompts como código: versionado" },
+  "aliases": ["prompt versioning", "prompt registry", "prompt management", "PromptOps", "prompt templates", "prompt CI", "Langfuse"],
+  "tldr": {
+    "en": "Treat every prompt as a deployable artifact: templated, versioned with its model and parameters, reviewed, eval-gated in CI, rolled out gradually and logged with every trace so you can roll back in seconds.",
+    "es": "Trata cada prompt como un artefacto desplegable: con plantilla, versionado junto con su modelo y parámetros, revisado, validado con evals en CI, liberado de a poco y registrado en cada traza para poder revertir en segundos."
+  },
+  "analogy": {
+    "en": "Database migrations: nobody edits the production schema by hand. Changes are numbered, reviewed, tested and reversible.",
+    "es": "Las migraciones de base de datos: nadie edita a mano el esquema de producción. Los cambios se numeran, se revisan, se prueban y se pueden revertir."
+  },
+  "explain": {
+    "en": "A prompt is code that runs on a model: a one-word edit can change behavior as much as a code change, so it gets the same discipline.\n\n**The unit you version** is not the text alone but a *prompt config*: template + variables + model snapshot + parameters (temperature, max tokens) + tool and output schemas. Change any of them and outputs change.\n\n**The lifecycle:**\n\n1. **Templates**, not string concatenation: one file or registry entry per prompt, with named variables (Jinja, Mustache).\n2. **Review** the diff in a PR, like code.\n3. **Evals on every change**: a golden set runs in CI ([[eval-ci]]) and a regression blocks the merge.\n4. **Immutable versions** in git or a **registry** (Langfuse, LangSmith, PromptLayer, MLflow). Environments are *labels* (`staging`, `production`) that point to a version.\n5. **Gradual rollout** behind a feature flag (5% → 50% → 100%), watching online metrics.\n6. **Version on every trace**: log prompt version and model id ([[llm-observability]]) so any bad output maps to the exact prompt that produced it.\n\n**Pin model snapshots** (`gpt-4o-2024-08-06`, not `gpt-4o`): an alias can move under you and silently change behavior.\n\nThe anti-pattern: f-strings scattered across 30 files, edited in hotfixes, and nobody can say which prompt is live.",
+    "es": "Un prompt es código que corre sobre un modelo: cambiar una palabra puede alterar el comportamiento tanto como un cambio de código, así que merece la misma disciplina.\n\n**La unidad que versionas** no es solo el texto, sino una *configuración de prompt*: plantilla + variables + snapshot del modelo + parámetros (temperature, max tokens) + esquemas de herramientas y de salida. Si cambias cualquiera, cambian las respuestas.\n\n**El ciclo de vida:**\n\n1. **Plantillas**, no concatenación de strings: un archivo o una entrada de registro por prompt, con variables con nombre (Jinja, Mustache).\n2. **Revisión** del diff en un PR, igual que el código.\n3. **Evals en cada cambio**: un golden set corre en CI ([[eval-ci]]) y una regresión bloquea el merge.\n4. **Versiones inmutables** en git o en un **registro** (Langfuse, LangSmith, PromptLayer, MLflow). Los ambientes son *etiquetas* (`staging`, `production`) que apuntan a una versión.\n5. **Rollout gradual** detrás de un feature flag (5% → 50% → 100%), vigilando las métricas online.\n6. **Versión en cada traza**: registra la versión del prompt y el id del modelo ([[llm-observability]]) para que cualquier salida mala apunte al prompt exacto que la produjo.\n\n**Fija snapshots del modelo** (`gpt-4o-2024-08-06`, no `gpt-4o`): un alias puede moverse sin aviso y cambiar el comportamiento en silencio.\n\nEl antipatrón: f-strings regados en 30 archivos, editados en hotfixes, y nadie sabe decir qué prompt está en producción."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  PR[\"Prompt change PR\"] --> EV{\"Evals in CI\"}\n  EV -->|regression| PR\n  EV -->|pass| REG[(\"Registry: v13\")]\n  REG --> FL{\"Rollout flag\"}\n  FL -->|5%| V13[\"v13 canary\"]\n  FL -->|95%| V12[\"v12 stable\"]\n  V13 --> TR[(\"Traces + version\")]\n  V12 --> TR\n  TR -->|metrics OK| FL",
+    "caption": {
+      "en": "A prompt change ships like code: eval-gated, released to a slice of traffic, traced by version, then promoted or rolled back by moving a label.",
+      "es": "Un cambio de prompt se despliega como código: pasa por evals, sale a una fracción del tráfico, se traza por versión y se promueve o se revierte moviendo una etiqueta."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Fetch a labeled prompt version and trace it", "es": "Traer una versión etiquetada del prompt y trazarla" },
+    "source": "from langfuse import Langfuse\nfrom openai import OpenAI\n\nlangfuse, llm = Langfuse(), OpenAI()\nDEFAULT_MODEL = \"gpt-4o-2024-08-06\"  # pinned snapshot, never a floating alias\n\n# Resolved by label: moving \"production\" to another version = deploy or rollback\nprompt = langfuse.get_prompt(\n    \"support-triage\",\n    label=\"production\",\n    cache_ttl_seconds=60,                         # keep the registry off the hot path\n    fallback=\"Classify this ticket: {{ticket}}\",  # served if the registry is down\n)\n\ndef triage(ticket: str) -> str:\n    cfg = prompt.config or {}                     # model + params versioned with the text\n    resp = llm.chat.completions.create(\n        model=cfg.get(\"model\", DEFAULT_MODEL),\n        temperature=cfg.get(\"temperature\", 0),\n        messages=[{\"role\": \"user\", \"content\": prompt.compile(ticket=ticket)}],\n    )\n    out = resp.choices[0].message.content\n    # Every trace records exactly which prompt and model produced it\n    log_trace(prompt=f\"{prompt.name}@v{prompt.version}\", model=resp.model, output=out)\n    return out"
+  },
+  "example": {
+    "en": "A fintech's chargeback classifier prompt lived as an f-string in three services. A \"small wording fix\" shipped in a hotfix and misrouted ~8% of disputes for two days, and nobody could tell which version had run. After moving to a registry, each change runs a 300-case golden set in CI, goes to 5% of traffic behind a flag, and every trace carries `dispute-triage@v14`. The next regression was caught at 5% and rolled back in under a minute by moving the `production` label.",
+    "es": "En una fintech, el prompt que clasificaba contracargos vivía como un f-string en tres servicios. Un \"pequeño ajuste de redacción\" salió en un hotfix y enrutó mal ~8% de las disputas durante dos días, y nadie podía saber qué versión había corrido. Tras pasar a un registro, cada cambio corre un golden set de 300 casos en CI, sale al 5% del tráfico detrás de un flag y cada traza lleva `dispute-triage@v14`. La siguiente regresión se detectó en el 5% y se revirtió en menos de un minuto moviendo la etiqueta `production`."
+  },
+  "pros": [
+    { "en": "Every output is traceable to an exact prompt, model and parameter set.", "es": "Cada salida se puede rastrear hasta un prompt, un modelo y unos parámetros exactos." },
+    { "en": "Rollback is a label move, not a redeploy: seconds instead of a release cycle.", "es": "Revertir es mover una etiqueta, no redesplegar: segundos en vez de un ciclo de release." },
+    { "en": "Regressions are caught in CI before users see them.", "es": "Las regresiones se detectan en CI antes de que las vean los usuarios." },
+    { "en": "PMs and domain experts can iterate safely inside the same guardrails.", "es": "Los PMs y expertos de dominio pueden iterar de forma segura dentro de las mismas barandas." }
+  ],
+  "cons": [
+    { "en": "Upfront cost: an eval set, CI wiring and a registry or file convention before the first win.", "es": "Costo inicial: un set de evals, integración con CI y un registro o convención de archivos antes de ver el primer beneficio." },
+    { "en": "A runtime registry is another dependency on the request path; it needs caching and a fallback.", "es": "Un registro en runtime es otra dependencia en el camino de la request; necesita caché y un fallback." },
+    { "en": "Prompts stored apart from code can drift from the parser that consumes their output.", "es": "Los prompts guardados lejos del código pueden desalinearse del parser que consume su salida." }
+  ],
+  "whenToUse": {
+    "en": "As soon as a prompt serves real users or more than one person edits it. Add a registry when non-engineers iterate weekly or you need rollback without a deploy.",
+    "es": "Desde que un prompt atiende usuarios reales o lo edita más de una persona. Suma un registro cuando gente no técnica itera cada semana o necesitas revertir sin desplegar."
+  },
+  "whenNotToUse": {
+    "en": "Throwaway notebooks and one-off scripts. And skip a heavy registry for one prompt owned by one engineer: a file in git plus an eval test is enough.",
+    "es": "Notebooks desechables y scripts de una sola vez. Y no montes un registro pesado para un único prompt de un solo ingeniero: un archivo en git más un test de evals alcanza."
+  },
+  "numbers": [
+    { "en": "Rollout ladder: ~1–5% → 25–50% → 100%, holding at each step long enough to read online metrics.", "es": "Escalera de rollout: ~1–5% → 25–50% → 100%, esperando en cada paso lo suficiente para leer las métricas online." },
+    { "en": "Start the CI golden set at ~50–200 cases per prompt; it must finish in minutes or people skip it.", "es": "Arranca el golden set de CI con ~50–200 casos por prompt; debe terminar en minutos o la gente lo saltea." },
+    { "en": "Registry fetches: client-side cache (TTL ~60 s) plus a bundled fallback, so an outage never blocks requests.", "es": "Lecturas del registro: caché en el cliente (TTL ~60 s) más un fallback empaquetado, para que una caída nunca bloquee requests." }
+  ],
+  "pitfalls": [
+    { "en": "Versioning the text but not the model and temperature: the same \"v12\" behaves differently next month.", "es": "Versionar el texto pero no el modelo ni la temperature: el mismo \"v12\" se comporta distinto el mes siguiente." },
+    { "en": "Floating model aliases in production, then blaming the prompt when the provider updates the snapshot.", "es": "Usar alias flotantes del modelo en producción y luego culpar al prompt cuando el proveedor actualiza el snapshot." },
+    { "en": "Editing the live prompt in a registry UI with no eval gate: a hotfix by another name.", "es": "Editar el prompt en vivo desde la UI del registro sin pasar por evals: un hotfix con otro nombre." },
+    { "en": "Not logging the prompt version on traces, so incidents can't be bisected.", "es": "No registrar la versión del prompt en las trazas, así los incidentes no se pueden bisecar." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Should prompts live in git or in a prompt registry?", "es": "¿Los prompts deben vivir en git o en un registro de prompts?" },
+      "a": {
+        "en": "It depends on who edits them and how fast I need to roll back. My default is git: prompts as template files next to the code that parses their output, reviewed in PRs and eval-gated in CI, so prompt and parser change atomically. I add a registry when PMs or domain experts iterate weekly, or when I need rollback without a deploy. Then versions are immutable, promotion is gated on the same evals, fetches are cached with a bundled fallback, and the version is still logged on every trace.",
+        "es": "Depende de quién los edita y de qué tan rápido necesito revertir. Por defecto uso git: prompts como archivos de plantilla junto al código que parsea su salida, revisados en PRs y validados con evals en CI, así prompt y parser cambian de forma atómica. Sumo un registro cuando PMs o expertos de dominio iteran cada semana, o cuando necesito revertir sin desplegar. En ese caso las versiones son inmutables, la promoción pasa por los mismos evals, las lecturas se cachean con un fallback empaquetado y la versión se sigue registrando en cada traza."
+      }
+    },
+    {
+      "q": { "en": "A prompt change shipped and quality dropped. What should have caught it, and how do you recover?", "es": "Salió un cambio de prompt y bajó la calidad. ¿Qué debió detectarlo y cómo te recuperas?" },
+      "a": {
+        "en": "Three layers. Offline, a golden-set eval in CI comparing new against current on the same cases, blocking on regressions in the metrics we care about. Online, a gradual rollout behind a flag with dashboards split by prompt version, so a drop at 5% shows before it reaches everyone. And traces tagged with prompt and model version. To recover, I move the production label back to the last good version, which takes seconds and no deploy, then add the failing cases to the golden set so this regression can't recur silently.",
+        "es": "Tres capas. Offline, un eval con golden set en CI que compara la versión nueva contra la actual en los mismos casos y bloquea si hay regresiones en las métricas que importan. Online, un rollout gradual detrás de un flag con dashboards separados por versión del prompt, para que una caída en el 5% se vea antes de llegar a todos. Y trazas etiquetadas con la versión del prompt y del modelo. Para recuperarme, muevo la etiqueta de producción a la última versión buena, lo que toma segundos y ningún deploy, y agrego los casos fallidos al golden set para que esa regresión no vuelva en silencio."
+      }
+    }
+  ],
+  "related": ["eval-ci", "llm-observability", "llmops", "model-registry", "golden-datasets", "ab-testing"],
+  "sources": [
+    { "title": "Langfuse — Prompt Management", "url": "https://langfuse.com/docs/prompts/get-started" },
+    { "title": "promptfoo — CI/CD integration", "url": "https://www.promptfoo.dev/docs/integrations/ci-cd/" },
+    { "title": "OpenAI — Models and snapshots", "url": "https://platform.openai.com/docs/models" },
+    { "title": "Hamel Husain — Your AI Product Needs Evals", "url": "https://hamel.dev/blog/posts/evals/" }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "id": "prompt-optimization",
+  "domain": "prompting",
+  "level": "advanced",
+  "title": { "en": "Automatic prompt optimization (DSPy)", "es": "Optimización automática de prompts (DSPy)" },
+  "aliases": ["DSPy", "prompt optimization", "APO", "MIPROv2", "BootstrapFewShot", "OPRO", "TextGrad", "GEPA"],
+  "tldr": {
+    "en": "Stop hand-tuning prompts: define the task, an eval set and a metric, and let an optimizer search instructions and few-shot examples that maximize the metric. Prompts become learned parameters you recompile per model.",
+    "es": "Deja de ajustar prompts a mano: define la tarea, un set de evaluación y una métrica, y deja que un optimizador busque instrucciones y ejemplos few-shot que maximicen la métrica. Los prompts pasan a ser parámetros aprendidos que recompilas por modelo."
+  },
+  "analogy": {
+    "en": "Hyperparameter search instead of tweaking a learning rate by hand: you define the objective and the search space, the machine runs the trials. Without a held-out set, you just overfit faster.",
+    "es": "Búsqueda de hiperparámetros en vez de mover el learning rate a mano: tú defines el objetivo y el espacio de búsqueda, y la máquina corre las pruebas. Sin un set reservado, solo sobreajustas más rápido."
+  },
+  "explain": {
+    "en": "Hand-written prompts are tuned by feel on a few examples and break when you swap models. **Automatic prompt optimization** treats the prompt as a **learnable parameter**: given labeled examples and a metric, an optimizer proposes prompts, scores them and keeps the best.\n\n**DSPy** (Stanford) is the main framework. You write a *program*, not a prompt:\n\n- **Signatures** declare inputs and outputs: `question, context -> answer`.\n- **Modules** pick a strategy (`Predict`, `ChainOfThought`, `ReAct`) and compose like PyTorch layers.\n- **Optimizers** tune the prompts of every module against your metric:\n  - `BootstrapFewShot` runs the program on training data and keeps traces that pass the metric as few-shot demos.\n  - `MIPROv2` also proposes instructions and searches instruction × demo combinations with Bayesian optimization.\n  - `GEPA` reflects on failed traces in natural language to rewrite instructions.\n\nOther approaches: **OPRO** (Google DeepMind) has an LLM propose new prompts from a history of scored ones; **TextGrad** backpropagates LLM-written critiques as \"textual gradients\" through a pipeline.\n\nThe non-negotiables: **train and validation splits plus an untouched test set**, and a **metric** you trust (exact match, F1, or a validated [[llm-as-judge]]). No eval set, no optimization ([[eval-driven-development]]).\n\nThe payoff: when the model changes, you **recompile** instead of rewriting prompts by hand.",
+    "es": "Los prompts escritos a mano se ajustan a ojo con pocos ejemplos y se rompen cuando cambias de modelo. La **optimización automática de prompts** trata el prompt como un **parámetro que se aprende**: con ejemplos etiquetados y una métrica, un optimizador propone prompts, los puntúa y se queda con el mejor.\n\n**DSPy** (Stanford) es el framework principal. Escribes un *programa*, no un prompt:\n\n- Las **signatures** declaran entradas y salidas: `question, context -> answer`.\n- Los **módulos** eligen una estrategia (`Predict`, `ChainOfThought`, `ReAct`) y se componen como capas de PyTorch.\n- Los **optimizadores** ajustan los prompts de cada módulo contra tu métrica:\n  - `BootstrapFewShot` corre el programa sobre los datos de entrenamiento y guarda como demos few-shot las trazas que pasan la métrica.\n  - `MIPROv2` además propone instrucciones y busca combinaciones de instrucción × demos con optimización bayesiana.\n  - `GEPA` reflexiona en lenguaje natural sobre las trazas fallidas para reescribir las instrucciones.\n\nOtros enfoques: **OPRO** (Google DeepMind) hace que un LLM proponga prompts nuevos a partir de un historial de prompts ya puntuados; **TextGrad** propaga hacia atrás críticas escritas por un LLM como \"gradientes textuales\" a través de un pipeline.\n\nLo innegociable: **splits de entrenamiento y validación más un test set intacto**, y una **métrica** en la que confíes (exact match, F1 o un [[llm-as-judge]] validado). Sin set de evaluación no hay optimización ([[eval-driven-development]]).\n\nLa recompensa: cuando cambia el modelo, **recompilas** en vez de reescribir prompts a mano."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[\"DSPy program<br/>signatures + modules\"] --> O{\"Optimizer<br/>MIPROv2\"}\n  T[(Train set)] --> O\n  O -->|candidate prompts| R[\"Run on train/val\"]\n  R -->|metric scores| O\n  O --> C[\"Compiled prompt<br/>instructions + demos\"]\n  C --> E{\"Held-out eval\"}\n  H[(Test set)] --> E\n  E -->|beats baseline| S[\"Ship as version\"]\n  E -.->|no gain| P",
+    "caption": {
+      "en": "The optimizer searches prompts against your metric on train/validation data; only an untouched test set decides whether the compiled prompt ships.",
+      "es": "El optimizador busca prompts contra tu métrica con datos de entrenamiento y validación; solo un test set intacto decide si el prompt compilado sale a producción."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Compile a ticket router with DSPy MIPROv2", "es": "Compilar un ruteador de tickets con DSPy MIPROv2" },
+    "source": "import dspy\n\ndspy.configure(lm=dspy.LM(\"openai/gpt-4o-mini\"))  # any LiteLLM model id\n\nclass Triage(dspy.Signature):\n    \"\"\"Route a support ticket to the right queue.\"\"\"\n    ticket: str = dspy.InputField()\n    queue: str = dspy.OutputField(desc=\"one of: billing, bug, account, other\")\n\nprogram = dspy.ChainOfThought(Triage)   # the program; prompts are its parameters\n\ndef metric(example, pred, trace=None):\n    return example.queue == pred.queue.strip().lower()\n\ndef to_examples(rows):\n    return [dspy.Example(ticket=t, queue=q).with_inputs(\"ticket\") for t, q in rows]\n\ntrainset = to_examples(load_split(\"train\"))  # ~300 labeled tickets\ntestset = to_examples(load_split(\"test\"))    # never shown to the optimizer\n\n# Proposes instructions, bootstraps demos, searches combinations\noptimizer = dspy.MIPROv2(metric=metric, auto=\"light\")\ncompiled = optimizer.compile(program, trainset=trainset)\n\nevaluate = dspy.Evaluate(devset=testset, metric=metric, num_threads=8)\nprint(\"baseline:\", evaluate(program))\nprint(\"compiled:\", evaluate(compiled))   # judge only on held-out data\n\ncompiled.save(\"triage_v3.json\")   # learned prompt = versioned artifact"
+  },
+  "example": {
+    "en": "A team routes support tickets into 6 queues with a hand-written prompt: ~78% accuracy on a 400-ticket held-out set. They wrap it as a DSPy `ChainOfThought` signature and run `MIPROv2` (light) on 300 labeled tickets. The compiled program, a new instruction plus 4 bootstrapped demos, scores ~86% on the same held-out set. Six months later they move to a cheaper model: recompiling takes one run instead of a week of prompt rewrites, and lands at ~84%.",
+    "es": "Un equipo rutea tickets de soporte a 6 colas con un prompt escrito a mano: ~78% de precisión en un set reservado de 400 tickets. Lo convierten en una signature `ChainOfThought` de DSPy y corren `MIPROv2` (light) sobre 300 tickets etiquetados. El programa compilado, una instrucción nueva más 4 demos generadas por bootstrap, llega a ~86% en el mismo set reservado. Seis meses después pasan a un modelo más barato: recompilar toma una corrida en vez de una semana reescribiendo prompts, y queda en ~84%."
+  },
+  "pros": [
+    { "en": "Replaces guesswork with a measured search against your own metric.", "es": "Reemplaza las corazonadas por una búsqueda medida contra tu propia métrica." },
+    { "en": "Portable: swap the model and recompile instead of rewriting prompts.", "es": "Portable: cambias el modelo y recompilas en vez de reescribir prompts." },
+    { "en": "Tunes every stage of a multi-step pipeline jointly, which humans rarely manage.", "es": "Ajusta en conjunto todas las etapas de un pipeline de varios pasos, algo que a mano casi nunca se logra." },
+    { "en": "Bootstrapped demos come from your own data, so few-shot examples match real inputs.", "es": "Las demos generadas por bootstrap salen de tus datos, así que los ejemplos few-shot se parecen a las entradas reales." }
+  ],
+  "cons": [
+    { "en": "Useless without a labeled eval set and a metric you trust; building those is the real work.", "es": "No sirve sin un set de evaluación etiquetado y una métrica confiable; construirlos es el trabajo de verdad." },
+    { "en": "Optimized prompts can be opaque or odd, which makes review and debugging harder.", "es": "Los prompts optimizados pueden ser opacos o raros, lo que complica revisarlos y depurarlos." },
+    { "en": "Each run costs hundreds to thousands of LLM calls and must be repeated on model changes.", "es": "Cada corrida cuesta cientos a miles de llamadas al LLM y hay que repetirla cuando cambia el modelo." }
+  ],
+  "whenToUse": {
+    "en": "You have ≥50 labeled examples and an automatic metric, plus a multi-stage pipeline, frequent model swaps or a plateau after hand-tuning. Classification, extraction, routing and RAG answering fit well.",
+    "es": "Tienes ≥50 ejemplos etiquetados y una métrica automática, además de un pipeline de varias etapas, cambios frecuentes de modelo o un techo tras ajustar a mano. Clasificación, extracción, ruteo y respuestas RAG encajan bien."
+  },
+  "whenNotToUse": {
+    "en": "No eval set or no reliable metric (open-ended creative writing), one-off prompts, or gaps that need new knowledge or behavior only better retrieval or fine-tuning can add.",
+    "es": "Sin set de evaluación o sin una métrica confiable (escritura creativa abierta), prompts de una sola vez, o brechas que requieren conocimiento o comportamiento nuevo que solo agrega una mejor recuperación o el fine-tuning."
+  },
+  "numbers": [
+    { "en": "OPRO: optimized prompts beat human-written ones by up to 8% on GSM8K and up to 50% on Big-Bench Hard tasks.", "es": "OPRO: los prompts optimizados superaron a los escritos por humanos hasta en 8% en GSM8K y hasta en 50% en tareas de Big-Bench Hard." },
+    { "en": "OPRO's top GSM8K instruction for PaLM 2-L, \"Take a deep breath and work on this problem step-by-step\": 80.2% vs 71.8% for \"Let's think step by step\".", "es": "La mejor instrucción de OPRO en GSM8K para PaLM 2-L, \"Take a deep breath and work on this problem step-by-step\": 80.2% vs 71.8% de \"Let's think step by step\"." },
+    { "en": "MIPRO: beat baseline optimizers on 5 of 7 multi-stage programs with Llama-3-8B, by up to 13% accuracy.", "es": "MIPRO: superó a los optimizadores base en 5 de 7 programas de varias etapas con Llama-3-8B, hasta por 13% de precisión." },
+    { "en": "TextGrad: lifted GPT-4o zero-shot accuracy on Google-Proof QA from 51% to 55%.", "es": "TextGrad: subió la precisión zero-shot de GPT-4o en Google-Proof QA de 51% a 55%." }
+  ],
+  "pitfalls": [
+    { "en": "Reporting the score on the data you optimized on; confirm on an untouched test split.", "es": "Reportar el puntaje sobre los datos con los que optimizaste; confírmalo en un split de test intacto." },
+    { "en": "A gameable metric, such as a judge that likes length, gets optimized into verbose wrong outputs.", "es": "Una métrica que se puede engañar, como un juez al que le gusta la longitud, termina optimizando salidas verbosas e incorrectas." },
+    { "en": "Shipping the compiled prompt unread: check the demos for leaked labels, PII or test items.", "es": "Desplegar el prompt compilado sin leerlo: revisa que las demos no filtren etiquetas, PII o ítems de test." },
+    { "en": "Assuming the result is model-independent: it is tuned to one model, so re-optimize when you switch.", "es": "Asumir que el resultado no depende del modelo: está ajustado a uno, así que reoptimiza cuando cambies." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you reach for DSPy instead of hand-writing prompts?", "es": "¿Cuándo usarías DSPy en vez de escribir prompts a mano?" },
+      "a": {
+        "en": "When three things hold: I have at least ~50–100 labeled examples, a metric I trust that runs automatically, and either a multi-stage pipeline or frequent model swaps. Then hand-tuning is the expensive, unreproducible option. I'd start with BootstrapFewShot, which is cheap and often captures much of the gain through good demos, then try MIPROv2. I'd skip it for open-ended generation without a reliable metric, or when the real gap is missing knowledge: optimization can't add facts the model doesn't have.",
+        "es": "Cuando se cumplen tres cosas: tengo al menos ~50–100 ejemplos etiquetados, una métrica confiable que corre sola, y además un pipeline de varias etapas o cambios frecuentes de modelo. Ahí ajustar a mano es la opción cara y no reproducible. Empezaría con BootstrapFewShot, que es barato y muchas veces captura buena parte de la mejora con buenas demos, y después probaría MIPROv2. Lo evitaría en generación abierta sin una métrica confiable, o cuando lo que falta es conocimiento: optimizar no le agrega al modelo datos que no tiene."
+      }
+    },
+    {
+      "q": { "en": "How do you avoid overfitting during prompt optimization?", "es": "¿Cómo evitas el sobreajuste al optimizar prompts?" },
+      "a": {
+        "en": "With the same discipline as ML. Three splits: train for bootstrapping demos, validation for selecting candidates, and a test set the optimizer never sees, used once to report. The data has to be large and representative enough; with 30 examples a 3-point gain is noise. I check the metric can't be gamed, read the winning prompt and demos for leaked labels, and gate promotion on the same CI evals as any prompt change, with the compiled artifact versioned and traced like code.",
+        "es": "Con la misma disciplina que en ML. Tres splits: entrenamiento para generar las demos, validación para elegir candidatos y un test set que el optimizador nunca ve, usado una sola vez para reportar. Los datos tienen que ser suficientes y representativos; con 30 ejemplos, una mejora de 3 puntos es ruido. Verifico que la métrica no se pueda engañar, leo el prompt ganador y sus demos buscando etiquetas filtradas, y condiciono la promoción a los mismos evals de CI que cualquier cambio de prompt, con el artefacto compilado versionado y trazado como código."
+      }
+    }
+  ],
+  "related": ["eval-driven-development", "few-shot", "golden-datasets", "llm-as-judge", "prompt-management", "evaluator-optimizer"],
+  "sources": [
+    { "title": "Khattab et al. — DSPy: Compiling Declarative Language Model Calls into Self-Improving Pipelines", "url": "https://arxiv.org/abs/2310.03714" },
+    { "title": "Opsahl-Ong et al. — Optimizing Instructions and Demonstrations for Multi-Stage Language Model Programs (MIPRO)", "url": "https://arxiv.org/abs/2406.11695" },
+    { "title": "Yang et al. — Large Language Models as Optimizers (OPRO)", "url": "https://arxiv.org/abs/2309.03409" },
+    { "title": "Yuksekgonul et al. — TextGrad: Automatic \"Differentiation\" via Text", "url": "https://arxiv.org/abs/2406.07496" }
+  ]
+}

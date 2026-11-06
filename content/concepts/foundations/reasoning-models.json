@@ -1,0 +1,96 @@
+{
+  "id": "reasoning-models",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Reasoning models & test-time compute", "es": "Modelos de razonamiento y test-time compute" },
+  "aliases": ["test-time compute", "inference-time scaling", "thinking models", "extended thinking", "reasoning effort", "o1", "o3", "DeepSeek-R1"],
+  "tldr": {
+    "en": "LLMs trained with RL to think at length before answering. You buy accuracy on hard problems by spending more thinking tokens, billed as output and paid for in seconds of latency.",
+    "es": "LLMs entrenados con RL para pensar largo antes de responder. Compras precisión en problemas difíciles gastando más tokens de pensamiento, que se cobran como salida y se pagan en segundos de latencia."
+  },
+  "analogy": {
+    "en": "A chess player in blitz vs. with ten minutes per move: same brain, better moves when it can calculate, but the clock runs on every move, even the obvious ones.",
+    "es": "Un ajedrecista jugando blitz frente a uno con diez minutos por jugada: el mismo cerebro, mejores jugadas cuando puede calcular, pero el reloj corre en cada movimiento, incluso en los obvios."
+  },
+  "explain": {
+    "en": "A **reasoning model** is an LLM trained to write a long chain of thought *before* answering, and to use it well. OpenAI's o-series (o1, o3, o4-mini), DeepSeek-R1 and Claude/Gemini \"extended thinking\" all work this way.\n\n**How they're made.** Take a strong base model and run reinforcement learning on tasks with checkable answers: math with known results, code with unit tests ([[rlvr]]). Only the final answer is rewarded, yet the model learns to plan, backtrack and double-check on its own. DeepSeek-R1-Zero's responses grew steadily longer during training without anyone asking for it.\n\n**Test-time compute.** This opens a second scaling axis: accuracy rises with the thinking tokens spent per query, not only with model size. You set it per call: OpenAI `reasoning.effort` (low/medium/high), Anthropic `budget_tokens`, Gemini `thinking_budget` or thinking level.\n\n**The bill.** Thinking tokens are billed as output tokens even when you never see them (OpenAI hides them; Claude 4 returns a summary). A hard prompt can burn ~5–20k of them and take tens of seconds.\n\nThey shine on math, code, multi-step planning and dense analysis. On extraction, classification or small talk they mostly add cost and latency, and can *overthink* their way out of a right answer.",
+    "es": "Un **modelo de razonamiento** es un LLM entrenado para escribir una larga cadena de pensamiento *antes* de responder, y para aprovecharla bien. La serie o de OpenAI (o1, o3, o4-mini), DeepSeek-R1 y el \"extended thinking\" de Claude y Gemini funcionan así.\n\n**Cómo se construyen.** Se parte de un buen modelo base y se aplica aprendizaje por refuerzo sobre tareas con respuesta verificable: matemáticas con resultado conocido, código con pruebas unitarias ([[rlvr]]). Solo se premia la respuesta final, pero el modelo aprende por su cuenta a planificar, retroceder y verificar. Las respuestas de DeepSeek-R1-Zero se hicieron cada vez más largas durante el entrenamiento sin que nadie se lo pidiera.\n\n**Cómputo en inferencia (test-time compute).** Esto abre un segundo eje de escalamiento: la precisión sube con los tokens de pensamiento que gastas por consulta, no solo con el tamaño del modelo. Lo ajustas en cada llamada: `reasoning.effort` en OpenAI (low/medium/high), `budget_tokens` en Anthropic, `thinking_budget` o nivel de thinking en Gemini.\n\n**La factura.** Los tokens de pensamiento se cobran como tokens de salida aunque nunca los veas (OpenAI los oculta; Claude 4 devuelve un resumen). Un prompt difícil puede quemar ~5–20k y tardar decenas de segundos.\n\nBrillan en matemáticas, código, planificación de varios pasos y análisis denso. En extracción, clasificación o charla casual casi solo agregan costo y latencia, y pueden *pensar de más* hasta abandonar una respuesta correcta."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[Prompt] --> M[Reasoning model]\n  E[\"Effort / budget\"] -.-> M\n  RL[\"RL on verifiable tasks\"] -.->|trained by| M\n  M --> T[\"Thinking tokens<br/>~1k–20k+\"]\n  T --> A[Final answer]\n  T -.->|billed as output| C[\"Cost + latency\"]\n  A --> C",
+    "caption": {
+      "en": "Training teaches the model to think; at inference you choose how much thinking to buy per call.",
+      "es": "El entrenamiento le enseña a pensar; en inferencia eliges cuánto pensamiento comprar en cada llamada."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Set reasoning effort per task and watch hidden tokens", "es": "Ajustar el esfuerzo por tarea y vigilar los tokens ocultos" },
+    "source": "from openai import OpenAI\n\nclient = OpenAI()\nMODEL = \"o4-mini\"  # any reasoning model that accepts reasoning effort\n\n# Spend thinking only where it buys accuracy (tune per task with evals)\nEFFORT = {\"extract\": \"low\", \"classify\": \"low\", \"code\": \"medium\", \"plan\": \"high\"}\n\ndef ask(task: str, prompt: str) -> str:\n    resp = client.responses.create(\n        model=MODEL,\n        reasoning={\"effort\": EFFORT.get(task, \"medium\")},\n        max_output_tokens=25_000,  # this cap includes the hidden reasoning tokens\n        input=prompt,\n    )\n    u = resp.usage\n    hidden = u.output_tokens_details.reasoning_tokens\n    # Billed as output tokens, but never returned to you\n    print(f\"{task}: reasoning={hidden} visible={u.output_tokens - hidden}\")\n    if resp.status == \"incomplete\":  # ran out of budget mid-thought\n        raise RuntimeError(\"raise max_output_tokens or lower the effort\")\n    return resp.output_text"
+  },
+  "example": {
+    "en": "A text-to-SQL assistant gets ~30% of multi-join questions wrong on a fast standard model. A cheap router sends only those (~10% of traffic) to a reasoning model at medium effort: most now pass the eval, but each burns ~4k hidden reasoning tokens and takes ~15 s instead of ~2 s. Simple lookups like *\"revenue last month\"* stay on the fast model. Accuracy on the hard tail jumps, while average cost per query rises only modestly because the expensive path is rare.",
+    "es": "Un asistente de text-to-SQL falla ~30% de las preguntas con varios joins usando un modelo estándar rápido. Un router barato manda solo esas (~10% del tráfico) a un modelo de razonamiento con esfuerzo medio: la mayoría ya pasa la evaluación, pero cada una quema ~4k tokens de razonamiento ocultos y tarda ~15 s en vez de ~2 s. Las consultas simples como *\"ingresos del mes pasado\"* se quedan en el modelo rápido. La precisión en la cola difícil sube mucho y el costo promedio por consulta crece poco, porque el camino caro es raro."
+  },
+  "pros": [
+    { "en": "Large accuracy jumps on math, code, planning and multi-constraint problems, with no fine-tuning.", "es": "Saltos grandes de precisión en matemáticas, código, planificación y problemas con muchas restricciones, sin fine-tuning." },
+    { "en": "One dial (effort or budget) trades cost and latency for accuracy on each call.", "es": "Una sola perilla (esfuerzo o presupuesto) intercambia costo y latencia por precisión en cada llamada." },
+    { "en": "Less prompt engineering: no hand-written \"think step by step\" scaffolding needed.", "es": "Menos prompt engineering: no necesitas armar a mano el \"piensa paso a paso\"." }
+  ],
+  "cons": [
+    { "en": "Hidden thinking tokens are billed as output, often several times the visible answer.", "es": "Los tokens de pensamiento ocultos se cobran como salida, a menudo varias veces lo que mide la respuesta visible." },
+    { "en": "Latency of seconds to minutes; painful in interactive UX unless effort is low.", "es": "Latencia de segundos a minutos; dolorosa en UX interactiva salvo con esfuerzo bajo." },
+    { "en": "Overthinking: thousands of tokens on trivial questions, sometimes talking itself out of a right answer.", "es": "Pensar de más: miles de tokens en preguntas triviales, y a veces se convence de abandonar una respuesta correcta." },
+    { "en": "Raw reasoning is hidden or summarized, so debugging is harder, and it is not a faithful explanation.", "es": "El razonamiento crudo está oculto o resumido: depurar cuesta más, y no es una explicación fiel." }
+  ],
+  "whenToUse": {
+    "en": "Math, code generation and repair, multi-step planning, agent orchestration, analysis with many constraints: where a wrong answer costs more than ~10–30 s and a few cents.",
+    "es": "Matemáticas, generación y corrección de código, planificación de varios pasos, orquestación de agentes, análisis con muchas restricciones: donde un error cuesta más que ~10–30 s y unos centavos."
+  },
+  "whenNotToUse": {
+    "en": "High-volume extraction, classification, routing, short chat or sub-second paths. Use a fast non-reasoning model, or the lowest effort setting.",
+    "es": "Extracción, clasificación o ruteo de alto volumen, chat corto o rutas de menos de un segundo. Usa un modelo rápido sin razonamiento, o el esfuerzo más bajo."
+  },
+  "numbers": [
+    { "en": "o1 on AIME 2024: 74% pass@1 vs 12% for GPT-4o; 83% with 64-sample consensus.", "es": "o1 en AIME 2024: 74% pass@1 frente a 12% de GPT-4o; 83% con consenso de 64 muestras." },
+    { "en": "DeepSeek-R1-Zero, pure RL: AIME 2024 pass@1 from 15.6% to 71.0%; R1 reached 79.8%.", "es": "DeepSeek-R1-Zero, solo con RL: AIME 2024 pass@1 de 15.6% a 71.0%; R1 llegó a 79.8%." },
+    { "en": "Anthropic extended thinking: minimum `budget_tokens` is 1,024.", "es": "Extended thinking de Anthropic: el `budget_tokens` mínimo es 1,024." },
+    { "en": "OpenAI suggests reserving ≥25,000 output tokens for reasoning + answer when you start.", "es": "OpenAI sugiere reservar ≥25,000 tokens de salida para razonamiento + respuesta al empezar." }
+  ],
+  "pitfalls": [
+    { "en": "Output cap too low: thinking eats the budget and you get an empty or truncated answer.", "es": "Límite de salida muy bajo: el pensamiento se come el presupuesto y recibes una respuesta vacía o truncada." },
+    { "en": "Adding \"think step by step\" or long CoT few-shots: redundant, and OpenAI advises against it.", "es": "Agregar \"piensa paso a paso\" o few-shots largos con CoT: es redundante y OpenAI lo desaconseja." },
+    { "en": "Defaulting to high effort everywhere, then discovering the bill. Measure accuracy per effort level.", "es": "Dejar esfuerzo alto en todo y descubrir la factura después. Mide la precisión por nivel de esfuerzo." },
+    { "en": "Treating the reasoning summary as a faithful audit trail, or showing raw thoughts to end users.", "es": "Tratar el resumen del razonamiento como un registro fiel de auditoría, o mostrar los pensamientos crudos al usuario final." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you choose a reasoning model over a standard one?", "es": "¿Cuándo elegirías un modelo de razonamiento en vez de uno estándar?" },
+      "a": {
+        "en": "I decide per task with evals, not per product. Reasoning models pay off when the answer needs multi-step search, like math, code changes checked by tests or planning across constraints, and when errors are expensive. For extraction, classification or routing they mostly add latency and hidden output tokens. So I run the same eval set with no reasoning, low and high effort, plot accuracy against cost and p95 latency, and pick the knee. Often the answer is a router: fast model for the easy majority, reasoning for the hard tail.",
+        "es": "Lo decido por tarea con evaluaciones, no por producto. Los modelos de razonamiento rinden cuando la respuesta exige buscar en varios pasos, como matemáticas, cambios de código validados con pruebas o planificación con restricciones, y cuando los errores son caros. En extracción, clasificación o ruteo casi solo agregan latencia y tokens de salida ocultos. Así que corro el mismo set de evaluación sin razonamiento, con esfuerzo bajo y alto, grafico precisión contra costo y latencia p95, y elijo el codo. Muchas veces la respuesta es un router: modelo rápido para la mayoría fácil y razonamiento para la cola difícil."
+      }
+    },
+    {
+      "q": { "en": "What does test-time compute scaling mean, and why does it matter for architecture?", "es": "¿Qué significa escalar el test-time compute y por qué importa para la arquitectura?" },
+      "a": {
+        "en": "It means you can buy accuracy at inference, not only at training. Two ways: let one model think longer, which is sequential, or sample several answers and pick with voting or a verifier, which is parallel. OpenAI showed o1's AIME accuracy rising smoothly with both. The architectural consequence is that quality becomes a per-request dial: I can spend heavy compute on the hard 5% of queries instead of paying for a bigger model on 100% of them.",
+        "es": "Significa que puedes comprar precisión en inferencia, no solo en entrenamiento. Hay dos formas: dejar que un modelo piense más, que es secuencial, o muestrear varias respuestas y elegir con votación o un verificador, que es paralelo. OpenAI mostró que la precisión de o1 en AIME sube de forma continua con ambas. La consecuencia arquitectónica es que la calidad se vuelve una perilla por llamada: puedo gastar mucho cómputo en el 5% difícil de las consultas en vez de pagar un modelo más grande para el 100%."
+      }
+    },
+    {
+      "q": { "en": "Your reasoning-model bill tripled but accuracy didn't move. What do you check?", "es": "La factura del modelo de razonamiento se triplicó y la precisión no cambió. ¿Qué revisas?" },
+      "a": {
+        "en": "First the usage data: reasoning tokens versus visible output per route. The usual causes are high effort as a default on easy tasks, prompts that invite overthinking, or a cap so low that calls truncate and get retried, so we pay for the thinking twice. Fixes: lower effort or budget per route, send easy traffic to a non-reasoning model, cache the stable prompt prefix. Then I rerun evals to confirm accuracy held before calling it done.",
+        "es": "Primero los datos de uso: tokens de razonamiento frente a salida visible por ruta. Las causas típicas son esfuerzo alto por defecto en tareas fáciles, prompts que invitan a pensar de más, o un límite tan bajo que las llamadas se truncan y se reintentan, así que pagamos el pensamiento dos veces. Arreglos: bajar el esfuerzo o el presupuesto por ruta, mandar el tráfico fácil a un modelo sin razonamiento y cachear el prefijo estable del prompt. Luego vuelvo a correr las evaluaciones para confirmar que la precisión se mantuvo."
+      }
+    }
+  ],
+  "related": ["rlvr", "chain-of-thought", "self-consistency", "model-routing", "token-economics", "model-selection"],
+  "sources": [
+    { "title": "OpenAI — Learning to Reason with LLMs", "url": "https://openai.com/index/learning-to-reason-with-llms/" },
+    { "title": "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "url": "https://arxiv.org/abs/2501.12948" },
+    { "title": "Snell et al. — Scaling LLM Test-Time Compute Optimally can be More Effective than Scaling Model Parameters", "url": "https://arxiv.org/abs/2408.03314" },
+    { "title": "Anthropic — Building with extended thinking", "url": "https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking" }
+  ]
+}

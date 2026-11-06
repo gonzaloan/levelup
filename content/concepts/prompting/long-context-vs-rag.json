@@ -1,0 +1,113 @@
+{
+  "id": "long-context-vs-rag",
+  "domain": "prompting",
+  "level": "advanced",
+  "title": { "en": "Long context vs RAG", "es": "Contexto largo vs RAG" },
+  "aliases": ["context stuffing", "RAG vs long context", "is RAG dead", "full-context prompting", "long-context LLM", "Self-Route", "cache-augmented generation", "CAG"],
+  "tldr": {
+    "en": "Stuff the whole corpus in the window when it's small, static and shared; use RAG when it's large, changing, permissioned or high-volume. Often you do both: retrieve whole documents, then reason in long context.",
+    "es": "Mete todo el corpus en la ventana cuando es pequeño, estático y compartido; usa RAG cuando es grande, cambiante, con permisos o de alto volumen. Muchas veces haces ambas: recuperas documentos completos y razonas con contexto largo."
+  },
+  "analogy": {
+    "en": "An open-book exam: if the book is a 20-page handout, bring all of it. If it's the national library, you need the catalog to fetch the right three books first.",
+    "es": "Un examen a libro abierto: si el libro es un apunte de 20 páginas, llévalo completo. Si es la biblioteca nacional, necesitas el catálogo para traer primero los tres libros correctos."
+  },
+  "explain": {
+    "en": "Context windows of 200k–1M+ tokens mean you can often skip retrieval and put the whole corpus in the prompt (*context stuffing*). Whether you should is a cost, latency and quality trade-off.\n\n**Long context wins when:**\n- The corpus fits comfortably: Anthropic's rule of thumb is under ~200k tokens (~500 pages).\n- The task needs **cross-document reasoning** (compare every contract, summarize a codebase) that top-k chunks would fragment.\n- You're prototyping and don't want to build ingestion, chunking and retrieval evals yet.\n\n**RAG wins when:**\n- The corpus is large or changes daily: no window holds 10M tokens, and re-sending a static one on every call is waste.\n- **Cost and latency** matter at volume: you pay for and prefill every token on every uncached call.\n- **Access control** differs per user: retrieval can filter by permission; a stuffed prompt exposes everything.\n- You need **citations** to specific passages.\n\nMore context isn't free quality either: models use facts in the middle of long inputs less reliably (*lost in the middle*, [[context-rot]]).\n\n**Hybrid** is the common production answer: retrieve the top 5–20 *documents* (not chunks), then let a long-context model read them whole. [[prompt-caching]] narrows the cost gap for static corpora, and routing (answer with RAG, escalate to long context when the model says the retrieved text is insufficient) gets most of both.",
+    "es": "Con ventanas de contexto de 200k a más de 1M de tokens, muchas veces puedes saltarte la recuperación y meter todo el corpus en el prompt (*context stuffing*). Si conviene o no es un trade-off de costo, latencia y calidad.\n\n**El contexto largo gana cuando:**\n- El corpus cabe con holgura: la regla práctica de Anthropic es menos de ~200k tokens (~500 páginas).\n- La tarea necesita **razonar entre documentos** (comparar todos los contratos, resumir una base de código) y un top-k de chunks lo fragmentaría.\n- Estás prototipando y todavía no quieres construir la ingesta, el chunking y las evals de recuperación.\n\n**RAG gana cuando:**\n- El corpus es grande o cambia a diario: ninguna ventana aguanta 10M de tokens, y reenviar uno estático en cada llamada es desperdicio.\n- El **costo y la latencia** importan a escala: pagas y haces prefill de cada token en cada llamada sin caché.\n- El **control de acceso** cambia por usuario: la recuperación puede filtrar por permisos; un prompt relleno lo expone todo.\n- Necesitas **citas** a pasajes específicos.\n\nMás contexto tampoco es calidad gratis: los modelos usan con menos confiabilidad los datos que quedan a mitad de entradas largas (*lost in the middle*, [[context-rot]]).\n\nEl **híbrido** es la respuesta común en producción: recupera los 5–20 *documentos* principales (no chunks) y deja que un modelo de contexto largo los lea completos. El [[prompt-caching]] achica la brecha de costo para corpus estáticos, y el ruteo (responder con RAG y escalar a contexto largo cuando el modelo dice que el texto recuperado no alcanza) te da casi lo mejor de ambos."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[New use case] --> F{\"Corpus under<br/>~200k tokens?\"}\n  F -->|yes| S{\"Static and same<br/>for all users?\"}\n  S -->|yes| LC[\"Long context<br/>+ prompt caching\"]\n  S -->|no| R[Retrieve first]\n  F -->|no| R\n  R --> X{\"Needs whole-doc<br/>reasoning?\"}\n  X -->|no| C[\"Top-k chunks<br/>classic RAG\"]\n  X -->|yes| H[\"Top documents,<br/>then long context\"]\n  LC --> E[Eval quality and cost]\n  C --> E\n  H --> E",
+    "caption": {
+      "en": "Fit, freshness and permissions pick the path; evals and the bill confirm it. At volume, even cached stuffing costs ~3× RAG per query.",
+      "es": "El tamaño, la frescura y los permisos eligen el camino; las evals y la factura lo confirman. A escala, incluso el contexto completo con caché cuesta ~3× lo de RAG por consulta."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Cost per query: stuffing vs caching vs RAG", "es": "Costo por consulta: contexto completo vs caché vs RAG" },
+    "source": "# Input cost per query: stuff the corpus vs retrieve top-k.\n# Output tokens are the same either way, so they cancel out.\nPRICE_IN = 3.00 / 1_000_000  # $ per input token, example mid-tier model\nCACHE_READ = 0.10            # cached input billed at ~10% (Anthropic-style)\nQUERIES_PER_DAY = 100_000\n\ncorpus = 150_000             # tokens, ~375 pages\ninstructions = 1_000         # system prompt + question\nrag_context = 8 * 500        # top-8 chunks of ~500 tokens\n\ndef cost(uncached: int, cached: int = 0) -> float:\n    # Cache writes ignored: amortized at ~70 queries/minute\n    return uncached * PRICE_IN + cached * PRICE_IN * CACHE_READ\n\noptions = {\n    \"stuff everything\": cost(corpus + instructions),\n    \"stuff + prompt cache\": cost(instructions, cached=corpus),\n    \"RAG top-8 chunks\": cost(instructions + rag_context),\n}\nfor name, usd in options.items():\n    print(f\"{name:21s} ${usd:.3f}/query  ${usd * QUERIES_PER_DAY:>7,.0f}/day\")\n\n# stuff everything      $0.453/query  $ 45,300/day\n# stuff + prompt cache  $0.048/query  $  4,800/day\n# RAG top-8 chunks      $0.015/query  $  1,500/day"
+  },
+  "example": {
+    "en": "Internal policy Q&A: a 150k-token corpus (~375 pages), 100k queries a day, a model at $3 per million input tokens (output cost is the same either way).\n\n- **Stuff everything:** ~151k input tokens → ~$0.45/query → ~$45k/day, plus seconds of prefill on every uncached call.\n- **Stuff + prompt caching:** corpus billed at ~10% → ~$0.048/query → ~$4.8k/day.\n- **RAG, top-8 × 500-token chunks:** ~5k tokens → ~$0.015/query → ~$1.5k/day, plus retrieval infrastructure.\n\nRAG is ~30× cheaper than naive stuffing but only ~3× cheaper than cached stuffing, so here quality evals, freshness and access control decide, not cost alone.",
+    "es": "Preguntas sobre políticas internas: un corpus de 150k tokens (~375 páginas), 100k consultas al día y un modelo a $3 por millón de tokens de entrada (el costo de salida es igual en ambos casos).\n\n- **Meter todo:** ~151k tokens de entrada → ~$0.45 por consulta → ~$45k al día, más segundos de prefill en cada llamada sin caché.\n- **Meter todo + prompt caching:** el corpus se cobra a ~10% → ~$0.048 por consulta → ~$4.8k al día.\n- **RAG, top-8 × chunks de 500 tokens:** ~5k tokens → ~$0.015 por consulta → ~$1.5k al día, más la infraestructura de recuperación.\n\nRAG es ~30× más barato que meter todo sin caché, pero solo ~3× más barato que hacerlo con caché, así que aquí deciden las evals de calidad, la frescura y el control de acceso, no solo el costo."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "Advertised vs effective context", "es": "Contexto anunciado vs efectivo" },
+      "body": {
+        "en": "A 1M-token window means the model *accepts* 1M tokens, not that it reasons equally well over all of them. Needle-in-a-haystack tests, which retrieve one planted sentence, are nearly saturated and flatter models. Harder benchmarks tell a different story: NVIDIA's RULER (2024) found only about half of models claiming 32k+ windows held satisfactory performance at 32k, and *Lost in the Middle* (2023) showed a U-shaped accuracy curve by position. Multi-hop questions, aggregation (\"count every clause that…\") and distractors degrade fastest. Practical rule: measure on your task at your real context length, and treat the advertised window as a ceiling, not a working size.",
+        "es": "Una ventana de 1M de tokens significa que el modelo *acepta* 1M de tokens, no que razone igual de bien sobre todos. Las pruebas de aguja en un pajar, que recuperan una sola frase plantada, están casi saturadas y favorecen al modelo. Benchmarks más difíciles cuentan otra historia: RULER de NVIDIA (2024) encontró que solo cerca de la mitad de los modelos que anunciaban ventanas de 32k o más mantenían un desempeño satisfactorio a 32k, y *Lost in the Middle* (2023) mostró una curva de exactitud en forma de U según la posición. Las preguntas multi-hop, la agregación (\"cuenta cada cláusula que…\") y los distractores son lo que más se degrada. Regla práctica: mide con tu tarea y tu longitud de contexto real, y trata la ventana anunciada como un techo, no como un tamaño de trabajo."
+      }
+    },
+    {
+      "title": { "en": "Routing between them (Self-Route)", "es": "Rutear entre ambos (Self-Route)" },
+      "body": {
+        "en": "Li et al. (2024) compared RAG and long context across several models and benchmarks: with enough budget, long context scored higher on average, RAG was far cheaper, and the two gave the same answer on most queries. **Self-Route** exploits that: retrieve top-k chunks and ask the model whether they are enough to answer; if yes, answer with RAG; if it declines, send the full context to the long-context model. Most queries take the cheap path, so cost drops substantially with quality close to full long context. In production, the same idea works with a confidence score or an explicit \"not enough information\" answer that triggers the pricier path.",
+        "es": "Li et al. (2024) compararon RAG y contexto largo con varios modelos y benchmarks: con presupuesto suficiente, el contexto largo obtuvo mejores resultados en promedio, RAG fue mucho más barato y ambos dieron la misma respuesta en la mayoría de las consultas. **Self-Route** aprovecha eso: recupera los chunks top-k y le pregunta al modelo si alcanzan para responder; si sí, responde con RAG; si se niega, manda el contexto completo al modelo de contexto largo. La mayoría de las consultas toman el camino barato, así que el costo baja bastante con una calidad cercana a la del contexto largo completo. En producción, la misma idea funciona con un puntaje de confianza o una respuesta explícita de \"no hay información suficiente\" que dispara la ruta más cara."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "Long context: no chunking, embeddings or index to build and keep in sync.", "es": "Contexto largo: no hay chunking, embeddings ni índice que construir y mantener sincronizados." },
+    { "en": "Long context: the model sees whole documents, so cross-document reasoning and summaries don't fragment.", "es": "Contexto largo: el modelo ve documentos completos, así que el razonamiento entre documentos y los resúmenes no se fragmentan." },
+    { "en": "RAG: cost and latency scale with the k chunks retrieved, not with corpus size.", "es": "RAG: el costo y la latencia crecen con los k chunks recuperados, no con el tamaño del corpus." },
+    { "en": "RAG: per-user access control, freshness and citations come naturally.", "es": "RAG: el control de acceso por usuario, la frescura y las citas salen de forma natural." }
+  ],
+  "cons": [
+    { "en": "Long context: you pay for and prefill the whole corpus on every uncached call.", "es": "Contexto largo: pagas y haces prefill de todo el corpus en cada llamada sin caché." },
+    { "en": "Long context: quality drops for facts buried mid-window and near the window's limit.", "es": "Contexto largo: la calidad baja para los datos enterrados a mitad de la ventana y cerca de su límite." },
+    { "en": "RAG: if retrieval misses the passage, the model never sees it; recall becomes the ceiling.", "es": "RAG: si la recuperación no trae el pasaje, el modelo nunca lo ve; el recall se vuelve el techo." },
+    { "en": "RAG: a pipeline to build, tune and evaluate (parsing, chunking, embeddings, reranking).", "es": "RAG: un pipeline que construir, ajustar y evaluar (parsing, chunking, embeddings, reranking)." }
+  ],
+  "whenToUse": {
+    "en": "Long context for small (under ~200k tokens), static, shared corpora, whole-document tasks and prototypes; RAG for large, fast-changing or permissioned corpora at volume; hybrid when you need both scale and whole-document reasoning.",
+    "es": "Contexto largo para corpus pequeños (menos de ~200k tokens), estáticos y compartidos, tareas sobre documentos completos y prototipos; RAG para corpus grandes, cambiantes o con permisos a escala; híbrido cuando necesitas escala y razonamiento sobre documentos completos."
+  },
+  "whenNotToUse": {
+    "en": "Don't decide by window size or vendor marketing: run both on your eval set and compare accuracy, p95 latency and cost per query before committing.",
+    "es": "No decidas por el tamaño de la ventana ni por el marketing del proveedor: corre ambos contra tu set de evaluación y compara exactitud, latencia p95 y costo por consulta antes de comprometerte."
+  },
+  "numbers": [
+    { "en": "Anthropic's rule of thumb: under ~200k tokens (~500 pages), consider skipping RAG and putting the whole knowledge base in the prompt, with caching.", "es": "Regla práctica de Anthropic: con menos de ~200k tokens (~500 páginas), considera saltarte RAG y poner toda la base de conocimiento en el prompt, con caché." },
+    { "en": "Lost in the Middle (2023): GPT-3.5-Turbo's multi-document QA accuracy fell ~20 points when the answer moved from the start to the middle of 20 documents.", "es": "Lost in the Middle (2023): la exactitud de GPT-3.5-Turbo en QA multidocumento cayó ~20 puntos cuando la respuesta pasó del inicio a la mitad de 20 documentos." },
+    { "en": "RULER (2024): only about half of models claiming 32k+ windows held satisfactory performance at 32k.", "es": "RULER (2024): solo cerca de la mitad de los modelos que anunciaban ventanas de 32k o más mantuvieron un desempeño satisfactorio a 32k." },
+    { "en": "Worked example at $3/M input, 150k-token corpus: ~$0.45/query stuffed, ~$0.05 cached, ~$0.015 with 5k-token RAG.", "es": "Ejemplo resuelto a $3/M de entrada, corpus de 150k tokens: ~$0.45 por consulta metiendo todo, ~$0.05 con caché, ~$0.015 con RAG de 5k tokens." }
+  ],
+  "pitfalls": [
+    { "en": "Trusting needle-in-a-haystack scores: retrieving one planted fact is far easier than reasoning across many.", "es": "Confiar en los puntajes de aguja en un pajar: recuperar un dato plantado es mucho más fácil que razonar sobre muchos." },
+    { "en": "Stuffing a multi-tenant corpus: any user can coax out documents they aren't allowed to see.", "es": "Meter un corpus multi-tenant completo: cualquier usuario puede sacarle al modelo documentos que no tiene permiso de ver." },
+    { "en": "Comparing naive stuffing to RAG on cost while ignoring prompt caching, or pricing RAG without its infrastructure and eval work.", "es": "Comparar el costo de meter todo sin caché contra RAG ignorando el prompt caching, o calcular RAG sin su infraestructura ni su trabajo de evaluación." },
+    { "en": "Retrieving tiny chunks for a task that needs whole documents; retrieve documents, then read them in full.", "es": "Recuperar chunks diminutos para una tarea que necesita documentos completos; recupera documentos y luego léelos enteros." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Context windows are 1M tokens now. Is RAG dead?", "es": "Las ventanas de contexto ya son de 1M de tokens. ¿Murió RAG?" },
+      "a": {
+        "en": "No, but the threshold moved. For a small, static corpus shared by all users, I'd now often stuff it and use prompt caching: less to build and better whole-document reasoning. RAG still wins when the corpus is bigger than any window, changes constantly, needs per-user permissions or citations, or runs at volume, where paying for 150k tokens per query costs ~30× a 5k-token prompt. And effective context is shorter than advertised: accuracy drops on facts buried mid-window. So I decide with evals, not window size.",
+        "es": "No, pero el umbral se movió. Para un corpus pequeño, estático y compartido por todos, hoy muchas veces lo meto completo con prompt caching: hay menos que construir y el razonamiento sobre documentos completos es mejor. RAG sigue ganando cuando el corpus no cabe en ninguna ventana, cambia todo el tiempo, necesita permisos por usuario o citas, o corre a escala, donde pagar 150k tokens por consulta cuesta ~30× un prompt de 5k. Y el contexto efectivo es más corto que el anunciado: la exactitud baja con datos enterrados a mitad de la ventana. Por eso decido con evals, no por el tamaño de la ventana."
+      }
+    },
+    {
+      "q": { "en": "Walk me through the cost of each for a 150k-token corpus at 100k queries a day.", "es": "Explícame el costo de cada opción para un corpus de 150k tokens con 100k consultas al día." },
+      "a": {
+        "en": "At $3 per million input tokens: stuffing is ~151k tokens, ~$0.45 per query, ~$45k a day. With prompt caching the corpus is billed at ~10%, so ~$0.048 per query, ~$4.8k a day, as long as traffic keeps the cache warm. RAG with eight 500-token chunks plus instructions is ~5k tokens, ~$0.015 per query, ~$1.5k a day plus retrieval infrastructure. Output cost is identical, so it cancels. A ~3× gap against cached stuffing is small enough that quality and access control usually decide.",
+        "es": "A $3 por millón de tokens de entrada: meter todo son ~151k tokens, ~$0.45 por consulta, ~$45k al día. Con prompt caching el corpus se cobra a ~10%, así que ~$0.048 por consulta, ~$4.8k al día, siempre que el tráfico mantenga viva la caché. RAG con ocho chunks de 500 tokens más instrucciones son ~5k tokens, ~$0.015 por consulta, ~$1.5k al día más la infraestructura de recuperación. El costo de salida es idéntico, así que se cancela. Una brecha de ~3× frente al contexto completo con caché es lo bastante chica como para que decidan la calidad y el control de acceso."
+      }
+    },
+    {
+      "q": { "en": "How would you combine the two?", "es": "¿Cómo combinarías los dos enfoques?" },
+      "a": {
+        "en": "Two patterns. First, retrieve at document level rather than chunk level, the top 5–20 documents, and give them whole to a long-context model, so retrieval narrows the corpus but reasoning isn't fragmented. Second, route: answer with RAG first and let the model flag when the retrieved context is insufficient, then escalate to long context. The Self-Route paper found RAG and long context agree on most queries, so most traffic stays on the cheap path while quality stays close to full long context.",
+        "es": "Dos patrones. Primero, recuperar a nivel de documento y no de chunk, los 5–20 documentos principales, y dárselos completos a un modelo de contexto largo, así la recuperación acota el corpus pero el razonamiento no se fragmenta. Segundo, rutear: responder primero con RAG y dejar que el modelo avise cuando el contexto recuperado no alcanza, para escalar a contexto largo. El paper de Self-Route encontró que RAG y contexto largo coinciden en la mayoría de las consultas, así que casi todo el tráfico se queda en el camino barato y la calidad se mantiene cerca del contexto largo completo."
+      }
+    }
+  ],
+  "related": ["rag", "context-rot", "prompt-caching", "context-window", "token-economics", "agentic-rag"],
+  "sources": [
+    { "title": "Liu et al. — Lost in the Middle: How Language Models Use Long Contexts", "url": "https://arxiv.org/abs/2307.03172" },
+    { "title": "Li et al. — Retrieval Augmented Generation or Long-Context LLMs? A Comprehensive Study and Hybrid Approach", "url": "https://arxiv.org/abs/2407.16833" },
+    { "title": "Hsieh et al. — RULER: What's the Real Context Size of Your Long-Context Language Models?", "url": "https://arxiv.org/abs/2404.06654" },
+    { "title": "Anthropic — Introducing Contextual Retrieval", "url": "https://www.anthropic.com/news/contextual-retrieval" }
+  ]
+}

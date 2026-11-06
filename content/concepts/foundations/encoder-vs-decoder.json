@@ -1,0 +1,90 @@
+{
+  "id": "encoder-vs-decoder",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Encoder vs decoder models (BERT vs GPT)", "es": "Modelos encoder vs decoder (BERT vs GPT)" },
+  "aliases": ["BERT", "GPT", "T5", "encoder-only", "decoder-only", "encoder-decoder", "seq2seq", "masked language model", "causal LM"],
+  "tldr": {
+    "en": "Encoders (BERT) read text in both directions and output vectors for classification, embeddings and rerankers. Decoders (GPT) predict the next token and generate. Decoder-only won the frontier; small encoders still win cheap, high-volume understanding.",
+    "es": "Los encoders (BERT) leen el texto en ambas direcciones y devuelven vectores para clasificación, embeddings y rerankers. Los decoders (GPT) predicen el siguiente token y generan. Decoder-only ganó la frontera; los encoders pequeños siguen ganando en comprensión barata y de alto volumen."
+  },
+  "analogy": {
+    "en": "An editor who reads the whole page before marking it (encoder) vs. a storyteller who can only look back at what was already said while choosing the next word (decoder).",
+    "es": "Un editor que lee toda la página antes de marcarla (encoder) frente a un narrador que, al elegir la siguiente palabra, solo puede mirar lo que ya dijo (decoder)."
+  },
+  "explain": {
+    "en": "The original 2017 [[transformer]] had two halves; modern models keep one or both.\n\n- **Encoder-only (BERT, RoBERTa, ModernBERT):** every token attends to every other, left *and* right (**bidirectional**). Trained by masking ~15% of tokens and predicting them. Output: one vector per token, pooled into one for the text. Built for *understanding*: classification, NER, [[embeddings]], cross-encoder [[reranking]]. It can't generate fluently.\n- **Decoder-only (GPT, Llama, Claude, Gemini):** each token sees only earlier tokens (**causal mask**). Trained to predict the next token. Built for *generation*, and at scale every task becomes generation: classify by answering, extract by writing JSON.\n- **Encoder-decoder (T5, BART, Whisper):** an encoder reads the full input; a decoder generates while cross-attending to it. Natural for input → output transforms: translation, summarization, speech-to-text.\n\n**Why decoder-only won:** one simple objective on raw text where every token is a training signal, clean scaling, in-context learning, and one model for every task via prompting. Serving one architecture also concentrated the optimizations ([[kv-cache]], batching, speculative decoding).\n\n**Where small encoders still win:** high-volume classification, embeddings and rerankers. A ~100–400M encoder fine-tuned on a few thousand labels often matches a prompted LLM on a narrow task, in milliseconds and at a fraction of the cost.",
+    "es": "El [[transformer]] original de 2017 tenía dos mitades; los modelos modernos conservan una o ambas.\n\n- **Encoder-only (BERT, RoBERTa, ModernBERT):** cada token atiende a todos los demás, a la izquierda *y* a la derecha (**bidireccional**). Se entrena ocultando ~15% de los tokens y prediciéndolos. Salida: un vector por token, que se agrupa en uno para todo el texto. Hecho para *comprender*: clasificación, NER, [[embeddings]], [[reranking]] con cross-encoder. No genera texto con fluidez.\n- **Decoder-only (GPT, Llama, Claude, Gemini):** cada token solo ve los anteriores (**máscara causal**). Se entrena para predecir el siguiente token. Hecho para *generar*, y a escala toda tarea se vuelve generación: clasificas respondiendo, extraes escribiendo JSON.\n- **Encoder-decoder (T5, BART, Whisper):** un encoder lee toda la entrada y un decoder genera mientras aplica cross-attention sobre ella. Natural para transformar entrada → salida: traducción, resúmenes, voz a texto.\n\n**Por qué ganó decoder-only:** un objetivo simple sobre texto crudo donde cada token es señal de entrenamiento, escalamiento limpio, aprendizaje en contexto y un solo modelo para todas las tareas vía prompting. Servir una sola arquitectura también concentró las optimizaciones ([[kv-cache]], batching, decodificación especulativa).\n\n**Dónde siguen ganando los encoders pequeños:** clasificación de alto volumen, embeddings y rerankers. Un encoder de ~100–400M parámetros ajustado con unos miles de etiquetas suele igualar a un LLM con prompt en una tarea acotada, en milisegundos y por una fracción del costo."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  A[\"BERT: full text\"] --> B[\"Encoder<br/>bidirectional\"]\n  B --> C[\"Label, embedding<br/>or score\"]\n  P[\"GPT: prompt\"] --> D[\"Decoder<br/>causal mask\"]\n  D -->|append token| D\n  D --> G[Generated text]\n  S[\"T5: source text\"] --> E[\"Encoder<br/>bidirectional\"]\n  E -->|cross-attention| F[\"Decoder<br/>causal mask\"]\n  F --> O[\"Translation<br/>or summary\"]",
+    "caption": {
+      "en": "Same Transformer blocks, different attention masks and outputs: understand, generate, or transform.",
+      "es": "Los mismos bloques Transformer con distintas máscaras de atención y salidas: comprender, generar o transformar."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "The three families on one task each", "es": "Las tres familias, cada una en su tarea" },
+    "source": "from transformers import pipeline\nfrom sentence_transformers import SentenceTransformer\n\ntext = \"The refund took three weeks and nobody answered my emails.\"\n\n# Encoder-only: one forward pass -> class scores. ~66M params, fine on CPU.\nclf = pipeline(\"text-classification\",\n               model=\"distilbert/distilbert-base-uncased-finetuned-sst-2-english\")\nprint(clf(text))  # [{'label': 'NEGATIVE', 'score': 0.99...}]\n\n# Encoder-only: sentence embeddings for search and clustering (22M params, 384 dims)\nemb = SentenceTransformer(\"sentence-transformers/all-MiniLM-L6-v2\")\nvecs = emb.encode([\"reset my password\", \"I forgot my login\"])\n\n# Encoder-decoder: read the whole input, then generate the output\nt5 = pipeline(\"translation_en_to_fr\", model=\"google-t5/t5-small\")\nprint(t5(text)[0][\"translation_text\"])\n\n# Decoder-only: any task by prompting, but generated token by token\ngen = pipeline(\"text-generation\", model=\"Qwen/Qwen2.5-0.5B-Instruct\")\nmsgs = [{\"role\": \"user\", \"content\": f\"Sentiment (positive/negative), one word: {text}\"}]\nprint(gen(msgs, max_new_tokens=3)[0][\"generated_text\"][-1][\"content\"])"
+  },
+  "example": {
+    "en": "A marketplace screens ~20M new listings a day against 12 policy labels. Prompting an LLM at ~400 tokens per listing means ~8B tokens a day, plus a second or more per item. Instead, the team fine-tunes ModernBERT-base (149M params) on ~30k labeled listings: one forward pass, a few ms per item on one GPU, near-zero marginal cost. Low-confidence items (~3%) go to an LLM, which also writes the explanation human reviewers read.",
+    "es": "Un marketplace revisa ~20M publicaciones nuevas al día contra 12 etiquetas de políticas. Usar un LLM con prompt a ~400 tokens por publicación son ~8B tokens diarios, más un segundo o más por elemento. En cambio, el equipo ajusta ModernBERT-base (149M parámetros) con ~30k publicaciones etiquetadas: una sola pasada, unos pocos ms por elemento en una GPU y un costo marginal casi nulo. Los casos de baja confianza (~3%) van a un LLM, que además redacta la explicación que leen los revisores humanos."
+  },
+  "pros": [
+    { "en": "Encoders: orders of magnitude smaller than frontier LLMs, millisecond latency, cheap to self-host and fine-tune.", "es": "Encoders: órdenes de magnitud más pequeños que los LLMs de frontera, latencia de milisegundos, baratos de hospedar y ajustar." },
+    { "en": "Encoders: one pass returns a score per class, with no output parsing.", "es": "Encoders: una sola pasada devuelve un puntaje por clase, sin parsear salida." },
+    { "en": "Decoders: one model does every task through prompting, zero-shot, with no labeled data.", "es": "Decoders: un solo modelo hace cualquier tarea vía prompting, zero-shot y sin datos etiquetados." },
+    { "en": "Encoder-decoders: efficient for long input → short output transforms like translation and ASR.", "es": "Encoder-decoders: eficientes para transformar entradas largas en salidas cortas, como traducción y ASR." }
+  ],
+  "cons": [
+    { "en": "Encoders can't generate; each new task needs labeled data and a fine-tune.", "es": "Los encoders no generan; cada tarea nueva necesita datos etiquetados y un fine-tuning." },
+    { "en": "Classic BERT models stop at 512 tokens; longer text is truncated (ModernBERT reaches 8,192).", "es": "Los BERT clásicos llegan a 512 tokens; el texto más largo se trunca (ModernBERT llega a 8,192)." },
+    { "en": "Decoders pay per generated token in latency and cost, and their output needs validation.", "es": "Los decoders pagan latencia y costo por cada token generado, y su salida requiere validación." },
+    { "en": "Encoder-decoders get less investment now: few open checkpoints near the frontier.", "es": "Los encoder-decoders reciben menos inversión hoy: hay pocos checkpoints abiertos cerca de la frontera." }
+  ],
+  "whenToUse": {
+    "en": "Encoder: high-volume, narrow, stable tasks with labels (classification, NER, PII detection, embeddings, rerankers). Decoder: open-ended generation, reasoning, few-label or fast-changing tasks. Encoder-decoder: translation, ASR, fixed transforms.",
+    "es": "Encoder: tareas acotadas, estables, de alto volumen y con etiquetas (clasificación, NER, detección de PII, embeddings, rerankers). Decoder: generación abierta, razonamiento, tareas con pocas etiquetas o que cambian rápido. Encoder-decoder: traducción, ASR, transformaciones fijas."
+  },
+  "whenNotToUse": {
+    "en": "Don't fine-tune an encoder for a task that changes weekly or has no labels: prompt an LLM. Don't call a frontier LLM millions of times a day for a label a 150M model learns.",
+    "es": "No ajustes un encoder para una tarea que cambia cada semana o no tiene etiquetas: usa un LLM con prompt. No llames a un LLM de frontera millones de veces al día por una etiqueta que aprende un modelo de 150M."
+  },
+  "numbers": [
+    { "en": "BERT-base 110M / BERT-large 340M params; pretraining masks 15% of tokens.", "es": "BERT-base 110M / BERT-large 340M parámetros; el preentrenamiento oculta 15% de los tokens." },
+    { "en": "DistilBERT: 40% smaller, 60% faster, keeps ~97% of BERT's language understanding.", "es": "DistilBERT: 40% más pequeño, 60% más rápido, conserva ~97% de la comprensión del lenguaje de BERT." },
+    { "en": "ModernBERT (Dec 2024): 8,192-token context, 149M (base) / 395M (large) params.", "es": "ModernBERT (dic. 2024): contexto de 8,192 tokens, 149M (base) / 395M (large) parámetros." },
+    { "en": "all-MiniLM-L6-v2: 22M params, 384-dim embeddings, still a common baseline.", "es": "all-MiniLM-L6-v2: 22M parámetros, embeddings de 384 dimensiones, sigue siendo una línea base común." }
+  ],
+  "pitfalls": [
+    { "en": "Sending every classification to an LLM at scale, then fighting cost and latency.", "es": "Mandar toda clasificación a un LLM a gran escala y luego pelear con el costo y la latencia." },
+    { "en": "Using raw BERT [CLS] vectors as embeddings: without contrastive training they're poor for similarity search.", "es": "Usar los vectores [CLS] de BERT crudos como embeddings: sin entrenamiento contrastivo rinden mal en búsqueda por similitud." },
+    { "en": "Forgetting the 512-token limit of classic BERT: long text is silently truncated.", "es": "Olvidar el límite de 512 tokens del BERT clásico: el texto largo se trunca sin avisar." },
+    { "en": "Assuming \"embedding model\" means encoder: many top embedding models today are fine-tuned decoder LLMs.", "es": "Suponer que \"modelo de embeddings\" significa encoder: muchos de los mejores hoy son LLMs decoder ajustados." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why did decoder-only models win?", "es": "¿Por qué ganaron los modelos decoder-only?" },
+      "a": {
+        "en": "Mostly scaling economics. Next-token prediction turns every token of raw text into a training signal, while BERT's masked objective learns from about 15% of positions, so decoders get more out of the same data. Then one causal model does every task through prompting and in-context learning, so the industry trains, serves and optimizes a single stack: KV cache, batching, speculative decoding. Encoder-decoders still do well on input-to-output transforms, but the investment went to decoders.",
+        "es": "Sobre todo por la economía del escalamiento. Predecir el siguiente token convierte cada token de texto crudo en señal de entrenamiento, mientras que el objetivo enmascarado de BERT aprende de alrededor del 15% de las posiciones, así que los decoders le sacan más a los mismos datos. Además, un solo modelo causal hace todas las tareas vía prompting y aprendizaje en contexto, y la industria entrena, sirve y optimiza un único stack: KV cache, batching, decodificación especulativa. Los encoder-decoders siguen rindiendo bien al transformar entrada en salida, pero la inversión se fue a los decoders."
+      }
+    },
+    {
+      "q": { "en": "Where would you put a BERT-style model in an LLM architecture?", "es": "¿Dónde pondrías un modelo tipo BERT en una arquitectura con LLMs?" },
+      "a": {
+        "en": "Anywhere I need a cheap, fast, high-volume judgment over a stable label set: intent routing in front of the LLM, PII or toxicity detection in guardrails, embeddings for retrieval, and cross-encoder reranking. A fine-tuned ~150M encoder answers in milliseconds for a tiny fraction of an LLM call. The trade-off is labeled data and retraining when labels change, so I often bootstrap labels with an LLM and then distill into the encoder.",
+        "es": "En cualquier punto donde necesite un juicio barato, rápido y de alto volumen sobre un conjunto estable de etiquetas: ruteo de intención antes del LLM, detección de PII o toxicidad en guardrails, embeddings para recuperación y reranking con cross-encoder. Un encoder ajustado de ~150M responde en milisegundos por una fracción mínima de lo que cuesta una llamada al LLM. El trade-off son los datos etiquetados y reentrenar cuando cambian las etiquetas, así que muchas veces genero las etiquetas iniciales con un LLM y luego destilo al encoder."
+      }
+    }
+  ],
+  "related": ["transformer", "attention", "embeddings", "embedding-models", "reranking", "distillation"],
+  "sources": [
+    { "title": "Devlin et al. — BERT: Pre-training of Deep Bidirectional Transformers", "url": "https://arxiv.org/abs/1810.04805" },
+    { "title": "Raffel et al. — Exploring the Limits of Transfer Learning with a Unified Text-to-Text Transformer (T5)", "url": "https://arxiv.org/abs/1910.10683" },
+    { "title": "Vaswani et al. — Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762" },
+    { "title": "Hugging Face — Finally, a Replacement for BERT: Introducing ModernBERT", "url": "https://huggingface.co/blog/modernbert" }
+  ]
+}

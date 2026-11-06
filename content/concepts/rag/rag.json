@@ -1,0 +1,113 @@
+{
+  "id": "rag",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "RAG (Retrieval-Augmented Generation)", "es": "RAG (generación aumentada por recuperación)" },
+  "aliases": ["RAG", "retrieval-augmented generation", "retrieval augmented generation", "grounded generation", "RAG pipeline", "naive RAG", "open-book QA"],
+  "tldr": {
+    "en": "Before the model answers, search your own data for the most relevant passages and put them in the prompt, so the answer is grounded in fresh, private, citable sources instead of memory.",
+    "es": "Antes de que el modelo responda, busca en tus propios datos los pasajes más relevantes y ponlos en el prompt, para que la respuesta se base en fuentes actuales, privadas y citables, no en su memoria."
+  },
+  "analogy": {
+    "en": "An open-book exam: the student (the LLM) still has to reason and write, but first looks up the right pages instead of answering from memory — and can point to the page.",
+    "es": "Un examen a libro abierto: el estudiante (el LLM) igual tiene que razonar y redactar, pero primero busca las páginas correctas en vez de responder de memoria, y puede señalar de qué página lo sacó."
+  },
+  "explain": {
+    "en": "**RAG** retrieves relevant passages from your own data at question time and puts them in the prompt, so the LLM answers from evidence instead of memory. The weights stay frozen; the knowledge lives in an index you control. Lewis et al. (2020) coined the term for a dense retriever and a generator fine-tuned end to end; today it means any retrieve-then-generate pipeline.\n\nIt has two paths:\n\n- **Offline (indexing):** [[document-parsing]] → [[chunking]] → embed ([[embedding-models]]) → store in a [[vector-databases]] index, usually with [[bm25]] alongside. Re-run incrementally as sources change ([[index-lifecycle]]).\n- **Online (query):** rewrite the query ([[query-transformation]]) → retrieve ~50 candidates with [[hybrid-search]], filtered to what this user may read ([[permission-aware-retrieval]]) → [[reranking]] to the top 3–8 → assemble the prompt → generate with citations ([[citations-grounding]]).\n\n**Why it wins:** knowledge that is fresh (re-index in minutes, no retraining), private, permission-scoped and citable, with fewer hallucinations.\n\n**Where it fails:** most wrong answers are retrieval failures — the passage was mangled by parsing, split across chunks, or ranked #40. Plain RAG is also weak at multi-hop and corpus-wide questions (\"which contracts expire this quarter?\"); reach for [[graphrag]], [[agentic-rag]] or SQL over metadata. Evaluate retrieval and generation separately ([[rag-evaluation]]).",
+    "es": "**RAG** recupera pasajes relevantes de tus propios datos en el momento de la pregunta y los pone en el prompt, para que el LLM responda a partir de evidencia y no de memoria. Los pesos no cambian; el conocimiento vive en un índice que tú controlas. Lewis et al. (2020) acuñaron el término para un recuperador denso y un generador ajustados de punta a punta; hoy se usa para cualquier pipeline de recuperar y luego generar.\n\nTiene dos caminos:\n\n- **Offline (indexación):** [[document-parsing]] → [[chunking]] → embeddings ([[embedding-models]]) → guardar en un índice de [[vector-databases]], normalmente junto con [[bm25]]. Se vuelve a correr de forma incremental cuando cambian las fuentes ([[index-lifecycle]]).\n- **Online (consulta):** reescribir la consulta ([[query-transformation]]) → recuperar ~50 candidatos con [[hybrid-search]], filtrados a lo que este usuario puede leer ([[permission-aware-retrieval]]) → [[reranking]] hasta el top 3–8 → armar el prompt → generar con citas ([[citations-grounding]]).\n\n**Por qué conviene:** conocimiento actualizado (reindexas en minutos, sin reentrenar), privado, filtrado por permisos y citable, con menos alucinaciones.\n\n**Dónde falla:** la mayoría de las respuestas incorrectas son fallas de recuperación: el parsing destrozó el pasaje, quedó partido entre dos chunks o salió en el puesto 40. El RAG simple también flaquea con preguntas multi-hop o que agregan todo el corpus (\"¿qué contratos vencen este trimestre?\"); para eso usa [[graphrag]], [[agentic-rag]] o SQL sobre los metadatos. Evalúa la recuperación y la generación por separado ([[rag-evaluation]])."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  subgraph OFF[\"Offline: indexing path\"]\n    D[Source docs] --> P[Parse] --> C[Chunk] --> E[Embed] --> I[(\"Vector + BM25 index\")]\n  end\n  subgraph ON[\"Online: query path\"]\n    Q[User query] --> R[\"Retrieve top 50<br/>ACL filtered\"] --> K[\"Rerank to top 5\"] --> A[Assemble prompt] --> G[LLM generates] --> O[\"Answer + citations\"]\n  end\n  R -.->|search| I",
+    "caption": {
+      "en": "Indexing runs offline whenever sources change; every user question runs the online path against that index.",
+      "es": "La indexación corre offline cada vez que cambian las fuentes; cada pregunta del usuario recorre el camino online contra ese índice."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Online path: retrieve, rerank, assemble, generate", "es": "Camino online: recuperar, reordenar, armar, generar" },
+    "source": "from openai import OpenAI\n\nclient = OpenAI()\nMODEL = \"gpt-4.1-mini\"  # any chat model\n\ndef answer(question: str, user) -> str:\n    # 1. Recall: hybrid search, filtered to what this user may read\n    candidates = hybrid_search(question, k=50, acl=user.groups)\n    # 2. Precision: keep the few chunks that actually answer it\n    chunks = rerank(question, candidates, keep=5)\n    # 3. Assemble: numbered sources so the model can cite them\n    context = \"\\n\\n\".join(\n        f\"[{i}] {c.title} ({c.updated})\\n{c.text}\" for i, c in enumerate(chunks, 1)\n    )\n    prompt = (\n        \"Answer ONLY from the sources below and cite them like [1]. \"\n        \"If they don't contain the answer, say you don't know.\\n\\n\"\n        f\"Sources:\\n{context}\\n\\nQuestion: {question}\"\n    )\n    # 4. Generate (low temperature: we want faithful, not creative)\n    resp = client.chat.completions.create(\n        model=MODEL, temperature=0,\n        messages=[{\"role\": \"user\", \"content\": prompt}],\n    )\n    return resp.choices[0].message.content"
+  },
+  "example": {
+    "en": "An HR assistant for a 5,000-person company indexes ~20,000 Confluence and SharePoint pages: ~150,000 chunks of ~500 tokens, embedded once for ~$1.50 with text-embedding-3-small. An employee asks *\"How many remote days does the Madrid office allow?\"*. Hybrid search returns 50 chunks the employee is allowed to see; the reranker keeps 5, including the Madrid policy edited last Tuesday. The LLM answers *\"3 days a week\"* and links that page. Without RAG it would have guessed from training data — or invented a policy.",
+    "es": "Un asistente de RRHH para una empresa de 5,000 personas indexa ~20,000 páginas de Confluence y SharePoint: ~150,000 chunks de ~500 tokens, convertidos en embeddings una sola vez por ~US$1.50 con text-embedding-3-small. Un empleado pregunta *\"¿Cuántos días de trabajo remoto permite la oficina de Madrid?\"*. La búsqueda híbrida devuelve 50 chunks que ese empleado tiene permiso de ver; el reranker conserva 5, entre ellos la política de Madrid editada el martes pasado. El LLM responde *\"3 días por semana\"* y enlaza esa página. Sin RAG habría adivinado con sus datos de entrenamiento, o inventado una política."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "The upgrade path, in order", "es": "El camino de mejora, en orden" },
+      "body": {
+        "en": "Naive RAG — embed chunks, take the top 5 by cosine, stuff the prompt — demos well and fails on exact terms, tables and long-tail questions. The order I upgrade in, measuring each step on an eval set:\n\n1. Inspect and fix parsing and chunking.\n2. Add [[bm25]] for [[hybrid-search]].\n3. Add [[reranking]] over a wider pool.\n4. [[query-transformation]] for vague or conversational queries.\n5. [[contextual-retrieval]] if chunks lose their context.\n6. [[agentic-rag]] only when questions genuinely need several retrieval hops.\n\nEvery step adds latency and cost, so stop when the evals plateau.",
+        "es": "El RAG ingenuo (embeddings de los chunks, top 5 por coseno y todo al prompt) luce bien en una demo y falla con términos exactos, tablas y preguntas poco frecuentes. Este es el orden en que lo mejoro, midiendo cada paso con un set de evaluación:\n\n1. Revisar y corregir el parsing y el chunking.\n2. Agregar [[bm25]] para tener [[hybrid-search]].\n3. Agregar [[reranking]] sobre un conjunto más amplio.\n4. [[query-transformation]] para consultas vagas o conversacionales.\n5. [[contextual-retrieval]] si los chunks pierden su contexto.\n6. [[agentic-rag]] solo cuando las preguntas de verdad necesitan varios saltos de recuperación.\n\nCada paso suma latencia y costo, así que para cuando las evaluaciones se estanquen."
+      }
+    },
+    {
+      "title": { "en": "Assembling the prompt", "es": "Cómo armar el prompt" },
+      "body": {
+        "en": "Number each chunk and include its title, source and date, so the model can cite `[2]` and the UI can render a link. Instruct it to answer only from the sources and to say \"I don't know\" when they don't cover the question — abstaining is a feature. Keep only the chunks that survived reranking: models use information at the start and end of a long context better than in the middle (Liu et al., *Lost in the Middle*), so put the strongest evidence first. Place the stable instructions before the retrieved text so [[prompt-caching]] can reuse that prefix.",
+        "es": "Numera cada chunk e incluye su título, fuente y fecha, para que el modelo pueda citar `[2]` y la interfaz muestre un enlace. Indícale que responda solo con las fuentes y que diga \"no lo sé\" cuando no cubren la pregunta: abstenerse es una función, no un error. Deja solo los chunks que sobrevivieron al reranking: los modelos aprovechan mejor la información al inicio y al final de un contexto largo que la del medio (Liu et al., *Lost in the Middle*), así que pon primero la evidencia más fuerte. Coloca las instrucciones fijas antes del texto recuperado para que [[prompt-caching]] reutilice ese prefijo."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "Update knowledge in minutes by re-indexing; no retraining.", "es": "Actualizas el conocimiento en minutos reindexando, sin reentrenar." },
+    { "en": "Citations make answers verifiable and auditable.", "es": "Las citas hacen que las respuestas sean verificables y auditables." },
+    { "en": "Access control is enforced at retrieval: the model only sees what the user may see.", "es": "El control de acceso se aplica en la recuperación: el modelo solo ve lo que el usuario puede ver." },
+    { "en": "Cheaper and far easier to update than fine-tuning for injecting facts.", "es": "Para incorporar hechos, es más barato y mucho más fácil de actualizar que el fine-tuning." }
+  ],
+  "cons": [
+    { "en": "Quality is capped by retrieval: if the right chunk isn't found, the model can't use it.", "es": "La calidad tiene como techo la recuperación: si no se encuentra el chunk correcto, el modelo no puede usarlo." },
+    { "en": "Many moving parts to build, evaluate and keep in sync: parsers, index, reranker, prompts.", "es": "Muchas piezas que construir, evaluar y mantener sincronizadas: parsers, índice, reranker y prompts." },
+    { "en": "Adds latency before the first token and a per-query retrieval cost.", "es": "Agrega latencia antes del primer token y un costo de recuperación por consulta." },
+    { "en": "Weak at multi-hop reasoning and aggregations over the whole corpus.", "es": "Flaquea con razonamiento multi-hop y con agregaciones sobre todo el corpus." }
+  ],
+  "whenToUse": {
+    "en": "The answer lives in documents that change, are private, or must be cited: support, internal knowledge, legal, product docs. It's the default for knowledge problems, before fine-tuning.",
+    "es": "Cuando la respuesta está en documentos que cambian, son privados o hay que citar: soporte, conocimiento interno, legal, documentación de producto. Es la opción por defecto para problemas de conocimiento, antes del fine-tuning."
+  },
+  "whenNotToUse": {
+    "en": "The whole corpus fits cheaply in the context window ([[long-context-vs-rag]]), the task is about behavior or format rather than knowledge, or the question is an aggregation that SQL answers exactly.",
+    "es": "Cuando todo el corpus cabe barato en la ventana de contexto ([[long-context-vs-rag]]), cuando la tarea trata de comportamiento o formato y no de conocimiento, o cuando la pregunta es una agregación que SQL responde con exactitud."
+  },
+  "numbers": [
+    { "en": "Typical online shape: retrieve ~50 → rerank → 3–8 chunks of ~300–800 tokens in the prompt.", "es": "Forma típica online: recuperar ~50 → reordenar → 3–8 chunks de ~300–800 tokens en el prompt." },
+    { "en": "Indexing is cheap: 75M tokens with text-embedding-3-small ($0.02 per 1M) ≈ $1.50.", "es": "Indexar es barato: 75M de tokens con text-embedding-3-small (US$0.02 por millón) ≈ US$1.50." },
+    { "en": "Retrieval + reranking usually add ~100–400 ms before the first token; generation dominates total latency.", "es": "La recuperación más el reranking suelen sumar ~100–400 ms antes del primer token; la generación domina la latencia total." },
+    { "en": "The original RAG paper retrieved from ~21M Wikipedia passages of 100 words.", "es": "El paper original de RAG recuperaba de ~21M de pasajes de Wikipedia de 100 palabras." }
+  ],
+  "pitfalls": [
+    { "en": "Tuning prompts and swapping LLMs when the real problem is retrieval: measure recall@k first.", "es": "Ajustar prompts y cambiar de LLM cuando el problema real es la recuperación: mide primero el recall@k." },
+    { "en": "Never looking at parsed text: tables flattened to number soup, footers in every chunk.", "es": "No mirar nunca el texto parseado: tablas convertidas en sopa de números y pies de página en cada chunk." },
+    { "en": "Stuffing 20+ chunks \"to be safe\": more noise, more cost, and the middle gets ignored.", "es": "Meter 20 chunks o más \"por si acaso\": más ruido, más costo, y lo del medio se ignora." },
+    { "en": "Filtering permissions after generation instead of at retrieval — the answer has already leaked.", "es": "Filtrar permisos después de generar en vez de hacerlo en la recuperación: la respuesta ya se filtró." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Walk me through how you'd build RAG for an internal knowledge assistant.", "es": "Explícame cómo construirías un RAG para un asistente de conocimiento interno." },
+      "a": {
+        "en": "Two paths. Offline: connectors pull from Confluence, Drive and tickets; a layout-aware parser keeps headings and tables; I chunk on structure at ~400–500 tokens, embed, and store vectors plus BM25 with metadata — source, date, ACL. Online: rewrite the query with the chat history, run hybrid search for ~50 candidates filtered by the user's groups, rerank to 5, and prompt the model to answer only from numbered sources with citations, or abstain. Around it: an eval set of real questions, per-stage tracing, and incremental re-indexing so content is fresh within minutes.",
+        "es": "Son dos caminos. Offline: conectores que traen datos de Confluence, Drive y tickets; un parser que entiende el layout y conserva títulos y tablas; chunking por estructura de ~400–500 tokens, embeddings, y guardo vectores más BM25 con metadatos: fuente, fecha y ACL. Online: reescribo la consulta con el historial del chat, hago búsqueda híbrida de ~50 candidatos filtrados por los grupos del usuario, reordeno a 5 y le pido al modelo que responda solo con fuentes numeradas y citas, o que se abstenga. Alrededor: un set de evaluación con preguntas reales, trazas por etapa y reindexación incremental para que el contenido esté al día en minutos."
+      }
+    },
+    {
+      "q": { "en": "RAG, fine-tuning or long context: how do you choose?", "es": "RAG, fine-tuning o contexto largo: ¿cómo eliges?" },
+      "a": {
+        "en": "They solve different problems. RAG is for knowledge: facts that change, are private, or need citations and access control. Fine-tuning is for behavior: format, tone, a narrow skill, or a shorter prompt; it's a poor way to inject facts because they're hard to update or attribute. Long context works when the relevant corpus is small and query volume is low, ideally with prompt caching; beyond that, cost per query, latency and lost-in-the-middle effects favor retrieval. Often I combine them: RAG for facts, a light fine-tune for output style.",
+        "es": "Resuelven problemas distintos. RAG es para conocimiento: hechos que cambian, que son privados o que necesitan citas y control de acceso. El fine-tuning es para comportamiento: formato, tono, una habilidad acotada o un prompt más corto; es una mala forma de meter hechos porque cuesta actualizarlos o atribuirlos. El contexto largo sirve cuando el corpus relevante es chico y el volumen de consultas es bajo, idealmente con prompt caching; más allá de eso, el costo por consulta, la latencia y el efecto lost-in-the-middle favorecen la recuperación. Muchas veces los combino: RAG para los hechos y un fine-tuning liviano para el estilo de salida."
+      }
+    },
+    {
+      "q": { "en": "What are the main ways RAG fails in production?", "es": "¿Cuáles son las principales formas en que falla un RAG en producción?" },
+      "a": {
+        "en": "I group them by stage. Ingestion: bad parsing, stale or duplicated content, missing permission metadata. Retrieval: the answer isn't in the top-k because of chunking, a weak embedding model, or no lexical search for IDs and codes. Ranking: it was retrieved but buried. Generation: the model ignores the context, blends sources, or answers when it should abstain. Plus questions RAG can't serve, like aggregations over the whole corpus. So I measure each stage separately — recall@k, context precision, faithfulness — not just end-to-end accuracy.",
+        "es": "Las agrupo por etapa. Ingesta: parsing malo, contenido viejo o duplicado, metadatos de permisos faltantes. Recuperación: la respuesta no está en el top-k por el chunking, un modelo de embeddings débil o la falta de búsqueda léxica para IDs y códigos. Ranking: se recuperó, pero quedó enterrada. Generación: el modelo ignora el contexto, mezcla fuentes o responde cuando debería abstenerse. Además están las preguntas que RAG no puede atender, como agregaciones sobre todo el corpus. Por eso mido cada etapa por separado (recall@k, precisión del contexto, fidelidad) y no solo la exactitud de punta a punta."
+      }
+    }
+  ],
+  "related": ["document-parsing", "chunking", "hybrid-search", "reranking", "rag-evaluation", "long-context-vs-rag"],
+  "sources": [
+    { "title": "Lewis et al. (2020) — Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks", "url": "https://arxiv.org/abs/2005.11401" },
+    { "title": "Gao et al. (2023) — Retrieval-Augmented Generation for Large Language Models: A Survey", "url": "https://arxiv.org/abs/2312.10997" },
+    { "title": "Barnett et al. (2024) — Seven Failure Points When Engineering a Retrieval Augmented Generation System", "url": "https://arxiv.org/abs/2401.05856" },
+    { "title": "Liu et al. (2023) — Lost in the Middle: How Language Models Use Long Contexts", "url": "https://arxiv.org/abs/2307.03172" }
+  ]
+}

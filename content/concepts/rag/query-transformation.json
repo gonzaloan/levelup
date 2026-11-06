@@ -1,0 +1,94 @@
+{
+  "id": "query-transformation",
+  "domain": "rag",
+  "level": "advanced",
+  "title": { "en": "Query transformation (rewrite, HyDE)", "es": "Transformación de consultas (rewrite, HyDE)" },
+  "aliases": ["query rewriting", "HyDE", "multi-query", "query expansion", "RAG-Fusion", "query decomposition", "step-back prompting", "query routing"],
+  "tldr": {
+    "en": "Before retrieving, use a small LLM to turn the user's raw message into better search queries (standalone, expanded, decomposed or a hypothetical answer), paying one extra model call for recall.",
+    "es": "Antes de recuperar, usa un LLM pequeño para convertir el mensaje crudo del usuario en mejores consultas de búsqueda (autónomas, expandidas, descompuestas o una respuesta hipotética), pagando una llamada extra al modelo a cambio de recall."
+  },
+  "analogy": {
+    "en": "A good librarian hearing \"and the other one?\" first works out which book you mean, then searches under a few different names, then walks to the right section.",
+    "es": "Un buen bibliotecario que escucha \"¿y el otro?\" primero averigua a qué libro te refieres, luego lo busca con varios nombres distintos y después va a la sección correcta."
+  },
+  "explain": {
+    "en": "Query transformation rewrites what the user typed into queries the index can actually match, **before** retrieval. Users write short, conversational, ambiguous messages; documents use different words. The main moves:\n\n- **Conversational rewrite**: turn *\"and for contractors?\"* plus the chat history into a standalone query (*\"vacation policy for contractors\"*). Mandatory in multi-turn RAG: the retriever never sees the history.\n- **Multi-query expansion**: generate 3–5 paraphrases, retrieve for each, merge with Reciprocal Rank Fusion (*RAG-Fusion*). Buys recall on vocabulary mismatch.\n- **HyDE**: have the LLM write a *hypothetical answer* and embed that instead of the question. Answers look more like documents than questions do; hallucinated details matter little because only the embedding is used.\n- **Decomposition**: split multi-hop questions (*\"compare Q1 and Q2 churn\"*) into sub-questions and retrieve each.\n- **Step-back**: also ask a more general question to fetch background principles.\n- **Routing**: send the query to the right index, tool or filter (SQL vs docs, product A vs B).\n\nEach costs an **extra LLM call before retrieval**, ~0.2–1 s with a small model. Use a fast model, parallelize, and keep the original query in the mix so exact terms survive.",
+    "es": "La transformación de consultas reescribe lo que escribió el usuario en consultas que el índice sí puede encontrar, **antes** de recuperar. Los usuarios escriben mensajes cortos, conversacionales y ambiguos; los documentos usan otras palabras. Las jugadas principales:\n\n- **Reescritura conversacional**: convierte *\"¿y para contratistas?\"* más el historial en una consulta autónoma (*\"política de vacaciones para contratistas\"*). Es obligatoria en RAG multiturno: el recuperador nunca ve el historial.\n- **Expansión multi-query**: genera 3–5 paráfrasis, recupera con cada una y fusiona los resultados con Reciprocal Rank Fusion (*RAG-Fusion*). Compra recall cuando el vocabulario no coincide.\n- **HyDE**: pide al LLM una *respuesta hipotética* y genera el embedding de esa respuesta en lugar del de la pregunta. Una respuesta se parece más a un documento que una pregunta; los detalles inventados importan poco porque solo se usa el embedding.\n- **Descomposición**: divide preguntas multi-hop (*\"compara el churn de Q1 y Q2\"*) en subpreguntas y recupera cada una.\n- **Step-back**: agrega una pregunta más general para traer principios y contexto de fondo.\n- **Routing**: envía la consulta al índice, herramienta o filtro correcto (SQL vs. documentos, producto A vs. B).\n\nCada una cuesta una **llamada extra al LLM antes de recuperar**, ~0.2–1 s con un modelo pequeño. Usa un modelo rápido, paraleliza y conserva la consulta original en la mezcla para que sobrevivan los términos exactos."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  U[\"Message + chat history\"] --> RW[\"Rewrite<br/>(small LLM)\"]\n  RW --> RT{Router}\n  RT -->|metrics question| SQL[(SQL warehouse)]\n  RT -->|docs question| MQ[\"Query variants<br/>+ HyDE passage\"]\n  MQ --> S1[Search 1]\n  MQ --> S2[Search 2]\n  MQ --> S3[Search N]\n  S1 --> F[RRF fusion]\n  S2 --> F\n  S3 --> F\n  F --> RR[Rerank top 50]\n  RR --> L[LLM answer]\n  SQL --> L",
+    "caption": {
+      "en": "The rewrite resolves the conversation, the router picks the source, variants fan out and RRF merges them before reranking.",
+      "es": "La reescritura resuelve la conversación, el router elige la fuente, las variantes se abren en abanico y RRF las fusiona antes del reranking."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Rewrite, expand and HyDE in one call, fused with RRF", "es": "Reescribir, expandir y HyDE en una llamada, fusionado con RRF" },
+    "source": "from openai import OpenAI\nfrom pydantic import BaseModel\n\nclient = OpenAI()\nMODEL = \"gpt-4.1-mini\"  # any small, fast chat model\n\nclass Queries(BaseModel):\n    standalone: str        # follow-up resolved against the history\n    variants: list[str]    # 3 paraphrases with different vocabulary\n    hyde: str              # short passage that would answer it\n\ndef transform(history: list[dict], message: str) -> Queries:\n    # One structured call instead of three: latency is the main cost\n    resp = client.responses.parse(model=MODEL, text_format=Queries, input=[\n        {\"role\": \"system\", \"content\": \"Rewrite the last user message as a \"\n         \"standalone search query, give 3 paraphrases, and write a ~80-word \"\n         \"passage that would answer it.\"},\n        *history, {\"role\": \"user\", \"content\": message}])\n    return resp.output_parsed\n\ndef rrf(rankings: list[list[str]], k: int = 60) -> list[str]:\n    scores: dict[str, float] = {}\n    for ranking in rankings:\n        for rank, doc_id in enumerate(ranking, start=1):\n            scores[doc_id] = scores.get(doc_id, 0.0) + 1 / (k + rank)\n    return sorted(scores, key=scores.get, reverse=True)\n\nmessage = \"and for contractors?\"\nq = transform(history, message)\nqueries = [message, q.standalone, *q.variants]   # keep the original too\nruns = [hybrid_search(x, k=50) for x in queries]\nruns.append(vector_search(embed(q.hyde), k=50))  # HyDE: embed the answer\ncandidates = rrf(runs)[:50]                      # then rerank"
+  },
+  "example": {
+    "en": "An HR assistant gets *\"How many vacation days do I get?\"*, then *\"and in Mexico?\"*. Embedding *\"and in Mexico?\"* alone returns the Mexico City office address. The rewrite step produces *\"annual vacation entitlement for employees in Mexico\"* and the Mexico leave policy jumps to #1. Later someone asks *\"Who gets more leave, Mexico or Spain?\"*: one embedding lands near one country's policy and misses the other, so decomposition issues two sub-queries and retrieves both. Cost: one small-model call, ~300 ms, on every turn.",
+    "es": "Un asistente de RRHH recibe *\"¿Cuántos días de vacaciones tengo?\"* y luego *\"¿y en México?\"*. El embedding de *\"¿y en México?\"* por sí solo devuelve la dirección de la oficina de Ciudad de México. El paso de reescritura produce *\"días de vacaciones anuales para empleados en México\"* y la política de vacaciones de México sube al puesto 1. Después alguien pregunta *\"¿Quién tiene más vacaciones, México o España?\"*: un solo embedding cae cerca de la política de un país y pierde la del otro, así que la descomposición lanza dos subconsultas y recupera ambas. Costo: una llamada a un modelo pequeño, ~300 ms, en cada turno."
+  },
+  "pros": [
+    { "en": "Fixes follow-up turns, a frequent and silent failure in chat RAG.", "es": "Arregla los turnos de seguimiento, una falla frecuente y silenciosa en el RAG conversacional." },
+    { "en": "Query-time only: no re-indexing, works with any retriever.", "es": "Solo actúa al consultar: no hay que reindexar y funciona con cualquier recuperador." },
+    { "en": "Multi-query and HyDE raise recall on vocabulary mismatch; routing shrinks the search space.", "es": "Multi-query y HyDE suben el recall cuando el vocabulario no coincide; el routing reduce el espacio de búsqueda." }
+  ],
+  "cons": [
+    { "en": "An extra LLM call before retrieval even starts: ~0.2–1 s plus its token cost.", "es": "Una llamada extra al LLM antes de que empiece la recuperación: ~0.2–1 s más su costo en tokens." },
+    { "en": "Rewrites drift: they drop a constraint, invent an entity or \"fix\" a product code.", "es": "Las reescrituras se desvían: pierden una restricción, inventan una entidad o \"corrigen\" un código de producto." },
+    { "en": "Multi-query multiplies retrieval load ×3–5 and needs a fusion step.", "es": "Multi-query multiplica la carga de recuperación ×3–5 y necesita un paso de fusión." },
+    { "en": "HyDE misleads when the model doesn't know your domain: the fake answer lands in the wrong neighborhood.", "es": "HyDE engaña cuando el modelo no conoce tu dominio: la respuesta falsa cae en el vecindario equivocado." }
+  ],
+  "whenToUse": {
+    "en": "Multi-turn chat (the rewrite is mandatory), short or vague queries, users and documents using different vocabulary, multi-hop questions, or several indexes and tools to choose from.",
+    "es": "Chat multiturno (ahí la reescritura es obligatoria), consultas cortas o vagas, usuarios y documentos con vocabulario distinto, preguntas multi-hop o varios índices y herramientas entre los cuales elegir."
+  },
+  "whenNotToUse": {
+    "en": "Exact lookups (IDs, error codes, SKUs) where a rewrite corrupts the key, tight latency budgets, or when recall@k is already high — measure before adding a call.",
+    "es": "Búsquedas exactas (IDs, códigos de error, SKUs) donde reescribir corrompe la clave, presupuestos de latencia ajustados, o cuando el recall@k ya es alto: mide antes de agregar una llamada."
+  },
+  "numbers": [
+    { "en": "Latency: +1 small-model call, ~0.2–1 s; produce rewrite, variants and HyDE passage in a single call.", "es": "Latencia: +1 llamada a un modelo pequeño, ~0.2–1 s; genera reescritura, variantes y pasaje HyDE en una sola llamada." },
+    { "en": "Multi-query: 3–5 variants → retrieval fan-out ×3–5 → fuse with RRF, score = Σ 1/(60 + rank).", "es": "Multi-query: 3–5 variantes → recuperación ×3–5 → fusión con RRF, puntaje = Σ 1/(60 + rank)." },
+    { "en": "HyDE (Gao et al., 2022) is zero-shot: it beat the unsupervised Contriever retriever without any relevance labels.", "es": "HyDE (Gao et al., 2022) es zero-shot: superó al recuperador no supervisado Contriever sin ninguna etiqueta de relevancia." }
+  ],
+  "pitfalls": [
+    { "en": "Sending the raw follow-up (\"what about it?\") to the retriever, which has no access to the chat history.", "es": "Mandar el seguimiento crudo (\"¿y eso?\") al recuperador, que no tiene acceso al historial." },
+    { "en": "Dropping the original query: search with it too, or you lose exact terms the rewrite paraphrased away.", "es": "Descartar la consulta original: busca también con ella o pierdes los términos exactos que la reescritura parafraseó." },
+    { "en": "Using your big answer model for a ~50-token rewrite; a small model is enough and much faster.", "es": "Usar tu modelo grande de respuesta para una reescritura de ~50 tokens; un modelo pequeño alcanza y es mucho más rápido." },
+    { "en": "Shipping it unmeasured: compare recall@k per transform on real multi-turn logs; HyDE can hurt on niche domains.", "es": "Lanzarlo sin medir: compara el recall@k de cada transformación sobre logs multiturno reales; HyDE puede empeorar en dominios de nicho." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your chatbot answers the first question well but follow-ups badly. Why?", "es": "Tu chatbot responde bien la primera pregunta pero mal los seguimientos. ¿Por qué?" },
+      "a": {
+        "en": "Because the retriever only sees the last message. \"And for contractors?\" has no subject, so its embedding matches noise. I add a conversational rewrite: a small model reads the last few turns and outputs a standalone query, which I embed, search and log. I keep the original message in a lexical search so exact terms survive. The trade-off is ~300 ms per turn and a new failure mode, a rewrite that drops a constraint, so I evaluate on real multi-turn conversations, not single questions.",
+        "es": "Porque el recuperador solo ve el último mensaje. \"¿Y para contratistas?\" no tiene sujeto, así que su embedding encuentra ruido. Agrego una reescritura conversacional: un modelo pequeño lee los últimos turnos y produce una consulta autónoma, que es la que convierto en embedding, busco y registro en logs. Mantengo el mensaje original en una búsqueda léxica para que sobrevivan los términos exactos. El trade-off son ~300 ms por turno y un modo de falla nuevo, una reescritura que pierde una restricción, así que evalúo con conversaciones multiturno reales, no con preguntas sueltas."
+      }
+    },
+    {
+      "q": { "en": "HyDE or multi-query: when would you use each?", "es": "HyDE o multi-query: ¿cuándo usarías cada uno?" },
+      "a": {
+        "en": "Both attack vocabulary mismatch. HyDE embeds a generated answer because answers sit closer to documents in embedding space than questions do; it's zero-shot and shines on short questions over general-knowledge corpora. It fails when the model doesn't know the domain: the fake answer points to the wrong neighborhood. Multi-query keeps the user's intent, fans out 3–5 paraphrases and fuses them with RRF; safer, but it multiplies retrieval load. I'd start with rewrite + hybrid search + reranker and add either only when recall@k on my eval set shows a gap.",
+        "es": "Ambos atacan el desajuste de vocabulario. HyDE genera el embedding de una respuesta inventada porque, en el espacio de embeddings, las respuestas quedan más cerca de los documentos que las preguntas; es zero-shot y brilla con preguntas cortas sobre corpus de conocimiento general. Falla cuando el modelo no conoce el dominio: la respuesta falsa apunta al vecindario equivocado. Multi-query conserva la intención del usuario, abre 3–5 paráfrasis y las fusiona con RRF; es más seguro, pero multiplica la carga de recuperación. Empezaría con reescritura + búsqueda híbrida + reranker y agregaría cualquiera de los dos solo si el recall@k de mi set de evaluación muestra una brecha."
+      }
+    },
+    {
+      "q": { "en": "How do you keep query transformation from blowing the latency budget?", "es": "¿Cómo evitas que la transformación de consultas reviente el presupuesto de latencia?" },
+      "a": {
+        "en": "Four levers. One call, not three: a single structured-output call returns the rewrite, the variants and the HyDE passage. A small, fast model, since the output is ~50–150 tokens. Skip it when it isn't needed: self-contained first turns, or exact-ID queries caught by a regex. And overlap work: start retrieval with the original query while the rewrite runs, then fuse. I watch end-to-end p95, not just the rewrite's own timing.",
+        "es": "Cuatro palancas. Una llamada, no tres: una sola llamada con salida estructurada devuelve la reescritura, las variantes y el pasaje HyDE. Un modelo pequeño y rápido, porque la salida es de ~50–150 tokens. Omitirla cuando no hace falta: primeros turnos que ya son autónomos o consultas de IDs exactos detectadas con una regex. Y solapar trabajo: arranco la recuperación con la consulta original mientras corre la reescritura y luego fusiono. Vigilo el p95 de punta a punta, no solo el tiempo de la reescritura."
+      }
+    }
+  ],
+  "related": ["rag", "hybrid-search", "reranking", "agentic-rag", "routing", "rag-evaluation"],
+  "sources": [
+    { "title": "Gao et al. — Precise Zero-Shot Dense Retrieval without Relevance Labels (HyDE)", "url": "https://arxiv.org/abs/2212.10496" },
+    { "title": "Ma et al. — Query Rewriting for Retrieval-Augmented Large Language Models", "url": "https://arxiv.org/abs/2305.14283" },
+    { "title": "Zheng et al. — Take a Step Back: Evoking Reasoning via Abstraction in LLMs", "url": "https://arxiv.org/abs/2310.06117" }
+  ]
+}

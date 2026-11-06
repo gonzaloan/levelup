@@ -1,0 +1,94 @@
+{
+  "id": "prompt-patterns",
+  "domain": "prompting",
+  "level": "core",
+  "title": { "en": "Prompt techniques that matter", "es": "Técnicas de prompting que importan" },
+  "aliases": ["prompt engineering", "prompt best practices", "XML tags", "delimiters", "role prompting", "prefill", "system prompt"],
+  "tldr": {
+    "en": "Treat the model like a brilliant new hire with zero context: say exactly what you want and why, separate data from instructions, show an example, and specify the output format.",
+    "es": "Trata al modelo como a un empleado nuevo brillante que no tiene contexto: dile exactamente qué quieres y por qué, separa los datos de las instrucciones, muestra un ejemplo y define el formato de salida."
+  },
+  "analogy": {
+    "en": "Briefing a contractor: \"fix the bathroom\" gets you something; \"replace the leaking tap, keep the tiles, finish by Friday because guests arrive Saturday\" gets you what you wanted.",
+    "es": "Es como darle instrucciones a un contratista: \"arregla el baño\" te da algo; \"cambia la llave que gotea, no toques los azulejos y termina el viernes porque llegan visitas el sábado\" te da lo que querías."
+  },
+  "explain": {
+    "en": "Most prompt quality comes from a handful of habits, not magic phrases:\n\n- **Be explicit and specific.** Current models follow instructions literally; if you want \"thorough, with edge cases\", say so.\n- **Give the why.** \"Never use ellipses\" works worse than \"a text-to-speech engine reads this aloud and can't pronounce ellipses\": the model generalizes from the reason.\n- **Separate data from instructions** with XML tags or delimiters (`<contract>…</contract>`) and refer to them by name. Put long documents first and the question last.\n- **A role** in the system prompt sets tone, vocabulary and audience; it doesn't add knowledge.\n- **Say what to do, not what to avoid**: \"write flowing prose paragraphs\" beats \"no markdown\".\n- **Show examples**: 3–5 diverse ones beat a page of rules ([[few-shot]]).\n- **Specify the output format**, ideally enforced with [[structured-outputs]]; prefilling the assistant turn (e.g. with `{`) works on APIs that allow it.\n- **Split complex tasks** into a chain of focused calls ([[prompt-chaining]]).\n\n**Anti-patterns:** ALL-CAPS threats (\"CRITICAL: you MUST\") make current models over-apply the rule; contradictory rules make the model guess which one wins; 5,000-word kitchen-sink prompts bury the instruction that matters. Every edit is a hypothesis: test it on an eval set.",
+    "es": "La mayor parte de la calidad de un prompt sale de unos pocos hábitos, no de frases mágicas:\n\n- **Sé explícito y específico.** Los modelos actuales siguen las instrucciones al pie de la letra; si quieres algo \"detallado y con casos borde\", dilo.\n- **Explica el porqué.** \"Nunca uses puntos suspensivos\" funciona peor que \"esto lo lee en voz alta un motor de texto a voz que no sabe pronunciarlos\": el modelo generaliza a partir de la razón.\n- **Separa los datos de las instrucciones** con etiquetas XML o delimitadores (`<contract>…</contract>`) y refiérete a ellos por nombre. Pon los documentos largos primero y la pregunta al final.\n- **Un rol** en el system prompt fija el tono, el vocabulario y la audiencia; no agrega conocimiento.\n- **Di qué hacer, no qué evitar**: \"escribe párrafos de prosa fluida\" funciona mejor que \"no uses markdown\".\n- **Muestra ejemplos**: 3–5 variados valen más que una página de reglas ([[few-shot]]).\n- **Define el formato de salida**, idealmente forzado con [[structured-outputs]]; prellenar el turno del asistente (p. ej. con `{`) funciona en las APIs que lo permiten.\n- **Divide las tareas complejas** en una cadena de llamadas enfocadas ([[prompt-chaining]]).\n\n**Antipatrones:** las amenazas en MAYÚSCULAS (\"CRÍTICO: DEBES\") hacen que los modelos actuales apliquen la regla de más; las reglas contradictorias lo obligan a adivinar cuál gana; los prompts de 5,000 palabras que intentan cubrirlo todo entierran la instrucción que importa. Cada cambio es una hipótesis: pruébalo contra un set de evaluación."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  R[\"System: role + why\"] --> P[Assembled prompt]\n  D[\"Data in XML tags\"] --> P\n  E[\"3-5 examples\"] --> P\n  F[Output format spec] --> P\n  Q[Question last] --> P\n  P --> M[LLM]\n  M --> V{\"Passes eval set?\"}\n  V -->|no| C[\"Change one thing\"]\n  C --> P\n  V -->|yes| S[Ship new version]",
+    "caption": {
+      "en": "A prompt is assembled from separable parts, and every change is validated against an eval set before it ships.",
+      "es": "Un prompt se arma con partes separables, y cada cambio se valida contra un set de evaluación antes de salir."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Role, reasons, tagged data and an output contract", "es": "Rol, razones, datos etiquetados y contrato de salida" },
+    "source": "import anthropic\n\nclient = anthropic.Anthropic()\nMODEL = \"claude-sonnet-4-5\"  # any chat model\n\n# Role + audience + the WHY behind each constraint\nSYSTEM = (\n    \"You are a tier-2 support engineer for a B2B SaaS product. \"\n    \"Your reply is pasted into a plain-text ticket widget, so write short \"\n    \"sentences and numbered steps. Customers are often mid-incident: \"\n    \"lead with the fix, then the explanation.\"\n)\n\n# Long data first, inside named tags; instructions and format last\nPROMPT = \"\"\"<runbook>\n{runbook}\n</runbook>\n\n<ticket>\n{ticket}\n</ticket>\n\n<example_reply>\n1. Clear the IdP session cookie. 2. Retry login. Why: the cookie pins a stale SAML assertion.\n</example_reply>\n\nAnswer the ticket using only the runbook. If the runbook does not cover it,\nsay so and set escalate to true.\nReturn JSON: {{\"reply\": str, \"runbook_section\": str | null, \"escalate\": bool}}\"\"\"\n\n# For a guaranteed shape, prefer structured outputs over a JSON instruction\nresp = client.messages.create(\n    model=MODEL, max_tokens=800, system=SYSTEM,\n    messages=[{\"role\": \"user\", \"content\": PROMPT.format(runbook=runbook, ticket=ticket)}],\n)"
+  },
+  "example": {
+    "en": "An invoice extractor scored 81% field accuracy. Error analysis on 60 failures found three causes: dates read as MM/DD instead of DD/MM, totals taken from the subtotal line, and invented PO numbers. Fixes, one at a time against a 300-invoice eval set: state the date format *and why* (\"the ERP rejects ambiguous dates\"), wrap the invoice in `<invoice>` tags and add two examples contrasting subtotal and total, and say \"return null when no PO number appears\". The line \"BE EXTREMELY ACCURATE!!!\" was deleted. Accuracy rose to ~94%, with no model change.",
+    "es": "Un extractor de facturas tenía 81% de exactitud por campo. El análisis de 60 fallas encontró tres causas: fechas leídas como MM/DD en lugar de DD/MM, totales tomados de la línea de subtotal y números de orden de compra inventados. Los arreglos, uno a la vez contra un set de evaluación de 300 facturas: indicar el formato de fecha *y el porqué* (\"el ERP rechaza fechas ambiguas\"), envolver la factura en etiquetas `<invoice>` con dos ejemplos que contrastan subtotal y total, y pedir \"devuelve null si no aparece una orden de compra\". Se borró la línea \"¡¡¡SÉ EXTREMADAMENTE PRECISO!!!\". La exactitud subió a ~94%, sin cambiar de modelo."
+  },
+  "pros": [
+    { "en": "The cheapest, fastest lever: a prompt change ships in minutes, with no training or infrastructure.", "es": "La palanca más barata y rápida: un cambio de prompt sale en minutos, sin entrenamiento ni infraestructura." },
+    { "en": "Fixes most \"the model is dumb\" complaints, which are usually missing context.", "es": "Resuelve la mayoría de las quejas de \"el modelo es tonto\", que casi siempre son falta de contexto." },
+    { "en": "The habits transfer across providers and model generations.", "es": "Los hábitos sirven entre proveedores y generaciones de modelos." }
+  ],
+  "cons": [
+    { "en": "Gains are model-specific: a prompt tuned for one model can regress on the next.", "es": "Las mejoras dependen del modelo: un prompt afinado para uno puede empeorar con el siguiente." },
+    { "en": "Prompts that grow by accretion become untestable folklore without versioning and evals.", "es": "Los prompts que crecen por acumulación se vuelven folclore imposible de probar si no tienen versiones ni evals." },
+    { "en": "Can't add knowledge or skills the model lacks; that needs RAG, a bigger model or fine-tuning.", "es": "No agrega conocimiento ni habilidades que el modelo no tiene; para eso está RAG, un modelo más grande o el fine-tuning." }
+  ],
+  "whenToUse": {
+    "en": "Always, and first. Before RAG, fine-tuning or a bigger model, make sure the prompt states the task, context, constraints and output format explicitly.",
+    "es": "Siempre, y primero. Antes de RAG, fine-tuning o un modelo más grande, asegúrate de que el prompt diga explícitamente la tarea, el contexto, las restricciones y el formato de salida."
+  },
+  "whenNotToUse": {
+    "en": "Stop polishing wording when evals plateau: the gap is then missing knowledge (RAG), missing capability (bigger model, fine-tuning) or a task that should be split.",
+    "es": "Deja de pulir palabras cuando las evals se estancan: la brecha es falta de conocimiento (RAG), falta de capacidad (modelo más grande, fine-tuning) o una tarea que hay que dividir."
+  },
+  "numbers": [
+    { "en": "Anthropic reports that putting the question after long documents improves response quality by up to ~30% on complex multi-document inputs.", "es": "Anthropic reporta que poner la pregunta después de los documentos largos mejora la calidad de la respuesta hasta ~30% en entradas complejas con varios documentos." },
+    { "en": "Anthropic recommends 3–5 diverse, relevant examples for few-shot prompting.", "es": "Anthropic recomienda 3–5 ejemplos variados y relevantes para few-shot." },
+    { "en": "OpenAI's GPT-4.1 guide: in long contexts, repeat key instructions at both the start and the end; XML delimited documents well, JSON poorly.", "es": "Guía de GPT-4.1 de OpenAI: con contexto largo, repite las instrucciones clave al inicio y al final; XML funcionó bien como delimitador de documentos y JSON, mal." }
+  ],
+  "pitfalls": [
+    { "en": "Adding a rule after every incident until the prompt contradicts itself; prune and dedupe regularly.", "es": "Agregar una regla después de cada incidente hasta que el prompt se contradice; depura y quita duplicados con regularidad." },
+    { "en": "Treating delimiters as security: `<user_input>` tags reduce confusion but do not stop prompt injection.", "es": "Tratar los delimitadores como seguridad: las etiquetas `<user_input>` reducen la confusión, pero no detienen un prompt injection." },
+    { "en": "Judging a prompt change on 3 hand-picked inputs instead of an eval set.", "es": "Juzgar un cambio de prompt con 3 entradas elegidas a mano en lugar de un set de evaluación." },
+    { "en": "Reusing a prompt tuned for one model on another without re-testing; newer models follow instructions more literally.", "es": "Reusar un prompt afinado para un modelo en otro sin volver a probarlo; los modelos nuevos siguen las instrucciones más al pie de la letra." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your prompt works in the demo but fails on ~10% of production traffic. What do you do?", "es": "Tu prompt funciona en la demo pero falla en ~10% del tráfico de producción. ¿Qué haces?" },
+      "a": {
+        "en": "I don't start by rewording. I pull 50–100 failures and label why each failed, because failures cluster: missing context, an ambiguous instruction, format drift or a real capability gap. I fix the biggest cluster with one targeted change, usually the missing context plus the reason behind a rule, or an example of that edge case, and re-run the full eval set to catch regressions. If a cluster survives two honest attempts, it isn't a prompt problem: I add retrieval, split the task or move up a model.",
+        "es": "No empiezo cambiando palabras. Saco 50–100 fallas y etiqueto por qué falló cada una, porque las fallas se agrupan: falta de contexto, una instrucción ambigua, deriva de formato o una brecha real de capacidad. Ataco el grupo más grande con un solo cambio dirigido, normalmente el contexto que faltaba más la razón detrás de una regla, o un ejemplo de ese caso borde, y vuelvo a correr todo el set de evaluación para detectar regresiones. Si un grupo sobrevive a dos intentos serios, no es un problema de prompt: agrego recuperación, divido la tarea o subo de modelo."
+      }
+    },
+    {
+      "q": { "en": "Do ALL-CAPS and \"you MUST\" instructions help?", "es": "¿Sirven las instrucciones en MAYÚSCULAS y los \"DEBES\"?" },
+      "a": {
+        "en": "With older models they sometimes compensated for weak instruction-following. With current models they mostly cause over-application: the model starts using that tool or rule where it shouldn't, and Anthropic's guidance for recent Claude models is to dial that language back. A calm, specific instruction plus the reason works better, because the model can then judge edge cases. If a rule truly must never break, I enforce it in code or a validator, not with capital letters.",
+        "es": "Con modelos viejos a veces compensaban un seguimiento de instrucciones débil. Con los modelos actuales sobre todo provocan que apliquen la regla de más: el modelo empieza a usar esa herramienta o regla donde no corresponde, y la guía de Anthropic para los Claude recientes es bajarle el tono a ese lenguaje. Funciona mejor una instrucción tranquila y específica con su razón, porque así el modelo puede juzgar los casos borde. Si una regla de verdad no se puede romper nunca, la hago cumplir en código o con un validador, no con mayúsculas."
+      }
+    },
+    {
+      "q": { "en": "How do you keep user-provided text from being treated as instructions?", "es": "¿Cómo evitas que el texto del usuario se trate como instrucciones?" },
+      "a": {
+        "en": "I put it inside clearly named tags, tell the model that tagged content is data to analyze, and keep my instructions outside it. That reduces accidental confusion, but it is not a security boundary: a determined prompt injection can still work. So the real controls live outside the prompt: least-privilege tools, output validation, and human approval for consequential actions.",
+        "es": "Lo pongo dentro de etiquetas con nombres claros, le digo al modelo que ese contenido es información para analizar y dejo mis instrucciones afuera. Eso reduce la confusión accidental, pero no es una frontera de seguridad: un prompt injection decidido todavía puede funcionar. Por eso los controles reales viven fuera del prompt: herramientas con el mínimo privilegio, validación de la salida y aprobación humana para las acciones con consecuencias."
+      }
+    }
+  ],
+  "related": ["prompt-anatomy", "few-shot", "structured-outputs", "prompt-chaining", "prompt-injection", "prompt-optimization"],
+  "sources": [
+    { "title": "Anthropic — Prompt engineering overview", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/overview" },
+    { "title": "Anthropic — Prompting best practices for Claude 4 models", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/claude-4-best-practices" },
+    { "title": "Anthropic — Long context prompting tips", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/long-context-tips" },
+    { "title": "OpenAI Cookbook — GPT-4.1 Prompting Guide", "url": "https://cookbook.openai.com/examples/gpt4-1_prompting_guide" }
+  ]
+}

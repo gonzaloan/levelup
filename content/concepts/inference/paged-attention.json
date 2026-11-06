@@ -1,0 +1,86 @@
+{
+  "id": "paged-attention",
+  "domain": "inference",
+  "level": "advanced",
+  "title": { "en": "PagedAttention & vLLM", "es": "PagedAttention y vLLM" },
+  "aliases": ["vLLM", "paged KV cache", "KV blocks", "block table", "copy-on-write KV", "automatic prefix caching", "APC"],
+  "tldr": {
+    "en": "Store the KV cache in small fixed-size blocks allocated on demand, like OS memory pages, so almost no GPU memory is wasted; the freed memory becomes bigger batches and 2–4× throughput.",
+    "es": "Guarda el KV cache en bloques pequeños de tamaño fijo que se asignan a demanda, como páginas de memoria del sistema operativo, para casi no desperdiciar memoria de GPU; la memoria liberada se convierte en batches más grandes y 2–4× de throughput."
+  },
+  "analogy": {
+    "en": "Instead of holding a 12-seat table for every party in case everyone shows up, seat guests at any free 2-seat table as they arrive and keep a list of which tables belong to whom.",
+    "es": "En lugar de apartar una mesa de 12 para cada grupo por si llegan todos, sientas a la gente en cualquier mesa libre de 2 a medida que llega y llevas una lista de qué mesas son de quién."
+  },
+  "explain": {
+    "en": "**PagedAttention** stores each request's [[kv-cache]] in small fixed-size **blocks** (16 tokens by default in vLLM) that can live anywhere in GPU memory, the way an OS maps virtual pages to physical frames. A per-request **block table** maps logical blocks to physical ones, and the attention kernel reads through it.\n\nBefore it, servers reserved one contiguous KV slab per request, sized for the *maximum* output length. Most of it was never filled, and the gaps between slabs could not be reused: Kwon et al. (SOSP 2023) measured only **20–38%** of KV memory holding real tokens, i.e. **~60–80% wasted**. With paging, memory grows one block at a time as tokens arrive, so the only waste is the half-empty last block: **under 4%**.\n\nTwo consequences:\n\n- **More sequences per GPU.** Freed memory becomes batch size, which [[continuous-batching]] turns into throughput: **2–4×** over FasterTransformer and Orca at the same latency.\n- **Sharing.** Blocks are reference-counted, so parallel samples, beam-search branches and requests with a common prefix point to the same physical blocks. A block is copied only when one sequence writes to it (**copy-on-write**). Automatic prefix caching reuses full blocks across requests the same way.\n\n**vLLM** is the server built around it; SGLang, TensorRT-LLM and TGI also use a paged KV cache.",
+    "es": "**PagedAttention** guarda el [[kv-cache]] de cada request en **bloques** pequeños de tamaño fijo (16 tokens por defecto en vLLM) que pueden estar en cualquier parte de la memoria de la GPU, igual que un sistema operativo mapea páginas virtuales a marcos físicos. Una **tabla de bloques** por request traduce bloques lógicos a físicos, y el kernel de atención lee a través de ella.\n\nAntes, los servidores reservaban un bloque contiguo de KV por request, dimensionado para la longitud *máxima* de salida. La mayor parte nunca se llenaba y los huecos entre reservas no se podían reutilizar: Kwon et al. (SOSP 2023) midieron que solo el **20–38%** de la memoria de KV guardaba tokens reales, es decir, **~60–80% desperdiciado**. Con paginación, la memoria crece bloque a bloque a medida que llegan tokens, así que el único desperdicio es el último bloque a medio llenar: **menos de 4%**.\n\nDos consecuencias:\n\n- **Más secuencias por GPU.** La memoria liberada se convierte en tamaño de batch, y [[continuous-batching]] lo transforma en throughput: **2–4×** frente a FasterTransformer y Orca con la misma latencia.\n- **Compartir.** Los bloques llevan conteo de referencias, así que muestras paralelas, ramas de beam search y requests con un prefijo común apuntan a los mismos bloques físicos. Un bloque se copia solo cuando una secuencia escribe en él (**copy-on-write**). El prefix caching automático reutiliza bloques completos entre requests de la misma forma.\n\n**vLLM** es el servidor construido alrededor de esta idea; SGLang, TensorRT-LLM y TGI también usan un KV cache paginado."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  A[\"Request A<br/>3 logical blocks\"] --> T[Block table]\n  B[\"Request B<br/>same prefix\"] --> T\n  F[(Free block pool)] -.->|allocate on demand| T\n  T -->|A0 and B0| P7[\"Physical block 7<br/>shared prefix\"]\n  T -->|A1| P2[Physical block 2]\n  T -->|A2| P4[Physical block 4]\n  T -->|B1| P9[\"Physical block 9<br/>copy-on-write\"]\n  P7 --> K[\"Attention kernel<br/>gathers blocks\"]\n  P2 --> K\n  P4 --> K\n  P9 --> K",
+    "caption": {
+      "en": "Each request's block table points to scattered physical blocks; a shared prefix is stored once and copied only on write.",
+      "es": "La tabla de bloques de cada request apunta a bloques físicos dispersos; un prefijo compartido se guarda una vez y solo se copia al escribir."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Offline batch generation with vLLM", "es": "Generación por lotes con vLLM" },
+    "source": "from vllm import LLM, SamplingParams\n\nMODEL = \"meta-llama/Llama-3.1-8B-Instruct\"  # any HF causal LM\n\nllm = LLM(\n    model=MODEL,\n    gpu_memory_utilization=0.90,  # VRAM vLLM claims; what's left after weights becomes KV blocks\n    max_model_len=8192,           # longest sequence allowed; blocks are still allocated lazily\n    block_size=16,                # tokens per KV block (the default)\n    enable_prefix_caching=True,   # identical prompt prefixes share physical blocks\n)\n# Startup log reports the KV cache size in tokens and the max concurrency it allows\n\nSYSTEM = \"You are ACME's support assistant. Policy: ...\"  # static part FIRST so it caches\nprompts = [f\"{SYSTEM}\\nUser: {q}\\nAssistant:\" for q in questions]\n\n# n=4 samples per prompt share the prompt's blocks (copy-on-write)\nparams = SamplingParams(n=4, temperature=0.8, max_tokens=256)\n\nfor out in llm.generate(prompts, params):  # continuous batching + paged KV inside\n    print([o.text for o in out.outputs])  # 4 candidates per prompt"
+  },
+  "example": {
+    "en": "A team serves Llama-3-8B on one 80 GB H100. After ~16 GB of weights, ~55 GiB remains for KV; at **128 KiB per token** that is ~450k tokens. Reserving a full 8k-token slab per request caps them at **~55 concurrent sequences**, even though the average conversation uses ~1.5k tokens. With 16-token blocks allocated on demand, the same memory holds **~300 sequences** at their real length, so each decode step batches far more requests. Their shared system prompt is now stored once instead of 300 times.",
+    "es": "Un equipo sirve Llama-3-8B en una H100 de 80 GB. Tras ~16 GB de pesos, quedan ~55 GiB para KV; a **128 KiB por token** son ~450k tokens. Reservar un bloque completo de 8k tokens por request los limita a **~55 secuencias concurrentes**, aunque la conversación promedio usa ~1.5k tokens. Con bloques de 16 tokens asignados a demanda, la misma memoria aloja **~300 secuencias** con su longitud real, así que cada paso de decode agrupa muchas más requests. Su system prompt compartido ahora se guarda una vez en lugar de 300."
+  },
+  "pros": [
+    { "en": "KV waste drops from ~60–80% to under 4%: 2–4× throughput on the same GPUs.", "es": "El desperdicio de KV baja de ~60–80% a menos de 4%: 2–4× de throughput en las mismas GPUs." },
+    { "en": "Cheap sharing for parallel sampling, beam search and common prefixes via copy-on-write.", "es": "Compartir sale barato en muestreo paralelo, beam search y prefijos comunes gracias a copy-on-write." },
+    { "en": "Block-level allocation makes preemption, swapping and prefix caching simple to implement.", "es": "Asignar por bloques simplifica implementar preemption, swapping a CPU y prefix caching." },
+    { "en": "Free: it's the default in vLLM, SGLang, TensorRT-LLM and TGI.", "es": "Viene gratis: es el comportamiento por defecto en vLLM, SGLang, TensorRT-LLM y TGI." }
+  ],
+  "cons": [
+    { "en": "The block-table indirection makes the attention kernel itself ~20–26% slower in the paper; bigger batches repay it.", "es": "La indirección de la tabla de bloques hace el kernel de atención ~20–26% más lento en el paper; los batches más grandes lo compensan." },
+    { "en": "It removes waste, not size: a 128k-token request still needs ~16 GiB of KV on Llama-3-8B.", "es": "Elimina desperdicio, no tamaño: una request de 128k tokens sigue necesitando ~16 GiB de KV en Llama-3-8B." },
+    { "en": "Little to gain at batch size 1 or for single-user local inference.", "es": "Aporta poco con batch de 1 o en inferencia local de un solo usuario." }
+  ],
+  "whenToUse": {
+    "en": "Any self-hosted LLM serving with concurrent requests: pick an engine with a paged KV cache (vLLM, SGLang, TensorRT-LLM) instead of a plain `transformers.generate` loop.",
+    "es": "Cualquier serving propio de LLMs con requests concurrentes: elige un motor con KV cache paginado (vLLM, SGLang, TensorRT-LLM) en lugar de un loop simple con `transformers.generate`."
+  },
+  "whenNotToUse": {
+    "en": "You never build it yourself. It matters little for batch-1 local use (llama.cpp on a laptop) or when you consume a hosted API, where the provider already does it.",
+    "es": "Nunca lo construyes tú. Importa poco en uso local con batch 1 (llama.cpp en una laptop) o si consumes una API hospedada, donde el proveedor ya lo hace."
+  },
+  "numbers": [
+    { "en": "Pre-vLLM servers used only 20–38% of KV memory for real tokens; vLLM wastes under 4%.", "es": "Los servidores previos a vLLM usaban solo el 20–38% de la memoria de KV en tokens reales; vLLM desperdicia menos de 4%." },
+    { "en": "2–4× throughput vs FasterTransformer/Orca at equal latency (paper); up to 24× vs plain HF Transformers (vLLM launch blog).", "es": "2–4× de throughput frente a FasterTransformer/Orca con igual latencia (paper); hasta 24× frente a HF Transformers simple (blog de lanzamiento de vLLM)." },
+    { "en": "Sharing cuts the memory of parallel sampling and beam search by up to 55% (vLLM blog).", "es": "Compartir bloques reduce hasta 55% la memoria del muestreo paralelo y beam search (blog de vLLM)." },
+    { "en": "Defaults: 16 tokens per block; `gpu_memory_utilization=0.9`.", "es": "Valores por defecto: 16 tokens por bloque; `gpu_memory_utilization=0.9`." }
+  ],
+  "pitfalls": [
+    { "en": "Running two vLLM instances on one GPU: each pre-claims 90% of VRAM at startup and the second one OOMs. Lower `gpu_memory_utilization`.", "es": "Correr dos instancias de vLLM en una GPU: cada una reserva el 90% de la VRAM al arrancar y la segunda se queda sin memoria. Baja `gpu_memory_utilization`." },
+    { "en": "Ignoring preemption logs: when blocks run out, vLLM evicts and recomputes sequences, and latency spikes. Add KV memory, cap `max_num_seqs` or shorten contexts.", "es": "Ignorar los avisos de preemption: cuando se acaban los bloques, vLLM desaloja y recalcula secuencias y la latencia se dispara. Agrega memoria de KV, limita `max_num_seqs` o acorta contextos." },
+    { "en": "Breaking prefix caching with a timestamp or user ID at the top of the prompt: every block after it misses.", "es": "Romper el prefix caching con un timestamp o un ID de usuario al inicio del prompt: todos los bloques posteriores fallan." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why does PagedAttention raise throughput if it doesn't make attention faster?", "es": "¿Por qué PagedAttention sube el throughput si no hace más rápida la atención?" },
+      "a": {
+        "en": "Because decode throughput comes from batch size, and batch size is capped by KV memory. Contiguous per-request reservations wasted 60–80% of that memory on worst-case slots and fragmentation. Allocating 16-token blocks on demand drops waste under 4%, and that memory becomes 2–4× more concurrent sequences. The kernel is actually slightly slower because of the block-table lookup; the batch gain dwarfs it. What I'd watch in production is preemption when the block pool fills.",
+        "es": "Porque el throughput del decode sale del tamaño de batch, y ese tamaño lo limita la memoria de KV. Las reservas contiguas por request desperdiciaban 60–80% de esa memoria en espacio para el peor caso y fragmentación. Asignar bloques de 16 tokens a demanda baja el desperdicio a menos de 4%, y esa memoria se convierte en 2–4× más secuencias concurrentes. El kernel de hecho es un poco más lento por la consulta a la tabla de bloques; la ganancia en batch lo opaca. Lo que vigilaría en producción es la preemption cuando se llena el pool de bloques."
+      }
+    },
+    {
+      "q": { "en": "How does vLLM share KV memory across sequences, and when does sharing break?", "es": "¿Cómo comparte vLLM la memoria de KV entre secuencias y cuándo deja de funcionar?" },
+      "a": {
+        "en": "Blocks are reference-counted. The n samples of one prompt point to the prompt's blocks, beam branches share their history, and automatic prefix caching reuses full blocks across requests by hashing their tokens plus everything before them. A shared block is copied only when someone writes to it. It breaks when prefixes are not token-identical: a timestamp at the top changes every block after it. So I put static instructions and documents first and per-user content last, and I track the prefix-cache hit rate.",
+        "es": "Los bloques llevan conteo de referencias. Las n muestras de un prompt apuntan a los bloques del prompt, las ramas de beam search comparten su historia y el prefix caching automático reutiliza bloques completos entre requests calculando un hash de sus tokens y de todo lo anterior. Un bloque compartido solo se copia cuando alguien escribe en él. Se rompe cuando los prefijos no son idénticos token a token: un timestamp al inicio cambia todos los bloques siguientes. Por eso pongo primero las instrucciones y documentos estáticos y al final lo de cada usuario, y mido el hit rate del prefix cache."
+      }
+    }
+  ],
+  "related": ["kv-cache", "continuous-batching", "gpu-memory-math", "prompt-caching", "serving-stack", "flash-attention"],
+  "sources": [
+    { "title": "Kwon et al. — Efficient Memory Management for Large Language Model Serving with PagedAttention (SOSP 2023)", "url": "https://arxiv.org/abs/2309.06180" },
+    { "title": "vLLM blog — Easy, Fast, and Cheap LLM Serving with PagedAttention", "url": "https://blog.vllm.ai/2023/06/20/vllm.html" }
+  ]
+}

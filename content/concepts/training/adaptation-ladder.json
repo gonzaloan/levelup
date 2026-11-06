@@ -1,0 +1,113 @@
+{
+  "id": "adaptation-ladder",
+  "domain": "training",
+  "level": "core",
+  "title": { "en": "Prompt → RAG → fine-tune: the decision", "es": "Prompt → RAG → fine-tuning: la decisión" },
+  "aliases": ["adaptation ladder", "RAG vs fine-tuning", "prompting vs fine-tuning", "when to fine-tune", "model customization", "LLM optimization ladder"],
+  "tldr": {
+    "en": "Climb only as high as you must: prompt, few-shot, RAG for missing knowledge, fine-tuning for behavior, format or cost. RAG adds facts; fine-tuning changes form. Pretraining is almost never the answer.",
+    "es": "Sube solo lo necesario: prompt, few-shot, RAG para el conocimiento que falta, fine-tuning para comportamiento, formato o costo. RAG aporta hechos; el fine-tuning cambia la forma. Preentrenar casi nunca es la respuesta."
+  },
+  "analogy": {
+    "en": "Onboarding a new hire: first clear instructions, then a few worked examples, then access to the wiki. You only pay for a months-long course when the job needs a new skill, not a new fact.",
+    "es": "Incorporar a alguien nuevo: primero instrucciones claras, luego unos ejemplos resueltos y después acceso a la wiki. Solo pagas un curso de meses cuando el puesto exige una habilidad nueva, no un dato nuevo."
+  },
+  "explain": {
+    "en": "The **adaptation ladder** ranks the ways to make a model fit your task, cheapest first. Climb a rung only when your eval set shows the one below has plateaued.\n\n1. **Prompting** ([[prompt-anatomy]]): instructions, constraints, output schema. Zero training data; changes ship in minutes.\n2. **Few-shot** ([[few-shot]]): 3–10 examples in the prompt teach format and edge cases.\n3. **RAG** ([[rag]]): the model lacks *knowledge*: private, fresh or citable facts. You update an index, not weights.\n4. **Fine-tuning** ([[sft]], [[lora]], [[dpo]]): the model lacks *behavior*: a strict format, house style, a narrow task done consistently. Or you want to **shrink**: [[distillation]] into a small model that matches the big one on your task at a fraction of the cost and latency.\n5. **Continued pretraining** ([[continued-pretraining]]): billions of tokens of a new language or domain (legal, biomedical).\n6. **Training from scratch**: trillions of tokens and millions of dollars. Almost never you.\n\nThe rule: **RAG for knowledge, fine-tuning for form.** Fine-tuning is a poor way to add facts: they are learned slowly, can't be cited or deleted, and go stale with the next update. The rungs stack rather than replace each other: mature systems are often prompt + RAG + a fine-tuned small model.",
+    "es": "La **escalera de adaptación** ordena las formas de ajustar un modelo a tu tarea, de la más barata a la más cara. Sube un peldaño solo cuando tu set de evaluación muestre que el de abajo se estancó.\n\n1. **Prompting** ([[prompt-anatomy]]): instrucciones, restricciones, esquema de salida. Cero datos de entrenamiento; los cambios salen en minutos.\n2. **Few-shot** ([[few-shot]]): 3–10 ejemplos en el prompt enseñan formato y casos borde.\n3. **RAG** ([[rag]]): al modelo le falta *conocimiento*: hechos privados, recientes o que hay que citar. Actualizas un índice, no los pesos.\n4. **Fine-tuning** ([[sft]], [[lora]], [[dpo]]): al modelo le falta *comportamiento*: un formato estricto, el estilo de la casa, una tarea acotada resuelta siempre igual. O quieres **achicar**: [[distillation]] hacia un modelo pequeño que iguale al grande en tu tarea por una fracción del costo y la latencia.\n5. **Continued pretraining** ([[continued-pretraining]]): miles de millones de tokens de un idioma o dominio nuevo (legal, biomédico).\n6. **Entrenar desde cero**: billones de tokens y millones de dólares. Casi nunca te toca.\n\nLa regla: **RAG para el conocimiento, fine-tuning para la forma.** El fine-tuning es una mala vía para agregar hechos: se aprenden lento, no se pueden citar ni borrar y quedan obsoletos con la siguiente actualización. Los peldaños se suman en vez de reemplazarse: los sistemas maduros suelen combinar prompt + RAG + un modelo pequeño con fine-tuning."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  S[\"Task + eval set\"] --> P[\"Prompt + few-shot\"]\n  P --> Q{\"Meets the bar?\"}\n  Q -->|yes| SHIP[Ship and monitor]\n  Q -->|no| K{\"Missing knowledge?\"}\n  K -->|yes| R[\"RAG<br/>index your data\"]\n  R --> Q\n  K -->|no| B{\"Format, style<br/>or cost?\"}\n  B -->|yes| F[\"Fine-tune<br/>SFT + LoRA\"]\n  F --> Q\n  B -->|no| C{\"New language<br/>or domain?\"}\n  C -->|yes| CP[Continued pretraining]\n  C -->|no| M[\"Stronger base model\"]",
+    "caption": {
+      "en": "Each loop re-runs the same eval. Knowledge gaps go to retrieval; behavior and cost gaps go to the weights.",
+      "es": "Cada vuelta corre la misma evaluación. Las brechas de conocimiento van a la recuperación; las de comportamiento y costo, a los pesos."
+    }
+  },
+  "example": {
+    "en": "An insurer builds claims triage. **Prompt + few-shot** on a frontier model scores 76% on a 300-claim eval set; most failures are missing policy rules, so they add **RAG** over 4,000 policy documents: 88%. The remaining errors are the internal 40-code taxonomy and the terse adjuster style, and the bill is ~$30k/month at 1.5M claims. They **fine-tune** an 8B model with LoRA on 8,000 filtered frontier outputs: 89%, ~12× cheaper, half the latency. Policies change weekly, so RAG stays and feeds the fine-tuned model.",
+    "es": "Una aseguradora arma un sistema de triage de siniestros. **Prompt + few-shot** con un modelo frontera logra 76% en un set de evaluación de 300 casos; la mayoría de las fallas son reglas de pólizas que el modelo no conoce, así que agregan **RAG** sobre 4,000 documentos de pólizas: 88%. Los errores restantes están en la taxonomía interna de 40 códigos y en el estilo seco de los ajustadores, y la factura es de ~$30k al mes por 1.5M de siniestros. Hacen **fine-tuning** de un modelo de 8B con LoRA sobre 8,000 salidas filtradas del modelo frontera: 89%, ~12× más barato y con la mitad de latencia. Las pólizas cambian cada semana, así que RAG se queda y alimenta al modelo ajustado."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "Data, cost and upkeep per rung", "es": "Datos, costo y mantenimiento por peldaño" },
+      "body": {
+        "en": "- **Prompt / few-shot:** zero training examples, ~50–200 eval cases (rule of thumb). Cost is tokens per call; cache long prefixes with [[prompt-caching]]. Upkeep: version prompts and re-run evals on every model upgrade.\n- **RAG:** a corpus plus an ingestion pipeline; weeks to build well. Upkeep: index freshness, permissions, retrieval evals.\n- **Fine-tuning:** hundreds to tens of thousands of curated examples; a LoRA run on an 8B model takes GPU-hours, not weeks. Upkeep: you now own a model version, retrained when the base is deprecated or the data drifts.\n- **Continued pretraining:** billions of tokens, a multi-GPU cluster and an ML team.\n- **From scratch:** trillions of tokens and a frontier-lab budget.",
+        "es": "- **Prompt / few-shot:** cero ejemplos de entrenamiento, ~50–200 casos de evaluación (regla práctica). El costo son tokens por llamada; cachea los prefijos largos con [[prompt-caching]]. Mantenimiento: versionar prompts y volver a correr evals con cada cambio de modelo.\n- **RAG:** un corpus más un pipeline de ingesta; hacerlo bien toma semanas. Mantenimiento: frescura del índice, permisos, evals de recuperación.\n- **Fine-tuning:** de cientos a decenas de miles de ejemplos curados; una corrida con LoRA sobre un modelo de 8B toma horas de GPU, no semanas. Mantenimiento: ahora eres dueño de una versión de modelo, que hay que reentrenar cuando deprecan la base o cambian los datos.\n- **Continued pretraining:** miles de millones de tokens, un clúster multi-GPU y un equipo de ML.\n- **Desde cero:** billones de tokens y presupuesto de laboratorio frontera."
+      }
+    },
+    {
+      "title": { "en": "Why fine-tuning is bad at facts", "es": "Por qué el fine-tuning no sirve para enseñar hechos" },
+      "body": {
+        "en": "The research agrees. Ovadia et al. (2023) found RAG consistently beat unsupervised fine-tuning for injecting knowledge, both new and previously seen. Gekhman et al. (2024) found models learn genuinely new facts through fine-tuning slowly, and once they do, their tendency to hallucinate rises. Add the operational reasons: no citations, no per-user permissions, no way to delete one fact (think GDPR), and a retrain for every update. Fine-tuning *on top of* retrieval is different and useful: RAFT trains the model to use retrieved documents and ignore distractors.",
+        "es": "La investigación coincide. Ovadia et al. (2023) encontraron que RAG superó de forma consistente al fine-tuning no supervisado para inyectar conocimiento, tanto nuevo como ya visto. Gekhman et al. (2024) encontraron que los modelos aprenden lento los hechos realmente nuevos vía fine-tuning y que, cuando los aprenden, aumenta su tendencia a alucinar. Suma las razones operativas: sin citas, sin permisos por usuario, sin forma de borrar un solo hecho (piensa en GDPR) y un reentrenamiento por cada actualización. Hacer fine-tuning *encima* de la recuperación es otra cosa y sí sirve: RAFT entrena al modelo para usar los documentos recuperados e ignorar los distractores."
+      }
+    },
+    {
+      "title": { "en": "The shrink play", "es": "La jugada de achicar el modelo" },
+      "body": {
+        "en": "The most common *business* reason to fine-tune is cost, not quality. Route a narrow, high-volume task (classification, extraction, triage) through a frontier model, log ~5k–50k inputs and outputs, filter them with your eval, and fine-tune a small model on them. Small models are often ~10–20× cheaper per token, faster, and can be self-hosted. The payback is volume: at a few thousand calls a day the training and upkeep rarely pay off; at millions a day they can pay off in weeks. Check the provider's terms before training on its outputs.",
+        "es": "La razón de *negocio* más común para hacer fine-tuning es el costo, no la calidad. Pasa una tarea acotada y de alto volumen (clasificación, extracción, triage) por un modelo frontera, registra ~5k–50k entradas y salidas, fíltralas con tu evaluación y entrena un modelo pequeño con ellas. Los modelos pequeños suelen ser ~10–20× más baratos por token, más rápidos y se pueden hospedar en casa. El retorno depende del volumen: con unos miles de llamadas al día, el entrenamiento y el mantenimiento rara vez se pagan; con millones al día pueden pagarse en semanas. Revisa los términos del proveedor antes de entrenar con sus salidas."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "Cheapest rung first keeps iteration in minutes, not weeks.", "es": "Empezar por el peldaño más barato mantiene la iteración en minutos, no en semanas." },
+    { "en": "Every rung is scored on the same eval set, so climbing is a measured decision, not a hunch.", "es": "Cada peldaño se mide con el mismo set de evaluación, así que subir es una decisión medida, no una corazonada." },
+    { "en": "Keeping knowledge in RAG and form in weights lets facts update daily with no retraining.", "es": "Dejar el conocimiento en RAG y la forma en los pesos permite actualizar hechos a diario sin reentrenar." }
+  ],
+  "cons": [
+    { "en": "Nothing is decidable without an eval set, and most teams skip building one.", "es": "Nada se puede decidir sin un set de evaluación, y la mayoría de los equipos no lo arma." },
+    { "en": "Higher rungs create ownership: data pipelines, training runs and model versions to maintain.", "es": "Los peldaños altos generan responsabilidad: pipelines de datos, corridas de entrenamiento y versiones de modelo que mantener." },
+    { "en": "The order is a default, not a law: a pure format problem can skip RAG entirely.", "es": "El orden es un punto de partida, no una ley: un problema puramente de formato puede saltarse RAG." }
+  ],
+  "whenToUse": {
+    "en": "Whenever someone proposes fine-tuning, or a prompt-only prototype plateaus and you must pick the next investment.",
+    "es": "Siempre que alguien proponga hacer fine-tuning, o cuando un prototipo solo con prompt se estanque y debas elegir la siguiente inversión."
+  },
+  "whenNotToUse": {
+    "en": "Don't walk it rung by rung when the answer is obvious: a 10× cost target at millions of calls a day justifies planning distillation from day one.",
+    "es": "No lo recorras peldaño por peldaño cuando la respuesta es obvia: una meta de 10× menos costo con millones de llamadas al día justifica planear la destilación desde el primer día."
+  },
+  "numbers": [
+    { "en": "LIMA: ~1,000 curated examples taught LLaMA-65B the assistant format (Zhou et al., 2023).", "es": "LIMA: ~1,000 ejemplos curados le enseñaron a LLaMA-65B el formato de asistente (Zhou et al., 2023)." },
+    { "en": "InstructGPT: labelers preferred a 1.3B tuned model over 175B GPT-3. Adaptation can beat size.", "es": "InstructGPT: los evaluadores prefirieron un modelo ajustado de 1.3B sobre GPT-3 de 175B. La adaptación puede ganarle al tamaño." },
+    { "en": "Price gap between a frontier model and its small sibling: often ~10–20× per token (GPT-4o vs GPT-4o mini was ~16×).", "es": "Diferencia de precio entre un modelo frontera y su hermano pequeño: a menudo ~10–20× por token (GPT-4o vs GPT-4o mini era ~16×)." },
+    { "en": "OpenAI fine-tuning needs at least 10 examples; gains usually show from 50–100.", "es": "El fine-tuning de OpenAI exige al menos 10 ejemplos; las mejoras suelen verse desde 50–100." }
+  ],
+  "pitfalls": [
+    { "en": "Fine-tuning to teach facts: learned slowly, impossible to cite, stale on the next update. That's RAG's job.", "es": "Hacer fine-tuning para enseñar hechos: se aprenden lento, no se pueden citar y quedan obsoletos con la próxima actualización. Eso le toca a RAG." },
+    { "en": "Climbing without an eval set: you can't tell whether the new rung helped or just moved the failures.", "es": "Subir sin set de evaluación: no sabes si el nuevo peldaño ayudó o solo movió las fallas de lugar." },
+    { "en": "Skipping prompt work: many \"we need fine-tuning\" cases are fixed by clearer instructions and five good examples.", "es": "Saltarse el trabajo de prompt: muchos casos de \"necesitamos fine-tuning\" se arreglan con instrucciones más claras y cinco buenos ejemplos." },
+    { "en": "Forgetting upkeep: a fine-tune is tied to a base model that will be deprecated. Budget the retrain.", "es": "Olvidar el mantenimiento: un fine-tuning está atado a un modelo base que van a deprecar. Presupuesta el reentrenamiento." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "A PM says: \"Let's fine-tune on our docs so the model knows our product.\" What do you say?", "es": "Un PM dice: \"Hagamos fine-tuning con nuestra documentación para que el modelo conozca el producto\". ¿Qué respondes?" },
+      "a": {
+        "en": "I'd steer that to RAG. Fine-tuning is a weak way to add facts: new facts are learned slowly and raise hallucination, the model can't cite a source, and every doc change means a retrain. RAG updates when the index updates and gives me citations and per-user permissions. Where I would fine-tune is behavior: if, after RAG, answers are right but the format, tone or a narrow task is unreliable, or if we need to cut cost by moving to a smaller model.",
+        "es": "Lo llevaría hacia RAG. El fine-tuning es una mala vía para agregar hechos: los hechos nuevos se aprenden lento y aumentan las alucinaciones, el modelo no puede citar la fuente y cada cambio en la documentación implica reentrenar. RAG se actualiza cuando se actualiza el índice y me da citas y permisos por usuario. Donde sí haría fine-tuning es en el comportamiento: si después de RAG las respuestas son correctas pero el formato, el tono o una tarea acotada fallan, o si necesitamos bajar costos pasando a un modelo más pequeño."
+      }
+    },
+    {
+      "q": { "en": "When is fine-tuning clearly worth it?", "es": "¿Cuándo vale claramente la pena hacer fine-tuning?" },
+      "a": {
+        "en": "Three cases. Form: a strict format, house style or taxonomy that prompting can't hold across thousands of calls. Cost and latency: a high-volume narrow task where a fine-tuned 8B model matches the frontier model at ~10× lower price per token. Long prompts: if every call carries 3,000 tokens of instructions and examples, baking them into weights cuts input cost and latency. In all three I need hundreds to thousands of good examples, an eval set, and a budget to retrain when the base model is retired.",
+        "es": "En tres casos. Forma: un formato estricto, el estilo de la casa o una taxonomía que el prompt no logra sostener en miles de llamadas. Costo y latencia: una tarea acotada de alto volumen donde un modelo de 8B ajustado iguala al modelo frontera con un precio por token ~10× menor. Prompts largos: si cada llamada carga 3,000 tokens de instrucciones y ejemplos, llevarlos a los pesos baja el costo de entrada y la latencia. En los tres necesito cientos o miles de buenos ejemplos, un set de evaluación y presupuesto para reentrenar cuando retiren el modelo base."
+      }
+    },
+    {
+      "q": { "en": "Can you combine RAG and fine-tuning?", "es": "¿Se pueden combinar RAG y fine-tuning?" },
+      "a": {
+        "en": "Yes, and mature systems usually do: retrieval supplies the facts at query time, fine-tuning supplies the behavior. A pattern I like is fine-tuning a small model on RAG-style inputs, so it learns our answer format, to cite the passages it was given and to say \"not in the documents\" instead of guessing. RAFT formalized this by training with distractor documents. What I avoid is putting facts into weights and dropping retrieval: I'd lose citations, permissions and freshness.",
+        "es": "Sí, y los sistemas maduros suelen hacerlo: la recuperación aporta los hechos al momento de la consulta y el fine-tuning aporta el comportamiento. Un patrón que me gusta es ajustar un modelo pequeño con entradas al estilo RAG, para que aprenda nuestro formato de respuesta, a citar los pasajes que recibió y a decir \"no está en los documentos\" en vez de adivinar. RAFT formalizó esto entrenando con documentos distractores. Lo que evito es meter hechos en los pesos y quitar la recuperación: perdería citas, permisos y frescura."
+      }
+    }
+  ],
+  "related": ["rag", "few-shot", "sft", "lora", "distillation", "continued-pretraining"],
+  "sources": [
+    { "title": "Ovadia et al. — Fine-Tuning or Retrieval? Comparing Knowledge Injection in LLMs", "url": "https://arxiv.org/abs/2312.05934" },
+    { "title": "Gekhman et al. — Does Fine-Tuning LLMs on New Knowledge Encourage Hallucinations?", "url": "https://arxiv.org/abs/2405.05904" },
+    { "title": "Zhang et al. — RAFT: Adapting Language Model to Domain Specific RAG", "url": "https://arxiv.org/abs/2403.10131" },
+    { "title": "OpenAI — Optimizing LLMs for accuracy", "url": "https://platform.openai.com/docs/guides/optimizing-llm-accuracy" }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "id": "eval-driven-development",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Eval-driven development", "es": "Eval-driven development (desarrollo guiado por evals)" },
+  "aliases": ["EDD", "evals-first", "test-driven prompting", "data flywheel", "LLM unit tests", "regression evals"],
+  "tldr": {
+    "en": "Write the evals before or with the feature, like TDD: the eval suite is the spec, and every prompt, model or retrieval change ships only if the suite's numbers say it's better.",
+    "es": "Escribe los evals antes o junto con la feature, como en TDD: la suite de evals es la especificación, y cada cambio de prompt, modelo o recuperación sale solo si los números de la suite dicen que es mejor."
+  },
+  "analogy": {
+    "en": "A pilot's checklist that grows after every incident report. Nobody debates whether the new plane \"feels safer\": it passes every item the old incidents taught us, or it doesn't fly.",
+    "es": "Una checklist de piloto que crece después de cada reporte de incidente. Nadie discute si el avión nuevo \"se siente más seguro\": o pasa cada punto que enseñaron los incidentes anteriores, o no vuela."
+  },
+  "explain": {
+    "en": "**Eval-driven development (EDD)** puts the eval suite first: before (or while) you build an LLM feature, you write down the cases it must handle and how each one is graded. The suite *is* the spec, the way tests are in TDD. Any change — prompt, model, retrieval, tool schema — is measured against it before it ships.\n\nThe difference from TDD: outputs are fuzzy and stochastic, so you track **pass rates per failure mode**, not green/red, and you need enough cases for a difference to beat the noise.\n\nThe loop, popularized by Hamel Husain and Eugene Yan, is a **flywheel**:\n\n1. Ship to a few users with tracing on ([[llm-observability]]).\n2. Read traces and find failures ([[error-analysis]]).\n3. Turn each failure mode into eval cases plus a grader: code first ([[deterministic-graders]]), [[llm-as-judge]] only where needed.\n4. Fix; confirm the targeted metric rises and nothing else drops.\n5. The cases join the regression suite in CI ([[eval-ci]]).\n\nHamel's three levels: cheap assertions on every commit, human and model review on a cadence, A/B tests for big changes.\n\nWhy an architect cares: **models are rented and replaced every few months; the eval suite is the durable asset.** With it, moving to a cheaper or newer model is an afternoon of measurement instead of a month of vibes.",
+    "es": "El **eval-driven development (EDD)** pone la suite de evals primero: antes (o mientras) construyes una feature con LLM, escribes los casos que debe resolver y cómo se califica cada uno. La suite *es* la especificación, como los tests en TDD. Cualquier cambio (prompt, modelo, recuperación, esquema de herramientas) se mide contra ella antes de salir.\n\nLa diferencia con TDD: las salidas son difusas y estocásticas, así que sigues **tasas de aprobación por modo de falla**, no verde o rojo, y necesitas suficientes casos para que una diferencia supere el ruido.\n\nEl ciclo, popularizado por Hamel Husain y Eugene Yan, es un **flywheel**:\n\n1. Lanza a pocos usuarios con tracing activo ([[llm-observability]]).\n2. Lee las trazas y encuentra fallas ([[error-analysis]]).\n3. Convierte cada modo de falla en casos de eval con su grader: primero código ([[deterministic-graders]]) y [[llm-as-judge]] solo donde haga falta.\n4. Corrige y confirma que la métrica objetivo sube y que nada más cae.\n5. Los casos entran a la suite de regresión en CI ([[eval-ci]]).\n\nLos tres niveles de Hamel: aserciones baratas en cada commit, revisión humana y con modelos de forma periódica, y tests A/B para los cambios grandes.\n\nPor qué le importa a un arquitecto: **los modelos se alquilan y se reemplazan cada pocos meses; la suite de evals es el activo que perdura.** Con ella, pasar a un modelo más barato o más nuevo es una tarde de medición y no un mes de sensaciones."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[Production traces] --> A[Error analysis]\n  A --> F[Failure modes]\n  F --> C[\"New eval cases<br/>+ graders\"]\n  C --> S[(Eval suite)]\n  X[\"Change: prompt,<br/>model, retrieval\"] --> G{Suite passes?}\n  S --> G\n  G -->|no| X\n  G -->|yes| D[Deploy]\n  D --> P",
+    "caption": {
+      "en": "The flywheel: every production failure becomes a permanent regression case, and every change must pass the whole suite before it ships.",
+      "es": "El flywheel: cada falla de producción se vuelve un caso de regresión permanente, y cada cambio debe pasar la suite completa antes de salir."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A minimal eval gate: pass rate per failure mode vs. baseline", "es": "Un gate mínimo de evals: tasa por modo de falla vs. baseline" },
+    "source": "import json, re\nfrom collections import defaultdict\n\n# Each case names the failure mode it guards and how it is graded, e.g.\n# {\"id\": \"tz-017\", \"mode\": \"wrong_timezone\", \"input\": \"...\", \"check\": \"regex\", \"expect\": \"15:00 CET\"}\nCASES = [json.loads(line) for line in open(\"evals/cases.jsonl\")]\n\nGRADERS = {\n    \"contains\": lambda out, exp: exp.lower() in out.lower(),\n    \"regex\": lambda out, exp: re.search(exp, out) is not None,\n}\n\ndef run_suite(generate) -> dict[str, float]:\n    passed, total = defaultdict(int), defaultdict(int)\n    for c in CASES:\n        out = generate(c[\"input\"])  # prompt + model + retrieval under test\n        total[c[\"mode\"]] += 1\n        passed[c[\"mode\"]] += GRADERS[c[\"check\"]](out, c[\"expect\"])\n    return {m: passed[m] / total[m] for m in total}  # never one blended average\n\nbaseline = json.load(open(\"evals/baseline.json\"))  # scores of what runs in prod today\ncandidate = run_suite(new_pipeline)\n\nTOLERANCE = 0.05  # size it to the noise at your n, or re-run flaky cases\nregressions = {m: (baseline[m], s) for m, s in candidate.items()\n               if m in baseline and s < baseline[m] - TOLERANCE}\nassert not regressions, f\"Blocked, modes got worse: {regressions}\""
+  },
+  "example": {
+    "en": "A travel-booking assistant starts with 60 cases written from the spec and 40 from week-one beta traces. Error analysis shows \"wrong time zone\" in 18% of failing traces, so the team adds 25 cases with a regex grader on the converted time. A prompt fix takes that mode from 52% to 96%, but the suite also shows refund-policy answers dropping from 91% to 78%: the fix had crowded out the policy instructions. Without the suite, that regression ships. Months later a new model arrives; the suite, now 480 cases, shows +4 points at lower cost in one afternoon, so they switch.",
+    "es": "Un asistente de reservas de viajes arranca con 60 casos escritos a partir de la especificación y 40 tomados de las trazas de la primera semana de beta. El análisis de errores muestra \"zona horaria incorrecta\" en el 18% de las trazas fallidas, así que el equipo agrega 25 casos con un grader de regex sobre la hora convertida. Un ajuste al prompt lleva ese modo de 52% a 96%, pero la suite también muestra que las respuestas sobre reembolsos bajan de 91% a 78%: el ajuste había desplazado las instrucciones de la política. Sin la suite, esa regresión sale a producción. Meses después llega un modelo nuevo; la suite, ya con 480 casos, muestra +4 puntos a menor costo en una tarde, y hacen el cambio."
+  },
+  "pros": [
+    { "en": "Turns \"it feels better\" debates into a number per failure mode.", "es": "Convierte los debates de \"se siente mejor\" en un número por modo de falla." },
+    { "en": "Model upgrades and cost-down swaps become a same-day measurement.", "es": "Actualizar el modelo o cambiar a uno más barato se vuelve una medición del mismo día." },
+    { "en": "Fixed bugs stay fixed: every failure becomes a permanent regression case.", "es": "Lo que se arregla queda arreglado: cada falla se vuelve un caso de regresión permanente." }
+  ],
+  "cons": [
+    { "en": "Upfront cost: cases, graders and a harness before the feature even demos.", "es": "Costo inicial: casos, graders y un harness antes de que la feature siquiera tenga demo." },
+    { "en": "Suites get overfit: tuning hard against 200 cases can hide regressions on real traffic.", "es": "Las suites se sobreajustan: optimizar mucho contra 200 casos puede esconder regresiones en el tráfico real." },
+    { "en": "LLM-judged cases add cost, latency and their own noise to every run.", "es": "Los casos evaluados con LLM juez suman costo, latencia y su propio ruido a cada corrida." }
+  ],
+  "whenToUse": {
+    "en": "Any LLM feature that will outlive a demo: several people change prompts, you expect to swap models, or a regression would reach customers. Start the day you have a first prototype.",
+    "es": "Cualquier feature con LLM que vaya a durar más que una demo: varias personas cambian prompts, esperas cambiar de modelo o una regresión llegaría a clientes. Empieza el día que tengas el primer prototipo."
+  },
+  "whenNotToUse": {
+    "en": "Throwaway prototypes and one-off scripts. And don't build a big generic suite up front: write cases for failures you have actually seen, not ones you imagine.",
+    "es": "Prototipos descartables y scripts de un solo uso. Y no armes una suite grande y genérica de entrada: escribe casos para las fallas que realmente viste, no para las que imaginas."
+  },
+  "numbers": [
+    { "en": "Rule of thumb: start with ~20–50 cases drawn from real failures; hundreds come later, from production traces.", "es": "Regla práctica: empieza con ~20–50 casos sacados de fallas reales; los cientos llegan después, desde las trazas de producción." },
+    { "en": "Noise floor: at n=100 and an 80% pass rate, the 95% CI is ~±8 points; at n=1,000, ~±2.5.", "es": "Piso de ruido: con n=100 y 80% de aprobación, el IC del 95% es de ~±8 puntos; con n=1.000, de ~±2,5." },
+    { "en": "Hamel Husain's three levels: assertions on every commit → human + model eval on a cadence → A/B tests for big changes.", "es": "Los tres niveles de Hamel Husain: aserciones en cada commit → eval humano y con modelos de forma periódica → tests A/B para cambios grandes." }
+  ],
+  "pitfalls": [
+    { "en": "Writing evals after launch, from imagination: you test the failures you guessed, not the ones users hit.", "es": "Escribir evals después del lanzamiento y de memoria: pruebas las fallas que adivinaste, no las que encuentran los usuarios." },
+    { "en": "One aggregate score: a +2 average can hide one failure mode falling from 95% to 60%.", "es": "Un único puntaje agregado: un promedio de +2 puede esconder un modo de falla que cae de 95% a 60%." },
+    { "en": "A suite that always passes has stopped finding bugs: keep adding harder cases from production.", "es": "Una suite que siempre pasa dejó de encontrar bugs: sigue agregando casos más difíciles desde producción." },
+    { "en": "Changing prompt, model and retrieval at once: the suite says something moved, not what.", "es": "Cambiar prompt, modelo y recuperación al mismo tiempo: la suite te dice que algo se movió, no qué." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How is eval-driven development different from TDD?", "es": "¿En qué se diferencia el eval-driven development de TDD?" },
+      "a": {
+        "en": "Same discipline, different math. In TDD a test is deterministic and binary; here outputs are stochastic and often fuzzy, so each failure mode is a pass rate, not a green tick. That means I need enough cases to beat noise: at 100 cases, a 5-point move sits inside the error bar, so I re-run flaky cases and compare per mode. The other difference is where cases come from. TDD writes them from the spec; I seed from the spec, but most cases end up coming from reading production traces.",
+        "es": "Es la misma disciplina con otra matemática. En TDD un test es determinista y binario; aquí las salidas son estocásticas y a menudo difusas, así que cada modo de falla es una tasa de aprobación, no una palomita verde. Eso significa que necesito suficientes casos para superar el ruido: con 100 casos, un movimiento de 5 puntos cae dentro del margen de error, así que vuelvo a correr los casos inestables y comparo por modo. La otra diferencia es de dónde salen los casos. TDD los escribe desde la especificación; yo arranco desde ahí, pero la mayoría termina saliendo de leer trazas de producción."
+      }
+    },
+    {
+      "q": { "en": "Leadership wants to switch to a newer, cheaper model. How do you decide?", "es": "La dirección quiere pasar a un modelo más nuevo y barato. ¿Cómo decides?" },
+      "a": {
+        "en": "I run the candidate on our eval suite and compare per failure mode and per slice, not just the average, plus cost and p95 latency on the same cases. If it's within noise everywhere and cheaper, I ship it behind a flag with a small rollout and watch online metrics. If one slice drops, say non-English or tool calling, I either fix the prompt for that slice or route those requests to the old model. Without a suite this is a month of vibes; with one it's an afternoon. That's the real return on building it.",
+        "es": "Corro el candidato contra nuestra suite de evals y comparo por modo de falla y por segmento, no solo el promedio, además del costo y la latencia p95 sobre los mismos casos. Si está dentro del ruido en todo y es más barato, lo lanzo detrás de un flag con un rollout pequeño y miro las métricas online. Si cae un segmento, por ejemplo idiomas distintos del inglés o tool calling, ajusto el prompt para ese segmento o enruto esas solicitudes al modelo anterior. Sin suite esto es un mes de sensaciones; con ella, una tarde. Ese es el verdadero retorno de construirla."
+      }
+    }
+  ],
+  "related": ["error-analysis", "golden-datasets", "deterministic-graders", "llm-as-judge", "eval-ci", "llm-observability"],
+  "sources": [
+    { "title": "Hamel Husain — Your AI Product Needs Evals", "url": "https://hamel.dev/blog/posts/evals/" },
+    { "title": "Eugene Yan — Task-Specific LLM Evals that Do & Don't Work", "url": "https://eugeneyan.com/writing/evals/" },
+    { "title": "Hamel Husain — A Field Guide to Rapidly Improving AI Products", "url": "https://hamel.dev/blog/posts/field-guide/" },
+    { "title": "Anthropic — Create strong empirical evaluations", "url": "https://docs.anthropic.com/en/docs/test-and-evaluate/develop-tests" }
+  ]
+}

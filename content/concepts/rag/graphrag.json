@@ -1,0 +1,89 @@
+{
+  "id": "graphrag",
+  "domain": "rag",
+  "level": "advanced",
+  "title": { "en": "GraphRAG & knowledge graphs", "es": "GraphRAG y grafos de conocimiento" },
+  "aliases": ["GraphRAG", "Graph RAG", "knowledge graph RAG", "KG-RAG", "LightRAG", "LazyGraphRAG", "community summaries", "Leiden"],
+  "tldr": {
+    "en": "An LLM turns the corpus into an entity–relation graph, clusters it into communities and pre-writes a summary of each, so you can answer corpus-wide questions that top-k chunk retrieval can't.",
+    "es": "Un LLM convierte el corpus en un grafo de entidades y relaciones, lo agrupa en comunidades y escribe de antemano un resumen de cada una, para responder preguntas sobre todo el corpus que el top-k de chunks no puede."
+  },
+  "analogy": {
+    "en": "Chunk RAG is searching a library's index cards. GraphRAG hires an analyst to read everything first, map who connects to whom and write a briefing per topic: expensive upfront, instant overviews later.",
+    "es": "El RAG por chunks es buscar en las fichas de una biblioteca. GraphRAG contrata a un analista que lo lee todo primero, mapea quién se conecta con quién y escribe un informe por tema: caro al inicio, panoramas inmediatos después."
+  },
+  "explain": {
+    "en": "**GraphRAG** uses an LLM to build a knowledge graph from your documents, then retrieves over the graph and its summaries, not only over raw chunks.\n\nChunk RAG fails on *global* questions — \"What are the main themes across these 5,000 interviews?\" — because no single chunk holds the answer and top-k returns 5 arbitrary fragments. Microsoft's GraphRAG (Edge et al., 2024) fixes that at index time:\n\n1. **Extract** — an LLM reads every chunk and emits entities, relations and claims.\n2. **Graph** — merge them into one graph; repeated entity names collapse into one node.\n3. **Cluster** — hierarchical **Leiden** community detection groups densely connected entities at several levels.\n4. **Summarize** — an LLM writes a *community report* per cluster, bottom-up.\n\nAt query time you pick a mode:\n\n- **Global search** — map-reduce over community reports: each yields a scored partial answer, the best are reduced into one. For themes and overviews; many LLM calls per query.\n- **Local search** — match the query to entities, then pull their neighbors, relations, source chunks and reports. For multi-hop questions like \"how is X related to Y?\".\n\nThe price is indexing: one or more LLM calls per chunk plus one per community, repeated as the corpus changes. **LightRAG** skips community reports and supports incremental inserts; Microsoft's **LazyGraphRAG** swaps LLM extraction for cheap NLP and defers summarization to query time.",
+    "es": "**GraphRAG** usa un LLM para construir un grafo de conocimiento a partir de tus documentos y luego recupera sobre el grafo y sus resúmenes, no solo sobre chunks sueltos.\n\nEl RAG por chunks falla en preguntas *globales* —\"¿Cuáles son los temas principales en estas 5000 entrevistas?\"— porque ningún chunk contiene la respuesta y el top-k devuelve 5 fragmentos arbitrarios. GraphRAG de Microsoft (Edge et al., 2024) lo resuelve al indexar:\n\n1. **Extraer**: un LLM lee cada chunk y emite entidades, relaciones y afirmaciones.\n2. **Armar el grafo**: todo se fusiona en un solo grafo; los nombres de entidad repetidos colapsan en un nodo.\n3. **Agrupar**: la detección jerárquica de comunidades **Leiden** junta las entidades densamente conectadas, en varios niveles.\n4. **Resumir**: un LLM escribe un *reporte de comunidad* por cada grupo, de abajo hacia arriba.\n\nAl consultar eliges un modo:\n\n- **Búsqueda global**: map-reduce sobre los reportes; cada uno produce una respuesta parcial con puntaje y las mejores se combinan en una. Para temas y panoramas; muchas llamadas al LLM por consulta.\n- **Búsqueda local**: asocia la consulta con entidades y trae sus vecinos, relaciones, chunks de origen y reportes. Para preguntas multi-hop como \"¿qué relación tiene X con Y?\".\n\nEl precio es la indexación: una o más llamadas al LLM por chunk más una por comunidad, y se repite cuando cambia el corpus. **LightRAG** se salta los reportes de comunidad y admite inserciones incrementales; **LazyGraphRAG** de Microsoft cambia la extracción con LLM por NLP barato y deja el resumen para el momento de la consulta."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[Chunks] --> E[\"LLM extract<br/>entities + relations\"]\n  E --> G[(Knowledge graph)]\n  G --> C[\"Leiden<br/>communities\"]\n  C --> S[\"LLM community<br/>reports\"]\n  Q[Query] --> M{Search mode}\n  M -->|global| MR[\"Map-reduce<br/>over reports\"]\n  M -->|local| L[\"Entity neighborhood<br/>+ source chunks\"]\n  S -.-> MR\n  G -.-> L\n  MR --> A[Answer]\n  L --> A",
+    "caption": {
+      "en": "Indexing spends LLM calls once per chunk and per community; each query then maps over summaries (global) or walks an entity's neighborhood (local).",
+      "es": "La indexación gasta llamadas al LLM una vez por chunk y por comunidad; luego cada consulta recorre los resúmenes (global) o el vecindario de una entidad (local)."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "The GraphRAG mechanism in miniature", "es": "El mecanismo de GraphRAG en miniatura" },
+    "source": "import networkx as nx\nfrom networkx.algorithms.community import louvain_communities\n\n# --- Indexing: cost scales with corpus size (LLM call per chunk + per community)\nG = nx.Graph()\nfor chunk in chunks:\n    # LLM returns [(head, relation, tail), ...]: the expensive step\n    for h, rel, t in llm_extract_triples(chunk.text):\n        G.add_edge(h.lower(), t.lower(), relation=rel, source=chunk.id)\n\n# GraphRAG uses hierarchical Leiden; Louvain shows the same idea\ncommunities = louvain_communities(G, seed=42)\nreports = [llm_summarize(G.subgraph(c).edges(data=True)) for c in communities]\n\n# --- Global search: map-reduce over reports, not over raw chunks\ndef global_search(question: str) -> str:\n    partials = [llm_partial_answer(question, r) for r in reports]  # map\n    useful = [p for p in partials if p.score > 0]                   # drop \"no info\"\n    useful.sort(key=lambda p: p.score, reverse=True)\n    return llm_reduce(question, [p.text for p in useful[:20]])      # reduce"
+  },
+  "example": {
+    "en": "A drug-safety team has ~3,000 adverse-event reports (~2M tokens). Asked *\"What recurring safety themes appear across all reports?\"*, chunk RAG returns 8 chunks about whichever drug sits closest to the query embedding, and the answer is anecdotal. GraphRAG costs thousands of LLM calls to index once, but global search maps the question over every community report (e.g. *\"liver toxicity: drugs A, C, F, 140 reports\"*) and reduces them into ranked themes that point back to source reports. For *\"What's the max dose of drug C?\"* the team still routes to plain hybrid search: faster, cheaper and sufficient.",
+    "es": "Un equipo de farmacovigilancia tiene ~3000 reportes de eventos adversos (~2M tokens). Ante *\"¿Qué temas de seguridad se repiten en todos los reportes?\"*, el RAG por chunks devuelve 8 chunks del fármaco que quedó más cerca del embedding de la consulta y la respuesta es anecdótica. Indexar con GraphRAG cuesta miles de llamadas al LLM una sola vez, pero la búsqueda global recorre cada reporte de comunidad (p. ej. *\"toxicidad hepática: fármacos A, C, F, 140 reportes\"*) y los combina en temas ordenados que apuntan a los reportes de origen. Para *\"¿Cuál es la dosis máxima del fármaco C?\"* el equipo sigue usando búsqueda híbrida simple: más rápida, más barata y suficiente."
+  },
+  "pros": [
+    { "en": "Answers global \"themes across the corpus\" questions that top-k retrieval structurally cannot.", "es": "Responde preguntas globales del tipo \"temas en todo el corpus\" que el top-k, por diseño, no puede." },
+    { "en": "Multi-hop entity questions follow explicit edges instead of hoping two chunks get co-retrieved.", "es": "Las preguntas multi-hop sobre entidades siguen aristas explícitas en vez de esperar que dos chunks se recuperen juntos." },
+    { "en": "The graph and community reports are inspectable artifacts you can browse, audit and reuse.", "es": "El grafo y los reportes de comunidad son artefactos que puedes explorar, auditar y reutilizar." }
+  ],
+  "cons": [
+    { "en": "Indexing is LLM-heavy: at least one call per chunk plus one per community, far above embedding cost.", "es": "La indexación depende mucho del LLM: al menos una llamada por chunk más una por comunidad, muy por encima del costo de generar embeddings." },
+    { "en": "Updates hurt: new documents can reshuffle communities and leave reports stale.", "es": "Las actualizaciones duelen: documentos nuevos pueden reacomodar las comunidades y dejar reportes desactualizados." },
+    { "en": "Extraction errors (missed or duplicated entities) silently corrupt the graph.", "es": "Los errores de extracción (entidades omitidas o duplicadas) corrompen el grafo sin hacer ruido." },
+    { "en": "Global search is slow and costly per query: one LLM call per report it scans.", "es": "La búsqueda global es lenta y cara por consulta: una llamada al LLM por cada reporte que recorre." }
+  ],
+  "whenToUse": {
+    "en": "Sensemaking over a mostly static, high-value corpus (research, investigations, due diligence) where users ask about themes, trends or how entities connect, and you can pay a large one-off indexing bill.",
+    "es": "Para entender un corpus de alto valor y casi estático (investigación, auditorías, due diligence) donde los usuarios preguntan por temas, tendencias o conexiones entre entidades, y puedes pagar una indexación cara una sola vez."
+  },
+  "whenNotToUse": {
+    "en": "Fact lookups, fast-changing corpora or tight budgets. Try good [[chunking]], [[hybrid-search]] and [[reranking]] first: most \"we need GraphRAG\" requests are really retrieval-quality problems.",
+    "es": "Búsquedas de datos puntuales, corpus que cambian rápido o presupuestos ajustados. Prueba primero buen [[chunking]], [[hybrid-search]] y [[reranking]]: casi todo \"necesitamos GraphRAG\" es en realidad un problema de calidad de recuperación."
+  },
+  "numbers": [
+    { "en": "Indexing cost ≈ one extraction call per chunk (plus optional \"gleaning\" retries) + one report per community.", "es": "Costo de indexación ≈ una llamada de extracción por chunk (más reintentos opcionales de \"gleaning\") + un reporte por comunidad." },
+    { "en": "The GraphRAG paper evaluated on ~1–2M-token corpora (podcast transcripts, news articles).", "es": "El paper de GraphRAG evaluó sobre corpus de ~1–2M tokens (transcripciones de podcasts, artículos de noticias)." },
+    { "en": "In the paper, 600-token chunks extracted ~2× the entity references of 2,400-token chunks.", "es": "En el paper, chunks de 600 tokens extrajeron ~2× las referencias a entidades que chunks de 2400 tokens." },
+    { "en": "LazyGraphRAG: indexing cost on par with vector RAG, ~0.1% of full GraphRAG (Microsoft Research, 2024).", "es": "LazyGraphRAG: costo de indexación similar al de RAG vectorial, ~0,1% del de GraphRAG completo (Microsoft Research, 2024)." }
+  ],
+  "pitfalls": [
+    { "en": "Adopting GraphRAG for a lookup workload: you pay the indexing bill and barely beat hybrid search.", "es": "Adoptar GraphRAG para una carga de búsquedas puntuales: pagas la indexación y apenas superas a la búsqueda híbrida." },
+    { "en": "Skipping entity resolution: \"AWS\", \"Amazon Web Services\" and \"Amazon\" become three nodes and communities fragment.", "es": "Omitir la resolución de entidades: \"AWS\", \"Amazon Web Services\" y \"Amazon\" terminan como tres nodos y las comunidades se fragmentan." },
+    { "en": "Re-indexing everything per new document instead of batching updates or using an incremental variant.", "es": "Reindexar todo por cada documento nuevo en vez de agrupar actualizaciones o usar una variante incremental." },
+    { "en": "No baseline: compare against chunk RAG + reranker on the same questions, including global ones.", "es": "No tener línea base: compara contra RAG por chunks + reranker con las mismas preguntas, incluidas las globales." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you choose GraphRAG over a standard vector RAG pipeline?", "es": "¿Cuándo elegirías GraphRAG en lugar de un pipeline RAG vectorial estándar?" },
+      "a": {
+        "en": "When the questions are global or relational, not lookups. For \"what are the main risks across all 4,000 contracts\", no top-k set of chunks contains the answer; GraphRAG pre-computes community summaries so global search can map-reduce over them. First I'd check the query mix in logs: if 90% are fact lookups, I'd invest in hybrid search and reranking instead. If I adopt it, I'd scope it to a static, high-value corpus, budget the indexing bill explicitly, and keep vector search as the default with a router sending only global questions to the graph.",
+        "es": "Cuando las preguntas son globales o relacionales, no búsquedas puntuales. Para \"¿cuáles son los riesgos principales en los 4000 contratos?\", ningún top-k de chunks contiene la respuesta; GraphRAG precalcula resúmenes de comunidad para que la búsqueda global haga map-reduce sobre ellos. Primero revisaría la mezcla de consultas en los logs: si el 90% son búsquedas de datos, invertiría en búsqueda híbrida y reranking. Si lo adopto, lo limito a un corpus estático y valioso, presupuesto la indexación de forma explícita y mantengo la búsqueda vectorial por defecto, con un router que mande al grafo solo las preguntas globales."
+      }
+    },
+    {
+      "q": { "en": "GraphRAG indexing is too expensive for us. What are your options?", "es": "Indexar con GraphRAG nos sale demasiado caro. ¿Qué opciones tienes?" },
+      "a": {
+        "en": "Three levers. Scope: index only the corpus where global questions actually occur. Cheaper models: extraction is a structured task a small or fine-tuned model can handle, but I'd validate entity recall on a sample before switching. Lighter variants: LightRAG skips community reports and supports incremental inserts; LazyGraphRAG uses cheap NLP extraction and defers LLM work to query time, with indexing cost close to vector RAG. The trade-off is moving cost from index time to query time, which pays off when the corpus changes often or is rarely queried.",
+        "es": "Tres palancas. Alcance: indexar solo el corpus donde de verdad aparecen preguntas globales. Modelos más baratos: la extracción es una tarea estructurada que un modelo pequeño o con fine-tuning puede resolver, pero validaría el recall de entidades en una muestra antes de cambiar. Variantes livianas: LightRAG se salta los reportes de comunidad y admite inserciones incrementales; LazyGraphRAG usa extracción con NLP barato y deja el trabajo del LLM para la consulta, con un costo de indexación cercano al de RAG vectorial. El trade-off es mover costo de la indexación a la consulta, lo que conviene si el corpus cambia seguido o se consulta poco."
+      }
+    }
+  ],
+  "related": ["rag", "agentic-rag", "hybrid-search", "chunking", "query-transformation", "rag-evaluation"],
+  "sources": [
+    { "title": "Edge et al. — From Local to Global: A Graph RAG Approach to Query-Focused Summarization (2024)", "url": "https://arxiv.org/abs/2404.16130" },
+    { "title": "Microsoft GraphRAG documentation", "url": "https://microsoft.github.io/graphrag/" },
+    { "title": "Guo et al. — LightRAG: Simple and Fast Retrieval-Augmented Generation (2024)", "url": "https://arxiv.org/abs/2410.05779" },
+    { "title": "Microsoft Research — LazyGraphRAG: Setting a new standard for quality and cost", "url": "https://www.microsoft.com/en-us/research/blog/lazygraphrag-setting-a-new-standard-for-quality-and-cost/" }
+  ]
+}

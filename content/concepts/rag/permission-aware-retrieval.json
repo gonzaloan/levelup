@@ -1,0 +1,93 @@
+{
+  "id": "permission-aware-retrieval",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Metadata filters & permission-aware retrieval", "es": "Filtros de metadatos y recuperación con permisos" },
+  "aliases": ["metadata filtering", "ACL filtering", "document-level security", "security trimming", "pre-filtering", "post-filtering", "filtered vector search", "RBAC for RAG"],
+  "tldr": {
+    "en": "Attach metadata (tenant, ACL groups, date, type) to every chunk and enforce it as a hard filter inside the search, built in code, so the LLM never sees a document the user couldn't open.",
+    "es": "Adjunta metadatos (tenant, grupos de la ACL, fecha, tipo) a cada chunk y aplícalos como filtro duro dentro de la búsqueda, construido en código, para que el LLM nunca vea un documento que el usuario no podría abrir."
+  },
+  "analogy": {
+    "en": "A records clerk who only opens the drawers your badge unlocks, versus one who pulls every file and asks you politely not to read the confidential ones.",
+    "es": "Un archivista que solo abre los cajones que tu credencial desbloquea, frente a uno que saca todos los expedientes y te pide amablemente que no leas los confidenciales."
+  },
+  "explain": {
+    "en": "Every chunk carries **metadata** copied from its source at ingestion: `tenant_id`, `allowed_groups`, `doc_type`, `updated_at`, `region`. At query time you pass a **filter** with the vector or keyword search, so only eligible chunks get scored.\n\nOne mechanism, two jobs:\n\n- **Relevance filters**: *\"only 2024 policies\"*, *\"only product X manuals\"*, often extracted from the query by [[query-transformation]].\n- **Authorization filters**: the user's groups must overlap the chunk's `allowed_groups`. This is security, so the filter is **built in code from the authenticated identity**: never from the prompt, never from LLM tool arguments, and never by asking the model to ignore what it shouldn't see. Once forbidden text reaches the window, [[prompt-injection]] can get it out.\n\n**Pre-filter vs post-filter.** Pre-filtering restricts the ANN search to allowed vectors and returns k results. Post-filtering searches first and drops forbidden hits: a user who can read 1% of the corpus keeps ~1 of 100. Use an engine with native filtered search (Qdrant payload indexes, pgvector iterative scans, Pinecone metadata filters) and benchmark recall *with* realistic filters, since very selective ones can degrade HNSW.\n\n**ACLs change.** Sync them from the source systems (SharePoint, Google Drive, Confluence) via webhooks plus a periodic full reconciliation, and re-check permissions on the final chunks when staleness matters.",
+    "es": "Cada chunk lleva **metadatos** copiados de su fuente al ingerirlo: `tenant_id`, `allowed_groups`, `doc_type`, `updated_at`, `region`. Al consultar pasas un **filtro** junto con la búsqueda vectorial o por palabras clave, así solo se puntúan los chunks elegibles.\n\nUn mecanismo, dos trabajos:\n\n- **Filtros de relevancia**: *\"solo políticas de 2024\"*, *\"solo manuales del producto X\"*, muchas veces extraídos de la consulta con [[query-transformation]].\n- **Filtros de autorización**: los grupos del usuario deben coincidir con algún grupo en `allowed_groups` del chunk. Esto es seguridad, así que el filtro **se construye en código a partir de la identidad autenticada**: nunca desde el prompt, nunca desde los argumentos de una herramienta del LLM y nunca pidiéndole al modelo que ignore lo que no debería ver. Una vez que el texto prohibido llega a la ventana, un [[prompt-injection]] puede sacarlo.\n\n**Pre-filtro vs. post-filtro.** El pre-filtro restringe la búsqueda ANN a los vectores permitidos y devuelve k resultados. El post-filtro busca primero y descarta lo prohibido: un usuario que puede leer el 1% del corpus conserva ~1 de 100. Usa un motor con búsqueda filtrada nativa (índices de payload en Qdrant, iterative scans en pgvector, filtros de metadatos en Pinecone) y mide el recall *con* filtros realistas, porque los muy selectivos pueden degradar HNSW.\n\n**Las ACL cambian.** Sincronízalas desde los sistemas fuente (SharePoint, Google Drive, Confluence) con webhooks más una reconciliación completa periódica, y vuelve a verificar permisos sobre los chunks finales cuando la desactualización importe."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  SRC[\"Source systems<br/>(Drive, Confluence)\"] -->|\"docs + ACLs\"| ING[Ingestion]\n  SRC -.->|ACL change webhook| ING\n  ING --> IDX[(\"Chunks + tenant,<br/>group metadata\")]\n  U[\"User session<br/>(verified identity)\"] --> F[\"Filter built in code\"]\n  U --> Q[User query]\n  Q --> S[Filtered ANN search]\n  F --> S\n  IDX --> S\n  S --> C[\"Re-check ACL<br/>on final chunks\"]\n  C --> L[LLM prompt]",
+    "caption": {
+      "en": "ACLs travel with the chunks; the filter comes from the verified session, never from the prompt, and a final re-check guards the window.",
+      "es": "Las ACL viajan con los chunks; el filtro sale de la sesión verificada, nunca del prompt, y una verificación final protege la ventana."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "ACL pre-filter in Qdrant, plus a canary leak test", "es": "Pre-filtro de ACL en Qdrant y un test canario de fugas" },
+    "source": "from qdrant_client import QdrantClient, models\n\nclient = QdrantClient(url=\"http://localhost:6333\")\n\ndef acl_conditions(user) -> list[models.FieldCondition]:\n    # From the verified session -- never from the prompt or LLM tool arguments\n    return [\n        models.FieldCondition(key=\"tenant_id\",\n                              match=models.MatchValue(value=user.tenant_id)),\n        models.FieldCondition(key=\"allowed_groups\",  # any shared group grants access\n                              match=models.MatchAny(any=user.groups)),\n    ]\n\ndef retrieve(user, query: str, k: int = 20, extra=()) -> list:\n    hits = client.query_points(\n        collection_name=\"chunks\",\n        query=embed(query),\n        # Pre-filter: ANN only visits allowed points, so we still get k results.\n        # Relevance filters (date, doc_type) are AND-ed with the ACL, never instead.\n        query_filter=models.Filter(must=[*acl_conditions(user), *extra]),\n        limit=k,\n    ).points\n    # Defense in depth: re-check against the source of truth before the prompt\n    return [h for h in hits if acl_service.can_read(user, h.payload[\"doc_id\"])]\n\ndef test_canary_never_reaches_prompt():\n    # A doc only \"hr-restricted\" can read, queried verbatim by an outsider\n    index_doc(\"CANARY-7f3a: Q3 reorg plan\", tenant_id=\"t1\",\n              allowed_groups=[\"hr-restricted\"])\n    outsider = User(tenant_id=\"t1\", groups=[\"engineering\"])\n    prompt = build_prompt(outsider, \"What is the Q3 reorg plan?\")\n    assert \"CANARY-7f3a\" not in prompt"
+  },
+  "example": {
+    "en": "An internal assistant indexes ~3M Confluence and Drive chunks with `allowed_groups`. An engineer asks about *\"reorg plans\"*. With post-filtering, the top 20 are all HR-only pages; every hit is dropped and the bot replies \"no information\", after the HR page titles already landed in a debug log. With pre-filtering on `allowed_groups`, the search returns 20 chunks the engineer can read, such as the public org-change FAQ. When a document owner unshares a folder, a webhook rewrites its chunks' `allowed_groups` within minutes instead of waiting for the nightly re-index.",
+    "es": "Un asistente interno indexa ~3M de chunks de Confluence y Drive con `allowed_groups`. Una ingeniera pregunta por *\"planes de reestructuración\"*. Con post-filtro, los 20 primeros son páginas exclusivas de RRHH: se descartan todos y el bot responde \"no tengo información\", después de que los títulos de esas páginas ya quedaron en un log de depuración. Con pre-filtro sobre `allowed_groups`, la búsqueda devuelve 20 chunks que ella sí puede leer, como el FAQ público sobre cambios organizacionales. Cuando el dueño de un documento deja de compartir una carpeta, un webhook reescribe el `allowed_groups` de sus chunks en minutos en lugar de esperar la reindexación nocturna."
+  },
+  "pros": [
+    { "en": "Deterministic access control: forbidden text never enters the window, so no prompt can leak it.", "es": "Control de acceso determinista: el texto prohibido nunca entra a la ventana, así que ningún prompt puede filtrarlo." },
+    { "en": "Relevance filters improve precision and speed by shrinking the candidate set.", "es": "Los filtros de relevancia mejoran la precisión y la velocidad al reducir el conjunto de candidatos." },
+    { "en": "A shared index with a mandatory tenant filter serves thousands of small tenants cheaply.", "es": "Un índice compartido con filtro obligatorio por tenant atiende a miles de tenants pequeños a bajo costo." }
+  ],
+  "cons": [
+    { "en": "ACL sync is real engineering: connectors, group expansion, webhooks, staleness windows.", "es": "Sincronizar ACL es ingeniería de verdad: conectores, expansión de grupos, webhooks y ventanas de desactualización." },
+    { "en": "Very selective filters can slow ANN or hurt its recall; post-filtering can return fewer than k.", "es": "Los filtros muy selectivos pueden volver lenta la búsqueda ANN o bajar su recall; el post-filtro puede devolver menos de k." },
+    { "en": "Shared index: one missing filter is a cross-tenant leak. Per-tenant indexes: isolation, but many small indexes to run.", "es": "Índice compartido: un filtro olvidado es una fuga entre tenants. Índices por tenant: aislamiento, pero muchos índices pequeños que operar." }
+  ],
+  "whenToUse": {
+    "en": "Any RAG over data with mixed visibility: multi-tenant SaaS, enterprise search over Drive, SharePoint or Confluence, HR, legal and customer data. Relevance filters whenever queries carry structure such as dates, products or regions.",
+    "es": "Cualquier RAG sobre datos con visibilidad mixta: SaaS multi-tenant, búsqueda empresarial sobre Drive, SharePoint o Confluence, datos de RRHH, legales o de clientes. Filtros de relevancia siempre que las consultas traigan estructura como fechas, productos o regiones."
+  },
+  "whenNotToUse": {
+    "en": "A fully public corpus with a single audience, like a public docs site or help center: authorization filtering adds sync cost for nothing. Relevance filters still apply.",
+    "es": "Un corpus totalmente público con una sola audiencia, como un sitio de documentación o un centro de ayuda público: filtrar por autorización agrega costo de sincronización sin beneficio. Los filtros de relevancia siguen sirviendo."
+  },
+  "numbers": [
+    { "en": "Post-filter math: a user who can read a fraction p of the corpus keeps ~p·k of k hits; 1% of 100 ≈ 1.", "es": "Cuenta del post-filtro: un usuario que puede leer una fracción p del corpus conserva ~p·k de k resultados; 1% de 100 ≈ 1." },
+    { "en": "Revocation delay = your ACL sync interval: a nightly batch can keep serving revoked access for up to ~24 h.", "es": "Demora de revocación = tu intervalo de sincronización de ACL: un batch nocturno puede seguir sirviendo accesos revocados hasta ~24 h." },
+    { "en": "pgvector 0.8+ adds iterative index scans so filtered HNSW queries keep returning enough rows.", "es": "pgvector 0.8+ agrega iterative index scans para que las consultas HNSW filtradas sigan devolviendo suficientes filas." }
+  ],
+  "pitfalls": [
+    { "en": "Enforcing access in the system prompt (\"don't reveal HR docs\"): the text is already in the window.", "es": "Imponer el control de acceso desde el system prompt (\"no reveles documentos de RRHH\"): el texto ya está en la ventana." },
+    { "en": "Taking the tenant or user from a client-controlled field or from LLM tool arguments instead of the verified session.", "es": "Tomar el tenant o el usuario de un campo que controla el cliente o de los argumentos de una herramienta del LLM, en lugar de la sesión verificada." },
+    { "en": "Storing user ids on chunks: every membership change forces a re-index. Store group ids and resolve the user's groups at query time.", "es": "Guardar ids de usuario en los chunks: cada cambio de membresía obliga a reindexar. Guarda ids de grupo y resuelve los grupos del usuario al consultar." },
+    { "en": "Forgetting side channels: titles in citations, a semantic cache shared across users, logs and eval traces.", "es": "Olvidar los canales laterales: títulos en las citas, una caché semántica compartida entre usuarios, logs y trazas de evaluación." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you guarantee RAG never shows a user a document they can't access?", "es": "¿Cómo garantizas que un RAG nunca le muestre a un usuario un documento al que no tiene acceso?" },
+      "a": {
+        "en": "I treat it as authorization, not prompting. Every chunk carries tenant and group ACLs synced from the source system. The retriever builds the filter in code from the authenticated session, never from user input or LLM arguments, and applies it inside the search, so forbidden text never enters the prompt. I re-check permissions on the final chunks, scope caches and logs per user, and keep a canary test in CI: a doc only one group can read, queried verbatim by an outsider, must never appear in the prompt.",
+        "es": "Lo trato como autorización, no como prompting. Cada chunk lleva las ACL de tenant y de grupo sincronizadas desde el sistema fuente. El recuperador arma el filtro en código a partir de la sesión autenticada, nunca desde la entrada del usuario ni desde argumentos del LLM, y lo aplica dentro de la búsqueda, así que el texto prohibido nunca entra al prompt. Vuelvo a verificar permisos sobre los chunks finales, aíslo cachés y logs por usuario y mantengo un test canario en CI: un documento que solo un grupo puede leer, consultado textualmente por alguien de afuera, nunca debe aparecer en el prompt."
+      }
+    },
+    {
+      "q": { "en": "Per-tenant index or one shared index with a tenant filter?", "es": "¿Un índice por tenant o un índice compartido con filtro por tenant?" },
+      "a": {
+        "en": "It depends on tenant count and isolation requirements. Per-tenant indexes or namespaces give hard isolation, trivial deletion when a customer leaves, and no noisy neighbors, but thousands of small indexes are costly to run and some engines cap them. A shared index with a mandatory tenant filter is cheaper and scales to many small tenants, but one missing filter is a cross-tenant leak. My default: a shared index partitioned by tenant, the filter injected by a wrapper the app can't bypass, and dedicated indexes for large or regulated tenants.",
+        "es": "Depende de la cantidad de tenants y de cuánto aislamiento se exige. Los índices o namespaces por tenant dan aislamiento fuerte, borrado trivial cuando un cliente se va y nada de vecinos ruidosos, pero miles de índices pequeños son caros de operar y algunos motores los limitan. Un índice compartido con filtro obligatorio por tenant es más barato y escala a muchos tenants pequeños, pero un filtro olvidado es una fuga entre tenants. Mi opción por defecto: un índice compartido particionado por tenant, el filtro inyectado por un wrapper que la aplicación no puede saltarse e índices dedicados para tenants grandes o regulados."
+      }
+    },
+    {
+      "q": { "en": "Pre-filter or post-filter?", "es": "¿Pre-filtro o post-filtro?" },
+      "a": {
+        "en": "Pre-filter by default: the engine only considers allowed vectors, so I get k results. Post-filter breaks when a user sees a small slice: search 100, drop 99, answer from one chunk or none. The catch is ANN performance under very selective filters, since HNSW traversal can get stuck in disallowed regions. So I pick an engine with native filtered search, benchmark recall@k under real filters, and fall back to exact search when the allowed set is small enough.",
+        "es": "Pre-filtro por defecto: el motor solo considera vectores permitidos, así que obtengo k resultados. El post-filtro se rompe cuando el usuario ve una porción pequeña: busco 100, descarto 99 y respondo con un chunk o con ninguno. El problema es el rendimiento ANN con filtros muy selectivos, porque el recorrido de HNSW puede atascarse en regiones no permitidas. Por eso elijo un motor con búsqueda filtrada nativa, mido el recall@k con filtros reales y caigo a búsqueda exacta cuando el conjunto permitido es lo bastante pequeño."
+      }
+    }
+  ],
+  "related": ["tenant-isolation", "multi-tenancy", "vector-databases", "prompt-injection", "ann-indexes", "case-enterprise-rag"],
+  "sources": [
+    { "title": "Qdrant — Filtering", "url": "https://qdrant.tech/documentation/concepts/filtering/" },
+    { "title": "pgvector — README (filtering and iterative index scans)", "url": "https://github.com/pgvector/pgvector" },
+    { "title": "Azure AI Search — Security filters for trimming results", "url": "https://learn.microsoft.com/en-us/azure/search/search-security-trimming-for-azure-search" }
+  ]
+}

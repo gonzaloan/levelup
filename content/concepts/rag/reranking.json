@@ -1,0 +1,83 @@
+{
+  "id": "reranking",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Reranking (cross-encoders)", "es": "Reranking (cross-encoders)" },
+  "aliases": ["reranker", "re-ranking", "cross-encoder", "two-stage retrieval", "Cohere Rerank"],
+  "tldr": {
+    "en": "Retrieve many candidates cheaply, then let a slower, smarter model reorder them and keep only the best few for the prompt.",
+    "es": "Recupera muchos candidatos de forma barata y luego deja que un modelo más lento y más preciso los reordene y conserve solo los mejores para el prompt."
+  },
+  "analogy": {
+    "en": "A recruiter skims 200 CVs by keywords in minutes; the hiring manager then reads the top 20 carefully and picks 3.",
+    "es": "Un reclutador filtra 200 CVs por palabras clave en minutos; después el gerente lee con calma los 20 mejores y elige 3."
+  },
+  "explain": {
+    "en": "Vector search uses a **bi-encoder**: query and document are embedded *separately*, so documents can be pre-computed and searched in milliseconds. The price is precision — the two texts never \"see\" each other.\n\nA **cross-encoder** feeds the query and one candidate *together* into a transformer and outputs a relevance score. Every query token can attend to every document token, so it catches negation, exact constraints and subtle relevance that cosine similarity misses. It is far too slow to run over millions of documents, but cheap on 50.\n\nSo production RAG uses **two stages**:\n\n1. **Recall** — [[hybrid-search]] or vector search returns top ~50–100.\n2. **Precision** — the reranker scores each (query, chunk) pair and you keep the top 3–8.\n\nFewer, better chunks means better answers *and* a smaller, cheaper prompt.",
+    "es": "La búsqueda vectorial usa un **bi-encoder**: la consulta y el documento se convierten en embeddings *por separado*, así los documentos se precalculan y se buscan en milisegundos. El precio es la precisión: los dos textos nunca se \"ven\".\n\nUn **cross-encoder** recibe la consulta y un candidato *juntos* en un transformer y devuelve un puntaje de relevancia. Cada token de la consulta puede atender a cada token del documento, así que detecta negaciones, restricciones exactas y relevancia sutil que la similitud coseno no ve. Es demasiado lento para millones de documentos, pero barato sobre 50.\n\nPor eso el RAG en producción usa **dos etapas**:\n\n1. **Recall**: [[hybrid-search]] o búsqueda vectorial devuelve el top ~50–100.\n2. **Precisión**: el reranker puntúa cada par (consulta, chunk) y te quedas con el top 3–8.\n\nMenos chunks y mejores significa mejores respuestas *y* un prompt más corto y barato."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[User query] --> R[\"Hybrid retrieval<br/>top 50\"]\n  R --> X[\"Cross-encoder<br/>score each pair\"]\n  X --> K[Keep top 5]\n  K --> L[LLM answer]\n  I[(Vector + BM25 index)] -.-> R",
+    "caption": {
+      "en": "Stage 1 optimizes recall in milliseconds; stage 2 buys precision on a small set.",
+      "es": "La etapa 1 optimiza recall en milisegundos; la etapa 2 compra precisión sobre un conjunto pequeño."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Rerank 50 candidates with an open cross-encoder", "es": "Reordenar 50 candidatos con un cross-encoder abierto" },
+    "source": "from sentence_transformers import CrossEncoder\n\nreranker = CrossEncoder(\"BAAI/bge-reranker-v2-m3\")\n\ndef rerank(query: str, chunks: list[str], keep: int = 5) -> list[str]:\n    # One forward pass per (query, chunk) pair, batched\n    scores = reranker.predict([(query, c) for c in chunks])\n    ranked = sorted(zip(scores, chunks), reverse=True)\n    return [c for _, c in ranked[:keep]]\n\ncandidates = hybrid_search(query, k=50)   # stage 1: cheap recall\ncontext = rerank(query, candidates)        # stage 2: precision"
+  },
+  "example": {
+    "en": "A support bot is asked *\"How do I cancel **without** losing my data?\"*. Vector search ranks a chunk titled *\"Cancel your plan — data is deleted after 30 days\"* first because it is semantically close. The cross-encoder reads both texts together, notices the \"without losing data\" constraint, and promotes the *\"Export your data before cancelling\"* chunk from #14 to #1.",
+    "es": "A un bot de soporte le preguntan *\"¿Cómo cancelo **sin** perder mis datos?\"*. La búsqueda vectorial pone primero un chunk titulado *\"Cancela tu plan: los datos se borran a los 30 días\"* porque es semánticamente cercano. El cross-encoder lee ambos textos juntos, nota la restricción \"sin perder datos\" y sube el chunk *\"Exporta tus datos antes de cancelar\"* del puesto 14 al 1."
+  },
+  "pros": [
+    { "en": "Usually the single biggest quality jump you can add to a RAG pipeline.", "es": "Suele ser la mayor mejora de calidad que puedes agregar a un pipeline RAG." },
+    { "en": "Fewer chunks in the prompt: lower cost, less distraction for the LLM.", "es": "Menos chunks en el prompt: menor costo y menos distracción para el LLM." },
+    { "en": "Drop-in: no re-indexing needed, works over any first-stage retriever.", "es": "Se enchufa directo: no requiere reindexar y funciona sobre cualquier recuperador de primera etapa." }
+  ],
+  "cons": [
+    { "en": "Adds latency, roughly 50–300 ms for ~50 pairs depending on model and hardware.", "es": "Agrega latencia, aproximadamente 50–300 ms para ~50 pares según modelo y hardware." },
+    { "en": "Can't fix bad recall: if the right chunk isn't in the top 50, it's gone.", "es": "No arregla un mal recall: si el chunk correcto no está en el top 50, se perdió." },
+    { "en": "Another model to host or another API to pay and depend on.", "es": "Otro modelo que hospedar u otra API que pagar y de la que depender." }
+  ],
+  "whenToUse": {
+    "en": "Almost any production RAG where answer quality matters and you can afford ~100–200 ms more.",
+    "es": "Casi cualquier RAG en producción donde importe la calidad y puedas pagar ~100–200 ms más."
+  },
+  "whenNotToUse": {
+    "en": "Ultra-low-latency autocomplete, or when recall@50 is already the bottleneck — fix retrieval first.",
+    "es": "Autocompletado de latencia ultra baja, o cuando el cuello de botella es el recall@50: arregla primero la recuperación."
+  },
+  "numbers": [
+    { "en": "Typical shape: retrieve 50–100 → rerank → keep 3–8.", "es": "Forma típica: recuperar 50–100 → reordenar → conservar 3–8." },
+    { "en": "Anthropic measured contextual retrieval + reranking cutting top-20 retrieval failures by 67%.", "es": "Anthropic midió que contextual retrieval + reranking reduce en 67% las fallas de recuperación en el top 20." }
+  ],
+  "pitfalls": [
+    { "en": "Reranking a top-5: there's nothing left to reorder. Give it a wide pool.", "es": "Reordenar un top 5: no queda nada que reordenar. Dale un conjunto amplio." },
+    { "en": "Using an English-only reranker on multilingual data.", "es": "Usar un reranker solo en inglés sobre datos multilingües." },
+    { "en": "Not measuring: track recall@k before and nDCG/answer quality after the reranker.", "es": "No medir: sigue recall@k antes y nDCG/calidad de respuesta después del reranker." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why not just use the cross-encoder for the whole search?", "es": "¿Por qué no usar el cross-encoder para toda la búsqueda?" },
+      "a": {
+        "en": "Because it can't pre-compute anything: it must run the model once per (query, document) pair at query time. Over a million documents that's a million forward passes per query. Bi-encoders let you embed documents offline and do ANN search in milliseconds, so I use them for recall and spend the cross-encoder's cost only on the top 50.",
+        "es": "Porque no puede precalcular nada: debe correr el modelo una vez por cada par (consulta, documento) en tiempo de consulta. Sobre un millón de documentos son un millón de pasadas por consulta. Los bi-encoders permiten generar los embeddings offline y hacer búsqueda ANN en milisegundos, así que los uso para recall y gasto el costo del cross-encoder solo en el top 50."
+      }
+    },
+    {
+      "q": { "en": "Your RAG answers are wrong although the right document exists. Where do you look?", "es": "Tu RAG responde mal aunque el documento correcto existe. ¿Dónde miras?" },
+      "a": {
+        "en": "I split the problem. First, is the right chunk in the top-50 candidates (recall@50)? If not, it's chunking, embeddings or missing lexical search — add hybrid search. If it is there but not in the final top-5, ranking is the issue — add or tune a reranker. If it reaches the prompt and the answer is still wrong, it's generation: prompt, context order or model.",
+        "es": "Separo el problema. Primero, ¿el chunk correcto está en los 50 candidatos (recall@50)? Si no, es chunking, embeddings o falta de búsqueda léxica: agrego búsqueda híbrida. Si está pero no llega al top 5 final, el problema es el ranking: agrego o ajusto un reranker. Si llega al prompt y aun así la respuesta es mala, es generación: prompt, orden del contexto o modelo."
+      }
+    }
+  ],
+  "related": ["hybrid-search", "embedding-models", "rag-evaluation", "late-interaction", "contextual-retrieval"],
+  "sources": [
+    { "title": "Anthropic — Introducing Contextual Retrieval", "url": "https://www.anthropic.com/news/contextual-retrieval" },
+    { "title": "Sentence Transformers — Cross-Encoders", "url": "https://www.sbert.net/examples/applications/cross-encoder/README.html" }
+  ]
+}

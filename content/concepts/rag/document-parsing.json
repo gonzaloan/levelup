@@ -1,0 +1,87 @@
+{
+  "id": "document-parsing",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Document ingestion & parsing", "es": "Ingesta y parsing de documentos" },
+  "aliases": ["document parsing", "ingestion pipeline", "PDF parsing", "OCR", "layout analysis", "table extraction", "Docling", "Unstructured"],
+  "tldr": {
+    "en": "Turn messy PDFs, slides, scans and web pages into clean, structured text with metadata before chunking; most RAG quality problems start here, not in the model.",
+    "es": "Convierte PDFs desordenados, presentaciones, escaneos y páginas web en texto limpio y estructurado, con metadatos, antes del chunking; la mayoría de los problemas de calidad de un RAG empiezan aquí, no en el modelo."
+  },
+  "analogy": {
+    "en": "Handing a brilliant analyst a report that went through a shredder and was taped back out of order: the analysis can only be as good as the pages they can read.",
+    "es": "Darle a una analista brillante un informe que pasó por la trituradora y lo pegaron en desorden: su análisis solo puede ser tan bueno como las páginas que logra leer."
+  },
+  "explain": {
+    "en": "Parsing converts source files into text the rest of the pipeline can use, keeping **structure** (headings, lists, tables, reading order) and **metadata** (source, title, date, author, permissions). It is unglamorous and it is where most RAG effort goes: garbage in, garbage out.\n\nWhat breaks:\n\n- **PDFs** store glyphs at coordinates, not paragraphs. Naive extraction interleaves two-column layouts and repeats headers, footers and page numbers on every page.\n- **Tables** flattened to a stream of cells lose which number belongs to which row and column.\n- **Scans and photos** have no text layer: they need OCR.\n- **Slides** are fragments; the meaning sits in charts and speaker notes.\n- **HTML** is mostly boilerplate: navigation, cookie banners, footers.\n\nTooling, cheapest to richest: plain text extractors (`pypdf`, PyMuPDF); layout-aware open-source parsers (**Unstructured**, **Docling**); managed services (**Azure AI Document Intelligence**, **AWS Textract**, **LlamaParse**); and **vision LLMs** that read page images directly — best on complex layouts, but slower, pricier and able to hallucinate text.\n\nEmit Markdown with headings and tables preserved so [[chunking]] can split on structure, and copy the ACL into every chunk for [[permission-aware-retrieval]].",
+    "es": "El parsing convierte los archivos fuente en texto que el resto del pipeline puede usar, conservando la **estructura** (títulos, listas, tablas, orden de lectura) y los **metadatos** (fuente, título, fecha, autor, permisos). Es poco glamoroso y es donde se va la mayor parte del esfuerzo de un RAG: si entra basura, sale basura.\n\nQué se rompe:\n\n- Los **PDFs** guardan glifos en coordenadas, no párrafos. Una extracción ingenua mezcla las dos columnas de un layout y repite encabezados, pies de página y números de página en cada hoja.\n- Las **tablas** aplanadas en un flujo de celdas pierden a qué fila y columna pertenece cada número.\n- Los **escaneos y fotos** no tienen capa de texto: necesitan OCR.\n- Las **presentaciones** son fragmentos; el significado está en los gráficos y en las notas del orador.\n- El **HTML** es casi todo relleno: navegación, avisos de cookies, pies de página.\n\nHerramientas, de la más barata a la más completa: extractores de texto plano (`pypdf`, PyMuPDF); parsers open source que entienden el layout (**Unstructured**, **Docling**); servicios administrados (**Azure AI Document Intelligence**, **AWS Textract**, **LlamaParse**); y **LLMs con visión** que leen la imagen de la página directamente: los mejores con layouts complejos, pero más lentos, más caros y capaces de alucinar texto.\n\nGenera Markdown con títulos y tablas preservados para que el [[chunking]] pueda cortar por estructura, y copia la ACL en cada chunk para [[permission-aware-retrieval]]."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  S[\"PDF, DOCX, HTML, scans\"] --> T{File type}\n  T -->|digital| L[\"Layout parser<br/>Docling, Unstructured\"]\n  T -->|scanned| O[\"OCR or vision LLM\"]\n  T -->|web| B[Strip boilerplate]\n  L --> M[\"Markdown + metadata\"]\n  O --> M\n  B --> M\n  M --> Q{Quality check}\n  Q -->|fail| R[Human review queue]\n  Q -->|pass| C[To chunking]",
+    "caption": {
+      "en": "Route by document type, normalize everything to Markdown with source, date and ACL attached, and gate on a quality check before chunking.",
+      "es": "Enruta según el tipo de documento, normaliza todo a Markdown con fuente, fecha y ACL, y pasa un control de calidad antes del chunking."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Parse a PDF to Markdown with Docling, keep metadata", "es": "Parsear un PDF a Markdown con Docling y conservar metadatos" },
+    "source": "from pathlib import Path\nfrom docling.document_converter import DocumentConverter\n\nconverter = DocumentConverter()  # layout model + table structure + OCR\n\ndef parse(path: Path, acl: list[str]) -> dict:\n    doc = converter.convert(path).document\n    md = doc.export_to_markdown()  # headings as #, tables as Markdown tables\n\n    # Cheap quality gate: almost no text per page usually means a scan OCR missed\n    chars_per_page = len(md) / max(len(doc.pages), 1)\n    if chars_per_page < 200:\n        raise ValueError(f\"{path.name}: {chars_per_page:.0f} chars/page, send to review\")\n\n    return {\n        \"text\": md,\n        \"source\": str(path),\n        \"modified\": path.stat().st_mtime,  # enables freshness filters later\n        \"acl\": acl,  # copied into every chunk for permission filtering\n    }"
+  },
+  "example": {
+    "en": "A bank indexes 3,000 annual-report PDFs with `pypdf`. Users ask *\"What was the 2023 net interest margin?\"* and get wrong figures: two-column pages came out with sentences interleaved, and the financial tables became a flat run of numbers with no row labels. Switching to a layout-aware parser that emits tables as Markdown, and dropping repeated headers and footers, fixes most of it — with no change to embeddings, prompt or model. The scanned pages go to OCR, and any page under 200 characters is flagged for review.",
+    "es": "Un banco indexa 3,000 PDFs de informes anuales con `pypdf`. Los usuarios preguntan *\"¿Cuál fue el margen de interés neto de 2023?\"* y reciben cifras equivocadas: las páginas a dos columnas salieron con las oraciones entrelazadas y las tablas financieras quedaron como una tira de números sin etiquetas de fila. Cambiar a un parser que entiende el layout y exporta las tablas en Markdown, y eliminar los encabezados y pies repetidos, arregla casi todo, sin tocar embeddings, prompt ni modelo. Las páginas escaneadas pasan por OCR y cualquier página con menos de 200 caracteres se marca para revisión."
+  },
+  "pros": [
+    { "en": "Fixing parsing often helps more than swapping the embedding model or the LLM.", "es": "Arreglar el parsing suele ayudar más que cambiar el modelo de embeddings o el LLM." },
+    { "en": "Preserved structure enables structure-aware chunking and precise citations (section, page).", "es": "La estructura preservada permite un chunking por estructura y citas precisas (sección, página)." },
+    { "en": "Metadata captured here powers filters, freshness and access control downstream.", "es": "Los metadatos capturados aquí habilitan filtros, frescura y control de acceso más adelante." }
+  ],
+  "cons": [
+    { "en": "Layout models and OCR are far slower than text extraction; large backlogs need GPUs or a paid API.", "es": "Los modelos de layout y el OCR son mucho más lentos que la extracción de texto; los grandes volúmenes necesitan GPUs o una API paga." },
+    { "en": "Vision-LLM parsing can hallucinate or silently drop text.", "es": "El parsing con LLMs de visión puede alucinar o perder texto sin avisar." },
+    { "en": "No parser wins on every format, so you end up routing by document type.", "es": "Ningún parser gana en todos los formatos, así que terminas enrutando según el tipo de documento." }
+  ],
+  "whenToUse": {
+    "en": "Always: every RAG pipeline has this step. Invest more when sources are PDFs with tables, multi-column layouts, scans or slides, or when answers depend on exact numbers.",
+    "es": "Siempre: todo pipeline RAG tiene este paso. Invierte más cuando las fuentes son PDFs con tablas, layouts a varias columnas, escaneos o presentaciones, o cuando las respuestas dependen de cifras exactas."
+  },
+  "whenNotToUse": {
+    "en": "Skip heavy layout models for clean Markdown, plain HTML docs or DOCX with real heading styles: a simple converter is faster, cheaper and deterministic.",
+    "es": "No uses modelos de layout pesados para Markdown limpio, documentación en HTML simple o DOCX con estilos de título reales: un conversor sencillo es más rápido, más barato y determinista."
+  },
+  "numbers": [
+    { "en": "Managed OCR lists at ~$1.50 per 1,000 pages; layout or table extraction ~$10–15 per 1,000 (Azure, AWS).", "es": "El OCR administrado cuesta ~US$1.50 por cada 1,000 páginas; la extracción de layout o tablas, ~US$10–15 por cada 1,000 (Azure, AWS)." },
+    { "en": "Under ~100–200 extracted characters per page usually means a scan that needs OCR.", "es": "Menos de ~100–200 caracteres extraídos por página suele indicar un escaneo que necesita OCR." },
+    { "en": "Read 20–50 parsed documents by eye before tuning anything downstream.", "es": "Lee a ojo 20–50 documentos parseados antes de ajustar cualquier cosa que venga después." }
+  ],
+  "pitfalls": [
+    { "en": "Never inspecting the output: teams tune retrieval for weeks on text that is already scrambled.", "es": "No inspeccionar nunca la salida: hay equipos que ajustan la recuperación durante semanas sobre texto que ya viene revuelto." },
+    { "en": "Dropping source, date and permissions at parse time — you can't filter or cite later.", "es": "Perder la fuente, la fecha y los permisos al parsear: después no puedes filtrar ni citar." },
+    { "en": "Keeping repeated headers, footers and legal disclaimers: they pollute every chunk's embedding.", "es": "Conservar encabezados, pies de página y avisos legales repetidos: contaminan el embedding de cada chunk." },
+    { "en": "Re-parsing the whole corpus on every run instead of hashing files and re-processing only changes.", "es": "Volver a parsear todo el corpus en cada corrida en lugar de calcular un hash por archivo y procesar solo lo que cambió." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your RAG over PDFs returns wrong numbers from financial tables. What do you do?", "es": "Tu RAG sobre PDFs devuelve cifras equivocadas de tablas financieras. ¿Qué haces?" },
+      "a": {
+        "en": "I look at the parsed output before touching the model. Naive extractors usually turn tables into a flat sequence of numbers with no row or column labels, so the retriever can't match them and the LLM can't read them. I'd switch to a layout-aware parser that exports tables as Markdown or HTML, keep each table with its caption and section heading in one chunk, and for wide tables also index one line per row, like \"2023 · net interest margin · value\". Then I add eval questions that target table values specifically.",
+        "es": "Miro la salida del parsing antes de tocar el modelo. Los extractores ingenuos suelen convertir las tablas en una secuencia plana de números sin etiquetas de fila ni de columna, así que el recuperador no las encuentra y el LLM no las entiende. Cambiaría a un parser que entienda el layout y exporte las tablas en Markdown o HTML, mantendría cada tabla con su título y el encabezado de su sección en un mismo chunk y, para tablas anchas, indexaría además una línea por fila, como \"2023 · margen de interés neto · valor\". Después agrego preguntas de evaluación enfocadas en valores de tablas."
+      }
+    },
+    {
+      "q": { "en": "Open-source parser, managed service or vision LLM: how do you choose?", "es": "Parser open source, servicio administrado o LLM con visión: ¿cómo eliges?" },
+      "a": {
+        "en": "By document mix, volume and risk. I sample ~50 representative documents and score each option on structure fidelity and text accuracy. Clean digital PDFs and DOCX: open source like Docling or Unstructured, self-hosted, deterministic and cheap. Scans, forms and dense tables: a managed service like Azure Document Intelligence or Textract, priced per page. Vision LLMs for the hardest layouts, such as charts and diagrams, but I verify them against the text layer because they can hallucinate. In practice I route by document type rather than pick a single tool.",
+        "es": "Según la mezcla de documentos, el volumen y el riesgo. Tomo ~50 documentos representativos y evalúo cada opción en fidelidad de estructura y exactitud del texto. PDFs digitales limpios y DOCX: open source como Docling o Unstructured, autohospedado, determinista y barato. Escaneos, formularios y tablas densas: un servicio administrado como Azure Document Intelligence o Textract, que cobra por página. LLMs con visión para los layouts más difíciles, como gráficos y diagramas, pero los verifico contra la capa de texto porque pueden alucinar. En la práctica enruto según el tipo de documento en vez de elegir una sola herramienta."
+      }
+    }
+  ],
+  "related": ["chunking", "rag", "permission-aware-retrieval", "index-lifecycle", "multimodal", "case-document-extraction"],
+  "sources": [
+    { "title": "Auer et al. (2024) — Docling Technical Report", "url": "https://arxiv.org/abs/2408.09869" },
+    { "title": "Unstructured — Documentation", "url": "https://docs.unstructured.io" },
+    { "title": "Microsoft — Azure AI Document Intelligence overview", "url": "https://learn.microsoft.com/en-us/azure/ai-services/document-intelligence/overview" },
+    { "title": "AWS — Amazon Textract", "url": "https://aws.amazon.com/textract/" }
+  ]
+}

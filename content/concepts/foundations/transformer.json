@@ -1,0 +1,89 @@
+{
+  "id": "transformer",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Transformer architecture", "es": "Arquitectura Transformer" },
+  "aliases": ["transformer", "decoder-only", "GPT architecture", "transformer block", "residual stream", "RoPE", "LM head", "Attention Is All You Need"],
+  "tldr": {
+    "en": "A decoder-only transformer embeds tokens, runs them through N identical blocks of attention plus MLP joined by residuals, and outputs next-token logits. It trains on all positions in parallel, which is why it beat RNNs.",
+    "es": "Un transformer decoder-only convierte los tokens en vectores, los pasa por N bloques idénticos de atención más MLP unidos por conexiones residuales y produce los logits del siguiente token. Entrena todas las posiciones en paralelo: por eso le ganó a las RNN."
+  },
+  "analogy": {
+    "en": "An assembly line of identical stations: every token rides a conveyor belt (the residual stream), and each station reads the belt, consults the other tokens, and adds a small edit before passing it on.",
+    "es": "Una línea de ensamblaje de estaciones idénticas: cada token viaja en una cinta (el residual stream) y cada estación lee la cinta, consulta a los otros tokens y agrega una pequeña corrección antes de pasarla."
+  },
+  "explain": {
+    "en": "A **transformer** is the neural network behind every modern LLM. Chat models are **decoder-only**: they predict the next token from the ones before it ([[encoder-vs-decoder]]).\n\nOne forward pass:\n\n1. **Embed**: each token ID becomes a vector of width `d_model` (4,096 in Llama 3 8B).\n2. **Attention sublayer**: each token mixes in information from earlier tokens ([[attention]]); position enters via **RoPE**, which rotates queries and keys.\n3. **MLP sublayer**: a per-token feed-forward network that expands the vector ~3.5–4×, applies a nonlinearity and projects back. It holds two-thirds or more of each block's parameters.\n4. **Unembed**: a final norm and the **LM head** produce **logits** over the vocabulary; [[sampling]] picks the next token, which is appended for the next pass.\n\nSteps 2–3 form one **block**, repeated N times (32 in Llama 3 8B). Each sublayer is wrapped as `x = x + f(norm(x))`: this **residual stream**, which every block reads and adds to, keeps deep stacks trainable.\n\n**Why it beat RNNs:** an RNN processes token *t* after token *t−1*, so training is sequential. A transformer with a causal mask predicts every position at once with large matrix multiplies, ideal for GPUs; that made training on trillions of tokens practical. Generation is still one token at a time, hence the [[kv-cache]].",
+    "es": "Un **transformer** es la red neuronal detrás de todo LLM moderno. Los modelos de chat son **decoder-only**: predicen el siguiente token a partir de los anteriores ([[encoder-vs-decoder]]).\n\nUna pasada hacia adelante (forward pass):\n\n1. **Embedding**: cada ID de token se vuelve un vector de ancho `d_model` (4,096 en Llama 3 8B).\n2. **Subcapa de atención**: cada token incorpora información de los tokens anteriores ([[attention]]); la posición entra con **RoPE**, que rota queries y keys.\n3. **Subcapa MLP**: una red feed-forward por token que expande el vector ~3.5–4×, aplica una no linealidad y lo proyecta de vuelta. Concentra dos tercios o más de los parámetros de cada bloque.\n4. **Salida**: una normalización final y el **LM head** producen **logits** sobre el vocabulario; el [[sampling]] elige el siguiente token, que se agrega para la siguiente pasada.\n\nLos pasos 2–3 forman un **bloque**, que se repite N veces (32 en Llama 3 8B). Cada subcapa va envuelta como `x = x + f(norm(x))`: este **residual stream**, que cada bloque lee y al que suma, mantiene entrenables las pilas profundas.\n\n**Por qué le ganó a las RNN:** una RNN procesa el token *t* después del *t−1*, así que el entrenamiento es secuencial. Un transformer con máscara causal predice todas las posiciones a la vez con grandes multiplicaciones de matrices, ideales para GPUs; eso hizo práctico entrenar con billones de tokens. La generación sigue siendo de a un token, de ahí el [[kv-cache]]."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  T[Token IDs] --> E[Embedding lookup]\n  E --> N1[RMSNorm]\n  N1 --> A[\"Causal self-attention<br/>with RoPE\"]\n  A --> R1[Add residual]\n  E -.->|residual| R1\n  R1 --> N2[RMSNorm]\n  N2 --> M[\"MLP (SwiGLU)\"]\n  M --> R2[Add residual]\n  R1 -.->|residual| R2\n  R2 -->|after N blocks| F[Final norm]\n  F --> H[\"LM head<br/>vocab logits\"]\n  H --> S[Sample next token]\n  S -.->|append and repeat| T",
+    "caption": {
+      "en": "One block = attention + MLP, each added back onto the residual stream; Llama 3 8B stacks 32 of them.",
+      "es": "Un bloque = atención + MLP, cada uno sumado de vuelta al residual stream; Llama 3 8B apila 32."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Count where Llama 3 8B's parameters live", "es": "Contar dónde viven los parámetros de Llama 3 8B" },
+    "source": "# Where do a decoder-only transformer's parameters live?\n# Llama 3 8B config (from its published config.json)\nd, layers, ffn, vocab = 4096, 32, 14336, 128256\nn_heads, n_kv_heads = 32, 8          # GQA: 8 K/V heads shared by 32 query heads\nhead_dim = d // n_heads              # 128\n\nattn = 2 * d * d + 2 * d * n_kv_heads * head_dim  # Wq, Wo full size; Wk, Wv smaller\nmlp = 3 * d * ffn                                 # SwiGLU: gate, up, down projections\nper_block = attn + mlp                            # norms are negligible\nemb = 2 * vocab * d                               # input embeddings + untied LM head\n\ntotal = layers * per_block + emb\nfor name, n in [(\"attention\", layers * attn), (\"MLP\", layers * mlp), (\"embed+head\", emb)]:\n    print(f\"{name:11} {n / 1e9:5.2f}B  {n / total:4.0%}\")  # ~1.34B, ~5.64B, ~1.05B\nprint(f\"{'total':11} {total / 1e9:5.2f}B\")                 # ~8.03B\nprint(f\"MLP share of each block: {mlp / per_block:.0%}\")   # ~81%\n\n# Rules of thumb that fall out of the count\nprint(f\"forward pass ≈ {2 * total / 1e9:.0f} GFLOPs per token\")  # ~2 x params\nprint(f\"bf16 weights ≈ {2 * total / 1e9:.0f} GB\")                # 2 bytes per param"
+  },
+  "example": {
+    "en": "You send a 2,000-token prompt to Llama 3 8B and get a 300-token answer. **Prefill**: all 2,000 positions flow through the 32 blocks in one parallel pass, the same trick that makes training fast; it sets time-to-first-token. **Decode**: each of the 300 output tokens needs its own pass through all 32 blocks, because each depends on the one before. Every pass reads all ~16 GB of bf16 weights from GPU memory, so on an H100 (~3.35 TB/s) a single stream tops out near ~200 tokens/s. Decode is bandwidth-bound, which is why batching and the [[kv-cache]] matter.",
+    "es": "Envías un prompt de 2,000 tokens a Llama 3 8B y recibes una respuesta de 300 tokens. **Prefill**: las 2,000 posiciones pasan por los 32 bloques en una sola pasada paralela, el mismo truco que hace rápido el entrenamiento; esto define el time-to-first-token. **Decode**: cada uno de los 300 tokens de salida necesita su propia pasada por los 32 bloques, porque cada uno depende del anterior. Cada pasada lee los ~16 GB de pesos en bf16 desde la memoria de la GPU, así que en una H100 (~3.35 TB/s) un solo flujo llega como máximo a ~200 tokens/s. El decode está limitado por ancho de banda, por eso importan el batching y el [[kv-cache]]."
+  },
+  "pros": [
+    { "en": "Trains in parallel across the sequence, so it scales with GPUs and data.", "es": "Entrena en paralelo a lo largo de la secuencia, así que escala con GPUs y datos." },
+    { "en": "Any token reaches any earlier token in one step: no long-range fading like RNNs.", "es": "Cualquier token llega a cualquier token anterior en un paso: sin el desvanecimiento a larga distancia de las RNN." },
+    { "en": "One generic block, stacked and widened, covers text, code, images and audio.", "es": "Un bloque genérico, apilado y ensanchado, sirve para texto, código, imágenes y audio." }
+  ],
+  "cons": [
+    { "en": "Attention cost grows with the square of sequence length.", "es": "El costo de la atención crece con el cuadrado del largo de la secuencia." },
+    { "en": "Generation is sequential and memory-bandwidth-bound: one full forward pass per output token.", "es": "La generación es secuencial y está limitada por el ancho de banda de memoria: una pasada completa por cada token de salida." },
+    { "en": "KV cache memory grows with context length × batch size, capping concurrency.", "es": "La memoria del KV cache crece con largo de contexto × tamaño de batch, y eso limita la concurrencia." }
+  ],
+  "whenToUse": {
+    "en": "It's the default for language, code and most multimodal models. As an architect, use this mental model to reason about cost, latency, GPU memory, MoE, quantization and fine-tuning choices.",
+    "es": "Es la opción por defecto para lenguaje, código y la mayoría de los modelos multimodales. Como arquitecto, usa este modelo mental para razonar sobre costo, latencia, memoria de GPU, MoE, cuantización y decisiones de fine-tuning."
+  },
+  "whenNotToUse": {
+    "en": "Small tabular or time-series problems where gradient-boosted trees win, or tight edge budgets where a tiny classifier or a regex is enough. Very long streams may favor state-space or hybrid models.",
+    "es": "Problemas tabulares o de series de tiempo pequeños donde ganan los árboles con gradient boosting, o presupuestos de edge ajustados donde basta un clasificador diminuto o una regex. Los flujos muy largos pueden favorecer modelos state-space o híbridos."
+  },
+  "numbers": [
+    { "en": "Params ≈ 12 × layers × d_model² for a classic block; GPT-3: 12 × 96 × 12,288² ≈ 174B.", "es": "Parámetros ≈ 12 × capas × d_model² en un bloque clásico; GPT-3: 12 × 96 × 12,288² ≈ 174B." },
+    { "en": "Llama 3 8B: 32 layers, d_model 4,096, 32 query / 8 KV heads, MLP width 14,336, vocab 128,256.", "es": "Llama 3 8B: 32 capas, d_model 4,096, 32 heads de query / 8 de KV, ancho del MLP 14,336, vocabulario 128,256." },
+    { "en": "MLPs hold ~2/3 of each block classically; ~81% in Llama 3 8B (SwiGLU + GQA), ~70% of all params.", "es": "Los MLP tienen ~2/3 de cada bloque en el diseño clásico; ~81% en Llama 3 8B (SwiGLU + GQA), ~70% del total." },
+    { "en": "Compute: ~2 × params FLOPs per token forward; ~6 × params per token to train.", "es": "Cómputo: ~2 × parámetros FLOPs por token en el forward; ~6 × parámetros por token para entrenar." },
+    { "en": "Weights memory = params × bytes per param: 8B in bf16 ≈ 16 GB.", "es": "Memoria de pesos = parámetros × bytes por parámetro: 8B en bf16 ≈ 16 GB." }
+  ],
+  "pitfalls": [
+    { "en": "Picturing the model writing the whole answer at once: every output token is a separate forward pass.", "es": "Imaginar que el modelo escribe toda la respuesta de una vez: cada token de salida es una pasada separada." },
+    { "en": "Sizing GPUs from weights alone, ignoring KV cache and activations.", "es": "Dimensionar GPUs solo por los pesos, ignorando el KV cache y las activaciones." },
+    { "en": "Using a decoder-only chat model where an encoder (BERT-style) is cheaper and better: embeddings, classification.", "es": "Usar un modelo de chat decoder-only donde un encoder (tipo BERT) es más barato y mejor: embeddings, clasificación." },
+    { "en": "Assuming quality scales with parameters alone; data quantity and quality matter as much.", "es": "Suponer que la calidad crece solo con los parámetros; la cantidad y la calidad de los datos importan igual." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why did transformers replace RNNs and LSTMs?", "es": "¿Por qué los transformers reemplazaron a las RNN y las LSTM?" },
+      "a": {
+        "en": "Mainly training parallelism. An RNN computes token t from the hidden state of token t−1, so a 4k-token sequence is 4k sequential steps. A transformer with a causal mask computes all positions in one pass of large matrix multiplies, which is exactly what GPUs are built for, and that made training on trillions of tokens feasible. Attention also gives every token a direct path to every earlier one, so long-range dependencies don't fade. The price is quadratic attention in sequence length, and inference is still sequential, so decode is memory-bandwidth-bound and needs a KV cache.",
+        "es": "Sobre todo por el paralelismo en el entrenamiento. Una RNN calcula el token t a partir del estado oculto del token t−1, así que una secuencia de 4k tokens son 4k pasos secuenciales. Un transformer con máscara causal calcula todas las posiciones en una pasada de grandes multiplicaciones de matrices, justo para lo que están hechas las GPUs, y eso hizo viable entrenar con billones de tokens. Además, la atención le da a cada token un camino directo a todos los anteriores, así que las dependencias lejanas no se desvanecen. El precio es una atención cuadrática en el largo de la secuencia, y la inferencia sigue siendo secuencial: el decode queda limitado por el ancho de banda de memoria y necesita un KV cache."
+      }
+    },
+    {
+      "q": { "en": "Where do a model's parameters live, and why should an architect care?", "es": "¿Dónde están los parámetros de un modelo y por qué debería importarle a un arquitecto?" },
+      "a": {
+        "en": "Mostly in the MLPs: about two-thirds of each block in the classic design and ~81% in Llama 3 8B, with embeddings and LM head around 13%. That explains several choices. Mixture-of-experts replaces exactly that MLP with many experts and routes each token to a few, so total parameters grow while compute per token doesn't. LoRA works best applied to all linear layers, MLPs included, which was a QLoRA finding. And memory math stays simple: parameters × bytes per weight, so 8B in bf16 is ~16 GB before any KV cache.",
+        "es": "Sobre todo en los MLP: cerca de dos tercios de cada bloque en el diseño clásico y ~81% en Llama 3 8B, con embeddings y LM head alrededor del 13%. Eso explica varias decisiones. Mixture-of-experts reemplaza justo ese MLP por muchos expertos y manda cada token a unos pocos, así que los parámetros totales crecen sin que crezca el cómputo por token. LoRA funciona mejor aplicado a todas las capas lineales, incluidos los MLP, un hallazgo de QLoRA. Y la cuenta de memoria es simple: parámetros × bytes por peso, así que 8B en bf16 son ~16 GB antes de cualquier KV cache."
+      }
+    }
+  ],
+  "related": ["attention", "tokens", "kv-cache", "moe", "encoder-vs-decoder", "prefill-decode"],
+  "sources": [
+    { "title": "Vaswani et al. — Attention Is All You Need", "url": "https://arxiv.org/abs/1706.03762" },
+    { "title": "Su et al. — RoFormer: Enhanced Transformer with Rotary Position Embedding", "url": "https://arxiv.org/abs/2104.09864" },
+    { "title": "Llama Team, Meta — The Llama 3 Herd of Models", "url": "https://arxiv.org/abs/2407.21783" },
+    { "title": "Jay Alammar — The Illustrated Transformer", "url": "https://jalammar.github.io/illustrated-transformer/" }
+  ]
+}

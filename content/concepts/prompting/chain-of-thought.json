@@ -1,0 +1,89 @@
+{
+  "id": "chain-of-thought",
+  "domain": "prompting",
+  "level": "core",
+  "title": { "en": "Chain-of-thought (CoT)", "es": "Chain-of-thought (CoT)" },
+  "aliases": ["CoT", "think step by step", "zero-shot CoT", "reasoning trace", "scratchpad", "extended thinking", "reasoning tokens"],
+  "tldr": {
+    "en": "Have the model write intermediate steps before the answer: it buys accuracy on multi-step problems at the cost of tokens and latency. Reasoning models do it natively, so set their effort knob instead.",
+    "es": "Haz que el modelo escriba los pasos intermedios antes de la respuesta: gana precisión en problemas de varios pasos a cambio de tokens y latencia. Los modelos de razonamiento lo hacen solos, así que ajusta su nivel de esfuerzo."
+  },
+  "analogy": {
+    "en": "Doing long division on paper instead of in your head: slower and uses more paper, but you make fewer mistakes. And the scratch work is not what you hand in.",
+    "es": "Hacer una división larga en papel en vez de mentalmente: es más lento y gasta más hoja, pero te equivocas menos. Y el borrador no es lo que entregas."
+  },
+  "explain": {
+    "en": "**Chain-of-thought** means the model writes intermediate reasoning *before* the final answer. Every generated token is extra computation that later tokens can condition on, so a problem with several dependent steps (math, logic, multi-constraint decisions) stops being a single leap.\n\nTwo ways to trigger it:\n- **Few-shot CoT** (Wei et al. 2022): examples that show worked reasoning.\n- **Zero-shot CoT** (Kojima et al. 2022): just add *\"Let's think step by step.\"*\n\n**Reasoning models** (OpenAI o-series, Claude with extended thinking, DeepSeek-R1, Gemini thinking models) are trained with RL to do this natively. Don't tell them to think step by step: set depth with the provider's knob (`reasoning_effort`, a thinking budget) and spend the prompt on the goal and constraints. See [[reasoning-models]].\n\nIn production:\n- **Separate thinking from the answer** with `<thinking>` and `<answer>` tags, or a `reasoning` field before `answer` in a schema; parse only the answer.\n- **Don't show raw reasoning to users.** It can hold wrong turns, leaked instructions or unsafe text; log it for debugging and evals.\n- **Reasoning goes first.** An explanation written after the answer is a rationalization and buys no accuracy.\n- **It is not a faithful explanation.** Models often omit what actually drove the answer (Turpin et al. 2023), so never use it as audit evidence.",
+    "es": "**Chain-of-thought** significa que el modelo escribe un razonamiento intermedio *antes* de la respuesta final. Cada token generado es cómputo extra en el que los tokens siguientes se pueden apoyar, así que un problema con varios pasos dependientes (matemática, lógica, decisiones con muchas restricciones) deja de ser un solo salto.\n\nDos formas de activarlo:\n- **Few-shot CoT** (Wei et al. 2022): ejemplos que muestran el razonamiento resuelto.\n- **Zero-shot CoT** (Kojima et al. 2022): basta con agregar *\"Pensemos paso a paso\"* (en el paper, *\"Let's think step by step\"*).\n\nLos **modelos de razonamiento** (serie o de OpenAI, Claude con extended thinking, DeepSeek-R1, los modelos thinking de Gemini) están entrenados con RL para hacerlo solos. No les pidas pensar paso a paso: ajusta la profundidad con la perilla del proveedor (`reasoning_effort`, un presupuesto de thinking) y usa el prompt para el objetivo y las restricciones. Mira [[reasoning-models]].\n\nEn producción:\n- **Separa el razonamiento de la respuesta** con etiquetas `<thinking>` y `<answer>`, o con un campo `reasoning` antes de `answer` en un esquema; parsea solo la respuesta.\n- **No muestres el razonamiento crudo a los usuarios.** Puede tener caminos equivocados, instrucciones filtradas o texto inseguro; guárdalo en logs para depurar y evaluar.\n- **El razonamiento va primero.** Una explicación escrita después de la respuesta es una racionalización y no mejora la precisión.\n- **No es una explicación fiel.** Los modelos suelen omitir lo que de verdad decidió la respuesta (Turpin et al. 2023), así que nunca la uses como evidencia de auditoría."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[Task] --> D{Reasoning model?}\n  D -->|yes| E[\"Set effort or budget<br/>no CoT instruction\"]\n  D -->|no| C[\"Prompt: reason in<br/>thinking tags\"]\n  E --> M[LLM]\n  C --> M\n  M --> P[Parse output]\n  P -->|reasoning| L[\"Logs + evals<br/>(not shown)\"]\n  P -->|answer| U[User]",
+    "caption": {
+      "en": "Instruct CoT only on non-reasoning models; either way, parse out the answer and keep the reasoning out of the UI.",
+      "es": "Pide CoT solo a modelos que no razonan por sí mismos; en ambos casos, extrae la respuesta y deja el razonamiento fuera de la UI."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Zero-shot CoT with tagged reasoning and answer", "es": "CoT zero-shot con razonamiento y respuesta etiquetados" },
+    "source": "import re\nimport anthropic\n\nclient = anthropic.Anthropic()\nMODEL = \"claude-haiku-4-5\"  # any chat model\n\nPROMPT = \"\"\"{question}\n\nThink through the problem step by step inside <thinking> tags.\nThen give only the final result inside <answer> tags.\"\"\"\n\ndef solve(question: str) -> tuple[str, str]:\n    r = client.messages.create(\n        model=MODEL,\n        max_tokens=1500,  # headroom: the reasoning eats tokens before <answer>\n        messages=[{\"role\": \"user\", \"content\": PROMPT.format(question=question)}],\n    )\n    text = r.content[0].text\n    answer = re.search(r\"<answer>(.*?)</answer>\", text, re.S)\n    thinking = re.search(r\"<thinking>(.*?)</thinking>\", text, re.S)\n    if not answer:  # truncated or format ignored: retry or flag, never guess\n        raise ValueError(\"no <answer> block\")\n    # Log the reasoning for debugging and evals; show the user only the answer\n    return answer.group(1).strip(), thinking.group(1) if thinking else \"\"\n\n# Reasoning mode: drop the instruction and set a budget instead, e.g.\n# client.messages.create(model=MODEL, max_tokens=8000,\n#     thinking={\"type\": \"enabled\", \"budget_tokens\": 4000}, messages=[...])"
+  },
+  "example": {
+    "en": "A billing bot gets: *\"Annual plan, $240, cancelled after 5 full months; refund the unused months minus a $20 fee.\"* Asked for just the number, a small non-reasoning model can jump to a plausible wrong figure. With CoT inside `<thinking>`: $240 / 12 = $20 a month; 7 unused months = $140; minus $20 = **$120**. The trail costs ~100 extra output tokens (~1–2 s at typical decode speeds). The user sees only *$120*; the steps go to logs, where an eval can check each one.",
+    "es": "Un bot de facturación recibe: *\"Plan anual de $240, cancelado después de 5 meses completos; devuelve los meses no usados menos un cargo de $20.\"* Si le pides solo el número, un modelo chico sin razonamiento puede saltar a una cifra plausible pero incorrecta. Con CoT dentro de `<thinking>`: $240 / 12 = $20 al mes; 7 meses sin usar = $140; menos $20 = **$120**. El razonamiento cuesta ~100 tokens extra de salida (~1–2 s a velocidades típicas de decodificación). El usuario ve solo *$120*; los pasos van a los logs, donde una eval puede revisar cada uno."
+  },
+  "pros": [
+    { "en": "Large accuracy gains on multi-step math, logic and planning.", "es": "Grandes mejoras de precisión en matemática, lógica y planificación de varios pasos." },
+    { "en": "The trace makes failures debuggable and gradable step by step.", "es": "El razonamiento hace que las fallas se puedan depurar y evaluar paso a paso." },
+    { "en": "One prompt line or one API parameter; no training.", "es": "Una línea de prompt o un parámetro de la API; sin entrenamiento." }
+  ],
+  "cons": [
+    { "en": "More output tokens, which are decoded serially and priced higher: slower and costlier.", "es": "Más tokens de salida, que se decodifican en serie y cuestan más: más lento y más caro." },
+    { "en": "The trace can be unfaithful: plausible reasoning that did not drive the answer.", "es": "El razonamiento puede no ser fiel: suena lógico pero no fue lo que decidió la respuesta." },
+    { "en": "Little or no gain on lookup, extraction or simple classification.", "es": "Poca o ninguna mejora en búsquedas puntuales, extracción o clasificación simple." }
+  ],
+  "whenToUse": {
+    "en": "Multi-step problems (math, logic, multi-constraint decisions, plans) on non-reasoning models, or whenever you need a trace for debugging and evals and can afford a few extra seconds.",
+    "es": "Problemas de varios pasos (matemática, lógica, decisiones con muchas restricciones, planes) en modelos sin razonamiento propio, o cuando necesitas un rastro para depurar y evaluar y puedes pagar unos segundos más."
+  },
+  "whenNotToUse": {
+    "en": "Reasoning models (use the effort knob), latency-critical simple tasks like extraction or routing, or as a user-facing justification of the decision.",
+    "es": "Con modelos de razonamiento (usa la perilla de esfuerzo), en tareas simples y sensibles a la latencia como extracción o ruteo, o como justificación de la decisión frente al usuario."
+  },
+  "numbers": [
+    { "en": "Zero-shot CoT (Kojima 2022): InstructGPT went 17.7% → 78.7% on MultiArith and 10.4% → 40.7% on GSM8K.", "es": "CoT zero-shot (Kojima 2022): InstructGPT pasó de 17.7% a 78.7% en MultiArith y de 10.4% a 40.7% en GSM8K." },
+    { "en": "Few-shot CoT (Wei 2022): PaLM 540B on GSM8K 17.9% → 56.9%; gains appeared only at ~100B+ parameters.", "es": "CoT few-shot (Wei 2022): PaLM 540B en GSM8K pasó de 17.9% a 56.9%; las mejoras aparecieron solo desde ~100B+ parámetros." },
+    { "en": "Sprague et al. 2024 meta-analysis: CoT's benefit concentrates on math and symbolic reasoning, with much smaller gains elsewhere.", "es": "Meta-análisis de Sprague et al. 2024: el beneficio de CoT se concentra en matemática y razonamiento simbólico, con mejoras mucho menores en lo demás." },
+    { "en": "Anthropic 2025: reasoning models mentioned a hint they had used only ~25% (Claude 3.7 Sonnet) and ~39% (DeepSeek-R1) of the time.", "es": "Anthropic 2025: los modelos de razonamiento mencionaron una pista que sí usaron solo ~25% (Claude 3.7 Sonnet) y ~39% (DeepSeek-R1) de las veces." },
+    { "en": "Reasoning and thinking tokens bill as output tokens; Claude's minimum thinking budget is 1,024 tokens.", "es": "Los tokens de razonamiento y de thinking se cobran como tokens de salida; el presupuesto mínimo de thinking en Claude es de 1,024 tokens." }
+  ],
+  "pitfalls": [
+    { "en": "Adding \"think step by step\" to o-series, R1 or Claude with thinking: redundant, and OpenAI advises against it.", "es": "Agregar \"piensa paso a paso\" a la serie o, a R1 o a Claude con thinking: es redundante y OpenAI lo desaconseja." },
+    { "en": "max_tokens too small: the reasoning eats the budget and the answer never arrives.", "es": "Un max_tokens muy chico: el razonamiento se come el presupuesto y la respuesta nunca llega." },
+    { "en": "Asking for the explanation after the answer: post-hoc rationalization, no accuracy gain.", "es": "Pedir la explicación después de la respuesta: racionalización a posteriori, sin mejora de precisión." },
+    { "en": "Shipping raw reasoning to the UI or treating it as an audit trail.", "es": "Mostrar el razonamiento crudo en la UI o tratarlo como registro de auditoría." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When does chain-of-thought help, and when is it a waste?", "es": "¿Cuándo ayuda el chain-of-thought y cuándo es un desperdicio?" },
+      "a": {
+        "en": "It helps when the answer depends on several intermediate steps: arithmetic, logic, multi-constraint decisions, planning. That's where the published gains are; PaLM on GSM8K roughly tripled. It's mostly a waste on lookup, extraction or routing, where it adds latency and cost for nothing, and it's redundant on reasoning models, where I tune effort instead. Output tokens are the slowest and priciest part of a call, so I decide per task with an eval comparing accuracy, p95 latency and cost.",
+        "es": "Ayuda cuando la respuesta depende de varios pasos intermedios: aritmética, lógica, decisiones con muchas restricciones, planificación. Ahí están las mejoras publicadas; PaLM en GSM8K casi triplicó su resultado. En búsquedas puntuales, extracción o ruteo casi siempre es un desperdicio: suma latencia y costo sin ganar nada. Y en modelos de razonamiento es redundante; ahí ajusto el esfuerzo. Los tokens de salida son la parte más lenta y cara de una llamada, así que decido por tarea con una eval que compare precisión, latencia p95 y costo."
+      }
+    },
+    {
+      "q": { "en": "Compliance wants to show users the model's reasoning as the explanation for a decision. Your take?", "es": "Compliance quiere mostrarle al usuario el razonamiento del modelo como explicación de una decisión. ¿Qué opinas?" },
+      "a": {
+        "en": "I'd push back. Chain-of-thought isn't a faithful explanation: models change answers because of cues their reasoning never mentions, and reasoning models disclosed a planted hint only a minority of the time. Raw traces can also leak system instructions or contain abandoned wrong turns. If we need explainability, I'd generate a separate user-facing rationale grounded in cited sources, keep the raw trace internal for debugging, and base the audit on inputs, retrieved evidence and the deterministic rules we applied.",
+        "es": "Me opondría. El chain-of-thought no es una explicación fiel: los modelos cambian su respuesta por señales que su razonamiento nunca menciona, y los modelos de razonamiento admitieron una pista plantada solo en una minoría de los casos. Además, el razonamiento crudo puede filtrar instrucciones del sistema o incluir caminos equivocados que se abandonaron. Si necesitamos explicabilidad, generaría una justificación aparte para el usuario, basada en fuentes citadas, guardaría el razonamiento crudo solo para depurar, y basaría la auditoría en las entradas, la evidencia recuperada y las reglas deterministas que aplicamos."
+      }
+    }
+  ],
+  "related": ["reasoning-models", "self-consistency", "structured-outputs", "few-shot", "prompt-patterns", "token-economics"],
+  "sources": [
+    { "title": "Wei et al. 2022 — Chain-of-Thought Prompting Elicits Reasoning in Large Language Models", "url": "https://arxiv.org/abs/2201.11903" },
+    { "title": "Kojima et al. 2022 — Large Language Models are Zero-Shot Reasoners", "url": "https://arxiv.org/abs/2205.11916" },
+    { "title": "Turpin et al. 2023 — Language Models Don't Always Say What They Think", "url": "https://arxiv.org/abs/2305.04388" },
+    { "title": "OpenAI — Reasoning best practices", "url": "https://platform.openai.com/docs/guides/reasoning-best-practices" }
+  ]
+}

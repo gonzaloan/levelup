@@ -1,0 +1,93 @@
+{
+  "id": "agents-vs-workflows",
+  "domain": "agents",
+  "level": "core",
+  "title": { "en": "Agents vs workflows", "es": "Agentes vs workflows" },
+  "aliases": ["agentic systems", "workflows vs agents", "augmented LLM", "Building effective agents", "agentic workflow", "LLM workflow", "autonomy spectrum"],
+  "tldr": {
+    "en": "Workflow: your code fixes the path and the LLM fills in steps. Agent: the LLM picks each next step and tool in a loop. Go single call → workflow → agent, climbing only when needed.",
+    "es": "Workflow: tu código fija el camino y el LLM resuelve cada paso. Agente: el LLM elige el siguiente paso y la herramienta en un loop. Sube de una llamada → workflow → agente solo cuando lo simple no alcanza."
+  },
+  "analogy": {
+    "en": "A workflow is a recipe a line cook follows step by step. An agent is a chef handed a full fridge and told \"dinner for six\": more adaptable, but slower, pricier and harder to predict.",
+    "es": "Un workflow es una receta que un cocinero sigue paso a paso. Un agente es un chef al que le das un refrigerador lleno y le dices \"cena para seis\": se adapta más, pero es más lento, más caro y menos predecible."
+  },
+  "explain": {
+    "en": "Anthropic's *Building effective agents* (Dec 2024) draws the standard line. Both are **agentic systems**:\n\n- **Workflow**: LLMs and tools orchestrated through **predefined code paths**. Your code owns the control flow; the model fills in each step.\n- **Agent**: the LLM **dynamically directs its own process and tool use**. It picks the next action from the last result, in a loop ([[react]]), until it decides it is done.\n\nBoth are built from one block: an LLM augmented with retrieval, [[tool-calling]] and memory. The five workflow patterns:\n\n1. [[prompt-chaining]]: fixed sequence, code gates between steps.\n2. [[routing]]: classify, then send to a specialized path.\n3. [[parallelization]]: independent subtasks at once, or N runs and a vote.\n4. [[orchestrator-workers]]: an LLM splits the task at runtime and delegates.\n5. [[evaluator-optimizer]]: one LLM drafts, another critiques, repeat.\n\n**Climb one rung at a time**: one call with good retrieval and examples → workflow → agent. Agents trade **latency, cost and predictability** for **flexibility**. Reach for one only if all of these hold:\n\n- The steps can't be known in advance or hardcoded.\n- Errors are detectable: tests, a verifier, a human approval.\n- Value per task pays for many calls and seconds to minutes of wait.\n- You can bound it: step cap, budget, scoped permissions.\n\nMost production \"agents\" are workflows with one bounded agentic step inside.",
+    "es": "*Building effective agents* de Anthropic (dic. 2024) traza la línea estándar. Ambos son **sistemas agénticos**:\n\n- **Workflow**: LLMs y herramientas orquestados por **caminos de código predefinidos**. Tu código controla el flujo; el modelo resuelve cada paso.\n- **Agente**: el LLM **dirige dinámicamente su propio proceso y el uso de herramientas**. Elige la siguiente acción según el último resultado, en un loop ([[react]]), hasta que decide que terminó.\n\nLos dos se construyen con el mismo bloque: un LLM aumentado con recuperación, [[tool-calling]] y memoria. Los cinco patrones de workflow:\n\n1. [[prompt-chaining]]: secuencia fija, con validaciones en código entre pasos.\n2. [[routing]]: clasificar y mandar a un camino especializado.\n3. [[parallelization]]: subtareas independientes a la vez, o N ejecuciones y una votación.\n4. [[orchestrator-workers]]: un LLM divide la tarea en tiempo de ejecución y delega.\n5. [[evaluator-optimizer]]: un LLM redacta, otro critica, y se repite.\n\n**Sube un escalón a la vez**: una llamada con buena recuperación y ejemplos → workflow → agente. Los agentes cambian **latencia, costo y previsibilidad** por **flexibilidad**. Usa uno solo si se cumple todo esto:\n\n- Los pasos no se pueden conocer de antemano ni fijar en código.\n- Los errores se pueden detectar: tests, un verificador, una aprobación humana.\n- El valor de cada tarea paga muchas llamadas y de segundos a minutos de espera.\n- Puedes acotarlo: tope de pasos, presupuesto, permisos limitados.\n\nLa mayoría de los \"agentes\" en producción son workflows con un solo paso agéntico acotado adentro."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  T[New task] --> S{\"Single call<br/>good enough?\"}\n  S -->|yes| C[Single LLM call]\n  S -->|no| P{\"Steps known<br/>in advance?\"}\n  P -->|yes| W[\"Workflow<br/>chain, route, parallel\"]\n  P -->|no| E{\"Errors detectable,<br/>value covers cost?\"}\n  E -->|yes| A[\"Agent loop<br/>with caps\"]\n  E -->|no| R[\"Rescope or<br/>keep human\"]",
+    "caption": {
+      "en": "Climb one rung at a time: most tasks stop at a single call or a workflow.",
+      "es": "Sube un escalón a la vez: la mayoría de las tareas se quedan en una llamada o un workflow."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "The same job as a workflow, an agent, and both", "es": "La misma tarea como workflow, como agente y combinados" },
+    "source": "# WORKFLOW: your code owns the control flow; every path is known and testable\ndef refund_status_workflow(ticket: str) -> str:\n    order_id = llm(f\"Extract the order id, or NONE:\\n{ticket}\")      # step 1\n    if order_id == \"NONE\":\n        return ask_user(\"Which order is this about?\")                 # code gate\n    order = orders_api.get(order_id)                                  # step 2: plain code\n    return llm(f\"Explain this refund status to the customer:\\n{order}\")  # step 3\n\n# AGENT: the model owns the control flow; your code owns tools, budget and stop\ndef support_agent(ticket: str, max_steps: int = 12) -> str:\n    messages = [{\"role\": \"user\", \"content\": ticket}]\n    for _ in range(max_steps):\n        reply = llm_with_tools(messages, tools=[search_kb, get_order, issue_refund])\n        if not reply.tool_calls:                 # the model decided it is done\n            return reply.text\n        messages += execute(reply.tool_calls)    # results steer the next step\n    return escalate_to_human(ticket)             # budget hit: fail safe, not silent\n\n# Production shape: predictable intents go to workflows, the long tail to the agent\nWORKFLOWS = {\"refund_status\": refund_status_workflow}\n\ndef handle(ticket: str) -> str:\n    intent = classify(ticket)  # cheap model, closed label set\n    return WORKFLOWS.get(intent, support_agent)(ticket)"
+  },
+  "example": {
+    "en": "A fintech shipped a 14-tool support agent: p50 ~40 s, ~$0.20 per ticket, and two runs on the same ticket often took different paths. Traces showed 80% of tickets were 5 intents (refund status, card block, statements, address change, fees). They rebuilt those as [[routing]] plus fixed workflows: 2–3 calls, ~4 s, ~$0.02, each step with its own eval. The agent now handles only the ~20% long tail, behind a 12-step cap and human approval for any money movement.",
+    "es": "Una fintech lanzó un agente de soporte con 14 herramientas: p50 de ~40 s, ~$0.20 por ticket, y dos ejecuciones sobre el mismo ticket solían tomar caminos distintos. Las trazas mostraron que el 80% de los tickets eran 5 intenciones (estado de reembolso, bloqueo de tarjeta, estados de cuenta, cambio de dirección, comisiones). Las rehicieron como [[routing]] más workflows fijos: 2–3 llamadas, ~4 s, ~$0.02, cada paso con su propio eval. El agente ahora atiende solo la cola larga de ~20%, con tope de 12 pasos y aprobación humana para cualquier movimiento de dinero."
+  },
+  "pros": [
+    { "en": "Workflows are predictable: each step can be tested, cached and evaluated on its own.", "es": "Los workflows son predecibles: cada paso se puede testear, cachear y evaluar por separado." },
+    { "en": "Agents handle open-ended tasks whose steps can't be hardcoded: coding, research, debugging.", "es": "Los agentes resuelven tareas abiertas cuyos pasos no se pueden fijar en código: programar, investigar, depurar." },
+    { "en": "Agents adapt mid-task: a failed call or a surprising result becomes input for the next step.", "es": "Los agentes se adaptan a mitad de camino: una llamada fallida o un resultado inesperado se vuelve entrada del siguiente paso." }
+  ],
+  "cons": [
+    { "en": "Agents are slower and pricier: many sequential calls, each re-sending a growing transcript.", "es": "Los agentes son más lentos y caros: muchas llamadas en secuencia, cada una reenviando una conversación que crece." },
+    { "en": "Agents compound errors: an early wrong step poisons every later one, and two runs can diverge.", "es": "Los agentes acumulan errores: un paso equivocado al inicio contamina todos los siguientes, y dos ejecuciones pueden divergir." },
+    { "en": "Workflows are brittle outside the paths you anticipated: they fail by rigidity.", "es": "Los workflows son frágiles fuera de los caminos que anticipaste: fallan por rigidez." }
+  ],
+  "whenToUse": {
+    "en": "An agent for open-ended, multi-step tasks where the path depends on what you find (coding, research, incident triage), success is checkable, and each task's value justifies many calls and minutes of latency.",
+    "es": "Un agente para tareas abiertas de varios pasos donde el camino depende de lo que encuentras (programar, investigar, triage de incidentes), el éxito se puede verificar y el valor de cada tarea justifica muchas llamadas y minutos de latencia."
+  },
+  "whenNotToUse": {
+    "en": "When the steps are known (extraction, classification, RAG Q&A), latency must stay ~1–2 s, runs must be identical and auditable, or a mistake is costly and can't be caught before it lands.",
+    "es": "Cuando los pasos se conocen (extracción, clasificación, preguntas sobre RAG), la latencia debe quedar en ~1–2 s, las ejecuciones deben ser idénticas y auditables, o un error es caro y no se puede atrapar antes de que llegue."
+  },
+  "numbers": [
+    { "en": "Anthropic (2025): agents use ~4× the tokens of a chat interaction; multi-agent systems ~15×.", "es": "Anthropic (2025): los agentes usan ~4× los tokens de una interacción de chat; los sistemas multiagente, ~15×." },
+    { "en": "Compounding: at 95% per-step reliability a 10-step run succeeds ~60% of the time (0.95¹⁰ ≈ 0.60); at 99%, ~90%.", "es": "Acumulación: con 95% de confiabilidad por paso, una ejecución de 10 pasos sale bien ~60% de las veces (0.95¹⁰ ≈ 0.60); con 99%, ~90%." },
+    { "en": "Anthropic's 49% on SWE-bench Verified (Claude 3.5 Sonnet, Oct 2024) used a minimal agent: one prompt, a bash tool, an edit tool, a loop.", "es": "El 49% de Anthropic en SWE-bench Verified (Claude 3.5 Sonnet, oct. 2024) usó un agente mínimo: un prompt, una herramienta bash, una de edición y un loop." }
+  ],
+  "pitfalls": [
+    { "en": "Building an agent first because it demos well, then spending months making it as predictable as a workflow would have been on day one.", "es": "Construir primero un agente porque luce bien en la demo y luego pasar meses haciéndolo tan predecible como habría sido un workflow desde el día uno." },
+    { "en": "Adopting a heavy framework before writing the loop yourself: abstractions hide the prompts and responses you need to debug.", "es": "Adoptar un framework pesado antes de escribir el loop tú mismo: las abstracciones esconden los prompts y respuestas que necesitas para depurar." },
+    { "en": "No step cap, budget or kill switch: an agent stuck in a loop burns money silently.", "es": "Sin tope de pasos, presupuesto ni botón de apagado: un agente atascado en un loop quema dinero en silencio." },
+    { "en": "All-or-nothing thinking: the best design is often a workflow with one bounded agentic step, like an agentic search inside a fixed pipeline.", "es": "Pensar en todo o nada: el mejor diseño suele ser un workflow con un solo paso agéntico acotado, como una búsqueda agéntica dentro de un pipeline fijo." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you choose an agent over a workflow?", "es": "¿Cuándo elegirías un agente en lugar de un workflow?" },
+      "a": {
+        "en": "I default to the simplest thing that passes the eval: one well-prompted call with retrieval, then a workflow if the task splits into known steps. I move to an agent only when the path depends on intermediate results so I can't hardcode it, success is checkable with tests, a verifier or human approval, and the task's value covers several times the tokens and much higher latency. Even then I bound it: step cap, budget, scoped tools and human approval for irreversible actions.",
+        "es": "Por defecto uso lo más simple que pase el eval: una llamada con buen prompt y recuperación, y luego un workflow si la tarea se divide en pasos conocidos. Paso a un agente solo cuando el camino depende de resultados intermedios y no lo puedo fijar en código, el éxito se puede verificar con tests, un verificador o aprobación humana, y el valor de la tarea cubre varias veces los tokens y una latencia mucho mayor. Aun así lo acoto: tope de pasos, presupuesto, herramientas limitadas y aprobación humana para acciones irreversibles."
+      }
+    },
+    {
+      "q": { "en": "Your team's agent is slow, expensive and flaky in production. What do you do?", "es": "El agente de tu equipo es lento, caro e inestable en producción. ¿Qué haces?" },
+      "a": {
+        "en": "I read traces before touching prompts. Usually most traffic follows a handful of paths that the agent rediscovers at full price every time. I cluster the trajectories, hardcode the frequent ones as workflows behind a router, and keep the agent for the long tail. Each workflow step then gets its own eval and SLO, cost and latency drop, and the agent's remaining traffic is small enough to supervise. I measure flakiness as pass^k across repeated runs, not single-run accuracy.",
+        "es": "Leo las trazas antes de tocar los prompts. Casi siempre la mayor parte del tráfico sigue unos pocos caminos que el agente redescubre a precio completo cada vez. Agrupo las trayectorias, fijo las frecuentes como workflows detrás de un router y dejo el agente para la cola larga. Así cada paso del workflow tiene su propio eval y SLO, bajan el costo y la latencia, y el tráfico que le queda al agente es lo bastante chico para supervisarlo. La inestabilidad la mido como pass^k sobre ejecuciones repetidas, no como accuracy de una sola corrida."
+      }
+    },
+    {
+      "q": { "en": "Do you need a framework like LangGraph to build agents?", "es": "¿Necesitas un framework como LangGraph para construir agentes?" },
+      "a": {
+        "en": "Not to start. The core loop is about 20 lines against the provider API, and early on I want to see every prompt and response while I learn the failure modes. I adopt a framework when I need what it actually provides: durable state, checkpoints, retries, human-in-the-loop interrupts, tracing. And I make sure I can still inspect the raw prompts underneath, because abstractions that hide them make debugging slower, which is Anthropic's main warning too.",
+        "es": "No para empezar. El loop central son unas 20 líneas contra la API del proveedor, y al principio quiero ver cada prompt y cada respuesta mientras aprendo los modos de falla. Adopto un framework cuando necesito lo que realmente aporta: estado durable, checkpoints, reintentos, interrupciones para intervención humana, trazas. Y me aseguro de poder seguir viendo los prompts crudos debajo, porque las abstracciones que los esconden hacen más lenta la depuración, que es también la advertencia principal de Anthropic."
+      }
+    }
+  ],
+  "related": ["react", "tool-calling", "routing", "orchestrator-workers", "agent-reliability", "durable-agents"],
+  "sources": [
+    { "title": "Anthropic — Building effective agents (2024)", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "Anthropic — How we built our multi-agent research system (2025)", "url": "https://www.anthropic.com/engineering/built-multi-agent-research-system" },
+    { "title": "Anthropic — Raising the bar on SWE-bench Verified with Claude 3.5 Sonnet", "url": "https://www.anthropic.com/research/swe-bench-sonnet" }
+  ]
+}

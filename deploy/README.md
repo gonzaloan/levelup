@@ -18,7 +18,7 @@ learner progress is localStorage-only. Same secure static pattern as
 ## Deploy
 
 ```bash
-npm run build        # produces ./out (207 pages)
+npm run build        # strict content gate, then ./out (~380 static pages)
 cd deploy && ./deploy.sh
 ```
 
@@ -33,8 +33,9 @@ Upload uses typed passes — HTML `no-cache`, hashed `_next/*` assets
 - Run on Windows git-bash: `HERE_W` (`pwd -W`) supplies native `C:\…` paths for
   `file://`/`fileb://` args, and CloudFront `--output text` values are stripped of
   `\r` before use (a trailing CR corrupts the Route53 change-batch JSON otherwise).
-- The root `/` uses Next's client-side locale redirect to `/en`; `<html lang>` is
-  statically `en` and upgraded client-side by `HtmlLang` on `/es` routes.
-- OG/canonical/share URLs are baked from `metadataBase` (`src/app/layout.tsx`) and
-  `siteOrigin()` (`src/lib/share.ts`) — both `https://levelup.skillrealm.dev`. If the
-  domain ever changes, update both and rebuild (grep `out/` for the old host = 0).
+- The root `/` redirects client-side to `/es/` (or `/en/` for English browsers); `<html lang>`
+  and the theme are set by an inline boot script in `src/app/layout.tsx` before first paint.
+- Canonical/OG URLs are baked from `metadataBase` in `src/app/layout.tsx`
+  (`https://levelup.skillrealm.dev`). If the domain changes, update it and rebuild.
+- **2026-11 rewrite:** the old routes (`/path`, `/lesson/*`, `/codex`, `/assess`, …) no longer
+  exist. The prune-only `--delete` sync removes them from the bucket; old links land on `404.html`.

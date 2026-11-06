@@ -1,0 +1,96 @@
+{
+  "id": "prompt-caching",
+  "domain": "prompting",
+  "level": "core",
+  "title": { "en": "Prompt caching", "es": "Prompt caching (caché de prompts)" },
+  "aliases": ["prefix caching", "context caching", "KV cache reuse", "cache_control", "cached input tokens", "automatic prefix caching"],
+  "tldr": {
+    "en": "The provider keeps the computed KV state of a prompt prefix it saw recently, so repeat calls skip that prefill: put static content first, variable content last, and cut input cost by up to ~90%.",
+    "es": "El proveedor guarda el estado KV ya calculado de un prefijo que vio hace poco, así las llamadas repetidas se saltan ese prefill: pon lo estático primero, lo variable al final, y recorta hasta ~90% del costo de entrada."
+  },
+  "analogy": {
+    "en": "Reading a 300-page brief once and then answering a stream of questions about it, instead of re-reading the whole brief before every single question.",
+    "es": "Leer una sola vez un expediente de 300 páginas y luego contestar una serie de preguntas sobre él, en lugar de releerlo completo antes de cada pregunta."
+  },
+  "explain": {
+    "en": "Every call starts with **prefill**: computing attention keys and values ([[kv-cache]]) for every input token. If 50k tokens of tools, system prompt and documents are identical across calls, that work is identical too. **Prompt caching** keeps that KV state on the provider's side and reuses it when a new request starts with the *exact same prefix*, byte for byte from the first token.\n\nThat one rule dictates the layout:\n\n1. Tools and system prompt (static)\n2. Reference documents and examples (static per session)\n3. Conversation history (append-only)\n4. The new user message (variable), last\n\nHow providers do it:\n\n- **Anthropic**: opt-in `cache_control` breakpoints (up to 4). A write costs ~1.25× base input, a read ~0.1×. The default TTL is 5 minutes, refreshed on every hit; a 1-hour TTL costs ~2× to write.\n- **OpenAI**: automatic for prompts ≥1,024 tokens; cached input is 50–90% cheaper depending on the model; check `cached_tokens` in usage.\n- **Gemini**: implicit caching, plus explicit caches with a TTL and an hourly storage fee.\n- **Self-hosted**: vLLM automatic prefix caching, SGLang RadixAttention.\n\nThe answer is still generated fresh, so unlike [[semantic-caching]] it can never serve a stale response.",
+    "es": "Cada llamada empieza con el **prefill**: calcular las keys y values de atención ([[kv-cache]]) para cada token de entrada. Si 50k tokens de herramientas, system prompt y documentos son idénticos entre llamadas, ese trabajo también lo es. El **prompt caching** guarda ese estado KV del lado del proveedor y lo reutiliza cuando una nueva petición empieza con *exactamente el mismo prefijo*, byte por byte desde el primer token.\n\nEsa sola regla define el orden del prompt:\n\n1. Herramientas y system prompt (estáticos)\n2. Documentos de referencia y ejemplos (estáticos durante la sesión)\n3. Historial de la conversación (solo crece al final)\n4. El nuevo mensaje del usuario (variable), al último\n\nCómo lo hace cada proveedor:\n\n- **Anthropic**: breakpoints `cache_control` opcionales (hasta 4). Escribir cuesta ~1.25× el input base y leer ~0.1×. El TTL por defecto es de 5 minutos y se renueva con cada hit; un TTL de 1 hora cuesta ~2× al escribir.\n- **OpenAI**: automático para prompts de ≥1,024 tokens; el input en caché es 50–90% más barato según el modelo; revisa `cached_tokens` en el usage.\n- **Gemini**: caché implícita, más cachés explícitas con TTL y un cargo de almacenamiento por hora.\n- **Self-hosted**: automatic prefix caching de vLLM y RadixAttention de SGLang.\n\nLa respuesta se genera de nuevo cada vez, así que, a diferencia del [[semantic-caching]], nunca puede devolver una respuesta vieja."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant A as App\n  participant P as Provider\n  participant C as Prefix cache\n  A->>P: Static prefix + question 1\n  P->>C: Lookup prefix hash\n  C-->>P: Miss\n  P->>P: Prefill 50k tokens\n  P->>C: Store KV state, 5 min\n  P-->>A: Answer, write billed 1.25x\n  A->>P: Same prefix + question 2\n  P->>C: Lookup prefix hash\n  C-->>P: Hit, reuse KV state\n  P-->>A: Faster answer, read 0.1x",
+    "caption": {
+      "en": "The first call pays to compute and store the prefix; every call within the TTL that starts with the same bytes reuses it.",
+      "es": "La primera llamada paga por calcular y guardar el prefijo; cada llamada dentro del TTL que empieza con los mismos bytes lo reutiliza."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Cache a 50k-token handbook across questions", "es": "Cachear un manual de 50k tokens entre preguntas" },
+    "source": "import anthropic\n\nclient = anthropic.Anthropic()\nMODEL = \"claude-sonnet-4-5\"  # any model that supports caching\n\nHANDBOOK = open(\"hr_handbook.md\").read()  # ~50k tokens, identical on every call\n\ndef ask(question: str) -> str:\n    resp = client.messages.create(\n        model=MODEL,\n        max_tokens=1024,\n        system=[\n            {\"type\": \"text\", \"text\": \"Answer HR questions using only the handbook.\"},\n            # Breakpoint: everything up to and including this block is cached\n            {\"type\": \"text\", \"text\": HANDBOOK, \"cache_control\": {\"type\": \"ephemeral\"}},\n        ],\n        # Variable content goes AFTER the cached prefix\n        messages=[{\"role\": \"user\", \"content\": question}],\n    )\n    u = resp.usage  # verify hits instead of assuming them\n    print(u.cache_creation_input_tokens, u.cache_read_input_tokens, u.input_tokens)\n    return resp.content[0].text\n\nask(\"How many vacation days do I get?\")  # write: ~1.25x on 50k tokens\nask(\"Can I carry unused days over?\")     # read:  ~0.1x on 50k tokens\n\n# OpenAI caches automatically above 1,024 tokens; check\n# resp.usage.prompt_tokens_details.cached_tokens"
+  },
+  "example": {
+    "en": "An HR assistant sends a 2k-token system prompt plus a 50k-token handbook with every question, ~1,000 questions an hour, on a model priced at $3 per million input tokens. Uncached: 52k × $3/M ≈ $0.156 per call, ~$156 an hour. With the prefix cached and traffic keeping the 5-minute TTL warm, each call reads it for ~$0.016: ~$16 an hour plus a few ~$0.20 writes, roughly a 90% cut in input cost. Time to first token falls too, because the 52k-token prefill is skipped.",
+    "es": "Un asistente de RR. HH. envía un system prompt de 2k tokens más un manual de 50k tokens con cada pregunta, ~1,000 preguntas por hora, con un modelo que cobra $3 por millón de tokens de entrada. Sin caché: 52k × $3/M ≈ $0.156 por llamada, ~$156 por hora. Con el prefijo en caché y suficiente tráfico para mantener vivo el TTL de 5 minutos, cada llamada lo lee por ~$0.016: ~$16 por hora más algunas escrituras de ~$0.20, cerca de 90% menos en costo de entrada. El tiempo al primer token también baja, porque se salta el prefill de 52k tokens."
+  },
+  "pros": [
+    { "en": "Up to ~90% off repeated input tokens and a large time-to-first-token cut on long prefixes.", "es": "Hasta ~90% de descuento en tokens de entrada repetidos y una gran reducción del tiempo al primer token en prefijos largos." },
+    { "en": "Zero quality risk: the output is still generated fresh from the full prompt.", "es": "Cero riesgo de calidad: la salida se sigue generando desde el prompt completo." },
+    { "en": "Makes long system prompts, many-shot examples and document-in-context designs affordable.", "es": "Hace costeables los system prompts largos, los prompts con muchos ejemplos y los diseños con documentos completos en contexto." }
+  ],
+  "cons": [
+    { "en": "Only exact prefixes hit: one changed byte early in the prompt invalidates everything after it.", "es": "Solo pegan los prefijos exactos: un byte distinto al inicio del prompt invalida todo lo que viene después." },
+    { "en": "Short TTLs: sparse or bursty traffic misses the cache and pays the write premium.", "es": "TTL cortos: el tráfico escaso o en ráfagas no encuentra la caché y paga el recargo de escritura." },
+    { "en": "Provider-specific mechanics (breakpoints, TTLs, minimum lengths, pricing) leak into your prompt layout.", "es": "La mecánica de cada proveedor (breakpoints, TTL, longitudes mínimas, precios) se filtra al diseño de tu prompt." }
+  ],
+  "whenToUse": {
+    "en": "Any workload that resends a long, stable prefix: agents with big system prompts and tool lists, multi-turn chat, document Q&A, many-shot prompts, batch jobs over one shared context.",
+    "es": "Cualquier carga que reenvíe un prefijo largo y estable: agentes con system prompts y listas de herramientas grandes, chat de varios turnos, preguntas sobre documentos, prompts con muchos ejemplos, jobs batch sobre un mismo contexto."
+  },
+  "whenNotToUse": {
+    "en": "Prompts under the model's minimum cacheable length, or prefixes unique to each call; on Anthropic, a prefix not reused within the TTL just pays the 25% write premium.",
+    "es": "Prompts por debajo de la longitud mínima cacheable del modelo, o prefijos únicos en cada llamada; en Anthropic, un prefijo que no se reutiliza dentro del TTL solo paga el 25% extra de escritura."
+  },
+  "numbers": [
+    { "en": "Anthropic: cache write ~1.25× base input (5-minute TTL) or ~2× (1-hour TTL); cache read ~0.1×.", "es": "Anthropic: escribir en caché cuesta ~1.25× el input base (TTL de 5 minutos) o ~2× (TTL de 1 hora); leer, ~0.1×." },
+    { "en": "Break-even on Anthropic's 5-minute cache is the first reuse: two calls cost ~1.35× instead of 2×.", "es": "El punto de equilibrio con la caché de 5 minutos de Anthropic es el primer reuso: dos llamadas cuestan ~1.35× en vez de 2×." },
+    { "en": "OpenAI: automatic at ≥1,024 tokens, matched in 128-token increments; cached input 50–90% cheaper depending on the model.", "es": "OpenAI: automático desde 1,024 tokens, con coincidencias en incrementos de 128 tokens; el input en caché es 50–90% más barato según el modelo." },
+    { "en": "Anthropic's launch benchmark: a 100k-token cached prompt cut time to first token from 11.5 s to 2.4 s and cost by 90%.", "es": "Benchmark de lanzamiento de Anthropic: un prompt de 100k tokens en caché bajó el tiempo al primer token de 11.5 s a 2.4 s y el costo en 90%." },
+    { "en": "Minimum cacheable prefix is ~1k–4k tokens depending on the model; shorter prompts never cache.", "es": "El prefijo mínimo cacheable es de ~1k–4k tokens según el modelo; los prompts más cortos nunca se cachean." }
+  ],
+  "pitfalls": [
+    { "en": "A timestamp, request ID or user name at the top of the system prompt: every call is a new prefix and the hit rate drops to ~0%.", "es": "Un timestamp, un ID de petición o el nombre del usuario al inicio del system prompt: cada llamada es un prefijo nuevo y la tasa de hits cae a ~0%." },
+    { "en": "Non-deterministic serialization: tools or JSON keys emitted in a different order per call silently break the prefix.", "es": "Serialización no determinista: herramientas o llaves JSON en distinto orden en cada llamada rompen el prefijo en silencio." },
+    { "en": "Placing per-query RAG chunks before the stable instructions instead of after them.", "es": "Poner los chunks de RAG de cada consulta antes de las instrucciones estables en lugar de después." },
+    { "en": "Never reading the cache fields in the usage response, so nobody notices the hit rate is zero.", "es": "No leer nunca los campos de caché en el usage de la respuesta, así que nadie nota que la tasa de hits es cero." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "You enabled prompt caching but the hit rate is near zero. What do you check?", "es": "Activaste prompt caching pero la tasa de hits es casi cero. ¿Qué revisas?" },
+      "a": {
+        "en": "First the usage fields, cache reads versus writes per call, then I diff two consecutive raw requests byte by byte. The usual culprits: something dynamic near the top (a timestamp, user ID or request ID in the system prompt), tools or JSON keys serialized in a different order, a prefix below the model's minimum, or traffic too sparse for a 5-minute TTL. The fixes are about layout: static first, variable last, deterministic serialization, and the 1-hour TTL if gaps between calls are long.",
+        "es": "Primero los campos del usage, lecturas contra escrituras de caché por llamada, y luego comparo byte por byte dos peticiones crudas consecutivas. Los culpables de siempre: algo dinámico cerca del inicio (un timestamp, el ID del usuario o de la petición en el system prompt), herramientas o llaves JSON serializadas en distinto orden, un prefijo por debajo del mínimo del modelo o tráfico demasiado escaso para un TTL de 5 minutos. Las soluciones son de orden: lo estático primero, lo variable al final, serialización determinista y el TTL de 1 hora si hay pausas largas entre llamadas."
+      }
+    },
+    {
+      "q": { "en": "How is prompt caching different from semantic caching?", "es": "¿En qué se diferencia el prompt caching del semantic caching?" },
+      "a": {
+        "en": "Prompt caching reuses computation: the provider skips prefill for an identical prefix, but the model still generates a fresh answer from the full prompt, so quality is unchanged. Semantic caching reuses an answer: if a new query embeds close to an old one, you return the stored response and skip the model entirely. That's far cheaper but can serve a wrong or stale answer to a subtly different question. I turn on prompt caching everywhere and add semantic caching only for high-repeat, low-risk queries.",
+        "es": "El prompt caching reutiliza cómputo: el proveedor se salta el prefill de un prefijo idéntico, pero el modelo igual genera una respuesta nueva con el prompt completo, así que la calidad no cambia. El semantic caching reutiliza una respuesta: si el embedding de una consulta nueva queda cerca de uno anterior, devuelves la respuesta guardada y te saltas el modelo. Es mucho más barato, pero puede dar una respuesta equivocada o vieja a una pregunta sutilmente distinta. Activo prompt caching en todos lados y agrego semantic caching solo para consultas muy repetidas y de bajo riesgo."
+      }
+    },
+    {
+      "q": { "en": "How does prompt caching change the long-context vs RAG decision?", "es": "¿Cómo cambia el prompt caching la decisión entre contexto largo y RAG?" },
+      "a": {
+        "en": "It shrinks the cost gap for static corpora. Stuffing 150k tokens costs ~$0.45 per query at $3 per million input tokens; cached, ~$0.045, which is within ~3× of a 5k-token RAG prompt. So for a small corpus that is identical for every user and queried often enough to keep the cache warm, I'll often skip the retrieval stack. It doesn't help when the corpus changes constantly, differs per user for access control, or exceeds the window.",
+        "es": "Achica la brecha de costo para corpus estáticos. Meter 150k tokens cuesta ~$0.45 por consulta a $3 por millón de tokens de entrada; con caché, ~$0.045, que queda a ~3× de un prompt RAG de 5k tokens. Así que para un corpus pequeño, igual para todos los usuarios y consultado lo bastante seguido como para mantener viva la caché, muchas veces me salto toda la capa de recuperación. No ayuda cuando el corpus cambia todo el tiempo, varía por usuario por control de acceso o no cabe en la ventana."
+      }
+    }
+  ],
+  "related": ["kv-cache", "prefill-decode", "token-economics", "semantic-caching", "long-context-vs-rag", "context-engineering"],
+  "sources": [
+    { "title": "Anthropic — Prompt caching (docs)", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching" },
+    { "title": "Anthropic — Prompt caching with Claude", "url": "https://www.anthropic.com/news/prompt-caching" },
+    { "title": "OpenAI — Prompt caching guide", "url": "https://platform.openai.com/docs/guides/prompt-caching" },
+    { "title": "Google — Gemini API context caching", "url": "https://ai.google.dev/gemini-api/docs/caching" }
+  ]
+}

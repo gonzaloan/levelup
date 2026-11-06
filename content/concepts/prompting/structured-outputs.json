@@ -1,0 +1,87 @@
+{
+  "id": "structured-outputs",
+  "domain": "prompting",
+  "level": "core",
+  "title": { "en": "Structured outputs & JSON mode", "es": "Structured outputs y JSON mode" },
+  "aliases": ["JSON mode", "structured outputs", "constrained decoding", "JSON Schema", "guided decoding", "Pydantic", "Instructor", "strict mode"],
+  "tldr": {
+    "en": "Don't ask for JSON, enforce it: strict schema mode masks every token that would break your schema, so output always parses. It guarantees shape, not truth, so still validate values and retry.",
+    "es": "No pidas JSON, oblígalo: el modo de esquema estricto bloquea cada token que rompería tu esquema, así que la salida siempre se parsea. Garantiza la forma, no la verdad: igual valida los valores y reintenta."
+  },
+  "analogy": {
+    "en": "A paper form with labeled boxes and checkboxes instead of a blank page: every field comes back in the right place, but nothing stops someone from writing a wrong number in a box.",
+    "es": "Un formulario con casillas y opciones marcadas en vez de una hoja en blanco: cada campo vuelve en su lugar, pero nada impide que alguien escriba un número equivocado en una casilla."
+  },
+  "explain": {
+    "en": "**Structured outputs** make the model return data your code can consume. Three levels of guarantee:\n\n1. **Prompt only** (\"reply in JSON\"): works most of the time, and at a million calls \"most\" means thousands of stray code fences, trailing prose and missing keys.\n2. **JSON mode** (`response_format: json_object`): always syntactically valid JSON, but *any* JSON. Your keys and types are not guaranteed.\n3. **Strict schema** (OpenAI Structured Outputs; Gemini, Anthropic and vLLM offer equivalents): **constrained decoding**. The schema is compiled into a grammar, and at every step the tokens that would violate it are masked out before sampling. The output always matches types, required keys and enums.\n\nIn code you declare a **Pydantic** model; the SDK turns it into JSON Schema and parses the reply back into a typed object.\n\nWhat it does **not** give you is correct values: a schema-valid invoice can still carry a hallucinated total. So **validate** semantics (Pydantic validators, cross-field checks), **retry** with the error message, and handle refusals and truncation.\n\nDesign rules:\n- **Enums** (`Literal[...]`) for classification, so labels can't be invented.\n- **Reasoning field first.** Keys are generated in schema order; an `answer` before `reasoning` commits before thinking. A rigid schema with no room to reason can lower quality.\n- **Nullable, not omitted.** Strict mode requires every key, so let absent values be `null`.",
+    "es": "Los **structured outputs** hacen que el modelo devuelva datos que tu código puede consumir. Tres niveles de garantía:\n\n1. **Solo prompt** (\"responde en JSON\"): funciona casi siempre, y en un millón de llamadas \"casi\" son miles de bloques de código sueltos, prosa extra al final y llaves faltantes.\n2. **JSON mode** (`response_format: json_object`): siempre es JSON sintácticamente válido, pero *cualquier* JSON. Tus llaves y tipos no están garantizados.\n3. **Esquema estricto** (Structured Outputs de OpenAI; Gemini, Anthropic y vLLM tienen equivalentes): **decodificación restringida**. El esquema se compila en una gramática y en cada paso se bloquean los tokens que la violarían antes de muestrear. La salida siempre respeta tipos, llaves obligatorias y enums.\n\nEn código declaras un modelo de **Pydantic**; el SDK lo convierte en JSON Schema y parsea la respuesta de vuelta a un objeto tipado.\n\nLo que **no** te da es que los valores sean correctos: una factura que cumple el esquema puede traer un total alucinado. Por eso **valida** la semántica (validadores de Pydantic, chequeos entre campos), **reintenta** pasando el mensaje de error y maneja los rechazos y los cortes por longitud.\n\nReglas de diseño:\n- **Enums** (`Literal[...]`) para clasificar, así no se inventan etiquetas.\n- **El campo de razonamiento primero.** Las llaves se generan en el orden del esquema; un `answer` antes de `reasoning` decide antes de pensar. Un esquema rígido sin espacio para razonar puede bajar la calidad.\n- **Nullable, no omitido.** El modo estricto exige todas las llaves, así que deja que los valores ausentes sean `null`."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  S[Pydantic model] --> J[JSON Schema]\n  J --> G[\"Grammar<br/>(compiled, cached)\"]\n  L[Next-token logits] --> K[\"Mask invalid<br/>tokens\"]\n  G --> K\n  K --> T[Sample token]\n  T -->|not done| L\n  T -->|done| V[\"Validate values<br/>(Pydantic)\"]\n  V -->|error| R[Retry with error]\n  V -->|ok| A[Typed object]",
+    "caption": {
+      "en": "The grammar guarantees shape token by token; only your validators can check whether the values are right.",
+      "es": "La gramática garantiza la forma token por token; solo tus validadores pueden revisar si los valores son correctos."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Strict schema with Pydantic, validation and retry", "es": "Esquema estricto con Pydantic, validación y reintento" },
+    "source": "from typing import Literal\nfrom openai import OpenAI\nfrom pydantic import BaseModel, Field, ValidationError, field_validator\n\nclient = OpenAI()\nMODEL = \"gpt-4.1-mini\"  # any model with Structured Outputs\n\nclass Triage(BaseModel):\n    # Keys are generated in order: gather evidence first, decide second\n    reasoning: str = Field(description=\"1-3 sentences of evidence from the ticket\")\n    category: Literal[\"billing\", \"bug\", \"how_to\", \"account\", \"other\"]  # closed set\n    priority: Literal[\"P1\", \"P2\", \"P3\"]\n    order_id: str | None  # strict mode needs every key: optional means nullable\n\n    @field_validator(\"order_id\")  # semantic rule the grammar cannot express\n    @classmethod\n    def looks_real(cls, v):\n        if v is not None and not v.startswith(\"ORD-\"):\n            raise ValueError(\"order_id must look like ORD-123, or be null\")\n        return v\n\ndef triage(ticket: str, tries: int = 3) -> Triage:\n    msgs = [{\"role\": \"system\", \"content\": \"Triage the support ticket.\"},\n            {\"role\": \"user\", \"content\": ticket}]\n    for _ in range(tries):\n        try:\n            r = client.chat.completions.parse(model=MODEL, messages=msgs, response_format=Triage)\n        except ValidationError as e:  # valid shape, wrong value: feed the error back\n            msgs.append({\"role\": \"user\", \"content\": f\"Fix this and answer again: {e}\"})\n            continue\n        msg = r.choices[0].message\n        if msg.refusal:  # safety refusals come back as text, not as your schema\n            raise RuntimeError(msg.refusal)\n        return msg.parsed\n    raise RuntimeError(\"no valid output after retries\")"
+  },
+  "example": {
+    "en": "An invoice pipeline extracts 50K PDFs a month. With only \"return JSON\" in the prompt, even a 1% parse-failure rate means ~500 broken records a month, each a manual fix. A strict schema makes parse failures impossible, but a validator that checks `sum(line_items) == total` still catches cases where the model misread a digit. Those get one retry with the validation error in the prompt, then go to a human review queue instead of the ledger.",
+    "es": "Un pipeline de facturas extrae 50K PDFs al mes. Con solo \"devuelve JSON\" en el prompt, incluso una tasa de 1% de fallas de parseo son ~500 registros rotos al mes, cada uno arreglado a mano. Un esquema estricto vuelve imposibles las fallas de parseo, pero un validador que revisa `sum(line_items) == total` igual detecta casos donde el modelo leyó mal un dígito. Esos reciben un reintento con el error de validación en el prompt y, si falla, van a una cola de revisión humana en lugar de al libro contable."
+  },
+  "pros": [
+    { "en": "Parsing never fails: no regex, no stripping code fences.", "es": "El parseo nunca falla: sin regex ni limpieza de bloques de código." },
+    { "en": "Enums turn classification into a closed set of labels.", "es": "Los enums convierten la clasificación en un conjunto cerrado de etiquetas." },
+    { "en": "The schema doubles as a typed contract and documentation between teams.", "es": "El esquema sirve también como contrato tipado y documentación entre equipos." }
+  ],
+  "cons": [
+    { "en": "Guarantees shape, not truth: values can still be wrong or hallucinated.", "es": "Garantiza la forma, no la verdad: los valores pueden seguir siendo incorrectos o alucinados." },
+    { "en": "A rigid schema with no room to think can lower quality on reasoning tasks.", "es": "Un esquema rígido sin espacio para pensar puede bajar la calidad en tareas de razonamiento." },
+    { "en": "Only a subset of JSON Schema is supported, and the first call with a new schema pays a compile delay.", "es": "Solo se soporta un subconjunto de JSON Schema, y la primera llamada con un esquema nuevo paga una demora de compilación." }
+  ],
+  "whenToUse": {
+    "en": "Whenever code consumes the output: extraction, classification, routing, tool arguments, agent state, LLM-judge scores. Default to strict schema; use JSON mode only where strict isn't available.",
+    "es": "Siempre que la salida la consuma código: extracción, clasificación, ruteo, argumentos de tools, estado de agentes, puntajes de un LLM juez. Por defecto usa esquema estricto; JSON mode solo donde no haya modo estricto."
+  },
+  "whenNotToUse": {
+    "en": "Prose for humans (chat answers, long-form writing), where a schema adds nothing. If you need metadata too, wrap the prose in one string field.",
+    "es": "Prosa para personas (respuestas de chat, textos largos), donde un esquema no aporta nada. Si además necesitas metadatos, mete la prosa en un solo campo de texto."
+  },
+  "numbers": [
+    { "en": "OpenAI eval: gpt-4o-2024-08-06 with Structured Outputs scored 100% on complex schema following; gpt-4-0613 scored under 40%.", "es": "Eval de OpenAI: gpt-4o-2024-08-06 con Structured Outputs obtuvo 100% siguiendo esquemas complejos; gpt-4-0613 quedó por debajo de 40%." },
+    { "en": "Tam et al. 2024: stricter format constraints generally meant larger drops on reasoning tasks.", "es": "Tam et al. 2024: restricciones de formato más estrictas en general implicaron caídas mayores en tareas de razonamiento." },
+    { "en": "Rule of thumb: allow 1–2 retries with the validation error; if more than ~1% of calls need one, fix the schema or the prompt.", "es": "Regla práctica: permite 1–2 reintentos con el error de validación; si más de ~1% de las llamadas lo necesita, arregla el esquema o el prompt." }
+  ],
+  "pitfalls": [
+    { "en": "Trusting JSON mode to enforce your schema: it guarantees braces, not keys. On OpenAI it also errors unless \"JSON\" appears in the prompt.", "es": "Confiar en que JSON mode respeta tu esquema: garantiza llaves de JSON, no tus campos. En OpenAI además da error si el prompt no menciona \"JSON\"." },
+    { "en": "Putting `answer` before `reasoning`: the model commits before it thinks.", "es": "Poner `answer` antes de `reasoning`: el modelo decide antes de pensar." },
+    { "en": "Required fields with no null option: the model invents an order id rather than leave it empty.", "es": "Campos obligatorios sin opción null: el modelo inventa un número de orden en vez de dejarlo vacío." },
+    { "en": "Ignoring refusals and max_tokens truncation, which return text or cut-off JSON instead of your object.", "es": "Ignorar los rechazos y los cortes por max_tokens, que devuelven texto o JSON incompleto en vez de tu objeto." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "JSON mode vs structured outputs: what's the difference, and how does the guarantee work?", "es": "JSON mode vs structured outputs: ¿cuál es la diferencia y cómo funciona la garantía?" },
+      "a": {
+        "en": "JSON mode guarantees syntactically valid JSON, any JSON. Structured outputs guarantee my schema. The mechanism is constrained decoding: the provider compiles the schema into a grammar and, at each decoding step, masks every token that would make the output invalid, so the model only samples legal continuations. That gives me types, required keys and enums for free. What it can't guarantee is that the values are right, so I still validate semantics with Pydantic, retry with the error, and route repeated failures to review.",
+        "es": "JSON mode garantiza JSON sintácticamente válido, cualquier JSON. Structured outputs garantiza mi esquema. El mecanismo es la decodificación restringida: el proveedor compila el esquema en una gramática y, en cada paso de decodificación, bloquea todo token que volvería inválida la salida, así que el modelo solo muestrea continuaciones legales. Eso me da tipos, llaves obligatorias y enums sin esfuerzo. Lo que no puede garantizar es que los valores sean correctos, así que igual valido la semántica con Pydantic, reintento con el error y mando las fallas repetidas a revisión."
+      }
+    },
+    {
+      "q": { "en": "After switching to a strict schema, extraction accuracy dropped. Why, and what do you do?", "es": "Después de pasar a un esquema estricto, bajó la precisión de la extracción. ¿Por qué y qué haces?" },
+      "a": {
+        "en": "Usually the schema took away the room to think, or forced an answer the model wasn't ready to give. Keys are generated in order, so I add a short evidence or reasoning field before the answer fields, make absent values nullable instead of forcing a guess, and move guidance into field descriptions. If the task needs long reasoning, I split it: free-text reasoning first, then a cheap structuring call. And I compare both versions on the same eval set, because the published results on format restrictions disagree.",
+        "es": "Casi siempre el esquema le quitó espacio para pensar o lo obligó a dar una respuesta para la que no estaba listo. Las llaves se generan en orden, así que agrego un campo corto de evidencia o razonamiento antes de los campos de respuesta, hago nullable lo que puede faltar en vez de forzar una adivinanza y paso la guía a las descripciones de los campos. Si la tarea necesita razonar mucho, la divido: primero razonamiento en texto libre y luego una llamada barata que lo estructura. Y comparo ambas versiones con el mismo set de evaluación, porque los resultados publicados sobre restricciones de formato no coinciden."
+      }
+    }
+  ],
+  "related": ["prompt-anatomy", "chain-of-thought", "tool-calling", "deterministic-graders", "case-document-extraction", "guardrails"],
+  "sources": [
+    { "title": "OpenAI — Structured Outputs guide", "url": "https://platform.openai.com/docs/guides/structured-outputs" },
+    { "title": "OpenAI — Introducing Structured Outputs in the API", "url": "https://openai.com/index/introducing-structured-outputs-in-the-api/" },
+    { "title": "Willard & Louf 2023 — Efficient Guided Generation for Large Language Models", "url": "https://arxiv.org/abs/2307.09702" },
+    { "title": "Tam et al. 2024 — Let Me Speak Freely? Format Restrictions and LLM Performance", "url": "https://arxiv.org/abs/2408.02442" }
+  ]
+}

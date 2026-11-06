@@ -1,0 +1,87 @@
+{
+  "id": "multi-agent",
+  "domain": "agents",
+  "level": "advanced",
+  "title": { "en": "Multi-agent systems", "es": "Sistemas multiagente" },
+  "aliases": ["multi-agent", "MAS", "subagents", "lead agent", "agent teams", "hierarchical agents", "agent swarm", "CrewAI"],
+  "tldr": {
+    "en": "Split work across several LLM agents, each with its own context and role, to gain parallelism and context isolation — paying ~15× chat tokens and coordination failures. Worth it for broad, parallel, read-heavy tasks.",
+    "es": "Reparte el trabajo entre varios agentes LLM, cada uno con su propio contexto y rol, para ganar paralelismo y aislamiento de contexto, a cambio de ~15× los tokens de un chat y fallas de coordinación. Conviene en tareas amplias, paralelas y de lectura."
+  },
+  "analogy": {
+    "en": "A newsroom editor sends three reporters after different angles, then writes the story from their notes. Great for coverage; a disaster if all three rewrite the same paragraph at once.",
+    "es": "Un editor manda a tres reporteros a cubrir ángulos distintos y luego escribe la nota con sus apuntes. Genial para cubrir terreno; un desastre si los tres reescriben el mismo párrafo a la vez."
+  },
+  "explain": {
+    "en": "A **multi-agent system** splits one task across several LLM agents, each with its own context window, prompt, tools and often model. The dominant production shape is **orchestrator–worker** ([[orchestrator-workers]]): a lead agent plans, spawns subagents with a written brief, and synthesizes their condensed results. Peer-to-peer \"agent societies\" exist but are rare in production.\n\nWhat you buy:\n- **Parallelism** — subagents search at the same time; wall-clock drops even though total work rises.\n- **Context isolation** — a subagent may read 50k tokens exploring and return a 1–2k summary, so the lead's window stays clean (see [[context-rot]]).\n- **Specialization** — per-role prompts, tools, permissions and cheaper models.\n\nWhat you pay:\n- **Tokens** — Anthropic's research system used ~15× the tokens of a chat (a single agent ~4×).\n- **Lost context** — a subagent only knows its brief. Cognition's *\"Don't Build Multi-Agents\"* argues that actions carry implicit decisions; two agents writing coupled code make conflicting ones.\n- **Compounding errors** — one bad brief poisons a whole branch, and failures are harder to trace and eval.\n\nRule: multi-agent pays off for **breadth-first, parallelizable, read-heavy** work (research, due diligence, broad code search). For **write-heavy, tightly coupled** work, keep one agent with one context and use subagents only as read-only scouts.",
+    "es": "Un **sistema multiagente** reparte una tarea entre varios agentes LLM, cada uno con su propia ventana de contexto, prompt, herramientas y a menudo su propio modelo. La forma dominante en producción es **orquestador–trabajadores** ([[orchestrator-workers]]): un agente líder planifica, lanza subagentes con un brief escrito y sintetiza sus resultados condensados. Las \"sociedades de agentes\" entre pares existen, pero casi no se ven en producción.\n\nLo que ganas:\n- **Paralelismo**: los subagentes buscan al mismo tiempo; el tiempo de reloj baja aunque el trabajo total suba.\n- **Aislamiento de contexto**: un subagente puede leer 50k tokens explorando y devolver un resumen de 1–2k, así la ventana del líder se mantiene limpia (ver [[context-rot]]).\n- **Especialización**: prompts, herramientas, permisos y modelos más baratos para cada rol.\n\nLo que pagas:\n- **Tokens**: el sistema de investigación de Anthropic usó ~15× los tokens de un chat (un solo agente, ~4×).\n- **Contexto perdido**: un subagente solo conoce su brief. El texto *\"Don't Build Multi-Agents\"* de Cognition sostiene que las acciones llevan decisiones implícitas; dos agentes que escriben código acoplado toman decisiones que chocan.\n- **Errores que se acumulan**: un brief malo envenena toda una rama, y las fallas cuestan más de rastrear y evaluar.\n\nRegla: el multiagente conviene en trabajo **amplio, paralelizable y de lectura** (investigación, due diligence, búsqueda amplia en código). Para trabajo **de escritura y muy acoplado**, mantén un solo agente con un solo contexto y usa subagentes solo como exploradores de lectura."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[User question] --> L[\"Lead agent<br/>plan and split\"]\n  L -->|brief A| A[\"Subagent A<br/>own context\"]\n  L -->|brief B| B[\"Subagent B<br/>own context\"]\n  L -->|brief C| C[\"Subagent C<br/>own context\"]\n  A -.-> T[(Search tools)]\n  B -.-> T\n  C -.-> T\n  A -->|condensed findings| S[Lead synthesizes]\n  B --> S\n  C --> S\n  S --> O[Answer with citations]",
+    "caption": {
+      "en": "Each subagent explores in its own window and returns only condensed findings, so the lead's context stays small.",
+      "es": "Cada subagente explora en su propia ventana y solo devuelve hallazgos condensados, así el contexto del líder se mantiene chico."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Lead agent fans out to parallel subagents", "es": "Un agente líder reparte a subagentes en paralelo" },
+    "source": "import asyncio\nfrom anthropic import AsyncAnthropic\n\nclient = AsyncAnthropic()\nLEAD = \"claude-opus-4-5\"      # strong model: plans and synthesizes\nWORKER = \"claude-sonnet-4-5\"  # cheaper model: runs each subtask\n\nasync def ask(model: str, system: str, prompt: str) -> str:\n    r = await client.messages.create(\n        model=model, max_tokens=4000, system=system,\n        messages=[{\"role\": \"user\", \"content\": prompt}])\n    return r.content[0].text\n\nasync def research(question: str) -> str:\n    plan = await ask(LEAD, \"Split into 1-5 INDEPENDENT subtasks, one per line: \"\n                     \"objective | output format | tools | what to skip. \"\n                     \"Use 1 subtask for simple questions.\", question)\n    briefs = [b for b in plan.splitlines() if b.strip()][:5]  # hard cap on fan-out\n\n    # Each subagent starts fresh: its brief only, not the lead's transcript\n    findings = await asyncio.gather(*[\n        run_agent_loop(WORKER, task=b, tools=SEARCH_TOOLS, max_steps=15)\n        for b in briefs])\n\n    notes = \"\\n\\n\".join(f\"## {b}\\n{f}\" for b, f in zip(briefs, findings))\n    return await ask(LEAD, \"Synthesize an answer with sources. \"\n                     \"Flag contradictions between findings.\",\n                     f\"Question: {question}\\n\\nFindings:\\n{notes}\")"
+  },
+  "example": {
+    "en": "A due-diligence agent must profile 12 competitors. A single agent reads ~40 pages per company in sequence: ~25 minutes, and by competitor 9 its window is full of stale pages and quality drops. A lead agent instead spawns 4 subagents with 3 companies each and a fixed output schema (pricing, funding, headcount, sources). Wall-clock falls to ~7 minutes and each profile is cleaner — but the run costs ~4× more tokens, and one vague brief sent a subagent after the wrong \"Acme\". Fix: briefs with objective, format, boundaries and disambiguating facts.",
+    "es": "Un agente de due diligence debe perfilar 12 competidores. Un solo agente lee ~40 páginas por empresa en secuencia: ~25 minutos, y para el competidor 9 su ventana está llena de páginas viejas y la calidad cae. En cambio, un agente líder lanza 4 subagentes con 3 empresas cada uno y un esquema de salida fijo (precios, financiamiento, plantilla, fuentes). El tiempo baja a ~7 minutos y cada perfil sale más limpio, pero la corrida cuesta ~4× más tokens, y un brief vago mandó a un subagente tras la \"Acme\" equivocada. Solución: briefs con objetivo, formato, límites y datos que eliminen ambigüedad."
+  },
+  "pros": [
+    { "en": "Parallel subagents cut wall-clock on broad tasks; Anthropic saw research time drop up to ~90%.", "es": "Los subagentes en paralelo reducen el tiempo en tareas amplias; Anthropic vio caer el tiempo de investigación hasta ~90%." },
+    { "en": "Context isolation: each worker explores in a fresh window and returns only a summary.", "es": "Aislamiento de contexto: cada trabajador explora en una ventana limpia y solo devuelve un resumen." },
+    { "en": "Specialization: per-role prompts, tools, permissions and cheaper models.", "es": "Especialización: prompts, herramientas, permisos y modelos más baratos por rol." }
+  ],
+  "cons": [
+    { "en": "Token cost: ~15× a chat in Anthropic's system, so only high-value tasks justify it.", "es": "Costo en tokens: ~15× un chat en el sistema de Anthropic, así que solo lo justifican tareas de alto valor." },
+    { "en": "Subagents lack shared context and make conflicting implicit decisions.", "es": "Los subagentes no comparten contexto y toman decisiones implícitas que chocan entre sí." },
+    { "en": "Harder to debug and eval: branching, nondeterministic traces where errors compound.", "es": "Más difícil de depurar y evaluar: trazas ramificadas y no deterministas donde los errores se acumulan." }
+  ],
+  "whenToUse": {
+    "en": "Breadth-first, parallelizable, read-heavy tasks whose value pays for the tokens: research, due diligence, broad codebase or document search, independent subtasks with a clear output schema.",
+    "es": "Tareas amplias, paralelizables y de lectura cuyo valor paga los tokens: investigación, due diligence, búsqueda amplia en código o documentos, subtareas independientes con un esquema de salida claro."
+  },
+  "whenNotToUse": {
+    "en": "Tightly coupled, write-heavy work (one code change, one document) where every step depends on shared decisions, or tasks one agent with good context already solves.",
+    "es": "Trabajo de escritura muy acoplado (un cambio de código, un documento) donde cada paso depende de decisiones compartidas, o tareas que un solo agente con buen contexto ya resuelve."
+  },
+  "numbers": [
+    { "en": "Anthropic research system: a single agent uses ~4× the tokens of a chat; multi-agent ~15×.", "es": "Sistema de investigación de Anthropic: un solo agente usa ~4× los tokens de un chat; el multiagente, ~15×." },
+    { "en": "Anthropic: an Opus 4 lead with Sonnet 4 subagents beat single-agent Opus 4 by 90.2% on its internal research eval.", "es": "Anthropic: un líder Opus 4 con subagentes Sonnet 4 superó por 90.2% a un solo agente Opus 4 en su eval interna de investigación." },
+    { "en": "Anthropic: token usage alone explained ~80% of the performance variance on BrowseComp.", "es": "Anthropic: el uso de tokens por sí solo explicó ~80% de la varianza de desempeño en BrowseComp." },
+    { "en": "MAST (Cemri et al., 2025): 14 failure modes in 3 groups — specification, inter-agent misalignment, verification.", "es": "MAST (Cemri et al., 2025): 14 modos de falla en 3 grupos: especificación, desalineación entre agentes y verificación." }
+  ],
+  "pitfalls": [
+    { "en": "Vague briefs (\"research chip shortages\"): subagents duplicate work or chase the wrong entity.", "es": "Briefs vagos (\"investiga la escasez de chips\"): los subagentes duplican trabajo o persiguen la entidad equivocada." },
+    { "en": "Splitting coupled writes across agents: two subagents build parts that don't fit together.", "es": "Repartir escrituras acopladas entre agentes: dos subagentes construyen piezas que no encajan." },
+    { "en": "Over-spawning: Anthropic's early lead agent launched 50 subagents for simple queries. Scale effort to complexity.", "es": "Lanzar de más: el primer agente líder de Anthropic lanzaba 50 subagentes para consultas simples. Ajusta el esfuerzo a la complejidad." },
+    { "en": "Routing every result through the lead (a game of telephone): let subagents write artifacts and return references.", "es": "Pasar todo resultado por el líder (un teléfono descompuesto): deja que los subagentes guarden artefactos y devuelvan referencias." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you choose a multi-agent architecture over a single agent?", "es": "¿Cuándo elegirías una arquitectura multiagente en vez de un solo agente?" },
+      "a": {
+        "en": "Only when the task is breadth-first and parallelizable and its value pays for the tokens — Anthropic measured ~15× chat tokens for their research system. So I start with one agent and good context engineering. I go multi-agent when a single window overflows with exploration, like researching 20 sources or scanning a large codebase, and the subtasks are independent and mostly read-only. If the work is coupled writes, like a refactor, one agent owns every decision and subagents are only read-only scouts that return summaries.",
+        "es": "Solo cuando la tarea es amplia y paralelizable y su valor paga los tokens: Anthropic midió ~15× los tokens de un chat en su sistema de investigación. Por eso empiezo con un agente y buen context engineering. Paso a multiagente cuando una sola ventana se desborda explorando, como investigar 20 fuentes o recorrer un codebase grande, y las subtareas son independientes y casi solo de lectura. Si el trabajo son escrituras acopladas, como un refactor, un solo agente es dueño de todas las decisiones y los subagentes solo exploran y devuelven resúmenes."
+      }
+    },
+    {
+      "q": { "en": "Cognition says \"don't build multi-agents\"; Anthropic built one. Who's right?", "es": "Cognition dice \"no construyas multiagentes\"; Anthropic construyó uno. ¿Quién tiene razón?" },
+      "a": {
+        "en": "Both, for different workloads. Cognition's point is that actions carry implicit decisions: two agents writing coupled code without each other's full trace make conflicting choices. That's true for write-heavy coding. Anthropic's research task is read-heavy and parallel: subagents gather facts and the lead makes the decisions while synthesizing. My rule is: parallelize reading, centralize writing. Either way I give each worker the full context it needs, keep one owner per decision, and eval the system end to end.",
+        "es": "Los dos, para cargas distintas. El punto de Cognition es que las acciones llevan decisiones implícitas: dos agentes que escriben código acoplado sin ver la traza completa del otro toman decisiones que chocan. Eso es cierto en programación con mucha escritura. La tarea de Anthropic es de lectura y paralela: los subagentes juntan datos y el líder decide al sintetizar. Mi regla: paraleliza la lectura, centraliza la escritura. En ambos casos le doy a cada trabajador el contexto completo que necesita, mantengo un dueño por decisión y evalúo el sistema de punta a punta."
+      }
+    }
+  ],
+  "related": ["orchestrator-workers", "parallelization", "a2a", "agents-vs-workflows", "context-engineering", "agent-evals"],
+  "sources": [
+    { "title": "Anthropic — How we built our multi-agent research system", "url": "https://www.anthropic.com/engineering/built-multi-agent-research-system" },
+    { "title": "Cognition — Don't Build Multi-Agents", "url": "https://cognition.ai/blog/dont-build-multi-agents" },
+    { "title": "Cemri et al. — Why Do Multi-Agent LLM Systems Fail? (2025)", "url": "https://arxiv.org/abs/2503.13657" }
+  ]
+}

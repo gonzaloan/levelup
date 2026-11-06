@@ -1,0 +1,89 @@
+{
+  "id": "late-interaction",
+  "domain": "rag",
+  "level": "advanced",
+  "title": { "en": "Late interaction (ColBERT)", "es": "Late interaction (ColBERT)" },
+  "aliases": ["ColBERT", "ColBERTv2", "PLAID", "ColPali", "MaxSim", "multi-vector retrieval", "token-level embeddings"],
+  "tldr": {
+    "en": "Store one vector per token instead of one per passage, and score with MaxSim at query time: precision close to a cross-encoder, with documents still pre-computed offline, paid for in storage.",
+    "es": "Guarda un vector por token en vez de uno por pasaje y puntúa con MaxSim al consultar: precisión cercana a un cross-encoder, con los documentos aún precalculados offline, a cambio de más almacenamiento."
+  },
+  "analogy": {
+    "en": "A single vector is a one-line book blurb. Late interaction keeps a sticky note on every word, and at query time checks each of your keywords against its best-matching note.",
+    "es": "Un solo vector es la reseña de una línea en la contratapa de un libro. Late interaction pega una nota en cada palabra y, al consultar, compara cada una de tus palabras clave con su nota más parecida."
+  },
+  "explain": {
+    "en": "**Late interaction** keeps **one embedding per token** instead of squeezing a whole passage into one vector, and compares query and document token by token at search time.\n\nThe scoring rule is **MaxSim**: for each query token, find its most similar document token (dot product), then sum those maxima over the query. So \"rotate *API keys*\" can match \"key rotation for the *API*\" token by token, even when the passage's averaged meaning drifted elsewhere.\n\nIt sits between the two architectures you already know:\n\n- **Bi-encoder** (one vector): documents encoded offline, one dot product per document. Fast, but one vector blurs details.\n- **Cross-encoder** ([[reranking]]): query and document read together. Most precise, but nothing can be pre-computed.\n- **Late interaction**: document token vectors are pre-computed offline like a bi-encoder; only the cheap MaxSim runs at query time.\n\nThe catch is **storage**: a 300-token chunk becomes ~300 vectors of 128 dims instead of one. **ColBERTv2** stores each as a centroid id plus a 1–2-bit residual per dimension (6–10× smaller), and the **PLAID** engine prunes candidates through those centroids before full scoring. **ColPali** applies the same idea to page *images*: one vector per image patch, so PDFs with tables and charts are retrieved without OCR.",
+    "es": "**Late interaction** guarda **un embedding por token** en vez de comprimir todo un pasaje en un solo vector, y compara consulta y documento token por token al momento de buscar.\n\nLa regla de puntaje es **MaxSim**: para cada token de la consulta busca el token del documento más parecido (producto punto) y luego suma esos máximos sobre toda la consulta. Así, \"rotar *claves de API*\" coincide token por token con \"rotación de *claves* para la *API*\", aunque el significado promedio del pasaje se haya ido por otro lado.\n\nQueda entre las dos arquitecturas que ya conoces:\n\n- **Bi-encoder** (un vector): documentos codificados offline, un producto punto por documento. Rápido, pero un solo vector difumina los detalles.\n- **Cross-encoder** ([[reranking]]): consulta y documento se leen juntos. El más preciso, pero no se puede precalcular nada.\n- **Late interaction**: los vectores por token del documento se precalculan offline como en un bi-encoder; al consultar solo corre el MaxSim, que es barato.\n\nLa trampa es el **almacenamiento**: un chunk de 300 tokens se vuelve ~300 vectores de 128 dimensiones en vez de uno. **ColBERTv2** guarda cada uno como un id de centroide más un residuo de 1–2 bits por dimensión (6–10× menos espacio), y el motor **PLAID** poda candidatos con esos centroides antes del puntaje completo. **ColPali** aplica la misma idea a *imágenes* de páginas: un vector por parche de imagen, así recuperas PDFs con tablas y gráficos sin OCR."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[Document] --> DE[\"Encode offline<br/>1 vector per token\"]\n  DE --> C[\"Compress<br/>centroid + residual\"]\n  C --> I[(Token index)]\n  Q[Query] --> QE[\"Encode query<br/>~32 token vectors\"]\n  QE --> M[\"MaxSim per<br/>query token\"]\n  I --> M\n  M --> S[\"Sum = score\"]\n  S --> K[Top-k passages]",
+    "caption": {
+      "en": "All the expensive encoding of documents happens offline; query time is one short encoder pass plus matrix products.",
+      "es": "Toda la codificación costosa de documentos ocurre offline; al consultar solo hay una pasada corta del encoder más productos de matrices."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "MaxSim by hand, then with a library", "es": "MaxSim a mano y luego con una librería" },
+    "source": "import numpy as np\n\ndef maxsim(q: np.ndarray, d: np.ndarray) -> float:\n    \"\"\"q: (n_q, 128) query token vectors; d: (n_d, 128) doc token vectors; both L2-normalized.\"\"\"\n    sims = q @ d.T                        # every query token vs every doc token\n    return float(sims.max(axis=1).sum())  # best doc token per query token, summed\n\n# Common production shape: late interaction as a cheap reranker\ncandidates = hybrid_search(query, k=200)            # stage 1: recall\nq_vecs = encode_query(query)                        # ~32 vectors, one short pass\nscored = [(maxsim(q_vecs, token_store[c.id]), c) for c in candidates]  # doc vecs precomputed\ntop = [c for _, c in sorted(scored, key=lambda x: x[0], reverse=True)[:10]]\n\n# Or a full ColBERTv2 index (PLAID, compressed) via RAGatouille\nfrom ragatouille import RAGPretrainedModel\n\nRAG = RAGPretrainedModel.from_pretrained(\"colbert-ir/colbertv2.0\")\nRAG.index(collection=docs, index_name=\"kb\")\nresults = RAG.search(\"how do I rotate API keys?\", k=10)"
+  },
+  "example": {
+    "en": "An internal code-docs search uses a single-vector embedder and keeps missing queries like *\"error E1043 on ARM builds\"*: the error code and the platform get averaged away into \"build problems\". The team keeps hybrid search as stage 1 (top 200) and reranks with a ColBERT model. Document token vectors were computed at ingestion, so query time is one encoder pass over ~32 query tokens plus 200 small matrix products, instead of 200 full transformer passes for a cross-encoder. The *E1043* token now finds a near-exact match and the right page moves into the top 3.",
+    "es": "Un buscador interno de documentación técnica usa un embedder de un solo vector y falla en consultas como *\"error E1043 en builds de ARM\"*: el código de error y la plataforma se diluyen en el promedio y quedan como \"problemas de build\". El equipo mantiene búsqueda híbrida como etapa 1 (top 200) y reordena con un modelo ColBERT. Los vectores por token de los documentos se calcularon al ingerir, así que al consultar hay una pasada del encoder sobre ~32 tokens más 200 productos de matrices pequeños, en vez de 200 pasadas completas de un cross-encoder. El token *E1043* ahora encuentra una coincidencia casi exacta y la página correcta sube al top 3."
+  },
+  "pros": [
+    { "en": "Better retrieval than single-vector embeddings on exact terms, rare entities and out-of-domain text.", "es": "Mejor recuperación que los embeddings de un solo vector con términos exactos, entidades raras y texto fuera de dominio." },
+    { "en": "Documents are encoded offline: query cost is one short encoder pass plus matrix products.", "es": "Los documentos se codifican offline: el costo por consulta es una pasada corta del encoder más productos de matrices." },
+    { "en": "Interpretable: you can see which document token each query token matched.", "es": "Interpretable: puedes ver con qué token del documento coincidió cada token de la consulta." },
+    { "en": "ColPali extends it to page images, skipping OCR and layout parsing.", "es": "ColPali lo extiende a imágenes de páginas y se salta el OCR y el parsing del layout." }
+  ],
+  "cons": [
+    { "en": "Storage: hundreds of vectors per chunk instead of one, even after compression.", "es": "Almacenamiento: cientos de vectores por chunk en vez de uno, incluso después de comprimir." },
+    { "en": "Fewer managed options and more operational work than a plain vector database.", "es": "Menos opciones gestionadas y más trabajo operativo que una base vectorial común." },
+    { "en": "Still below a strong cross-encoder on the hardest relevance judgments.", "es": "Sigue por debajo de un buen cross-encoder en los juicios de relevancia más difíciles." }
+  ],
+  "whenToUse": {
+    "en": "When single-vector retrieval is the bottleneck, queries carry exact identifiers or rare terms, or you need a reranker cheaper than a cross-encoder. ColPali for visually rich PDFs where parsing loses meaning.",
+    "es": "Cuando la recuperación de un solo vector es el cuello de botella, las consultas traen identificadores exactos o términos raros, o necesitas un reranker más barato que un cross-encoder. ColPali para PDFs muy visuales donde el parsing pierde significado."
+  },
+  "whenNotToUse": {
+    "en": "Small corpora where a cross-encoder over the top 50 is cheap enough, huge corpora on a tight storage budget, or teams without capacity to run a less standard index. Try [[hybrid-search]] plus a reranker first.",
+    "es": "Corpus chicos donde un cross-encoder sobre el top 50 ya es barato, corpus enormes con presupuesto de almacenamiento ajustado, o equipos sin capacidad para operar un índice menos estándar. Prueba primero [[hybrid-search]] más un reranker."
+  },
+  "numbers": [
+    { "en": "ColBERT: 128-dim vector per token; queries padded or truncated to 32 tokens.", "es": "ColBERT: vector de 128 dimensiones por token; las consultas se rellenan o recortan a 32 tokens." },
+    { "en": "Uncompressed: 300 tokens × 128 dims × 2 bytes (fp16) ≈ 77 KB per chunk vs ~4 KB for one 1,024-dim fp32 vector.", "es": "Sin comprimir: 300 tokens × 128 dims × 2 bytes (fp16) ≈ 77 KB por chunk vs ~4 KB de un vector fp32 de 1024 dims." },
+    { "en": "ColBERTv2 residual compression (1–2 bits per dimension): 6–10× smaller index.", "es": "Compresión residual de ColBERTv2 (1–2 bits por dimensión): índice 6–10× más chico." },
+    { "en": "PLAID: up to ~7× lower latency on GPU and ~45× on CPU vs vanilla ColBERTv2.", "es": "PLAID: hasta ~7× menos latencia en GPU y ~45× en CPU frente a ColBERTv2 sin PLAID." },
+    { "en": "ColPali: ~1,000 patch vectors of 128 dims per page image.", "es": "ColPali: ~1000 vectores de parche de 128 dims por imagen de página." }
+  ],
+  "pitfalls": [
+    { "en": "Brute-forcing MaxSim over the whole corpus: use a PLAID-style engine, or MaxSim only to rerank a first-stage pool.", "es": "Calcular MaxSim por fuerza bruta sobre todo el corpus: usa un motor tipo PLAID, o MaxSim solo para reordenar el pool de la primera etapa." },
+    { "en": "Sizing infrastructure with single-vector math and discovering the per-token storage multiplier in production.", "es": "Dimensionar la infraestructura con cuentas de un solo vector y descubrir en producción el multiplicador de almacenamiento por token." },
+    { "en": "Assuming an English MS MARCO checkpoint works on multilingual or domain data: evaluate, or pick a multilingual model.", "es": "Asumir que un checkpoint entrenado en MS MARCO en inglés sirve para datos multilingües o de dominio: evalúa, o elige un modelo multilingüe." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Where does ColBERT sit between bi-encoders and cross-encoders?", "es": "¿Dónde queda ColBERT entre los bi-encoders y los cross-encoders?" },
+      "a": {
+        "en": "It's about when query and document interact. A bi-encoder never lets them interact: one vector each, a single dot product. A cross-encoder interacts at every layer, so nothing can be pre-computed. ColBERT interacts late: documents are encoded offline into per-token vectors, and at query time I only compute MaxSim — each query token's best-matching document token, summed. I keep token-level precision while paying only a short query encoding and matrix products. The cost moves to storage, which is why ColBERTv2's compression and PLAID matter.",
+        "es": "Se trata de cuándo interactúan la consulta y el documento. Un bi-encoder nunca los deja interactuar: un vector cada uno y un solo producto punto. Un cross-encoder los hace interactuar en cada capa, así que no se puede precalcular nada. ColBERT interactúa tarde: los documentos se codifican offline en vectores por token y al consultar solo calculo MaxSim, el token del documento que mejor coincide con cada token de la consulta, sumado. Conservo precisión a nivel de token y solo pago una codificación corta de la consulta y productos de matrices. El costo pasa al almacenamiento; por eso importan la compresión de ColBERTv2 y PLAID."
+      }
+    },
+    {
+      "q": { "en": "Would you use late interaction as your first-stage retriever or as a reranker?", "es": "¿Usarías late interaction como recuperador de primera etapa o como reranker?" },
+      "a": {
+        "en": "It depends on corpus size and storage budget. For a few million passages, a full ColBERTv2/PLAID index is affordable and usually gives better first-stage quality than dense vectors. At larger scale I'd keep a cheap first stage, hybrid BM25 plus dense, and use MaxSim to rerank the top 100–500, keeping token vectors in cheap storage instead of an ANN index. That captures most of the gain at a fraction of cross-encoder latency. I'd decide with recall@k and nDCG on our own eval set, not on public benchmark numbers.",
+        "es": "Depende del tamaño del corpus y del presupuesto de almacenamiento. Con unos pocos millones de pasajes, un índice completo ColBERTv2/PLAID es costeable y suele dar mejor calidad de primera etapa que los vectores densos. A mayor escala mantendría una primera etapa barata, híbrida BM25 más densa, y usaría MaxSim para reordenar el top 100–500, guardando los vectores por token en almacenamiento barato en vez de un índice ANN. Eso captura la mayor parte de la mejora con una fracción de la latencia de un cross-encoder. Decidiría con recall@k y nDCG sobre nuestro propio set de evaluación, no con benchmarks públicos."
+      }
+    }
+  ],
+  "related": ["reranking", "embedding-models", "hybrid-search", "ann-indexes", "vector-databases", "multimodal"],
+  "sources": [
+    { "title": "Khattab & Zaharia — ColBERT: Efficient and Effective Passage Search via Contextualized Late Interaction over BERT (2020)", "url": "https://arxiv.org/abs/2004.12832" },
+    { "title": "Santhanam et al. — ColBERTv2: Effective and Efficient Retrieval via Lightweight Late Interaction (2021)", "url": "https://arxiv.org/abs/2112.01488" },
+    { "title": "Santhanam et al. — PLAID: An Efficient Engine for Late Interaction Retrieval (2022)", "url": "https://arxiv.org/abs/2205.09707" },
+    { "title": "Faysse et al. — ColPali: Efficient Document Retrieval with Vision Language Models (2024)", "url": "https://arxiv.org/abs/2407.01449" }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "id": "ann-indexes",
+  "domain": "rag",
+  "level": "advanced",
+  "title": { "en": "ANN indexes: HNSW, IVF, PQ", "es": "Índices ANN: HNSW, IVF, PQ" },
+  "aliases": ["ANN", "approximate nearest neighbor", "HNSW", "IVF", "IVFFlat", "IVF-PQ", "product quantization", "DiskANN"],
+  "tldr": {
+    "en": "Exact nearest-neighbor search scans every vector; ANN indexes visit a tiny fraction and accept missing a few true neighbors. HNSW is the default, IVF and PQ trade recall for memory, efSearch/nprobe are the dials.",
+    "es": "La búsqueda exacta de vecinos recorre todos los vectores; los índices ANN visitan una fracción mínima y aceptan perder algunos vecinos reales. HNSW es la opción por defecto, IVF y PQ cambian recall por memoria, y efSearch/nprobe son las perillas."
+  },
+  "analogy": {
+    "en": "Finding a house by asking for directions: first the right highway exit, then the street, then door to door. You never check every house, and once in a while you miss the best one.",
+    "es": "Encontrar una casa preguntando cómo llegar: primero la salida correcta de la autopista, luego la calle y luego puerta por puerta. Nunca revisas todas las casas y, de vez en cuando, te pierdes la mejor."
+  },
+  "explain": {
+    "en": "Exact k-nearest-neighbor search compares the query with all N vectors: O(N·d). At 10M × 768 dims that is ~7.7 billion multiply-adds and ~31 GB of memory read per query. **ANN** (approximate nearest neighbor) indexes look at a tiny fraction and accept missing a few true neighbors. The quality metric is **recall@k**: the share of the true top-k you got back.\n\n- **HNSW** (Hierarchical Navigable Small World): a layered proximity graph. Search enters the sparse top layer, hops greedily toward the query and descends to layer 0, which holds every vector. Knobs: `M` (links per node), `efConstruction` (build effort) and `efSearch` (candidate list at query time, your main recall/latency dial). Best recall per millisecond, but RAM-heavy and slow to build.\n- **IVF** (inverted file): k-means splits the vectors into `nlist` clusters; a query scans only the `nprobe` closest. Cheaper to build; misses neighbors sitting across a cluster border.\n- **PQ** (product quantization): chops each vector into sub-vectors and stores a 1-byte centroid code for each, 32–64× smaller. Distances become approximate, so it usually ships as IVF-PQ plus rescoring with full vectors.\n- **DiskANN**: a graph on SSD with compressed vectors in RAM; billion-scale on one machine.\n\nEvery knob moves you along the same curve: more recall costs latency or memory.",
+    "es": "La búsqueda exacta de los k vecinos más cercanos compara la consulta con los N vectores: O(N·d). Con 10M × 768 dimensiones son ~7,700 millones de multiplicaciones y sumas, y ~31 GB de memoria leída por consulta. Los índices **ANN** (vecinos más cercanos aproximados) miran una fracción mínima y aceptan perder algunos vecinos reales. La métrica de calidad es el **recall@k**: qué parte del top-k verdadero recuperaste.\n\n- **HNSW** (Hierarchical Navigable Small World): un grafo de proximidad por capas. La búsqueda entra por la capa superior, que es dispersa, salta de forma voraz hacia la consulta y baja hasta la capa 0, donde están todos los vectores. Perillas: `M` (enlaces por nodo), `efConstruction` (esfuerzo de construcción) y `efSearch` (lista de candidatos al consultar, tu perilla principal de recall contra latencia). El mejor recall por milisegundo, pero consume mucha RAM y tarda en construirse.\n- **IVF** (archivo invertido): k-means reparte los vectores en `nlist` clústeres; cada consulta revisa solo los `nprobe` más cercanos. Se construye más barato; pierde vecinos que quedan del otro lado de la frontera de un clúster.\n- **PQ** (cuantización de producto): corta cada vector en subvectores y guarda para cada uno un código de 1 byte del centroide más cercano, 32–64× más chico. Las distancias se vuelven aproximadas, por eso suele usarse como IVF-PQ más un rescoring con los vectores completos.\n- **DiskANN**: un grafo en SSD con vectores comprimidos en RAM; escala de miles de millones en una sola máquina.\n\nCada perilla te mueve sobre la misma curva: más recall cuesta latencia o memoria."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[Query vector] --> H{Index type}\n  H -->|HNSW| T[\"Sparse top layer\"]\n  T -->|greedy descent| L0[\"Layer 0 beam<br/>size efSearch\"]\n  H -->|IVF-PQ| C[\"nprobe nearest<br/>centroids\"]\n  C --> P[\"Scan PQ codes<br/>in clusters\"]\n  P --> R[\"Rescore with<br/>full vectors\"]\n  L0 --> K[Top-k results]\n  R --> K\n  K -.->|\"vs brute force\"| M[\"Measure recall@k\"]",
+    "caption": {
+      "en": "HNSW descends a graph; IVF-PQ scans a few compressed clusters. efSearch and nprobe set how much you look, and therefore recall versus latency.",
+      "es": "HNSW baja por un grafo; IVF-PQ revisa unos pocos clústeres comprimidos. efSearch y nprobe definen cuánto miras y, por lo tanto, recall contra latencia."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Sweep efSearch and nprobe against brute-force ground truth", "es": "Barrer efSearch y nprobe contra la verdad exacta" },
+    "source": "import faiss\nimport numpy as np\n\nxb = np.load(\"doc_embeddings.npy\").astype(\"float32\")    # (N, d) real embeddings\nxq = np.load(\"query_embeddings.npy\").astype(\"float32\")  # (Q, d) real queries\nfaiss.normalize_L2(xb); faiss.normalize_L2(xq)          # unit vectors: L2 order = cosine order\nd, k = xb.shape[1], 10\n\nexact = faiss.IndexFlatL2(d)       # brute force, O(N·d) per query: the ground truth\nexact.add(xb)\n_, truth = exact.search(xq, k)\n\ndef recall(found) -> float:        # share of the true top-k we got back\n    return np.mean([len(set(f) & set(t)) / k for f, t in zip(found, truth)])\n\nhnsw = faiss.IndexHNSWFlat(d, 32)  # M = 32 links per node: more RAM, better recall\nhnsw.hnsw.efConstruction = 200     # build effort, paid once\nhnsw.add(xb)\nfor ef in (16, 64, 256):           # efSearch: the query-time recall/latency dial\n    hnsw.hnsw.efSearch = ef\n    print(\"HNSW efSearch\", ef, recall(hnsw.search(xq, k)[1]))\n\nquantizer = faiss.IndexFlatL2(d)\n# 1,024 clusters, 1 byte per 16 dims (d must be divisible by 16)\nivfpq = faiss.IndexIVFPQ(quantizer, d, 1024, d // 16, 8)\nivfpq.train(xb)                    # k-means centroids + PQ codebooks\nivfpq.add(xb)\nfor nprobe in (1, 16, 64):         # clusters scanned per query\n    ivfpq.nprobe = nprobe          # expect lower recall: rescore a top 100 in production\n    print(\"IVF-PQ nprobe\", nprobe, recall(ivfpq.search(xq, k)[1]))"
+  },
+  "example": {
+    "en": "A docs-search team has 10M chunks × 768 dims. Brute force reads ~31 GB per query, roughly 0.1–1 s on a CPU server, bound by memory bandwidth. HNSW (M = 32) needs ~31 GB of vectors plus ~2.6 GB of links, so they rent a 64 GB node, sweep efSearch on 1,000 real queries against brute-force ground truth, and keep the smallest value with recall@10 ≥ 0.95. A 1B-vector image corpus would need ~3 TB of RAM that way; there they use IVF-PQ at 48 bytes per vector (~48 GB of codes) and rescore the top 100 with full vectors.",
+    "es": "Un equipo de búsqueda de documentación tiene 10M chunks × 768 dimensiones. La fuerza bruta lee ~31 GB por consulta, más o menos 0.1–1 s en un servidor con CPU, limitada por el ancho de banda de memoria. HNSW (M = 32) necesita ~31 GB de vectores más ~2.6 GB de enlaces, así que rentan un nodo de 64 GB, barren efSearch con 1,000 consultas reales contra la verdad exacta y se quedan con el valor más chico que da recall@10 ≥ 0.95. Un corpus de 1,000 millones de imágenes necesitaría ~3 TB de RAM de esa forma; ahí usan IVF-PQ con 48 bytes por vector (~48 GB de códigos) y hacen rescoring del top 100 con los vectores completos."
+  },
+  "pros": [
+    { "en": "Millisecond queries over millions of vectors instead of a full scan.", "es": "Consultas en milisegundos sobre millones de vectores en lugar de un recorrido completo." },
+    { "en": "A per-query dial (efSearch, nprobe) lets you buy recall with latency.", "es": "Una perilla por consulta (efSearch, nprobe) te deja comprar recall con latencia." },
+    { "en": "PQ and quantization cut memory 4–64×, which makes billion-scale affordable.", "es": "PQ y la cuantización reducen la memoria 4–64×, y eso vuelve costeable la escala de miles de millones." }
+  ],
+  "cons": [
+    { "en": "Approximate: some true neighbors are silently missed, so recall must be measured.", "es": "Es aproximado: algunos vecinos reales se pierden sin aviso, así que hay que medir el recall." },
+    { "en": "HNSW is RAM-hungry and slow to build; deletes leave tombstones that degrade the graph.", "es": "HNSW consume mucha RAM y tarda en construirse; los borrados dejan marcas que degradan el grafo." },
+    { "en": "IVF and PQ must be trained on representative data and lose recall when the data drifts.", "es": "IVF y PQ se entrenan con datos representativos y pierden recall cuando los datos cambian." }
+  ],
+  "whenToUse": {
+    "en": "Beyond ~100k–1M vectors, or when p95 must stay under ~10–20 ms. HNSW by default; IVF-PQ or DiskANN when the vectors do not fit in RAM or cost per vector dominates.",
+    "es": "A partir de ~100k–1M vectores, o cuando el p95 debe quedar por debajo de ~10–20 ms. HNSW por defecto; IVF-PQ o DiskANN cuando los vectores no caben en RAM o domina el costo por vector."
+  },
+  "whenNotToUse": {
+    "en": "Small corpora (under ~100k vectors) or when results must be exact, as in dedup audits or compliance lookups: brute force on CPU or GPU is simpler and fast enough.",
+    "es": "Corpus chicos (menos de ~100k vectores) o cuando los resultados deben ser exactos, como en auditorías de duplicados o búsquedas de cumplimiento: la fuerza bruta en CPU o GPU es más simple y suficientemente rápida."
+  },
+  "numbers": [
+    { "en": "Exact kNN over 10M × 768 float32 reads ~31 GB per query.", "es": "kNN exacto sobre 10M × 768 en float32 lee ~31 GB por consulta." },
+    { "en": "Common HNSW starting points: M = 16, efConstruction = 64–200, efSearch = 40–100 (and always ≥ k).", "es": "Puntos de partida comunes en HNSW: M = 16, efConstruction = 64–200, efSearch = 40–100 (y siempre ≥ k)." },
+    { "en": "PQ at 1 byte per 16 dims: a 1536-dim float32 vector goes from 6 KB to 96 bytes (64×).", "es": "PQ con 1 byte cada 16 dimensiones: un vector float32 de 1536 dimensiones pasa de 6 KB a 96 bytes (64×)." },
+    { "en": "pgvector IVFFlat guidance: lists = rows/1000 up to 1M rows, √rows above; probes ≈ √lists.", "es": "Guía de pgvector para IVFFlat: lists = filas/1000 hasta 1M de filas, √filas por encima; probes ≈ √lists." },
+    { "en": "DiskANN paper: a billion-point index on one workstation with 64 GB of RAM plus an SSD.", "es": "Paper de DiskANN: un índice de mil millones de puntos en una estación de trabajo con 64 GB de RAM más un SSD." }
+  ],
+  "pitfalls": [
+    { "en": "Never measuring recall@k on your own queries: results on SIFT or random vectors do not transfer to your embeddings.", "es": "Nunca medir el recall@k con tus propias consultas: los resultados sobre SIFT o vectores aleatorios no se trasladan a tus embeddings." },
+    { "en": "efSearch below k, or nprobe = 1, and then blaming the embedding model for bad retrieval.", "es": "Dejar efSearch por debajo de k, o nprobe = 1, y después culpar al modelo de embeddings por la mala recuperación." },
+    { "en": "Training IVF/PQ on a small or stale sample, then adding very different data: clusters become unbalanced.", "es": "Entrenar IVF/PQ con una muestra chica o vieja y después agregar datos muy distintos: los clústeres quedan desbalanceados." },
+    { "en": "Heavy deletes on HNSW without rebuilds: tombstones waste memory and degrade recall.", "es": "Muchos borrados en HNSW sin reconstruir: las marcas de borrado desperdician memoria y degradan el recall." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "HNSW or IVF-PQ: which would you pick?", "es": "¿HNSW o IVF-PQ? ¿Cuál eliges?" },
+      "a": {
+        "en": "It is a memory question first. If vectors plus graph fit in RAM, I pick HNSW: the best recall-per-millisecond curve, no training step, incremental inserts. If they do not, or cost per vector dominates, IVF-PQ compresses 32–64× at a recall cost, so I over-fetch ~100 candidates and rescore them with full-precision vectors. At billions of vectors with fast SSDs, DiskANN. Either way I set efSearch or nprobe from a measured recall@10 versus p95 curve on our real queries, not from defaults.",
+        "es": "Primero es una pregunta de memoria. Si los vectores más el grafo caben en RAM, elijo HNSW: la mejor curva de recall por milisegundo, sin paso de entrenamiento y con inserciones incrementales. Si no caben, o domina el costo por vector, IVF-PQ comprime 32–64× a cambio de recall, así que traigo ~100 candidatos de más y les hago rescoring con los vectores en precisión completa. Con miles de millones de vectores y SSD rápidos, DiskANN. En cualquier caso, fijo efSearch o nprobe a partir de una curva medida de recall@10 contra p95 con nuestras consultas reales, no con los valores por defecto."
+      }
+    },
+    {
+      "q": { "en": "Retrieval got worse after the corpus grew 10×. What happened?", "es": "La recuperación empeoró cuando el corpus creció 10×. ¿Qué pasó?" },
+      "a": {
+        "en": "Most likely the ANN parameters were tuned for the old size. With HNSW, the same efSearch explores a smaller share of a bigger graph, and accumulated deletes leave tombstones. With IVF, centroids trained on the old data become unbalanced, so a fixed nprobe covers less. I would measure recall@10 against brute force on a sample of real queries, re-tune efSearch or nprobe, and schedule rebuilds or retraining. I would also check filters: a selective filter on a bigger index starves the candidate list.",
+        "es": "Lo más probable es que los parámetros del ANN estuvieran ajustados para el tamaño anterior. Con HNSW, el mismo efSearch explora una parte más chica de un grafo más grande, y los borrados acumulados dejan marcas. Con IVF, los centroides entrenados con los datos viejos quedan desbalanceados, así que un nprobe fijo cubre menos. Mediría el recall@10 contra fuerza bruta con una muestra de consultas reales, reajustaría efSearch o nprobe y programaría reconstrucciones o reentrenamientos. También revisaría los filtros: un filtro selectivo sobre un índice más grande deja sin candidatos a la búsqueda."
+      }
+    }
+  ],
+  "related": ["vector-databases", "embedding-models", "quantization", "back-of-envelope", "index-lifecycle", "hybrid-search"],
+  "sources": [
+    { "title": "Malkov & Yashunin — Efficient and robust approximate nearest neighbor search using HNSW graphs", "url": "https://arxiv.org/abs/1603.09320" },
+    { "title": "Douze et al. — The Faiss library", "url": "https://arxiv.org/abs/2401.08281" },
+    { "title": "Microsoft — DiskANN", "url": "https://github.com/microsoft/DiskANN" },
+    { "title": "ANN-Benchmarks", "url": "https://ann-benchmarks.com/" }
+  ]
+}

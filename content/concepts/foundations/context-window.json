@@ -1,0 +1,88 @@
+{
+  "id": "context-window",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Context window", "es": "Ventana de contexto" },
+  "aliases": ["context length", "context size", "token limit", "long context", "effective context", "max_tokens", "lost in the middle"],
+  "tldr": {
+    "en": "The maximum tokens a model handles in one call, input and output combined: 128k to 1M+ today. Usable quality degrades well before the advertised limit, and every token costs money and latency.",
+    "es": "El máximo de tokens que un modelo maneja en una llamada, entrada y salida juntas: hoy entre 128k y más de 1M. La calidad útil cae mucho antes del límite anunciado, y cada token cuesta dinero y latencia."
+  },
+  "analogy": {
+    "en": "A desk, not a filing cabinet: everything the model works with must be on the desk for this call. A bigger desk helps, but piling it high makes things harder to find, and you pay rent per sheet.",
+    "es": "Un escritorio, no un archivero: todo lo que el modelo usa debe estar sobre el escritorio en esta llamada. Uno más grande ayuda, pero si apilas demasiado cuesta encontrar las cosas, y pagas renta por cada hoja."
+  },
+  "explain": {
+    "en": "The **context window** is the maximum number of [[tokens]] a model can process in one request. System prompt, tool definitions, conversation history, retrieved documents, the user message **and the generated output** all share it. The model has no memory between calls: whatever isn't in the window doesn't exist for it.\n\nCommon sizes on 2025-era models run from **128k** (GPT-4o, Llama 3.1) through **200k** (Claude) to **~1M** (Gemini 2.5 Pro, GPT-4.1). 128k tokens is roughly 300 pages of English. Output has a **separate, much smaller cap** (e.g., 16,384 tokens for GPT-4o), set per call with `max_tokens`.\n\nThree things matter more than the headline number:\n\n- **Effective vs advertised context.** Models ace needle-in-a-haystack lookups but degrade on real reasoning over long inputs, and facts in the middle are used worst ([[context-rot]]).\n- **Cost and latency scale with tokens.** You pay for every input token on every call, and prefill time grows with prompt length: hundreds of thousands of tokens can mean seconds to tens of seconds before the first token.\n- **Overflow needs a policy.** When content won't fit: **truncate** (drop the oldest turns, never the system prompt), **summarize** older history into a rolling summary, or **retrieve** only what's relevant per call ([[rag]]). Reserve room for the output first.",
+    "es": "La **ventana de contexto** es el número máximo de [[tokens]] que un modelo puede procesar en una solicitud. El system prompt, las definiciones de herramientas, el historial de la conversación, los documentos recuperados, el mensaje del usuario **y la salida generada** la comparten. El modelo no tiene memoria entre llamadas: lo que no está en la ventana no existe para él.\n\nLos tamaños comunes en modelos de 2025 van de **128k** (GPT-4o, Llama 3.1) a **200k** (Claude) y **~1M** (Gemini 2.5 Pro, GPT-4.1). 128k tokens son unas 300 páginas en inglés. La salida tiene un **tope aparte y mucho menor** (p. ej., 16,384 tokens en GPT-4o), que fijas por llamada con `max_tokens`.\n\nTres cosas importan más que la cifra del anuncio:\n\n- **Contexto efectivo vs anunciado.** Los modelos aprueban las búsquedas tipo needle-in-a-haystack, pero se degradan al razonar de verdad sobre entradas largas, y los datos que quedan en el medio se aprovechan peor ([[context-rot]]).\n- **El costo y la latencia escalan con los tokens.** Pagas cada token de entrada en cada llamada, y el tiempo de prefill crece con el largo del prompt: cientos de miles de tokens pueden implicar de segundos a decenas de segundos antes del primer token.\n- **El desborde necesita una política.** Cuando el contenido no cabe: **truncar** (quitar los turnos más viejos, nunca el system prompt), **resumir** el historial viejo en un resumen continuo o **recuperar** solo lo relevante en cada llamada ([[rag]]). Primero reserva espacio para la salida."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  SP[System prompt] --> W{\"Fits window minus<br/>output reserve?\"}\n  TL[Tool definitions] --> W\n  H[Chat history] --> W\n  R[Retrieved docs] --> W\n  U[User message] --> W\n  W -->|yes| M[Model call]\n  W -->|no| FIX[\"Trim, summarize<br/>or retrieve less\"]\n  FIX --> W\n  M --> A[\"Output tokens<br/>capped by max_tokens\"]",
+    "caption": {
+      "en": "Everything in the call, including the answer, competes for one budget; when it overflows you need a deliberate policy.",
+      "es": "Todo lo que va en la llamada, incluida la respuesta, compite por un mismo presupuesto; cuando se desborda necesitas una política deliberada."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Fit chat history into the window with a rolling summary", "es": "Ajustar el historial a la ventana con un resumen continuo" },
+    "source": "import tiktoken\n\nenc = tiktoken.get_encoding(\"o200k_base\")  # match your model's tokenizer\nWINDOW = 128_000      # model context window: input + output\nMAX_OUTPUT = 4_000    # reserve the answer's room first\nSAFETY = 1_000        # message formatting overhead, tokenizer drift\n\ndef n_tokens(msg: dict) -> int:\n    return len(enc.encode(msg[\"content\"])) + 4  # ~per-message overhead\n\ndef fit_history(system: dict, history: list[dict], summarize) -> list[dict]:\n    \"\"\"Keep recent turns verbatim; fold older ones into a summary instead of dropping them.\"\"\"\n    budget = WINDOW - MAX_OUTPUT - SAFETY - n_tokens(system)\n    history_budget = int(budget * 0.8)  # leave ~20% for the summary\n    kept, used = [], 0\n    for msg in reversed(history):        # newest first: recency matters most\n        cost = n_tokens(msg)\n        if used + cost > history_budget:\n            break\n        kept.insert(0, msg)\n        used += cost\n    older = history[: len(history) - len(kept)]\n    if older:  # an LLM call; cache the summary across turns instead of redoing it\n        summary = summarize(older, max_tokens=budget - used)\n        system = {**system, \"content\": system[\"content\"] + \"\\n\\nEarlier conversation, summarized:\\n\" + summary}\n    return [system] + kept"
+  },
+  "example": {
+    "en": "A support chat sends a 3,000-token system prompt plus tools, and each turn adds ~600 tokens of user and assistant text. Turn 40 sends 3,000 + 40 × 600 = 27,000 input tokens, well inside 128k, so nobody worries. But the whole history is re-sent every turn: the session bills ~612k input tokens, not 27k. Capping history at 8k tokens with a rolling summary cuts that to ~390k and keeps latency flat from turn 14 on; caching the stable 3,000-token prefix with [[prompt-caching]] trims the bill further.",
+    "es": "Un chat de soporte envía un system prompt de 3,000 tokens más las herramientas, y cada turno agrega ~600 tokens de texto del usuario y del asistente. El turno 40 envía 3,000 + 40 × 600 = 27,000 tokens de entrada, muy por debajo de 128k, así que nadie se preocupa. Pero todo el historial se reenvía en cada turno: la sesión factura ~612k tokens de entrada, no 27k. Limitar el historial a 8k tokens con un resumen continuo lo baja a ~390k y mantiene la latencia estable desde el turno 14; cachear el prefijo estable de 3,000 tokens con [[prompt-caching]] recorta aún más la factura."
+  },
+  "pros": [
+    { "en": "Whole-document tasks work without a retrieval pipeline: contracts, transcripts, code files.", "es": "Las tareas sobre un documento completo funcionan sin pipeline de recuperación: contratos, transcripciones, archivos de código." },
+    { "en": "The model can relate facts across sections that chunked retrieval would separate.", "es": "El modelo puede relacionar datos entre secciones que la recuperación por chunks separaría." },
+    { "en": "Fast prototyping: paste the data first, build retrieval only when cost or quality demands it.", "es": "Prototipado rápido: pega los datos primero y construye la recuperación solo cuando el costo o la calidad lo exijan." }
+  ],
+  "cons": [
+    { "en": "Cost and prefill latency grow with every token sent, on every call.", "es": "El costo y la latencia de prefill crecen con cada token enviado, en cada llamada." },
+    { "en": "Quality degrades with length and position well before the advertised limit.", "es": "La calidad se degrada con el largo y la posición mucho antes del límite anunciado." },
+    { "en": "Some providers charge a higher per-token rate above a threshold (e.g., Gemini 2.5 Pro above 200k).", "es": "Algunos proveedores cobran una tarifa por token más alta a partir de un umbral (p. ej., Gemini 2.5 Pro por encima de 200k)." }
+  ],
+  "whenToUse": {
+    "en": "Fill the window deliberately for a single long artifact that must be read whole, many-shot prompts, or prototypes before building retrieval, and cache the prefix when the same long input repeats.",
+    "es": "Llena la ventana a propósito para un artefacto largo que hay que leer completo, prompts con muchos ejemplos o prototipos antes de construir la recuperación, y cachea el prefijo cuando la misma entrada larga se repite."
+  },
+  "whenNotToUse": {
+    "en": "Don't stuff it by default: large or changing corpora, high-QPS or latency-sensitive paths, and multi-hop reasoning over facts scattered across 100k+ tokens are better served by retrieval and trimming.",
+    "es": "No la llenes por defecto: corpus grandes o cambiantes, rutas de alto QPS o sensibles a la latencia y el razonamiento multi-hop sobre datos dispersos en más de 100k tokens se resuelven mejor con recuperación y recortes."
+  },
+  "numbers": [
+    { "en": "128k tokens ≈ ~96k English words ≈ ~300 pages.", "es": "128k tokens ≈ ~96k palabras en inglés ≈ ~300 páginas." },
+    { "en": "Common windows: 128k (GPT-4o, Llama 3.1), 200k (Claude), ~1M (Gemini 2.5 Pro, GPT-4.1).", "es": "Ventanas comunes: 128k (GPT-4o, Llama 3.1), 200k (Claude), ~1M (Gemini 2.5 Pro, GPT-4.1)." },
+    { "en": "Output caps are separate and smaller: 16,384 tokens for GPT-4o, 65,536 for Gemini 2.5 Pro.", "es": "Los topes de salida son aparte y más chicos: 16,384 tokens en GPT-4o, 65,536 en Gemini 2.5 Pro." },
+    { "en": "RULER (2024): of models claiming 32k+ context, only about half held up at 32k.", "es": "RULER (2024): de los modelos que anunciaban 32k o más de contexto, solo cerca de la mitad rendía bien a 32k." },
+    { "en": "Chat re-sends history every turn, so session input tokens grow ~quadratically with turn count.", "es": "Un chat reenvía el historial en cada turno, así que los tokens de entrada de la sesión crecen ~cuadráticamente con los turnos." }
+  ],
+  "pitfalls": [
+    { "en": "Not reserving output: a 127k prompt on a 128k model leaves ~1k tokens, and the answer is cut off mid-sentence.", "es": "No reservar la salida: un prompt de 127k en un modelo de 128k deja ~1k tokens y la respuesta se corta a media frase." },
+    { "en": "Framework truncation that silently drops the oldest messages first, system prompt included.", "es": "Un framework que trunca en silencio los mensajes más viejos primero, incluido el system prompt." },
+    { "en": "Treating needle-in-a-haystack scores as proof the model reasons well over 500k tokens.", "es": "Tomar los resultados de needle-in-a-haystack como prueba de que el modelo razona bien sobre 500k tokens." },
+    { "en": "Burying the key instruction mid-prompt; put long documents first and the question and instructions at the end.", "es": "Enterrar la instrucción clave a mitad del prompt; pon los documentos largos primero y la pregunta y las instrucciones al final." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "The model supports 1M tokens. Why not put all our documents in the prompt instead of building RAG?", "es": "El modelo soporta 1M de tokens. ¿Por qué no poner todos nuestros documentos en el prompt en vez de construir RAG?" },
+      "a": {
+        "en": "Three reasons, then the exception. Cost: a 1M-token prompt is paid on every call, so even at $1 per million input tokens that's ~$1 per question before output. Latency: prefilling that much can take tens of seconds. Quality: effective context is well below the advertised one; RULER and the lost-in-the-middle results show degradation with length and position. Most corpora also exceed 1M tokens, change daily and need per-user permissions. The exception: one large document, or a small stable corpus with prompt caching, where long context is simpler and often better.",
+        "es": "Tres razones y luego la excepción. Costo: un prompt de 1M de tokens se paga en cada llamada, así que aun a $1 por millón de tokens de entrada son ~$1 por pregunta antes de la salida. Latencia: hacer el prefill de todo eso puede tardar decenas de segundos. Calidad: el contexto efectivo está muy por debajo del anunciado; RULER y los resultados de lost-in-the-middle muestran degradación según el largo y la posición. Además, la mayoría de los corpus pasan de 1M de tokens, cambian a diario y necesitan permisos por usuario. La excepción: un solo documento grande, o un corpus chico y estable con prompt caching, donde el contexto largo es más simple y muchas veces mejor."
+      }
+    },
+    {
+      "q": { "en": "How do you handle a conversation that outgrows the context window?", "es": "¿Cómo manejas una conversación que ya no cabe en la ventana de contexto?" },
+      "a": {
+        "en": "I budget explicitly: window minus reserved output minus system prompt and tools is what history and retrieval can use. Then, in order: cut waste first, since raw tool outputs and verbose JSON are usually the biggest offenders; keep the system prompt and the last few turns verbatim; fold older turns into a rolling summary; and move durable facts into retrievable memory instead of carrying them. The failure mode I watch for is silent truncation, so I log token counts per call and eval long sessions, because summaries lose details like IDs and numbers.",
+        "es": "Presupuesto de forma explícita: la ventana menos la salida reservada, menos el system prompt y las herramientas, es lo que pueden usar el historial y la recuperación. Luego, en orden: primero recorto lo que sobra, porque las salidas crudas de herramientas y el JSON verboso suelen ser lo que más ocupa; conservo tal cual el system prompt y los últimos turnos; condenso los turnos viejos en un resumen continuo; y paso los datos duraderos a una memoria recuperable en vez de cargarlos siempre. La falla que vigilo es el truncamiento silencioso, así que registro los tokens por llamada y evalúo sesiones largas, porque los resúmenes pierden detalles como IDs y números."
+      }
+    }
+  ],
+  "related": ["tokens", "long-context-vs-rag", "context-rot", "context-engineering", "kv-cache", "prompt-caching"],
+  "sources": [
+    { "title": "Liu et al. — Lost in the Middle: How Language Models Use Long Contexts", "url": "https://arxiv.org/abs/2307.03172" },
+    { "title": "Hsieh et al. — RULER: What's the Real Context Size of Your Long-Context Language Models?", "url": "https://arxiv.org/abs/2404.06654" },
+    { "title": "Anthropic — Context windows", "url": "https://docs.anthropic.com/en/docs/build-with-claude/context-windows" }
+  ]
+}

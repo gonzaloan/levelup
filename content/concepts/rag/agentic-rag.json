@@ -1,0 +1,88 @@
+{
+  "id": "agentic-rag",
+  "domain": "rag",
+  "level": "advanced",
+  "title": { "en": "Agentic RAG", "es": "Agentic RAG" },
+  "aliases": ["agentic retrieval", "iterative retrieval", "multi-hop RAG", "Self-RAG", "Corrective RAG", "CRAG", "adaptive retrieval"],
+  "tldr": {
+    "en": "Put retrieval inside an agent loop: the model decides whether, what and where to search, judges the evidence, and searches again until it can answer — accuracy on hard questions for latency, tokens and predictability.",
+    "es": "Mete la recuperación dentro de un loop de agente: el modelo decide si buscar, qué y dónde, evalúa la evidencia y vuelve a buscar hasta poder responder. Ganas precisión en preguntas difíciles a cambio de latencia, tokens y previsibilidad."
+  },
+  "analogy": {
+    "en": "A one-shot pipeline is a vending machine: one button, one product. Agentic RAG is a research assistant who checks the wiki, then the database, notices a gap and goes back before writing the memo.",
+    "es": "Un pipeline de una sola pasada es una máquina expendedora: un botón, un producto. Agentic RAG es un asistente de investigación que revisa la wiki, luego la base de datos, nota un hueco y vuelve a buscar antes de escribir el informe."
+  },
+  "explain": {
+    "en": "**Agentic RAG** puts retrieval inside an agent loop. Instead of a fixed *retrieve once → generate* pipeline, the model decides **whether** to retrieve, **what** to search for, **where** (which index or tool) and **whether the evidence is good enough**.\n\nOne-shot RAG embeds the user's raw question once. That breaks on **multi-hop** questions — \"Which German customers use the plan we deprecated last quarter?\" — where the second search depends on what the first one found.\n\nA typical loop:\n\n1. **Plan** — decompose the question and pick a tool: vector index, SQL, web search, a [[graphrag]] global search.\n2. **Retrieve** with a model-written query.\n3. **Grade** — are these results relevant and sufficient? **Corrective RAG** (CRAG) uses a lightweight evaluator and falls back to web search when retrieved documents look wrong.\n4. **Iterate** — reformulate and search again, or move on.\n5. **Self-check** — is every claim supported? **Self-RAG** trains the model to emit reflection tokens for exactly these decisions.\n\nThe costs are real. Each step is another LLM call that re-sends a growing transcript, so latency goes from ~1–3 s to ~10 s or more, tokens multiply, and two runs can take different paths. Cap the steps, trace everything, and route only hard questions to the loop.",
+    "es": "**Agentic RAG** mete la recuperación dentro de un loop de agente. En vez de un pipeline fijo *recuperar una vez → generar*, el modelo decide **si** recuperar, **qué** buscar, **dónde** (qué índice o herramienta) y **si la evidencia alcanza**.\n\nEl RAG de una sola pasada convierte en embedding la pregunta cruda del usuario una vez. Eso falla en preguntas **multi-hop** —\"¿Qué clientes de Alemania usan el plan que dimos de baja el trimestre pasado?\"—, donde la segunda búsqueda depende de lo que encontró la primera.\n\nUn loop típico:\n\n1. **Planear**: descomponer la pregunta y elegir herramienta: índice vectorial, SQL, búsqueda web, una búsqueda global de [[graphrag]].\n2. **Recuperar** con una consulta escrita por el modelo.\n3. **Evaluar**: ¿los resultados son relevantes y suficientes? **Corrective RAG** (CRAG) usa un evaluador liviano y recurre a búsqueda web cuando los documentos recuperados parecen incorrectos.\n4. **Iterar**: reformular y buscar otra vez, o seguir.\n5. **Autoverificar**: ¿cada afirmación tiene respaldo? **Self-RAG** entrena al modelo para emitir tokens de reflexión justo para estas decisiones.\n\nLos costos son reales. Cada paso es otra llamada al LLM que reenvía una conversación cada vez más larga, así que la latencia pasa de ~1–3 s a ~10 s o más, los tokens se multiplican y dos ejecuciones pueden tomar caminos distintos. Limita los pasos, registra todo y manda al loop solo las preguntas difíciles."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  Q[User question] --> P[\"Agent plans<br/>next step\"]\n  P --> T{Choose tool}\n  T --> V[(Vector index)]\n  T --> S[(\"SQL / API\")]\n  T --> W[Web search]\n  V --> G{Evidence sufficient?}\n  S --> G\n  W --> G\n  G -->|no, reformulate| P\n  G -->|yes| A[Draft answer]\n  A --> C{Claims supported?}\n  C -->|no| P\n  C -->|yes| O[\"Answer + citations\"]",
+    "caption": {
+      "en": "Every arrow back to the planner is another LLM call; a hard step cap and an abstain path keep the loop bounded.",
+      "es": "Cada flecha de vuelta al planificador es otra llamada al LLM; un límite de pasos y una salida para abstenerse mantienen el loop acotado."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A bounded agentic RAG loop with two tools", "es": "Un loop de agentic RAG acotado con dos herramientas" },
+    "source": "import json\nfrom openai import OpenAI\n\nclient = OpenAI()\nMODEL = \"gpt-4.1-mini\"  # any tool-calling model\n\ndef tool(name, desc, arg):\n    return {\"type\": \"function\", \"function\": {\"name\": name, \"description\": desc,\n            \"parameters\": {\"type\": \"object\", \"properties\": {arg: {\"type\": \"string\"}}, \"required\": [arg]}}}\n\nTOOLS = [tool(\"search_docs\", \"Hybrid search over internal docs; returns chunks with doc ids.\", \"query\"),\n         tool(\"run_sql\", \"Read-only SQL over the customers database.\", \"sql\")]\nIMPL = {\"search_docs\": hybrid_search, \"run_sql\": readonly_sql}\n\ndef agentic_rag(question: str, max_steps: int = 6) -> str:\n    msgs = [{\"role\": \"system\", \"content\": \"Search until every claim has evidence; cite doc ids. \"\n             \"If the evidence does not exist, say so.\"},\n            {\"role\": \"user\", \"content\": question}]\n    for _ in range(max_steps):  # hard cap bounds latency and cost\n        msg = client.chat.completions.create(model=MODEL, messages=msgs, tools=TOOLS).choices[0].message\n        if not msg.tool_calls:\n            return msg.content  # the model decided the evidence is enough\n        msgs.append(msg)\n        for call in msg.tool_calls:\n            result = IMPL[call.function.name](**json.loads(call.function.arguments))\n            msgs.append({\"role\": \"tool\", \"tool_call_id\": call.id, \"content\": json.dumps(result)})\n    return \"I couldn't find enough evidence within the step budget.\"  # abstain, don't guess"
+  },
+  "example": {
+    "en": "An analyst asks *\"Did any enterprise customer churn after the March pricing change, and what reason did they give?\"* One-shot RAG embeds the whole sentence and returns pricing-page chunks: useless. The agent instead (1) searches the changelog and finds the change date, March 12; (2) runs SQL for enterprise accounts cancelled after that date and gets 4; (3) searches support tickets filtered to those 4 account ids; (4) grades the results, finds no ticket for one account and says so. Five tool calls, ~12 s and several times the tokens of the one-shot path: fine for an analyst tool, wrong for a chat widget.",
+    "es": "Un analista pregunta *\"¿Algún cliente enterprise se fue después del cambio de precios de marzo y qué motivo dio?\"*. El RAG de una pasada convierte toda la frase en embedding y devuelve chunks de la página de precios: inútil. El agente en cambio (1) busca en el changelog y encuentra la fecha del cambio, 12 de marzo; (2) corre SQL para las cuentas enterprise canceladas después de esa fecha y obtiene 4; (3) busca tickets de soporte filtrando por esos 4 ids de cuenta; (4) evalúa los resultados, no encuentra ticket para una cuenta y lo dice. Cinco llamadas a herramientas, ~12 s y varias veces los tokens del camino de una pasada: bien para una herramienta de análisis, mal para un widget de chat."
+  },
+  "pros": [
+    { "en": "Handles multi-hop and comparative questions where the next query depends on the last result.", "es": "Resuelve preguntas multi-hop y comparativas donde la siguiente consulta depende del resultado anterior." },
+    { "en": "Picks the right source per sub-question: vector index, SQL, web search or an API.", "es": "Elige la fuente correcta para cada subpregunta: índice vectorial, SQL, búsqueda web o una API." },
+    { "en": "Can notice weak evidence and retry or abstain instead of answering from irrelevant chunks.", "es": "Puede notar evidencia débil y reintentar o abstenerse en vez de responder con chunks irrelevantes." }
+  ],
+  "cons": [
+    { "en": "Latency and tokens multiply: every plan, grade and retry is another LLM call.", "es": "La latencia y los tokens se multiplican: cada plan, evaluación y reintento es otra llamada al LLM." },
+    { "en": "Less predictable: different paths per run make caching, debugging and evaluation harder.", "es": "Menos previsible: caminos distintos en cada ejecución complican el cache, la depuración y la evaluación." },
+    { "en": "New failure modes: loops, over-searching, or stopping early with false confidence.", "es": "Nuevos modos de falla: loops, búsquedas de más o detenerse antes de tiempo con falsa confianza." }
+  ],
+  "whenToUse": {
+    "en": "Multi-hop, comparative or research-style questions across several sources, where users accept seconds of extra latency (analyst tools, deep research, internal copilots) and a wrong answer costs more than tokens.",
+    "es": "Preguntas multi-hop, comparativas o de investigación que cruzan varias fuentes, donde el usuario acepta segundos extra de latencia (herramientas de análisis, deep research, copilotos internos) y una respuesta errónea cuesta más que los tokens."
+  },
+  "whenNotToUse": {
+    "en": "High-volume, latency-sensitive Q&A where one retrieval usually suffices (FAQ bots, support widgets). Fix the one-shot pipeline first, then add [[routing]] so only hard questions take the agentic path.",
+    "es": "Preguntas y respuestas de alto volumen y sensibles a la latencia donde una sola recuperación suele bastar (bots de FAQ, widgets de soporte). Arregla primero el pipeline de una pasada y luego agrega [[routing]] para que solo las preguntas difíciles tomen el camino agéntico."
+  },
+  "numbers": [
+    { "en": "N agent steps cost more than N× the input tokens of one-shot RAG: each call re-sends the growing transcript.", "es": "N pasos de agente cuestan más que N× los tokens de entrada de un RAG de una pasada: cada llamada reenvía la conversación acumulada." },
+    { "en": "Self-RAG uses 4 reflection-token types: Retrieve, IsRel, IsSup, IsUse.", "es": "Self-RAG usa 4 tipos de tokens de reflexión: Retrieve, IsRel, IsSup, IsUse." },
+    { "en": "CRAG's retrieval evaluator is a fine-tuned T5-large (~0.77B params), not the generator LLM: grading can be cheap.", "es": "El evaluador de recuperación de CRAG es un T5-large con fine-tuning (~770 millones de parámetros), no el LLM generador: evaluar puede ser barato." },
+    { "en": "Rule of thumb: ~1–3 s for one-shot RAG vs ~10 s+ once the agent takes 3–5 steps.", "es": "Regla práctica: ~1–3 s para RAG de una pasada vs ~10 s o más cuando el agente da 3–5 pasos." }
+  ],
+  "pitfalls": [
+    { "en": "No step or token budget: a confused agent fires 20 searches at an unanswerable question.", "es": "No poner límite de pasos ni de tokens: un agente confundido lanza 20 búsquedas ante una pregunta sin respuesta." },
+    { "en": "Making every request agentic instead of routing: you pay multi-step latency on questions one search answers.", "es": "Volver agéntica cada petición en vez de enrutar: pagas latencia de varios pasos en preguntas que una búsqueda resuelve." },
+    { "en": "Evaluating only final answers: score the trajectory too (queries written, tools chosen, evidence used).", "es": "Evaluar solo la respuesta final: puntúa también la trayectoria (consultas escritas, herramientas elegidas, evidencia usada)." },
+    { "en": "Overlapping tool descriptions (\"search_docs\" vs \"search_kb\"), so the model picks between them at random.", "es": "Descripciones de herramientas que se solapan (\"search_docs\" vs \"search_kb\"), así que el modelo elige entre ellas al azar." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you move from a classic RAG pipeline to agentic RAG?", "es": "¿Cuándo pasarías de un pipeline RAG clásico a agentic RAG?" },
+      "a": {
+        "en": "When error analysis shows failures one retrieval can't fix: multi-hop questions, questions needing two sources like docs plus SQL, or comparisons. If the failures are bad chunks or missing lexical match, an agent just retries a broken retriever, so I'd fix that first. Then I'd add a router: simple questions stay on the one-shot path at ~1–3 s, and only complex ones enter the loop, with a step cap, a token budget and an explicit abstain option. The trade-off I'd name is latency, cost and predictability in exchange for accuracy on the hard tail.",
+        "es": "Cuando el análisis de errores muestra fallas que una sola recuperación no puede arreglar: preguntas multi-hop, preguntas que necesitan dos fuentes como documentos más SQL, o comparaciones. Si las fallas son chunks malos o falta de coincidencia léxica, un agente solo reintenta con un recuperador roto, así que arreglaría eso primero. Después agregaría un router: las preguntas simples siguen por el camino de una pasada a ~1–3 s y solo las complejas entran al loop, con límite de pasos, presupuesto de tokens y una opción explícita de abstenerse. El trade-off que nombraría es latencia, costo y previsibilidad a cambio de precisión en la cola difícil."
+      }
+    },
+    {
+      "q": { "en": "How do you keep an agentic RAG system reliable and debuggable?", "es": "¿Cómo mantienes un sistema de agentic RAG confiable y fácil de depurar?" },
+      "a": {
+        "en": "I treat it like any agent. Hard limits: max steps, max tokens, timeouts. Few, non-overlapping tools with clear descriptions, returning chunk ids so citations are checkable. Full tracing of every step — query written, tool chosen, results, grade — because a wrong answer usually traces back to one bad intermediate query. I evaluate trajectories, not just answers: right source, number of steps, abstaining when evidence is missing. And I keep a deterministic one-shot fallback for when the loop runs out of budget.",
+        "es": "Lo trato como cualquier agente. Límites duros: máximo de pasos, de tokens y timeouts. Pocas herramientas, sin solaparse, con descripciones claras y que devuelvan ids de chunk para poder verificar las citas. Trazas completas de cada paso —consulta escrita, herramienta elegida, resultados, evaluación—, porque una respuesta errónea casi siempre viene de una consulta intermedia mala. Evalúo trayectorias, no solo respuestas: fuente correcta, número de pasos, abstenerse cuando falta evidencia. Y mantengo un fallback determinista de una pasada para cuando el loop agota su presupuesto."
+      }
+    }
+  ],
+  "related": ["rag", "query-transformation", "react", "agents-vs-workflows", "routing", "agent-evals"],
+  "sources": [
+    { "title": "Asai et al. — Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection (2023)", "url": "https://arxiv.org/abs/2310.11511" },
+    { "title": "Yan et al. — Corrective Retrieval Augmented Generation (2024)", "url": "https://arxiv.org/abs/2401.15884" },
+    { "title": "Trivedi et al. — Interleaving Retrieval with Chain-of-Thought Reasoning for Knowledge-Intensive Multi-Step Questions (2022)", "url": "https://arxiv.org/abs/2212.10509" },
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" }
+  ]
+}

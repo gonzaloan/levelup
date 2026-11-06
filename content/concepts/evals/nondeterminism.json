@@ -1,0 +1,95 @@
+{
+  "id": "nondeterminism",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Non-determinism: pass@k & variance", "es": "No determinismo: pass@k y varianza" },
+  "aliases": ["pass@k", "pass^k", "confidence interval", "Wilson interval", "flaky evals", "eval variance", "error bars", "temperature 0"],
+  "tldr": {
+    "en": "Same input, different outputs: one eval run is a sample, not a measurement. Run several trials, report mean ± confidence interval, and choose pass@k (any success) or pass^k (every success) to match real use.",
+    "es": "Misma entrada, salidas distintas: una corrida de evaluación es una muestra, no una medición. Corre varios intentos, reporta la media ± intervalo de confianza y elige pass@k (algún acierto) o pass^k (todos aciertan) según el uso real."
+  },
+  "analogy": {
+    "en": "A 70% free-throw shooter goes 5/10 one day and 9/10 the next. You judge them over hundreds of shots, and \"makes at least one of three\" is a very different claim from \"makes all three\".",
+    "es": "Un tirador de 70% en tiros libres mete 5 de 10 un día y 9 de 10 al siguiente. Lo juzgas sobre cientos de tiros, y \"mete al menos uno de tres\" es algo muy distinto de \"mete los tres\"."
+  },
+  "explain": {
+    "en": "An LLM system can return **different outputs for the same input**, so a single eval run is one draw from a distribution. Every score is an estimate and needs error bars.\n\n**Temperature 0 doesn't fix it.** GPU kernels sum floating-point numbers in an order that depends on batch size, and on a shared API your batch depends on other people's traffic. A tiny difference flips a near-tie token and the rest of the answer diverges. Provider `seed` parameters are best-effort, and silent model updates add drift.\n\n**What to report:**\n\n- **Mean ± 95% CI over tasks.** A pass rate's standard error is √(p(1−p)/n): at n=100 and 50%, the interval is ±~10 points. Halving it takes 4× the items.\n- **pass@k**: chance that *at least one* of k attempts succeeds. Fits when something picks the winner: unit tests, a user choosing a draft.\n- **pass^k**: chance that *all* k succeed, i.e. reliability. At 90% per trial, pass^3 is only ~73% (if trials are independent).\n- **Flaky items**: tasks that both pass and fail across trials. Read them; they often expose ambiguous specs.\n\nTo compare two versions, run both on the **same items** and compute the CI of the **paired difference**: it cancels item difficulty and is far tighter than two separate intervals.",
+    "es": "Un sistema con LLM puede devolver **salidas distintas para la misma entrada**, así que una corrida de evaluación es una sola muestra de una distribución. Todo puntaje es una estimación y necesita barras de error.\n\n**Temperatura 0 no lo resuelve.** Los kernels de GPU suman números de punto flotante en un orden que depende del tamaño del batch, y en una API compartida tu batch depende del tráfico de otros. Una diferencia mínima cambia un token casi empatado y el resto de la respuesta diverge. El parámetro `seed` de los proveedores es de mejor esfuerzo, y las actualizaciones silenciosas del modelo suman deriva.\n\n**Qué reportar:**\n\n- **Media ± IC del 95% sobre las tareas.** El error estándar de una tasa de acierto es √(p(1−p)/n): con n=100 y 50%, el intervalo es de ±~10 puntos. Reducirlo a la mitad exige 4× los ítems.\n- **pass@k**: probabilidad de que *al menos uno* de k intentos acierte. Sirve cuando algo elige al ganador: tests unitarios o un usuario que escoge un borrador.\n- **pass^k**: probabilidad de que *los k* acierten, o sea, confiabilidad. Con 90% por intento, pass^3 es apenas ~73% (si los intentos son independientes).\n- **Ítems inestables (flaky)**: tareas que a veces pasan y a veces fallan. Léelas: suelen revelar especificaciones ambiguas.\n\nPara comparar dos versiones, córrelas sobre los **mismos ítems** y calcula el IC de la **diferencia pareada**: cancela la dificultad de cada ítem y es mucho más estrecho que dos intervalos por separado."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[(\"Eval set<br/>N tasks\")] --> R[\"Run each task<br/>n trials\"]\n  R --> M[\"Per-task<br/>success rate\"]\n  M --> A[\"Mean ± 95% CI\"]\n  M --> P1[\"pass@k<br/>any of k\"]\n  M --> P2[\"pass^k<br/>all of k\"]\n  M --> F[\"Flaky tasks<br/>mixed pass/fail\"]\n  A --> G{\"Paired diff CI<br/>excludes 0?\"}\n  G -->|no| N2[\"More tasks<br/>or trials\"]\n  G -->|yes| S[Real change]\n  F -.->|fix spec| D",
+    "caption": {
+      "en": "Trials per task turn one noisy number into a rate with error bars; the paired difference decides whether a change is real.",
+      "es": "Varios intentos por tarea convierten un número ruidoso en una tasa con barras de error; la diferencia pareada decide si un cambio es real."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Wilson CI, pass@k and pass^k from repeated trials", "es": "IC de Wilson, pass@k y pass^k a partir de intentos repetidos" },
+    "source": "import math\nimport numpy as np\n\ndef wilson_ci(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:\n    # Stays inside [0, 1] and behaves near 0% / 100%, unlike p ± z*SE\n    p = successes / n\n    denom = 1 + z**2 / n\n    center = (p + z**2 / (2 * n)) / denom\n    half = z * math.sqrt(p * (1 - p) / n + z**2 / (4 * n**2)) / denom\n    return center - half, center + half\n\ndef pass_at_k(n: int, c: int, k: int) -> float:\n    # Unbiased estimator (Chen et al., 2021): n trials, c successes, >= 1 of k\n    return 1.0 if n - c < k else 1 - math.comb(n - c, k) / math.comb(n, k)\n\ndef pass_hat_k(n: int, c: int, k: int) -> float:\n    # pass^k (tau-bench): all k trials succeed = reliability\n    return math.comb(c, k) / math.comb(n, k)\n\ndef report(runs: dict[str, list[bool]], k: int = 3) -> dict:\n    # runs[task_id] = outcome of each of n trials (e.g. n=5)\n    rates = np.array([sum(r) / len(r) for r in runs.values()])\n    # CI over TASKS, not trials: 100 tasks x 5 trials is not n=500\n    se = rates.std(ddof=1) / math.sqrt(len(rates))\n    return {\n        \"mean\": rates.mean(),\n        \"ci95\": (rates.mean() - 1.96 * se, rates.mean() + 1.96 * se),\n        f\"pass@{k}\": np.mean([pass_at_k(len(r), sum(r), k) for r in runs.values()]),\n        f\"pass^{k}\": np.mean([pass_hat_k(len(r), sum(r), k) for r in runs.values()]),\n        \"flaky\": [t for t, r in runs.items() if 0 < sum(r) < len(r)],\n    }\n\nprint(wilson_ci(50, 100))  # (0.404, 0.596): ±~10 points at n=100"
+  },
+  "example": {
+    "en": "Prompt v2 of a booking agent scores 78% vs v1's 74% on 150 tasks, one run each, and the team wants to ship. Rerunning both 5 times shows v1 ranging 71–77% and v2 73–80%. The paired difference is +2.1 points, 95% CI [−0.8, +5.0]: not proven. **pass^5** tells another story: v1 completes 61% of tasks on all five trials, v2 only 52%, so v2 is more capable but less reliable. Of the 23 tasks that flip between pass and fail, 14 have ambiguous instructions: fix the dataset before choosing a prompt.",
+    "es": "La versión 2 del prompt de un agente de reservas saca 78% contra 74% de la v1 en 150 tareas, con una sola corrida cada una, y el equipo quiere desplegarla. Al repetir ambas 5 veces, la v1 oscila entre 71% y 77%, y la v2 entre 73% y 80%. La diferencia pareada es de +2,1 puntos, IC 95% [−0,8; +5,0]: no está demostrada. **pass^5** cuenta otra historia: la v1 completa 61% de las tareas en los cinco intentos y la v2 solo 52%; la v2 es más capaz pero menos confiable. De las 23 tareas que alternan entre pasar y fallar, 14 tienen instrucciones ambiguas: arregla el dataset antes de elegir prompt."
+  },
+  "pros": [
+    { "en": "Stops you shipping or reverting on noise: a 3-point \"win\" at n=100 is usually nothing.", "es": "Evita que despliegues o reviertas por ruido: una \"mejora\" de 3 puntos con n=100 casi nunca significa nada." },
+    { "en": "pass^k exposes unreliability that a single-run average hides.", "es": "pass^k expone la falta de confiabilidad que esconde el promedio de una sola corrida." },
+    { "en": "Flaky items point straight at ambiguous tasks and brittle prompts.", "es": "Los ítems inestables apuntan directo a tareas ambiguas y prompts frágiles." }
+  ],
+  "cons": [
+    { "en": "k trials multiply eval cost and wall-clock time by k.", "es": "k intentos multiplican por k el costo y el tiempo de la evaluación." },
+    { "en": "Real precision needs hundreds of items; small sets give wide intervals.", "es": "La precisión real exige cientos de ítems; los sets pequeños dan intervalos anchos." },
+    { "en": "Trials of the same task are correlated, so naive pooled CIs look tighter than they are.", "es": "Los intentos de una misma tarea están correlacionados, así que un IC ingenuo sobre todo junto parece más estrecho de lo que es." }
+  ],
+  "whenToUse": {
+    "en": "Any comparison you will act on: model swaps, prompt changes, release gates. Use pass^k for agents and unattended workflows; pass@k when a verifier or a human picks the best of k.",
+    "es": "En cualquier comparación sobre la que vayas a actuar: cambios de modelo o de prompt y gates de release. Usa pass^k para agentes y flujos desatendidos; pass@k cuando un verificador o una persona elige el mejor de k."
+  },
+  "whenNotToUse": {
+    "en": "Very early exploration, where reading 20 traces teaches more than any interval, or when a change is so large (20+ points) that one run already settles it.",
+    "es": "En la exploración muy temprana, donde leer 20 trazas enseña más que cualquier intervalo, o cuando un cambio es tan grande (20+ puntos) que una corrida ya lo resuelve."
+  },
+  "numbers": [
+    { "en": "95% CI half-width ≈ 1.96·√(p(1−p)/n): at 50%, n=100 → ±~10 pts; n=400 → ±~5; n=1,000 → ±~3.", "es": "Semiancho del IC 95% ≈ 1,96·√(p(1−p)/n): con 50%, n=100 → ±~10 pts; n=400 → ±~5; n=1.000 → ±~3." },
+    { "en": "pass^k ≈ p^k for independent trials: 90% per run → ~73% for 3 in a row, ~59% for 5.", "es": "pass^k ≈ p^k con intentos independientes: 90% por corrida → ~73% para 3 seguidos y ~59% para 5." },
+    { "en": "Codex (2021): 28.8% of HumanEval with 1 sample, 70.2% with 100 samples per problem.", "es": "Codex (2021): 28,8% de HumanEval con 1 muestra y 70,2% con 100 muestras por problema." },
+    { "en": "τ-bench (2024): GPT-4o solved <50% of tasks, and pass^8 fell below 25% in the retail domain.", "es": "τ-bench (2024): GPT-4o resolvió <50% de las tareas y su pass^8 cayó por debajo de 25% en el dominio retail." }
+  ],
+  "pitfalls": [
+    { "en": "Declaring a winner from one run per variant on 50–100 items.", "es": "Declarar un ganador con una sola corrida por variante sobre 50–100 ítems." },
+    { "en": "Pooling trials into one big n: 100 tasks × 5 trials is not n=500 for the CI.", "es": "Sumar todos los intentos en un solo n: 100 tareas × 5 intentos no equivalen a n=500 para el IC." },
+    { "en": "Assuming temperature 0 or a seed makes runs reproducible across batches, hardware or provider updates.", "es": "Suponer que temperatura 0 o un seed vuelven reproducibles las corridas entre batches, hardware o actualizaciones del proveedor." },
+    { "en": "Reporting pass@k for an agent that gets exactly one shot in production.", "es": "Reportar pass@k para un agente que en producción tiene un solo intento." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your new prompt scores 3 points higher on the eval. Do you ship it?", "es": "Tu nuevo prompt saca 3 puntos más en la evaluación. ¿Lo despliegas?" },
+      "a": {
+        "en": "Not on that alone. First I ask for n and the number of runs: at 100 items, a 50% pass rate has a ±10-point 95% interval, so 3 points is inside the noise. I'd rerun both variants on the same items with several trials each and compute the CI of the paired per-item difference, which cancels item difficulty and is much tighter. If it still includes zero, I either grow the set or call them equal and decide on cost and latency. I'd also check per slice, because a flat average can hide a regression in one category.",
+        "es": "No solo con eso. Primero pregunto por n y por el número de corridas: con 100 ítems, una tasa de 50% tiene un intervalo del 95% de ±10 puntos, así que 3 puntos están dentro del ruido. Volvería a correr ambas variantes sobre los mismos ítems, con varios intentos cada una, y calcularía el IC de la diferencia pareada por ítem, que cancela la dificultad y es mucho más estrecho. Si aún incluye el cero, agrando el set o las doy por iguales y decido por costo y latencia. También revisaría por segmento, porque un promedio plano puede esconder una regresión en una categoría."
+      }
+    },
+    {
+      "q": { "en": "pass@k vs pass^k: when do you use each?", "es": "pass@k vs. pass^k: ¿cuándo usas cada uno?" },
+      "a": {
+        "en": "pass@k is the chance that at least one of k attempts succeeds. It fits when something downstream picks the winner: unit tests selecting among k code samples, or a user choosing among drafts. pass^k is the chance all k succeed, which is the reliability a customer feels when an agent runs the same kind of task every day. They diverge fast: 70% per trial is ~97% pass@3 but ~34% pass^3. For unattended agents I gate on pass^k; reporting pass@k there sells capability the user never gets.",
+        "es": "pass@k es la probabilidad de que al menos uno de k intentos acierte. Sirve cuando algo posterior elige al ganador: tests unitarios que escogen entre k muestras de código o un usuario que elige entre borradores. pass^k es la probabilidad de que los k acierten, que es la confiabilidad que siente un cliente cuando un agente hace el mismo tipo de tarea todos los días. Se separan rápido: 70% por intento da ~97% de pass@3 pero ~34% de pass^3. Para agentes desatendidos uso pass^k como gate; reportar pass@k ahí vende una capacidad que el usuario nunca recibe."
+      }
+    },
+    {
+      "q": { "en": "Why isn't temperature 0 deterministic?", "es": "¿Por qué temperatura 0 no es determinista?" },
+      "a": {
+        "en": "Because the arithmetic isn't. Floating-point addition isn't associative, and GPU kernels reduce in orders that depend on batch size and how work is split; on a shared API your batch size depends on other tenants' load. A tiny numeric difference flips a near-tie token, and from there the continuation diverges. Seeds are best-effort and providers update models. So I never treat one run as ground truth: I pin model snapshots so the weights don't move, and design evals to tolerate variance with repeated trials.",
+        "es": "Porque la aritmética no lo es. La suma de punto flotante no es asociativa, y los kernels de GPU reducen en un orden que depende del tamaño del batch y de cómo se reparte el trabajo; en una API compartida, el tamaño de tu batch depende de la carga de otros clientes. Una diferencia numérica mínima cambia un token casi empatado y desde ahí la continuación diverge. Los seeds son de mejor esfuerzo y los proveedores actualizan modelos. Por eso nunca tomo una corrida como verdad: fijo snapshots del modelo para que los pesos no cambien y diseño las evaluaciones para tolerar varianza con intentos repetidos."
+      }
+    }
+  ],
+  "related": ["sampling", "agent-evals", "ab-testing", "eval-ci", "golden-datasets", "llm-as-judge"],
+  "sources": [
+    { "title": "Chen et al. — Evaluating Large Language Models Trained on Code (pass@k)", "url": "https://arxiv.org/abs/2107.03374" },
+    { "title": "Yao et al. — τ-bench: tool-agent-user interaction benchmark (pass^k)", "url": "https://arxiv.org/abs/2406.12045" },
+    { "title": "Miller — Adding Error Bars to Evals", "url": "https://arxiv.org/abs/2411.00640" },
+    { "title": "Thinking Machines — Defeating Nondeterminism in LLM Inference", "url": "https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/" }
+  ]
+}

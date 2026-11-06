@@ -1,0 +1,96 @@
+{
+  "id": "serving-stack",
+  "domain": "inference",
+  "level": "advanced",
+  "title": { "en": "Self-hosted serving stack", "es": "Stack de serving self-hosted" },
+  "aliases": ["vLLM", "SGLang", "TensorRT-LLM", "TGI", "KServe", "Ray Serve", "NVIDIA Dynamo", "LLM inference server"],
+  "tldr": {
+    "en": "An inference engine (vLLM, SGLang, TensorRT-LLM) does the batching and KV-cache work on the GPUs; a platform layer (Kubernetes, KServe, Ray Serve, Dynamo) routes, scales on queue depth and hides minutes-long cold starts.",
+    "es": "Un motor de inferencia (vLLM, SGLang, TensorRT-LLM) hace el batching y la gestión del KV cache en las GPUs; una capa de plataforma (Kubernetes, KServe, Ray Serve, Dynamo) enruta, escala según la cola y esconde arranques en frío de varios minutos."
+  },
+  "analogy": {
+    "en": "A restaurant: the engine is the chef cooking many orders at once on one stove; the platform is the manager who watches the ticket queue and opens a second kitchen, which takes 20 minutes to heat up.",
+    "es": "Un restaurante: el motor es el chef que cocina muchos pedidos a la vez en una estufa; la plataforma es el gerente que vigila la fila de comandas y abre una segunda cocina, que tarda 20 minutos en calentarse."
+  },
+  "explain": {
+    "en": "A self-hosted stack has two layers.\n\n**The engine** runs one model on one or more GPUs: [[continuous-batching]], [[paged-attention]] KV memory, prefix caching and an OpenAI-compatible API.\n\n- **vLLM**: the default; widest model and hardware support, multi-LoRA.\n- **SGLang**: RadixAttention keeps shared prefixes in a radix tree; strong for agents, few-shot and multi-turn traffic.\n- **TensorRT-LLM**: NVIDIA's optimized kernels and FP8/FP4 paths; often the fastest on NVIDIA hardware, more complex to operate.\n- **TGI**: Hugging Face's server, now in maintenance mode.\n- **llama.cpp / Ollama**: quantized GGUF models on laptops and CPUs; for development, not fleets.\n\n**The platform** turns replicas into a service: Kubernetes GPU node pools, KServe or Ray Serve for deploys and autoscaling, and NVIDIA Dynamo or llm-d for KV-aware routing and disaggregated prefill/decode.\n\nThree rules that differ from web serving:\n\n1. **Scale on queue depth or KV-cache usage, not CPU.** CPU says nothing, and GPU util% reads ~100% even at batch 1.\n2. **Cold starts take minutes.** A GPU node, a ~10 GB image and 140 GB of weights: keep a warm floor and pre-stage weights.\n3. **Tensor parallelism stays inside one NVLink node**; across nodes, use pipeline parallelism.\n\n**Multi-LoRA** serves dozens of fine-tunes from one copy of the base model.",
+    "es": "Un stack self-hosted tiene dos capas.\n\n**El motor** corre un modelo en una o varias GPUs: [[continuous-batching]], memoria KV con [[paged-attention]], prefix caching y una API compatible con OpenAI.\n\n- **vLLM**: la opción por defecto; el soporte más amplio de modelos y hardware, multi-LoRA.\n- **SGLang**: RadixAttention guarda los prefijos compartidos en un árbol radix; brilla con agentes, few-shot y conversaciones de varios turnos.\n- **TensorRT-LLM**: kernels optimizados de NVIDIA y rutas FP8/FP4; suele ser el más rápido en hardware NVIDIA, pero es más complejo de operar.\n- **TGI**: el servidor de Hugging Face, hoy en modo mantenimiento.\n- **llama.cpp / Ollama**: modelos GGUF cuantizados en laptops y CPU; para desarrollo, no para flotas.\n\n**La plataforma** convierte réplicas en un servicio: node pools de GPU en Kubernetes, KServe o Ray Serve para deploys y autoescalado, y NVIDIA Dynamo o llm-d para routing que conoce el KV cache y prefill/decode desagregados.\n\nTres reglas que cambian respecto al serving web:\n\n1. **Escala según la cola o el uso del KV cache, no por CPU.** La CPU no dice nada y el % de uso de la GPU marca ~100% incluso con batch 1.\n2. **Los arranques en frío tardan minutos.** Un nodo GPU, una imagen de ~10 GB y 140 GB de pesos: mantén un mínimo de réplicas encendidas y precarga los pesos.\n3. **El tensor parallelism se queda dentro de un nodo con NVLink**; entre nodos, usa pipeline parallelism.\n\nEl **multi-LoRA** sirve decenas de fine-tunes desde una sola copia del modelo base."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  C[Clients] --> G[\"Gateway<br/>auth, quotas\"]\n  G --> R[KV-aware router]\n  R --> P1[\"vLLM replica<br/>TP=4\"]\n  R --> P2[\"vLLM replica<br/>TP=4\"]\n  W[(\"Weights<br/>S3 / NVMe\")] -.->|load at start| P1\n  W -.-> P2\n  P1 -->|queue, KV usage| M[Prometheus]\n  P2 --> M\n  M --> A[\"KEDA / HPA\"]\n  A -->|add replica| K[GPU node pool]",
+    "caption": {
+      "en": "Engines batch on the GPUs; the platform routes by prefix, scales on queue depth and pre-stages weights to shorten cold starts.",
+      "es": "Los motores hacen batching en las GPUs; la plataforma enruta por prefijo, escala según la cola y precarga los pesos para acortar los arranques en frío."
+    }
+  },
+  "code": {
+    "lang": "yaml",
+    "title": { "en": "vLLM on Kubernetes, autoscaled on queue depth", "es": "vLLM en Kubernetes con autoescalado por cola" },
+    "source": "# 70B in BF16 = ~140 GB of weights -> TP=4 on 80 GB GPUs leaves room for KV cache\napiVersion: apps/v1\nkind: Deployment\nmetadata: { name: llama-70b }\nspec:\n  selector: { matchLabels: { app: llama-70b } }\n  template:\n    metadata: { labels: { app: llama-70b } }\n    spec:\n      nodeSelector: { pool: h100 }            # dedicated GPU node pool\n      containers:\n        - name: vllm\n          image: vllm/vllm-openai:v0.10.1     # pin it; never :latest\n          args: [\"--model\", \"/models/llama-3.3-70b-instruct\",  # pre-staged on local NVMe\n                 \"--served-model-name\", \"llama-70b\", \"--tensor-parallel-size\", \"4\",\n                 \"--enable-prefix-caching\", \"--enable-lora\", \"--max-loras\", \"8\"]\n          resources: { limits: { nvidia.com/gpu: 4 } }\n          # Loading weights takes minutes: a short liveness probe would kill it mid-load\n          startupProbe: { httpGet: { path: /health, port: 8000 }, periodSeconds: 10, failureThreshold: 90 }\n---\n# Scale on queued requests: CPU stays flat while the GPUs saturate\napiVersion: keda.sh/v1alpha1\nkind: ScaledObject\nmetadata: { name: llama-70b }\nspec:\n  scaleTargetRef: { name: llama-70b }\n  minReplicaCount: 2          # warm floor: a cold replica needs minutes\n  maxReplicaCount: 8\n  triggers:\n    - type: prometheus\n      metadata:\n        serverAddress: http://prometheus.monitoring:9090\n        query: sum(vllm:num_requests_waiting{model_name=\"llama-70b\"})\n        threshold: \"8\"        # target ~8 waiting requests per replica"
+  },
+  "example": {
+    "en": "A team serves Llama 3.3 70B for an internal assistant on 2 replicas of 4× H100. Every Monday at 9:00 traffic triples. Their HPA watched CPU, which sat at ~15% while requests queued for 40 s, so nothing scaled. They moved to KEDA on `vllm:num_requests_waiting`, but each new replica took ~12 minutes (node provisioning, image pull, 140 GB download from S3). The final fix: weights pre-staged on node NVMe (load drops to ~3 minutes), a scheduled scale-up at 8:30, and the queue-based scaler for the rest of the day.",
+    "es": "Un equipo sirve Llama 3.3 70B para un asistente interno con 2 réplicas de 4× H100. Cada lunes a las 9:00 el tráfico se triplica. Su HPA miraba la CPU, que se quedaba en ~15% mientras las peticiones esperaban 40 s en cola, así que nada escalaba. Pasaron a KEDA con `vllm:num_requests_waiting`, pero cada réplica nueva tardaba ~12 minutos (aprovisionar el nodo, bajar la imagen, descargar 140 GB desde S3). La solución final: pesos precargados en el NVMe del nodo (la carga baja a ~3 minutos), un escalado programado a las 8:30 y el escalador por cola el resto del día."
+  },
+  "pros": [
+    { "en": "OpenAI-compatible engines make a self-hosted model a drop-in behind existing client code.", "es": "Los motores compatibles con OpenAI hacen que un modelo self-hosted se enchufe detrás del código cliente que ya tienes." },
+    { "en": "Full control of latency, batching, quantization and which fine-tunes run.", "es": "Control total de la latencia, el batching, la cuantización y qué fine-tunes corren." },
+    { "en": "Prefix caching and multi-LoRA let one fleet serve many tenants and model variants.", "es": "El prefix caching y el multi-LoRA permiten que una sola flota atienda a muchos tenants y variantes del modelo." }
+  ],
+  "cons": [
+    { "en": "You own GPU capacity, drivers, CUDA versions, engine upgrades and the 3 a.m. page.", "es": "Son tuyos la capacidad de GPU, los drivers, las versiones de CUDA, las actualizaciones del motor y la alerta de las 3 a.m." },
+    { "en": "Minutes-long cold starts force a warm floor of idle, billed GPUs.", "es": "Los arranques en frío de minutos obligan a mantener un mínimo de GPUs encendidas, ociosas y facturando." },
+    { "en": "Engines move fast: flags, metric names and defaults change between minor versions.", "es": "Los motores cambian rápido: flags, nombres de métricas y valores por defecto cambian entre versiones menores." }
+  ],
+  "whenToUse": {
+    "en": "You have already decided to self-host (data residency, custom weights, steady high volume) and need predictable latency for open models in production.",
+    "es": "Ya decidiste hacer self-hosting (residencia de datos, pesos propios, volumen alto y estable) y necesitas latencia predecible para modelos abiertos en producción."
+  },
+  "whenNotToUse": {
+    "en": "Low or spiky traffic, a team without GPU and Kubernetes ops experience, or when a managed endpoint for the same open model (Bedrock, Vertex, an inference provider) meets your constraints.",
+    "es": "Tráfico bajo o con picos, un equipo sin experiencia operando GPUs y Kubernetes, o cuando un endpoint administrado del mismo modelo abierto (Bedrock, Vertex, un proveedor de inferencia) cumple tus restricciones."
+  },
+  "numbers": [
+    { "en": "Weights ≈ params × bytes: 70B in BF16 ≈ 140 GB → at least 2× 80 GB GPUs, usually 4 for KV-cache headroom.", "es": "Pesos ≈ parámetros × bytes: 70B en BF16 ≈ 140 GB → al menos 2 GPUs de 80 GB, normalmente 4 para dejar espacio al KV cache." },
+    { "en": "vLLM pre-allocates 90% of GPU memory by default (`--gpu-memory-utilization 0.9`), mostly for KV cache.", "es": "vLLM reserva por defecto el 90% de la memoria de la GPU (`--gpu-memory-utilization 0.9`), casi todo para el KV cache." },
+    { "en": "SGLang paper (2023): up to 6.4× higher throughput than prior systems on structured, prefix-sharing workloads.", "es": "Paper de SGLang (2023): hasta 6.4× más throughput que los sistemas previos en cargas estructuradas que comparten prefijos." },
+    { "en": "H100 NVLink ~900 GB/s vs ~50 GB/s for a 400 Gb/s NIC: why tensor parallelism stays inside a node.", "es": "NVLink en H100 ~900 GB/s vs ~50 GB/s de una NIC de 400 Gb/s: por eso el tensor parallelism se queda dentro de un nodo." },
+    { "en": "Cold-start floor: 140 GB at ~1 GB/s is ~2.5 minutes for the bytes alone, before node provisioning and warm-up.", "es": "Piso del arranque en frío: 140 GB a ~1 GB/s son ~2.5 minutos solo de bytes, sin contar aprovisionar el nodo ni el warm-up." }
+  ],
+  "pitfalls": [
+    { "en": "Autoscaling on CPU or GPU util%: neither tracks how full the batch is. Use queue depth, KV usage or TTFT.", "es": "Autoescalar por CPU o por % de uso de GPU: ninguno refleja qué tan lleno está el batch. Usa la cola, el uso del KV cache o el TTFT." },
+    { "en": "Liveness probes that kill a replica still loading its weights: use a long startupProbe.", "es": "Liveness probes que matan una réplica mientras todavía carga sus pesos: usa un startupProbe largo." },
+    { "en": "Scaling to zero for an interactive product: the first user after a quiet period waits minutes.", "es": "Escalar a cero en un producto interactivo: el primer usuario después de un rato tranquilo espera minutos." },
+    { "en": "Tensor parallelism across nodes over Ethernet: the per-layer all-reduce eats the gain. Use pipeline parallelism between nodes.", "es": "Tensor parallelism entre nodos sobre Ethernet: el all-reduce de cada capa se come la ganancia. Entre nodos usa pipeline parallelism." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you autoscale a self-hosted LLM fleet?", "es": "¿Cómo autoescalarías una flota de LLMs self-hosted?" },
+      "a": {
+        "en": "Not on CPU, and not on GPU utilization: nvidia-smi shows ~100% even at batch 1. I scale on signals that track saturation: requests waiting in the engine queue, KV-cache usage and p95 TTFT against the SLO. Because a new replica needs minutes (node, image, 140 GB of weights), I keep a warm floor sized for normal peak, pre-stage weights on local NVMe, schedule scale-ups for known peaks and let the queue-based scaler handle the rest. Scale-down is slow and conservative to avoid flapping.",
+        "es": "No por CPU ni por uso de GPU: nvidia-smi marca ~100% incluso con batch 1. Escalo con señales que reflejan saturación: peticiones esperando en la cola del motor, uso del KV cache y TTFT p95 contra el SLO. Como una réplica nueva tarda minutos (nodo, imagen, 140 GB de pesos), mantengo un mínimo dimensionado para el pico normal, precargo los pesos en NVMe local, programo escalados para los picos conocidos y dejo que el escalador por cola cubra el resto. Bajo réplicas despacio y con cuidado para evitar oscilaciones."
+      }
+    },
+    {
+      "q": { "en": "vLLM, SGLang or TensorRT-LLM: which do you pick?", "es": "vLLM, SGLang o TensorRT-LLM: ¿cuál eliges?" },
+      "a": {
+        "en": "I default to vLLM: widest model support, OpenAI-compatible server, prefix caching, multi-LoRA and the biggest community, so new models usually land there first. I pick SGLang when traffic shares long prefixes (agents, few-shot templates, multi-turn chat) because RadixAttention reuses them aggressively. TensorRT-LLM when I run NVIDIA at large scale and the extra throughput per GPU pays for the extra build and ops complexity. Either way I benchmark on my own prompt and output length distribution at my latency SLO, not on a vendor chart.",
+        "es": "Por defecto, vLLM: el soporte de modelos más amplio, servidor compatible con OpenAI, prefix caching, multi-LoRA y la comunidad más grande, así que los modelos nuevos suelen llegar ahí primero. Elijo SGLang cuando el tráfico comparte prefijos largos (agentes, plantillas few-shot, chat de varios turnos), porque RadixAttention los reutiliza a fondo. TensorRT-LLM cuando corro NVIDIA a gran escala y el throughput extra por GPU paga la complejidad extra de build y operación. En cualquier caso hago benchmark con mi distribución real de largos de prompt y de salida, a mi SLO de latencia, no con la gráfica del proveedor."
+      }
+    },
+    {
+      "q": { "en": "You must serve 40 customer-specific fine-tunes of an 8B model. How?", "es": "Tienes que servir 40 fine-tunes de un modelo 8B, uno por cliente. ¿Cómo lo haces?" },
+      "a": {
+        "en": "Not with 40 deployments. I train LoRA adapters and serve them on one base model with multi-LoRA (vLLM `--enable-lora`, S-LoRA-style batching). Adapters are tens of MB, so many fit next to one 16 GB copy of the base, and requests for different adapters batch together; the request picks its adapter by model name. The trade-off is some per-token overhead versus a merged model, so if one tenant dominates traffic, it gets a dedicated merged deployment.",
+        "es": "No con 40 deployments. Entreno adaptadores LoRA y los sirvo sobre un solo modelo base con multi-LoRA (`--enable-lora` en vLLM, batching al estilo S-LoRA). Los adaptadores pesan decenas de MB, así que caben muchos junto a una sola copia de 16 GB del base, y las peticiones de distintos adaptadores van en el mismo batch; cada petición elige su adaptador por el nombre del modelo. El trade-off es algo de overhead por token frente a un modelo fusionado, así que si un tenant domina el tráfico, le doy un deployment dedicado con los pesos fusionados."
+      }
+    }
+  ],
+  "related": ["continuous-batching", "paged-attention", "gpu-memory-math", "api-vs-self-host", "llm-gateway", "lora"],
+  "sources": [
+    { "title": "vLLM documentation", "url": "https://docs.vllm.ai/en/latest/" },
+    { "title": "Zheng et al. — SGLang: Efficient Execution of Structured Language Model Programs", "url": "https://arxiv.org/abs/2312.07104" },
+    { "title": "NVIDIA Dynamo (GitHub)", "url": "https://github.com/ai-dynamo/dynamo" },
+    { "title": "Sheng et al. — S-LoRA: Serving Thousands of Concurrent LoRA Adapters", "url": "https://arxiv.org/abs/2311.03285" }
+  ]
+}

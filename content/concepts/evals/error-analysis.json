@@ -1,0 +1,93 @@
+{
+  "id": "error-analysis",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Error analysis: look at your data", "es": "Análisis de errores: mira tus datos" },
+  "aliases": ["error analysis", "open coding", "axial coding", "failure modes", "trace review", "look at your data", "failure taxonomy"],
+  "tldr": {
+    "en": "Read ~100 real traces, write a free-form note on each failure, group the notes into failure modes, count them, and fix the biggest bucket first. Automate evals only for modes you actually found.",
+    "es": "Lee ~100 trazas reales, escribe una nota libre sobre cada falla, agrupa las notas en modos de falla, cuéntalas y arregla primero el grupo más grande. Automatiza evals solo para los modos que realmente encontraste."
+  },
+  "analogy": {
+    "en": "A restaurant owner reads every complaint card for a month before touching the menu. Three causes explain most of the cards, and none of them is the one she had guessed.",
+    "es": "La dueña de un restaurante lee todas las tarjetas de quejas de un mes antes de tocar el menú. Tres causas explican la mayoría, y ninguna es la que ella había imaginado."
+  },
+  "explain": {
+    "en": "**Error analysis** is reading real outputs before deciding what to measure. Generic metrics (\"helpfulness\", \"coherence\") rarely match how *your* product fails; the traces tell you.\n\nThe process comes from qualitative research (grounded theory) and was popularized for LLMs by Hamel Husain and Shreya Shankar:\n\n1. **Sample ~100 traces**: full conversations with tool calls and retrieved context, mixing random picks with thumbs-down and edge cases.\n2. **Open coding**: a domain expert writes a short free-form note per trace, pass/fail plus what went wrong. Note the **first** upstream error; later ones are often its consequences.\n3. **Axial coding**: group the notes into a handful of **failure modes** (\"misreads date ranges\", \"answers out-of-policy questions\"). An LLM can propose clusters; a human decides.\n4. **Count**: the distribution is usually skewed, so fix the biggest bucket first.\n5. **Automate**: only now write evals, one per mode that matters, with code checks where possible and a judge where not.\n\nJudge each trace **pass/fail, not 1–5**. Binary forces a decision, agrees better across raters, and makes the note (*why* it failed) the useful output. Keep reading until new traces stop revealing new modes (**saturation**), and repeat after every big change.",
+    "es": "El **análisis de errores** consiste en leer salidas reales antes de decidir qué medir. Las métricas genéricas (\"utilidad\", \"coherencia\") casi nunca coinciden con cómo falla *tu* producto; las trazas te lo dicen.\n\nEl proceso viene de la investigación cualitativa (teoría fundamentada) y lo popularizaron para LLMs Hamel Husain y Shreya Shankar:\n\n1. **Muestrea ~100 trazas**: conversaciones completas con llamadas a herramientas y contexto recuperado, mezclando casos al azar con pulgares abajo y casos borde.\n2. **Codificación abierta**: una persona experta en el dominio escribe una nota libre y breve por traza, pasa/falla y qué salió mal. Anota el **primer** error de la cadena; los siguientes suelen ser consecuencia de ese.\n3. **Codificación axial**: agrupa las notas en unos pocos **modos de falla** (\"interpreta mal rangos de fechas\", \"responde preguntas fuera de política\"). Un LLM puede proponer grupos; una persona decide.\n4. **Cuenta**: la distribución suele estar sesgada, así que arregla primero el grupo más grande.\n5. **Automatiza**: recién ahora escribe evals, uno por cada modo que importe, con verificaciones en código donde se pueda y un juez donde no.\n\nCalifica cada traza **pasa/falla, no de 1 a 5**. Lo binario obliga a decidir, genera más acuerdo entre evaluadores y convierte la nota (*por qué* falló) en lo verdaderamente útil. Sigue leyendo hasta que las trazas nuevas dejen de revelar modos nuevos (**saturación**) y repite después de cada cambio grande."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  T[(Production traces)] --> S[Sample ~100]\n  S --> O[\"Open coding<br/>note per trace\"]\n  O --> A[\"Axial coding<br/>group into modes\"]\n  A -.->|new modes still appearing| S\n  A --> C[Count per mode]\n  C --> F[Fix biggest bucket]\n  C --> E[\"Evals for<br/>found modes only\"]\n  E --> R[(Regression suite)]\n  F --> T",
+    "caption": {
+      "en": "Open coding describes each failure in plain words, axial coding names the modes, and counting tells you where to spend the week.",
+      "es": "La codificación abierta describe cada falla con palabras simples, la axial nombra los modos y el conteo te dice dónde invertir la semana."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "From annotated traces to a ranked list of failure modes", "es": "De trazas anotadas a una lista priorizada de modos de falla" },
+    "source": "import pandas as pd\n\n# One row per reviewed trace, filled by a domain expert in a sheet or annotation UI.\n# Columns: trace_id, passed (bool), note (open code), failure_mode (axial code), channel\ndf = pd.read_csv(\"annotations.csv\")\nfails = df[~df[\"passed\"]]\nprint(f\"pass rate: {df['passed'].mean():.0%} over {len(df)} traces\")\n\n# Share of ALL traces per mode, so buckets compare directly with the pass rate\nprint((fails[\"failure_mode\"].value_counts() / len(df)).round(3))\n\n# Where does each mode concentrate? Slices often point at the root cause\nprint(pd.crosstab(fails[\"failure_mode\"], fails[\"channel\"]))\n\n# Saturation: did the last 20 traces reveal a mode never seen before?\nearlier = set(df.iloc[:-20].query(\"not passed\")[\"failure_mode\"])\nlatest = set(df.iloc[-20:].query(\"not passed\")[\"failure_mode\"])\nnew_modes = latest - earlier\nprint(\"keep reading:\" if new_modes else \"saturated, go fix\", new_modes or \"\")"
+  },
+  "example": {
+    "en": "A tax-prep assistant has a 4.1/5 average from an LLM judge, and nobody knows what to fix. A domain expert reads 120 traces in an afternoon, marking pass/fail with a one-line note: 41 fail. Axial coding groups them: 17 cite last year's limits, 11 ignore the user's filing status, 8 hand off to a human too late, 5 miscellaneous. Two modes are two-thirds of all failures. Last year's limits trace back to a stale index, a retrieval fix rather than a prompt fix; filing status gets a code assertion and a prompt rule. A fresh sample a week later passes 85%, up from 66%.",
+    "es": "Un asistente de declaraciones de impuestos tiene un promedio de 4,1/5 según un LLM juez, y nadie sabe qué arreglar. Una experta del dominio lee 120 trazas en una tarde y marca pasa/falla con una nota de una línea: fallan 41. La codificación axial las agrupa: 17 citan los topes del año anterior, 11 ignoran la situación fiscal del usuario, 8 derivan a un humano demasiado tarde y 5 son varias. Dos modos son dos tercios de todas las fallas. Los topes viejos vienen de un índice desactualizado, un arreglo de recuperación y no de prompt; la situación fiscal recibe una aserción en código y una regla en el prompt. Una muestra nueva una semana después aprueba 85%, frente al 66% inicial."
+  },
+  "pros": [
+    { "en": "Finds the failures that matter for your product, not generic ones.", "es": "Encuentra las fallas que importan para tu producto, no las genéricas." },
+    { "en": "Cheap: a few hours of expert reading and a spreadsheet, no infrastructure.", "es": "Barato: unas horas de lectura experta y una hoja de cálculo, sin infraestructura." },
+    { "en": "Tells you which evals to build, and which ones to skip.", "es": "Te dice qué evals construir y cuáles puedes saltarte." }
+  ],
+  "cons": [
+    { "en": "Needs a domain expert's time; engineers alone misjudge domain failures.", "es": "Requiere tiempo de una persona experta en el dominio; los ingenieros solos juzgan mal las fallas del dominio." },
+    { "en": "Manual and periodic: it must be redone after big changes or traffic shifts.", "es": "Es manual y periódico: hay que repetirlo después de cambios grandes o cuando cambia el tráfico." },
+    { "en": "Small samples miss rare but severe failures; add targeted sampling for those.", "es": "Las muestras chicas no ven fallas raras pero graves; para esas agrega muestreo dirigido." }
+  ],
+  "whenToUse": {
+    "en": "Before building any automated eval, after every significant change (model, prompt, retriever), and whenever metrics look fine but users complain. Budget a few hours a week once in production.",
+    "es": "Antes de construir cualquier eval automatizado, después de cada cambio importante (modelo, prompt, retriever) y siempre que las métricas se vean bien pero los usuarios se quejen. Reserva unas horas por semana una vez en producción."
+  },
+  "whenNotToUse": {
+    "en": "Never skip it entirely, but don't hand-read what a deterministic check already catches: sample the residual. And don't start before you have real or realistic traces to read.",
+    "es": "Nunca lo omitas del todo, pero no leas a mano lo que una verificación determinista ya detecta: muestrea lo que queda. Y no empieces antes de tener trazas reales o realistas para leer."
+  },
+  "numbers": [
+    { "en": "Rule of thumb: review ~100 traces per round, and keep going until new traces stop revealing new failure modes.", "es": "Regla práctica: revisa ~100 trazas por ronda y sigue hasta que las trazas nuevas dejen de revelar modos de falla nuevos." },
+    { "en": "Typical shape (rule of thumb): a handful of modes, often 3–6, covers most failures: Pareto, not uniform.", "es": "Forma típica (regla práctica): unos pocos modos, a menudo 3–6, cubren la mayoría de las fallas: Pareto, no uniforme." },
+    { "en": "Effort (rule of thumb): with a good trace viewer, 100 traces is a few hours of reading, not days.", "es": "Esfuerzo (regla práctica): con un buen visor de trazas, 100 trazas son unas horas de lectura, no días." }
+  ],
+  "pitfalls": [
+    { "en": "Starting from off-the-shelf metrics (helpfulness, toxicity) instead of reading traces.", "es": "Empezar con métricas genéricas (utilidad, toxicidad) en lugar de leer trazas." },
+    { "en": "Letting an LLM do the open coding unsupervised: it misses domain errors and invents tidy categories.", "es": "Dejar que un LLM haga la codificación abierta sin supervisión: pasa por alto errores del dominio e inventa categorías prolijas." },
+    { "en": "Rating 1–5: raters disagree on a 3 versus a 4, and the score explains nothing.", "es": "Calificar de 1 a 5: los evaluadores discrepan entre un 3 y un 4, y el puntaje no explica nada." },
+    { "en": "Labeling every error in a trace instead of the first: one root cause gets counted several times.", "es": "Etiquetar todos los errores de una traza en vez del primero: una sola causa raíz se cuenta varias veces." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "You inherit an LLM product with a dashboard of generic scores and unhappy users. What's your first week?", "es": "Heredas un producto con LLM, un dashboard de puntajes genéricos y usuarios descontentos. ¿Qué haces la primera semana?" },
+      "a": {
+        "en": "I'd stop staring at the dashboard and read traces. I sample about 100, mixing random traffic with thumbs-down conversations, and sit with a domain expert to mark each pass or fail with a one-line note on the first thing that went wrong. Then we group the notes into failure modes and count them. Usually two or three modes explain most failures, and at least one isn't a prompt problem: stale data, a broken tool, a late handoff. Only then do I build evals, one per mode, so the dashboard measures what actually hurts users.",
+        "es": "Dejaría de mirar el dashboard y me pondría a leer trazas. Muestreo unas 100, mezclando tráfico al azar con conversaciones con pulgar abajo, y me siento con una persona experta en el dominio a marcar cada una como pasa o falla, con una nota de una línea sobre lo primero que salió mal. Después agrupamos las notas en modos de falla y los contamos. Casi siempre dos o tres modos explican la mayoría, y al menos uno no es un problema de prompt: datos desactualizados, una herramienta rota, una derivación tardía. Recién entonces construyo evals, uno por modo, para que el dashboard mida lo que de verdad afecta a los usuarios."
+      }
+    },
+    {
+      "q": { "en": "Why binary pass/fail instead of a 1–5 score?", "es": "¿Por qué pasa/falla binario en lugar de un puntaje de 1 a 5?" },
+      "a": {
+        "en": "Because the score has to drive a decision. With 1–5, two raters argue whether something is a 3 or a 4, the average moves for reasons nobody can explain, and you need more samples to see a real change. Pass/fail forces the reviewer to decide whether this output is acceptable for the product, and the critique, why it failed, carries the detail. If I need gradations, I split the criterion into several binary checks, like \"cites a source\" and \"the source supports the claim\", instead of one fuzzy scale.",
+        "es": "Porque el puntaje tiene que llevar a una decisión. Con 1 a 5, dos evaluadores discuten si algo es un 3 o un 4, el promedio se mueve por razones que nadie puede explicar y necesitas más muestras para ver un cambio real. Pasa/falla obliga a decidir si esa salida es aceptable para el producto, y la crítica, por qué falló, lleva el detalle. Si necesito matices, divido el criterio en varias verificaciones binarias, como \"cita una fuente\" y \"la fuente respalda la afirmación\", en vez de una escala difusa."
+      }
+    },
+    {
+      "q": { "en": "Can't an LLM do the error analysis for you?", "es": "¿No puede un LLM hacer el análisis de errores por ti?" },
+      "a": {
+        "en": "It can help, not lead. I use a model to cluster notes into candidate failure modes and to pre-filter obviously fine traces, which saves hours. But open coding needs domain judgment: a model will happily pass a confident, wrong tax answer. And Shreya Shankar's work on criteria drift shows people refine what \"good\" means while grading outputs, so the reading itself is how you discover the criteria. A human makes the final call on every label.",
+        "es": "Puede ayudar, no liderar. Uso un modelo para agrupar las notas en modos de falla candidatos y para descartar trazas que claramente están bien, lo que ahorra horas. Pero la codificación abierta requiere criterio del dominio: un modelo aprueba sin problema una respuesta de impuestos segura y equivocada. Además, el trabajo de Shreya Shankar sobre criteria drift muestra que las personas ajustan qué significa \"bueno\" mientras califican salidas, así que la lectura misma es la forma de descubrir los criterios. Una persona tiene la última palabra en cada etiqueta."
+      }
+    }
+  ],
+  "related": ["eval-driven-development", "llm-as-judge", "human-eval", "golden-datasets", "llm-observability", "agent-evals"],
+  "sources": [
+    { "title": "Hamel Husain — A Field Guide to Rapidly Improving AI Products", "url": "https://hamel.dev/blog/posts/field-guide/" },
+    { "title": "Hamel Husain & Shreya Shankar — Frequently Asked Questions About AI Evals", "url": "https://hamel.dev/blog/posts/evals-faq/" },
+    { "title": "Shankar et al. — Who Validates the Validators? (2024)", "url": "https://arxiv.org/abs/2404.12272" }
+  ]
+}

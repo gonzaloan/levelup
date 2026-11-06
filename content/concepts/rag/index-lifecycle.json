@@ -1,0 +1,88 @@
+{
+  "id": "index-lifecycle",
+  "domain": "rag",
+  "level": "advanced",
+  "title": { "en": "Index freshness & lifecycle", "es": "Frescura y ciclo de vida del índice" },
+  "aliases": ["incremental indexing", "re-indexing", "re-embedding", "blue/green index", "index alias swap", "tombstones", "CDC ingestion", "freshness SLA"],
+  "tldr": {
+    "en": "A RAG index is a replica of your sources: stream changes in, propagate every deletion, version each chunk, and migrate embedding models through a blue/green index and an alias swap, never in place.",
+    "es": "Un índice RAG es una réplica de tus fuentes: ingiere los cambios en streaming, propaga cada borrado, versiona cada chunk y migra de modelo de embeddings con un índice blue/green y un cambio de alias, nunca en el mismo índice."
+  },
+  "analogy": {
+    "en": "Like a store's shelf labels: if prices change in the back office and nobody updates the shelf, customers get confidently wrong answers, and recalled products must leave every shelf, not just the warehouse.",
+    "es": "Como las etiquetas de precio de una tienda: si los precios cambian en el sistema y nadie actualiza el estante, el cliente recibe datos errados con toda seguridad, y un producto retirado debe salir de cada estante, no solo de la bodega."
+  },
+  "explain": {
+    "en": "An index is not built once: it is a **replica of your sources** that drifts the moment a document changes. Lifecycle is everything that keeps it correct.\n\n- **Incremental ingestion** — consume changes instead of re-crawling: CDC from the database log (e.g. Debezium), webhooks or change APIs from Drive, Confluence or SharePoint, plus a periodic reconciliation crawl for missed events. Upsert by a stable `doc_id`; hash each chunk and skip re-embedding unchanged ones.\n- **Deletions** — every chunk carries its `doc_id`, so one delete removes *all* its chunks. Many ANN indexes only tombstone deletes until compaction. A GDPR erasure must reach the index, caches and derived stores; embeddings can be inverted back toward the text, so treat them as personal data.\n- **Versioning** — store `doc_version`, `chunker_version`, `embedding_model` and `content_hash` per chunk, so staleness is queryable.\n- **Model changes** — vectors from two models live in incompatible spaces: **never mix them in one index**. Build a new (green) index, backfill, dual-write live changes, evaluate, then **swap an alias** atomically and keep the old (blue) one for rollback.\n- **Freshness SLA** — e.g. p95 edit-to-searchable under 15 min, deletions under 1 h; measure the lag and alert on it.\n- **Dedup** — exact hashes plus near-duplicate detection, or the top-k fills with five copies of one page.",
+    "es": "Un índice no se construye una sola vez: es una **réplica de tus fuentes** que se desfasa en cuanto cambia un documento. El ciclo de vida es todo lo que lo mantiene correcto.\n\n- **Ingesta incremental**: consume cambios en vez de volver a rastrear todo: CDC desde el log de la base de datos (p. ej. Debezium), webhooks o APIs de cambios de Drive, Confluence o SharePoint, más un rastreo periódico de conciliación para eventos perdidos. Haz upsert por un `doc_id` estable; calcula un hash por chunk y no vuelvas a generar el embedding de los que no cambiaron.\n- **Borrados**: cada chunk lleva su `doc_id`, así un borrado elimina *todos* sus chunks. Muchos índices ANN solo marcan los borrados (tombstones) hasta la compactación. Una solicitud de borrado bajo GDPR debe llegar al índice, a los caches y a los almacenes derivados; los embeddings se pueden invertir para aproximar el texto, así que trátalos como datos personales.\n- **Versionado**: guarda `doc_version`, `chunker_version`, `embedding_model` y `content_hash` por chunk, para poder consultar qué está desactualizado.\n- **Cambio de modelo**: los vectores de dos modelos viven en espacios incompatibles: **nunca los mezcles en un mismo índice**. Construye un índice nuevo (green), haz el backfill, escribe los cambios en vivo en ambos, evalúa y luego **cambia el alias** de forma atómica, conservando el viejo (blue) para hacer rollback.\n- **SLA de frescura**: p. ej. p95 de edición a búsqueda menor a 15 min y borrados en menos de 1 h; mide el desfase y alerta sobre él.\n- **Deduplicación**: hashes exactos más detección de casi duplicados, o el top-k se llena con cinco copias de la misma página."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  S[Sources] -->|\"CDC, webhooks\"| Q[Change queue]\n  Q --> P[\"Parse, chunk,<br/>hash, dedup\"]\n  P -->|changed chunks| E1[\"Embed v1\"]\n  P -->|changed chunks| E2[\"Embed v2\"]\n  P -->|tombstones| D[\"Delete by doc_id\"]\n  E1 --> B[(Blue index v1)]\n  E2 --> G[(Green index v2)]\n  D --> B\n  D --> G\n  R[Retriever] --> A{Alias kb}\n  A -->|live| B\n  A -.->|swap after eval| G",
+    "caption": {
+      "en": "During a model migration, changes and deletions are dual-written to both indexes; readers only see the alias, which flips to green once it passes eval.",
+      "es": "Durante una migración de modelo, cambios y borrados se escriben en ambos índices; los lectores solo ven el alias, que pasa a green cuando aprueba la evaluación."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Per-document sync and an atomic alias swap (Qdrant)", "es": "Sincronización por documento y cambio atómico de alias (Qdrant)" },
+    "source": "import hashlib, uuid\nfrom qdrant_client import QdrantClient, models\n\nclient = QdrantClient(\"http://localhost:6333\")\nEMBED_MODEL = \"text-embedding-3-small\"  # pinned: queries must use the same model\nALIAS = \"kb\"                            # readers only ever query the alias\n\ndef match(key, value):\n    return models.FieldCondition(key=key, match=models.MatchValue(value=value))\n\ndef sync_document(coll: str, doc_id: str, version: int, text: str | None) -> None:\n    if text is not None:  # write the new version first: no gap where the doc vanishes\n        chunks = chunk(text)\n        vectors = embed_cached(chunks, model=EMBED_MODEL)  # cache keyed by content hash\n        client.upsert(coll, points=[models.PointStruct(\n            id=str(uuid.uuid5(uuid.NAMESPACE_URL, f\"{doc_id}:{version}:{i}\")), vector=v,\n            payload={\"doc_id\": doc_id, \"doc_version\": version, \"chunk_index\": i,\n                     \"content_hash\": hashlib.sha256(c.encode()).hexdigest(),\n                     \"embedding_model\": EMBED_MODEL, \"text\": c})\n            for i, (c, v) in enumerate(zip(chunks, vectors))])\n    # Then drop older versions; text=None is a tombstone (delete or GDPR erasure)\n    stale = models.Filter(must=[match(\"doc_id\", doc_id)],\n                          must_not=None if text is None else [match(\"doc_version\", version)])\n    client.delete(coll, points_selector=models.FilterSelector(filter=stale))\n\ndef swap_alias(new_coll: str) -> None:\n    # Atomic flip once the green index passes eval; keep the old one for rollback\n    client.update_collection_aliases(change_aliases_operations=[\n        models.DeleteAliasOperation(delete_alias=models.DeleteAlias(alias_name=ALIAS)),\n        models.CreateAliasOperation(create_alias=models.CreateAlias(\n            collection_name=new_coll, alias_name=ALIAS)),\n    ])"
+  },
+  "example": {
+    "en": "A company indexes 400k Confluence pages (~8M chunks) with a nightly crawl. Two incidents in month one: a policy edited at 9:00 still served the old text at 17:00, and an ex-employee's erasure request cleared the HR system while their 1:1 notes stayed retrievable. Fix: webhooks → queue → per-document sync with version-based cleanup, deletes as audited tombstones, a weekly reconciliation crawl. Six months later they switch embedding models: ~4B tokens to re-embed cost ~$80 at $0.02 per 1M tokens. The real work was the two-day backfill, dual-writes and an eval gate before the alias swap.",
+    "es": "Una empresa indexa 400 mil páginas de Confluence (~8M chunks) con un rastreo nocturno. Dos incidentes en el primer mes: una política editada a las 9:00 seguía mostrando el texto viejo a las 17:00, y la solicitud de borrado de un ex empleado limpió el sistema de RR. HH., pero sus notas de 1:1 seguían recuperables. Solución: webhooks → cola → sincronización por documento con limpieza por versión, borrados como tombstones auditados y un rastreo semanal de conciliación. Seis meses después cambian de modelo de embeddings: volver a generar los embeddings de ~4 mil millones de tokens cuesta ~US$80 a US$0,02 por millón de tokens. El trabajo real fue el backfill de dos días, la doble escritura y una evaluación obligatoria antes del cambio de alias."
+  },
+  "pros": [
+    { "en": "Answers reflect the current source, edits and deletions included, within a measured SLA.", "es": "Las respuestas reflejan la fuente actual, con ediciones y borrados incluidos, dentro de un SLA medido." },
+    { "en": "Model upgrades become routine and reversible instead of a risky big-bang re-index.", "es": "Cambiar de modelo se vuelve rutina y es reversible, en vez de una reindexación riesgosa de una sola vez." },
+    { "en": "Per-chunk versions and hashes make staleness auditable and skip needless re-embedding.", "es": "Versiones y hashes por chunk hacen auditable lo desactualizado y evitan generar embeddings de más." }
+  ],
+  "cons": [
+    { "en": "Real pipeline engineering: queues, retries, idempotency and reconciliation jobs.", "es": "Ingeniería de pipelines de verdad: colas, reintentos, idempotencia y jobs de conciliación." },
+    { "en": "Blue/green doubles storage and write load during every migration.", "es": "Blue/green duplica el almacenamiento y la carga de escritura durante cada migración." },
+    { "en": "Source change feeds are often incomplete, so periodic full reconciliation is still required.", "es": "Los feeds de cambios de las fuentes suelen ser incompletos, así que igual necesitas conciliaciones completas periódicas." }
+  ],
+  "whenToUse": {
+    "en": "Any RAG beyond a demo: sources that change, users with deletion rights, regulated data, or an embedding model you will eventually upgrade. That is every production system.",
+    "es": "Cualquier RAG que vaya más allá de una demo: fuentes que cambian, usuarios con derecho a borrar sus datos, datos regulados o un modelo de embeddings que algún día vas a cambiar. Es decir, todo sistema en producción."
+  },
+  "whenNotToUse": {
+    "en": "A truly static corpus (an archived dataset, a fixed set of manuals) where a scheduled full rebuild is cheap and simpler than change feeds.",
+    "es": "Un corpus de verdad estático (un dataset archivado, un conjunto fijo de manuales) donde una reconstrucción completa programada es barata y más simple que los feeds de cambios."
+  },
+  "numbers": [
+    { "en": "GDPR: answer an erasure request without undue delay, normally within one month (Art. 12(3)).", "es": "GDPR: responde una solicitud de supresión sin demora indebida, normalmente en un plazo de un mes (art. 12.3)." },
+    { "en": "Re-embedding 1B tokens with text-embedding-3-small ≈ $20 ($0.02 per 1M); throughput and rebuild time are the real bottleneck.", "es": "Volver a generar embeddings para mil millones de tokens con text-embedding-3-small ≈ US$20 (US$0,02 por millón); el cuello de botella real es el throughput y el tiempo de reconstrucción." },
+    { "en": "Embedding inversion (vec2text) recovered 92% of 32-token inputs exactly from their embeddings.", "es": "La inversión de embeddings (vec2text) recuperó exactamente el 92% de entradas de 32 tokens a partir de sus embeddings." },
+    { "en": "Example SLA: p95 edit-to-searchable < 15 min; deletions < 1 h; alert on the measured lag.", "es": "SLA de ejemplo: p95 de edición a búsqueda < 15 min; borrados < 1 h; alerta sobre el desfase medido." }
+  ],
+  "pitfalls": [
+    { "en": "Upgrading the query embedder while the index still holds old vectors: results turn silently random.", "es": "Actualizar el embedder de consultas mientras el índice tiene vectores viejos: los resultados se vuelven aleatorios sin ningún error." },
+    { "en": "Deleting the source document but not its chunks, cached answers or [[semantic-caching]] entries.", "es": "Borrar el documento fuente pero no sus chunks, respuestas en cache ni entradas de [[semantic-caching]]." },
+    { "en": "Random chunk ids: re-ingestion creates duplicates instead of replacing the old version.", "es": "Ids de chunk aleatorios: reingerir crea duplicados en vez de reemplazar la versión anterior." },
+    { "en": "Trusting webhooks alone: one dropped event leaves a page stale forever. Schedule reconciliation.", "es": "Confiar solo en webhooks: un evento perdido deja una página desactualizada para siempre. Programa conciliaciones." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "You must switch embedding models on a 50M-chunk production index. How?", "es": "Tienes que cambiar de modelo de embeddings en un índice de producción de 50M chunks. ¿Cómo lo haces?" },
+      "a": {
+        "en": "Blue/green, never in place, because old and new vectors aren't comparable. I build a new collection with the new model and backfill from the canonical chunk store, not by re-parsing sources. While it runs, live changes and deletions are dual-written to both. Before flipping I run the retrieval eval set on both — recall@k, nDCG — plus a shadow comparison on real queries. Then I swap the alias atomically, with query embedding pinned to the same version, and keep blue for rollback. The cost is mostly backfill throughput and double storage, not embedding dollars.",
+        "es": "Blue/green, nunca en el mismo índice, porque los vectores viejos y nuevos no son comparables. Construyo una colección nueva con el modelo nuevo y hago el backfill desde el almacén canónico de chunks, no volviendo a parsear las fuentes. Mientras corre, los cambios y borrados en vivo se escriben en ambos. Antes de cambiar corro el set de evaluación de recuperación en los dos —recall@k, nDCG— más una comparación en sombra con consultas reales. Luego cambio el alias de forma atómica, con el embedding de consultas fijado a la misma versión, y conservo blue para rollback. El costo es sobre todo throughput del backfill y almacenamiento doble, no dinero en embeddings."
+      }
+    },
+    {
+      "q": { "en": "A user exercises their GDPR right to erasure. What has to happen in your RAG system?", "es": "Un usuario ejerce su derecho de supresión bajo GDPR. ¿Qué tiene que pasar en tu sistema RAG?" },
+      "a": {
+        "en": "Erasure must reach every derived copy, not only the source. I map the person to every doc_id they own or appear in, emit tombstones, and delete all chunks by doc_id in every live index, including a green index mid-migration. Then I purge caches, answer logs and eval sets built from production data, and confirm the vector store actually compacts, since many ANN indexes only mark deletes. Embeddings can be inverted toward the original text, so I treat them as personal data. I log the deletion for audit and verify with a search that nothing comes back.",
+        "es": "La supresión debe llegar a cada copia derivada, no solo a la fuente. Mapeo a la persona a cada doc_id que le pertenece o donde aparece, emito tombstones y borro todos los chunks por doc_id en cada índice vivo, incluido un índice green a mitad de migración. Después purgo caches, logs de respuestas y sets de evaluación armados con datos de producción, y confirmo que la base vectorial realmente compacte, porque muchos índices ANN solo marcan los borrados. Los embeddings se pueden invertir para aproximar el texto original, así que los trato como datos personales. Registro el borrado para auditoría y verifico con una búsqueda que no vuelva nada."
+      }
+    }
+  ],
+  "related": ["vector-databases", "chunking", "embedding-models", "pii-privacy", "queues-streams", "permission-aware-retrieval"],
+  "sources": [
+    { "title": "Qdrant documentation — Collections and collection aliases", "url": "https://qdrant.tech/documentation/concepts/collections/" },
+    { "title": "GDPR Article 17 — Right to erasure", "url": "https://gdpr-info.eu/art-17-gdpr/" },
+    { "title": "Morris et al. — Text Embeddings Reveal (Almost) As Much As Text (2023)", "url": "https://arxiv.org/abs/2310.06801" },
+    { "title": "Debezium documentation", "url": "https://debezium.io/documentation/" }
+  ]
+}

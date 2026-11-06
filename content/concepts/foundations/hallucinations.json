@@ -1,0 +1,86 @@
+{
+  "id": "hallucinations",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Hallucinations: why they happen", "es": "Alucinaciones: por qué ocurren" },
+  "aliases": ["hallucination", "confabulation", "fabrication", "factuality", "faithfulness", "ungrounded answers", "abstention"],
+  "tldr": {
+    "en": "LLMs predict plausible text, not true text, and training and benchmarks reward guessing over \"I don't know\". You can't remove hallucinations; you ground, verify, allow abstention and measure the residual rate.",
+    "es": "Los LLMs predicen texto plausible, no texto verdadero, y el entrenamiento y los benchmarks premian adivinar por encima de decir \"no sé\". No puedes eliminar las alucinaciones: fundamentas, verificas, permites abstenerse y mides la tasa residual."
+  },
+  "analogy": {
+    "en": "A student on a multiple-choice exam with no penalty for wrong answers: a blank scores zero, so they always guess, confidently. Change the grading and \"I don't know\" starts to appear.",
+    "es": "Un estudiante en un examen de opción múltiple donde equivocarse no resta: dejarlo en blanco vale cero, así que siempre adivina, y con seguridad. Cambia la forma de calificar y empieza a aparecer el \"no sé\"."
+  },
+  "explain": {
+    "en": "A **hallucination** is fluent, confident output that is false or not supported by the input. It isn't a bug in one component; it falls out of how LLMs are trained and graded.\n\n**Why it happens**\n- **Objective:** pretraining maximizes next-token likelihood. A plausible fake citation and a real one look alike to that loss; nothing in it checks truth.\n- **Incentives:** OpenAI's 2025 paper argues that benchmarks and post-training grade right/wrong only, so a guess scores better than *\"I don't know\"*. Models learn to bluff, like students on a test with no penalty for wrong answers.\n- **Knowledge gaps:** facts seen once or never in training can't be recalled reliably, and anything after the cutoff is unknown.\n- **Inputs:** ambiguous prompts, missing context, or long noisy context where the key passage gets lost ([[context-rot]]).\n\n**Two kinds**\n- **Factuality:** contradicts the world (a wrong date, an invented paper).\n- **Faithfulness:** contradicts or goes beyond the *given* context or instructions (a RAG answer adding a clause the document doesn't contain).\n\n**Mitigations stack; none reaches zero.** Ground answers with [[rag]]; require citations you can check ([[citations-grounding]]); explicitly allow abstaining; verify claims with tools or a second pass; measure errors *and* abstentions ([[groundedness]]). Lower temperature cuts variance, not falsehood.",
+    "es": "Una **alucinación** es una salida fluida y segura de sí misma que es falsa o que la entrada no respalda. No es un bug de un componente: es consecuencia de cómo se entrenan y se califican los LLMs.\n\n**Por qué ocurre**\n- **Objetivo:** el preentrenamiento maximiza la probabilidad del siguiente token. Para esa función de pérdida, una cita falsa pero plausible y una real se ven igual; nada en ella verifica la verdad.\n- **Incentivos:** el paper de OpenAI de 2025 argumenta que los benchmarks y el post-entrenamiento solo califican acierto/error, así que adivinar puntúa mejor que *\"no sé\"*. El modelo aprende a adivinar con aplomo, como un estudiante en un examen donde equivocarse no resta.\n- **Huecos de conocimiento:** los hechos que aparecen una vez o nunca en el entrenamiento no se recuerdan de forma confiable, y todo lo posterior a la fecha de corte es desconocido.\n- **Entradas:** prompts ambiguos, contexto faltante o contexto largo y ruidoso donde se pierde el pasaje clave ([[context-rot]]).\n\n**Dos tipos**\n- **Factualidad:** contradice al mundo (una fecha equivocada, un paper inventado).\n- **Fidelidad:** contradice o va más allá del contexto o de las instrucciones *dados* (una respuesta RAG que agrega una cláusula que el documento no tiene).\n\n**Las mitigaciones se suman y ninguna llega a cero.** Fundamenta las respuestas con [[rag]]; exige citas que puedas verificar ([[citations-grounding]]); permite explícitamente abstenerse; verifica afirmaciones con herramientas o una segunda pasada; mide errores *y* abstenciones ([[groundedness]]). Bajar la temperatura reduce la varianza, no la falsedad."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[Question] --> M[LLM]\n  R[(Retrieved sources)] -.->|grounding| M\n  M --> K{\"Knows it or<br/>has a source?\"}\n  K -->|yes| D[Draft answer]\n  K -->|no| G[\"Plausible guess<br/>(evals reward it)\"]\n  G --> D\n  D --> V{\"Claims supported<br/>by sources?\"}\n  V -->|yes| S[Answer with citations]\n  V -->|no| I[\"Abstain: I don't know\"]",
+    "caption": {
+      "en": "The model fills gaps with plausible text; a deterministic claim check decides whether it ships or abstains.",
+      "es": "El modelo llena los huecos con texto plausible; una verificación determinista de las afirmaciones decide si se entrega o se abstiene."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Grounded answer with abstention and a quote check", "es": "Respuesta fundamentada con abstención y verificación de citas" },
+    "source": "from openai import OpenAI\nfrom pydantic import BaseModel\n\nclient = OpenAI()\nMODEL = \"gpt-4.1-mini\"  # any chat model with structured outputs\n\nclass Answer(BaseModel):\n    answer: str | None   # None = abstain\n    quotes: list[str]    # verbatim evidence copied from the sources\n\nSYSTEM = (\"Answer ONLY from the sources. Copy the exact sentences you rely on into \"\n          \"quotes. If the sources don't contain the answer, set answer to null. \"\n          \"A wrong answer is worse than no answer.\")\n\ndef grounded_answer(question: str, sources: str) -> str:\n    resp = client.responses.parse(\n        model=MODEL,\n        temperature=0,\n        text_format=Answer,\n        input=[{\"role\": \"system\", \"content\": SYSTEM},\n               {\"role\": \"user\", \"content\": f\"<sources>\\n{sources}\\n</sources>\\n\\n{question}\"}],\n    )\n    out = resp.output_parsed\n    # Deterministic check: models fabricate citations too, so every quote must exist\n    if out.answer is None or not out.quotes or any(q not in sources for q in out.quotes):\n        return \"I don't know based on the available documents.\"\n    return out.answer"
+  },
+  "example": {
+    "en": "Two real failures, one of each kind. **Factuality:** in *Mata v. Avianca* (2023), lawyers filed a brief citing six court decisions that ChatGPT had invented, with plausible names and quotes; the judge fined them $5,000. **Faithfulness:** in 2024 a Canadian tribunal held Air Canada liable after its website chatbot told a grieving customer he could claim a bereavement fare retroactively, contradicting the airline's own policy page. Checking each claim against a source (a case-law database, the policy page) would have caught both.",
+    "es": "Dos fallas reales, una de cada tipo. **Factualidad:** en *Mata v. Avianca* (2023), unos abogados presentaron un escrito que citaba seis fallos judiciales inventados por ChatGPT, con nombres y citas plausibles; el juez los multó con $5,000. **Fidelidad:** en 2024 un tribunal canadiense declaró responsable a Air Canada porque el chatbot de su sitio le dijo a un cliente en duelo que podía pedir la tarifa por fallecimiento de forma retroactiva, contradiciendo la propia política de la aerolínea. Verificar cada afirmación contra una fuente (una base de jurisprudencia, la página de la política) habría detectado ambas."
+  },
+  "pros": [
+    { "en": "Grounding plus citations turns many factuality errors into checkable faithfulness questions.", "es": "Fundamentar y citar convierte muchos errores de factualidad en preguntas de fidelidad que sí puedes verificar." },
+    { "en": "Allowing abstention cuts confident errors sharply (SimpleQA: 75% → 26% error rate).", "es": "Permitir abstenerse reduce mucho los errores con aplomo (SimpleQA: tasa de error de 75% → 26%)." },
+    { "en": "Deterministic checks (quote matching, schemas, tool lookups) catch errors without another LLM call.", "es": "Las verificaciones deterministas (coincidencia de citas, esquemas, consultas a herramientas) atrapan errores sin otra llamada al LLM." }
+  ],
+  "cons": [
+    { "en": "No mitigation reaches zero; you must design for the residual rate (review, reversibility, disclaimers).", "es": "Ninguna mitigación llega a cero; tienes que diseñar para la tasa residual (revisión, reversibilidad, avisos)." },
+    { "en": "More abstention means lower coverage: users see \"I don't know\" more often.", "es": "Más abstención significa menos cobertura: los usuarios ven \"no sé\" con más frecuencia." },
+    { "en": "LLM verifiers and self-checks add latency and cost, and share the model's blind spots.", "es": "Los verificadores LLM y las autoverificaciones agregan latencia y costo, y comparten los puntos ciegos del modelo." }
+  ],
+  "whenToUse": {
+    "en": "Treat hallucination as a design constraint in every LLM feature. Invest most where outputs are facts people act on: legal, medical, finance, support policy, citations, code that ships.",
+    "es": "Trata la alucinación como una restricción de diseño en toda función con LLM. Invierte más donde la salida son hechos sobre los que alguien actúa: legal, médico, finanzas, políticas de soporte, citas, código que llega a producción."
+  },
+  "whenNotToUse": {
+    "en": "Skip heavy factual guards for brainstorming, fiction or drafts a human rewrites: there, invention is the feature. Spend the budget where an error has a cost.",
+    "es": "No montes guardas factuales pesadas para lluvia de ideas, ficción o borradores que una persona reescribe: ahí inventar es la función. Gasta el presupuesto donde un error cuesta."
+  },
+  "numbers": [
+    { "en": "SimpleQA (OpenAI): gpt-5-thinking-mini abstains 52%, errs 26%; o4-mini abstains 1%, errs 75%, at similar accuracy (22% vs 24%).", "es": "SimpleQA (OpenAI): gpt-5-thinking-mini se abstiene 52% y se equivoca 26%; o4-mini se abstiene 1% y se equivoca 75%, con precisión similar (22% vs 24%)." },
+    { "en": "Kalai et al.: if ~20% of facts like birthdays appear once in training, expect ≥~20% hallucination on them.", "es": "Kalai et al.: si ~20% de hechos como cumpleaños aparecen una sola vez en el entrenamiento, espera ≥~20% de alucinación sobre ellos." },
+    { "en": "Mata v. Avianca (2023): 6 invented case citations, $5,000 sanction.", "es": "Mata v. Avianca (2023): 6 citas judiciales inventadas, sanción de $5,000." }
+  ],
+  "pitfalls": [
+    { "en": "Believing lower temperature or a bigger model eliminates hallucination. It lowers some, never all.", "es": "Creer que bajar la temperatura o usar un modelo más grande elimina la alucinación. Reduce algunas, nunca todas." },
+    { "en": "Asking for citations without checking them: models fabricate citations too.", "es": "Pedir citas sin verificarlas: los modelos también inventan citas." },
+    { "en": "Prompts that say \"always answer\", or evals that score abstention as a failure.", "es": "Prompts que dicen \"responde siempre\", o evaluaciones que cuentan la abstención como falla." },
+    { "en": "Stuffing 100k tokens of loosely relevant context: more noise, more faithfulness errors.", "es": "Meter 100k tokens de contexto poco relevante: más ruido, más errores de fidelidad." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why do LLMs hallucinate? Give me the one-minute version.", "es": "¿Por qué alucinan los LLMs? Dame la versión de un minuto." },
+      "a": {
+        "en": "Three layers. The objective: pretraining rewards plausible next tokens, and plausible isn't true; for facts seen once or never, there's nothing reliable to recall. The incentives: most post-training and benchmarks grade right or wrong, so guessing beats abstaining, which is the core argument of OpenAI's 2025 paper. And the inputs: ambiguous questions or long, noisy context. So I don't treat it as a bug to patch but as a rate to engineer down and design around.",
+        "es": "Tres capas. El objetivo: el preentrenamiento premia el siguiente token plausible, y plausible no es verdadero; para hechos vistos una vez o nunca, no hay nada confiable que recordar. Los incentivos: casi todo el post-entrenamiento y los benchmarks califican acierto o error, así que adivinar le gana a abstenerse, que es el argumento central del paper de OpenAI de 2025. Y las entradas: preguntas ambiguas o contexto largo y ruidoso. Por eso no lo trato como un bug que se parcha, sino como una tasa que hay que bajar con ingeniería y contemplar en el diseño."
+      }
+    },
+    {
+      "q": { "en": "How would you reduce hallucinations in an enterprise RAG assistant?", "es": "¿Cómo reducirías las alucinaciones en un asistente RAG empresarial?" },
+      "a": {
+        "en": "I separate factuality from faithfulness. For factuality, the model doesn't answer from memory: it retrieves, answers only from sources, and says it doesn't know otherwise. For faithfulness, I require quoted evidence per claim, verify quotes deterministically, and run an LLM-judge groundedness check on a sample. Then I measure on a golden set that includes unanswerable questions, tracking both error rate and abstention rate, because cutting one usually raises the other. For high-stakes actions, a human approves.",
+        "es": "Separo factualidad de fidelidad. Para la factualidad, el modelo no responde de memoria: recupera, responde solo con las fuentes y, si no están, dice que no sabe. Para la fidelidad, exijo evidencia citada por afirmación, verifico las citas de forma determinista y corro un chequeo de groundedness con un LLM juez sobre una muestra. Después mido con un golden set que incluye preguntas sin respuesta, siguiendo la tasa de error y la de abstención, porque bajar una suele subir la otra. Para acciones de alto riesgo, aprueba una persona."
+      }
+    }
+  ],
+  "related": ["rag", "citations-grounding", "groundedness", "context-rot", "llm-as-judge", "sampling"],
+  "sources": [
+    { "title": "OpenAI — Why language models hallucinate", "url": "https://openai.com/index/why-language-models-hallucinate/" },
+    { "title": "Kalai et al. — Why Language Models Hallucinate", "url": "https://arxiv.org/abs/2509.04664" },
+    { "title": "Huang et al. — A Survey on Hallucination in Large Language Models", "url": "https://arxiv.org/abs/2311.05232" }
+  ]
+}

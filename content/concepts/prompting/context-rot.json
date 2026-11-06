@@ -1,0 +1,95 @@
+{
+  "id": "context-rot",
+  "domain": "prompting",
+  "level": "core",
+  "title": { "en": "Lost in the middle & context rot", "es": "Lost in the middle y context rot" },
+  "aliases": ["lost in the middle", "context rot", "U-shaped recall", "positional bias", "needle in a haystack", "NIAH", "effective context length", "RULER"],
+  "tldr": {
+    "en": "Models don't use long context evenly: facts in the middle get used worst, and quality decays as input grows even on easy tasks. Send less, better context, with key parts at the edges.",
+    "es": "Los modelos no usan el contexto largo de forma pareja: lo que está en el medio se aprovecha peor y la calidad cae a medida que crece la entrada, incluso en tareas fáciles. Envía menos contexto y mejor, con lo clave en los extremos."
+  },
+  "analogy": {
+    "en": "A long meeting: everyone remembers the opening and the last five minutes, but the decision made at minute 40 is gone. The longer the meeting, the worse it gets.",
+    "es": "Una reunión larga: todos recuerdan el inicio y los últimos cinco minutos, pero la decisión del minuto 40 se pierde. Cuanto más larga la reunión, peor."
+  },
+  "explain": {
+    "en": "A context window is how much a model can *read*, not how well it *uses* it. Two effects matter.\n\n**Lost in the middle** (Liu et al., 2023): in multi-document QA, accuracy is **U-shaped** by position, highest when the answer sits at the start or end of the context and lowest in the middle. With 20 documents, GPT-3.5-Turbo did *worse* with the answer mid-context than with no documents at all.\n\n**Context rot** (Chroma, 2025): across 18 models, quality degrades as input grows *even when the task stays trivial*, such as copying back a sequence of repeated words. It degrades faster when the question and the needed fact share few words, and when plausible distractors are present.\n\nWhy the classic **needle-in-a-haystack** test misleads: the needle usually shares exact words with the question, so it measures lexical lookup, not reasoning over context. Near-perfect NIAH scores coexist with steep drops on harder tests like RULER and NoLiMa.\n\nWhat I do about it:\n\n- Put long documents **first** and the instructions + question **last**; restate key constraints near the end.\n- Send **fewer, better** chunks: [[reranking]] down to 3–8 instead of stuffing 50.\n- In agents, **compact** old turns and tool output, and give sub-agents clean windows ([[context-engineering]]).",
+    "es": "La ventana de contexto indica cuánto puede *leer* un modelo, no qué tan bien lo *usa*. Hay dos efectos que importan.\n\n**Lost in the middle** (Liu et al., 2023): en preguntas sobre varios documentos, la precisión tiene **forma de U** según la posición: es máxima cuando la respuesta está al inicio o al final del contexto y mínima en el medio. Con 20 documentos, GPT-3.5-Turbo rindió *peor* con la respuesta en el medio que sin ningún documento.\n\n**Context rot** (Chroma, 2025): en 18 modelos, la calidad se degrada a medida que crece la entrada *aunque la tarea siga siendo trivial*, como copiar una secuencia de palabras repetidas. Se degrada más rápido cuando la pregunta y el dato necesario comparten pocas palabras y cuando hay distractores plausibles.\n\nPor qué engaña el clásico **needle-in-a-haystack**: la aguja suele compartir palabras exactas con la pregunta, así que mide búsqueda léxica, no razonamiento sobre el contexto. Puntajes casi perfectos en NIAH conviven con caídas fuertes en pruebas más difíciles como RULER y NoLiMa.\n\nLo que hago al respecto:\n\n- Pongo los documentos largos **primero** y las instrucciones + la pregunta **al final**; repito las restricciones clave cerca del cierre.\n- Envío **menos chunks y mejores**: [[reranking]] hasta quedarme con 3–8 en vez de meter 50.\n- En agentes, **compacto** los turnos viejos y las salidas de herramientas, y les doy ventanas limpias a los sub-agentes ([[context-engineering]])."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  R[\"Retrieve top 50\"] --> X[\"Rerank, keep 6\"]\n  X --> O[\"Best chunks at edges\"]\n  H[(Chat history)] --> C[\"Compact old turns\"]\n  O --> P[\"Prompt: docs, then question\"]\n  C --> P\n  P --> L[LLM]",
+    "caption": {
+      "en": "Shrink the pile before ordering it: rerank to a few chunks, put the strongest at the edges, compact history, ask the question last.",
+      "es": "Achica la pila antes de ordenarla: reordena hasta pocos chunks, pon los más fuertes en los extremos, compacta el historial y haz la pregunta al final."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Fewer chunks, strongest at the edges, question last", "es": "Menos chunks, los mejores en los extremos, pregunta al final" },
+    "source": "from openai import OpenAI\n\nclient = OpenAI()\nMODEL = \"gpt-4.1\"  # any long-context chat model\n\ndef edge_order(ranked: list[str]) -> list[str]:\n    # Strongest chunks at both ends, weakest in the middle (U-shaped use)\n    front, back = ranked[0::2], ranked[1::2]\n    return front + back[::-1]   # [1,2,3,4,5,6] -> [1,3,5,6,4,2]\n\ndef answer(question: str, candidates: list[str]) -> str:\n    top = rerank(question, candidates, keep=6)   # fewer, better chunks\n    docs = \"\\n\\n\".join(\n        f'<doc id=\"{i}\">\\n{c}\\n</doc>' for i, c in enumerate(edge_order(top))\n    )\n    prompt = (\n        f\"<documents>\\n{docs}\\n</documents>\\n\\n\"   # long material first\n        \"Answer only from the documents. Cite doc ids.\\n\"\n        f\"Question: {question}\"                     # question last\n    )\n    resp = client.chat.completions.create(\n        model=MODEL, messages=[{\"role\": \"user\", \"content\": prompt}]\n    )\n    return resp.choices[0].message.content"
+  },
+  "example": {
+    "en": "A legal-assistant RAG stuffed the top 40 clauses (~30K tokens) into every prompt. On a 200-question eval it kept missing termination clauses that ranked ~15–25, right in the middle. The team reranked down to 6 chunks, put the strongest at the edges and moved the question below the documents. The prompt shrank to ~5K tokens, input cost per query fell ~6×, and most misses disappeared: the right clause was now one of six, not one of forty.",
+    "es": "Un RAG de asistencia legal metía las 40 cláusulas mejor rankeadas (~30K tokens) en cada prompt. En un eval de 200 preguntas fallaba una y otra vez en cláusulas de rescisión que quedaban en los puestos ~15–25, justo en el medio. El equipo reordenó con un reranker hasta 6 chunks, puso los más fuertes en los extremos y movió la pregunta debajo de los documentos. El prompt bajó a ~5K tokens, el costo de entrada por consulta cayó ~6× y la mayoría de los fallos desapareció: la cláusula correcta ahora era una de seis, no una de cuarenta."
+  },
+  "pros": [
+    { "en": "Shorter, curated context is cheaper and faster on every single call.", "es": "Un contexto más corto y curado es más barato y más rápido en cada llamada." },
+    { "en": "Edge placement and question-last ordering are free: no extra calls, just reordering.", "es": "Poner lo clave en los extremos y la pregunta al final es gratis: sin llamadas extra, solo reordenar." },
+    { "en": "Compaction lets agents run long sessions without stale tool output drowning the goal.", "es": "La compactación permite que los agentes corran sesiones largas sin que las salidas viejas de herramientas tapen el objetivo." }
+  ],
+  "cons": [
+    { "en": "Aggressive pruning can drop the one chunk you needed, and that recall loss is silent.", "es": "Podar de forma agresiva puede tirar justo el chunk que necesitabas, y esa pérdida de recall es silenciosa." },
+    { "en": "Compaction is lossy: a summary can erase a detail a later step depends on.", "es": "La compactación pierde información: un resumen puede borrar un detalle del que depende un paso posterior." },
+    { "en": "Effects vary by model and task, so you must measure on your own data, not a vendor's NIAH chart.", "es": "Los efectos varían según el modelo y la tarea, así que debes medir con tus datos, no con el gráfico NIAH del proveedor." }
+  ],
+  "whenToUse": {
+    "en": "Any time the prompt grows past a few thousand tokens: RAG with many chunks, long agent loops, multi-document analysis, long chat histories.",
+    "es": "Siempre que el prompt pase de unos pocos miles de tokens: RAG con muchos chunks, loops largos de agentes, análisis de varios documentos o historiales de chat largos."
+  },
+  "whenNotToUse": {
+    "en": "Skip heavy pruning when the task truly needs the whole input (full-contract review, transcript summaries); split it into map-reduce passes instead of cutting context.",
+    "es": "Evita podar fuerte cuando la tarea de verdad necesita toda la entrada (revisar un contrato completo, resumir una transcripción); divídela en pasadas map-reduce en vez de recortar contexto."
+  },
+  "numbers": [
+    { "en": "Liu et al.: ~20-point accuracy drop from edge to middle position (GPT-3.5-Turbo, 20 documents).", "es": "Liu et al.: caída de ~20 puntos de precisión entre los extremos y el medio (GPT-3.5-Turbo, 20 documentos)." },
+    { "en": "RULER: of models claiming 32K+ context, only about half held up at 32K.", "es": "RULER: de los modelos que declaran 32K+ de contexto, solo cerca de la mitad rindió bien a 32K." },
+    { "en": "NoLiMa: at 32K tokens, 10 of 12 models fell below 50% of their short-context score; GPT-4o went from 99.3% to 69.7%.", "es": "NoLiMa: a 32K tokens, 10 de 12 modelos cayeron por debajo del 50% de su puntaje con contexto corto; GPT-4o pasó de 99.3% a 69.7%." },
+    { "en": "Anthropic: putting the query after long documents improved response quality by up to 30% in its tests.", "es": "Anthropic: poner la consulta después de los documentos largos mejoró la calidad de respuesta hasta un 30% en sus pruebas." }
+  ],
+  "pitfalls": [
+    { "en": "Trusting a 1M-token window because the vendor's needle-in-a-haystack chart is all green.", "es": "Confiar en una ventana de 1M tokens porque el gráfico needle-in-a-haystack del proveedor está todo en verde." },
+    { "en": "Stating instructions only at the top of a 100K-token prompt and never near the question.", "es": "Dar las instrucciones solo al inicio de un prompt de 100K tokens y nunca cerca de la pregunta." },
+    { "en": "Raising top-k \"to be safe\": more chunks add distractors and push the right one into the middle.", "es": "Subir el top-k \"por las dudas\": más chunks suman distractores y empujan el correcto hacia el medio." },
+    { "en": "Never trimming agent history: stale tool output piles up and quality decays turn by turn.", "es": "Nunca recortar el historial del agente: las salidas viejas de herramientas se acumulan y la calidad cae turno a turno." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your model supports 1M tokens. Why not put the whole knowledge base in the prompt?", "es": "Tu modelo soporta 1M tokens. ¿Por qué no meter toda la base de conocimiento en el prompt?" },
+      "a": {
+        "en": "Three reasons. First, usable context is shorter than advertised: quality degrades with length even on easy tasks, and facts mid-context get used worst; vanilla needle tests hide this because the needle shares words with the question. Second, cost and latency scale with input tokens on every call. Third, every irrelevant chunk is a distractor. So I retrieve and rerank to a handful of chunks, and reserve long context for tasks that need the whole document, after measuring on my own eval at the lengths I'll actually send.",
+        "es": "Por tres razones. Primero, el contexto útil es más corto que el anunciado: la calidad cae con la longitud incluso en tareas fáciles, y lo que está en el medio se aprovecha peor; los needle tests básicos lo esconden porque la aguja comparte palabras con la pregunta. Segundo, el costo y la latencia escalan con los tokens de entrada en cada llamada. Tercero, cada chunk irrelevante es un distractor. Así que recupero y reordeno hasta unos pocos chunks, y reservo el contexto largo para tareas que necesitan el documento entero, después de medir con mi propio eval en las longitudes que de verdad voy a enviar."
+      }
+    },
+    {
+      "q": { "en": "How would you check whether context length is hurting your app?", "es": "¿Cómo verificarías si la longitud del contexto está afectando tu aplicación?" },
+      "a": {
+        "en": "I run a length-and-position sweep on my own data: same questions, gold chunk placed at the start, middle and end, padded with realistic distractors (real neighbouring chunks, not random text) at, say, 4K, 16K and 64K tokens. I plot accuracy by position and length. If the middle or the long settings sag, I cut top-k, add a reranker, reorder strongest-to-the-edges and move the question last, then rerun the same sweep to confirm the curve flattened.",
+        "es": "Hago un barrido de longitud y posición con mis datos: las mismas preguntas, con el chunk correcto al inicio, en el medio y al final, rodeado de distractores realistas (chunks vecinos reales, no texto aleatorio) a, por ejemplo, 4K, 16K y 64K tokens. Grafico la precisión por posición y longitud. Si el medio o las longitudes largas caen, bajo el top-k, agrego un reranker, pongo lo más fuerte en los extremos y muevo la pregunta al final; luego repito el mismo barrido para confirmar que la curva se aplanó."
+      }
+    },
+    {
+      "q": { "en": "An agent gets noticeably worse after 50 turns. What is happening and what do you do?", "es": "Un agente empeora claramente después de 50 turnos. ¿Qué está pasando y qué haces?" },
+      "a": {
+        "en": "Most likely context rot: the window is full of stale tool output, failed attempts and superseded plans, so the current goal is a small slice buried mid-context. I compact: summarize old turns into a state note with goal, decisions and open items, and drop raw tool results once used. I offload large artifacts to files the agent can re-read, and hand sub-tasks to sub-agents with fresh windows that return short summaries. Then I measure task success against turn count to confirm the decay is gone.",
+        "es": "Lo más probable es context rot: la ventana está llena de salidas viejas de herramientas, intentos fallidos y planes descartados, así que el objetivo actual es una porción chica enterrada en el medio. Compacto: resumo los turnos viejos en una nota de estado con objetivo, decisiones y pendientes, y descarto los resultados crudos de herramientas una vez usados. Paso los artefactos grandes a archivos que el agente puede releer y delego subtareas a sub-agentes con ventanas limpias que devuelven resúmenes cortos. Luego mido el éxito de la tarea contra el número de turnos para confirmar que la caída desapareció."
+      }
+    }
+  ],
+  "related": ["context-window", "context-engineering", "long-context-vs-rag", "reranking", "attention", "agent-memory"],
+  "sources": [
+    { "title": "Liu et al. — Lost in the Middle: How Language Models Use Long Contexts", "url": "https://arxiv.org/abs/2307.03172" },
+    { "title": "Chroma — Context Rot: How Increasing Input Tokens Impacts LLM Performance", "url": "https://research.trychroma.com/context-rot" },
+    { "title": "Hsieh et al. — RULER: What's the Real Context Size of Your Long-Context Language Models?", "url": "https://arxiv.org/abs/2404.06654" },
+    { "title": "Anthropic — Long context prompting tips", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/long-context-tips" }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "id": "vector-databases",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Vector databases", "es": "Bases de datos vectoriales" },
+  "aliases": ["vector DB", "vector store", "pgvector", "Pinecone", "Qdrant", "Weaviate", "Milvus", "turbopuffer"],
+  "tldr": {
+    "en": "A database that stores embeddings with metadata and answers \"the k nearest vectors to this one, where tenant = X\" in milliseconds. Choose on scale, filtering, hybrid support and ops burden; often pgvector is enough.",
+    "es": "Una base de datos que guarda embeddings con metadatos y responde \"los k vectores más cercanos a este, donde tenant = X\" en milisegundos. Elige por escala, filtrado, soporte híbrido y carga operativa; muchas veces pgvector alcanza."
+  },
+  "analogy": {
+    "en": "A warehouse that shelves products by what they resemble, not by name: you hand it a sample and ask for the ten most similar items, but only from aisle 7.",
+    "es": "Un almacén que acomoda los productos según a qué se parecen, no por su nombre: le das una muestra y pides los diez más parecidos, pero solo del pasillo 7."
+  },
+  "explain": {
+    "en": "A vector database stores **vectors + metadata + an id** and answers one question fast: *the k vectors nearest to this query vector, among rows matching this filter*. Under the hood it is an approximate nearest-neighbor index ([[ann-indexes]]), usually HNSW, wrapped in what a database owes you: upserts and deletes, metadata filters, persistence, replication, backups and access control.\n\nEngines differ less on raw speed than on:\n\n- **Filtered search**: `tenant_id = 42 AND lang = 'es'`. Naive post-filtering (ANN top 100, then filter) can return 2 rows; good engines filter during index traversal.\n- **Hybrid**: keyword scoring ([[bm25]]) or sparse vectors next to dense ones.\n- **Multi-tenancy**: namespaces or per-tenant shards, so one customer never sees another's data.\n- **Ops model**: an extension (pgvector), an embedded library (LanceDB), a server you run (Qdrant, Weaviate, Milvus) or a managed service (Pinecone, turbopuffer).\n\n**Storage math**: 1M × 1536 dims × 4 bytes ≈ 6 GB of raw float32, and HNSW wants it in RAM. int8 quantization cuts it to ~1.5 GB, binary to ~0.2 GB.\n\nMy default: **pgvector** if you already run Postgres and stay under tens of millions of vectors; Elasticsearch/OpenSearch if that is already your search stack; a dedicated engine when scale, filtering or tenancy outgrow those.",
+    "es": "Una base de datos vectorial guarda **vectores + metadatos + un id** y responde rápido una sola pregunta: *los k vectores más cercanos a este vector de consulta, entre las filas que cumplen este filtro*. Por dentro es un índice de vecinos más cercanos aproximados ([[ann-indexes]]), casi siempre HNSW, envuelto en lo que una base de datos te debe: upserts y borrados, filtros por metadatos, persistencia, replicación, backups y control de acceso.\n\nLos motores se diferencian menos por velocidad bruta que por:\n\n- **Búsqueda filtrada**: `tenant_id = 42 AND lang = 'es'`. El post-filtrado ingenuo (top 100 del ANN y después filtrar) puede devolver 2 filas; los buenos motores filtran mientras recorren el índice.\n- **Híbrida**: puntuación por palabras clave ([[bm25]]) o vectores dispersos junto a los densos.\n- **Multi-tenancy**: namespaces o shards por cliente, para que un cliente nunca vea los datos de otro.\n- **Modelo operativo**: una extensión (pgvector), una biblioteca embebida (LanceDB), un servidor que operas tú (Qdrant, Weaviate, Milvus) o un servicio administrado (Pinecone, turbopuffer).\n\n**Cuentas de almacenamiento**: 1M × 1536 dimensiones × 4 bytes ≈ 6 GB de float32 crudo, y HNSW lo quiere en RAM. Cuantizar a int8 lo baja a ~1.5 GB; a binario, a ~0.2 GB.\n\nMi opción por defecto: **pgvector** si ya operas Postgres y te quedas por debajo de decenas de millones de vectores; Elasticsearch/OpenSearch si ese ya es tu stack de búsqueda; un motor dedicado cuando la escala, el filtrado o la multi-tenancy los superan."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  C[Chunks] --> E[Embedding model]\n  E -->|\"vector + metadata\"| U[Upsert]\n  U --> I[(\"ANN index<br/>+ metadata\")]\n  Q[User query] --> QE[Embed query]\n  QE --> S[Filtered ANN search]\n  F[\"Filter: tenant, ACL\"] --> S\n  I --> S\n  S --> K[\"Top-k ids + scores\"]",
+    "caption": {
+      "en": "The write path embeds and upserts; the read path embeds the query and runs ANN search with the filter applied inside the index.",
+      "es": "La ruta de escritura genera embeddings y hace upsert; la de lectura genera el embedding de la consulta y busca con ANN aplicando el filtro dentro del índice."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "pgvector: HNSW index and a filtered query", "es": "pgvector: índice HNSW y una consulta filtrada" },
+    "source": "CREATE EXTENSION IF NOT EXISTS vector;\n\nCREATE TABLE chunks (\n  id        bigserial PRIMARY KEY,\n  tenant_id int  NOT NULL,\n  content   text NOT NULL,\n  embedding vector(1536)   -- must match the embedding model's dimensions\n);\n\n-- Build after the bulk load: much faster than indexing row by row\nCREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops)\n  WITH (m = 16, ef_construction = 64);\nCREATE INDEX ON chunks (tenant_id);  -- the filter needs its own index\n\n-- Query time: a wider candidate list buys recall with latency\nSET hnsw.ef_search = 100;\n-- pgvector 0.8+: keep scanning when the filter discards candidates\nSET hnsw.iterative_scan = relaxed_order;\n\nSELECT id, content, 1 - (embedding <=> $1) AS cosine_similarity\nFROM chunks\nWHERE tenant_id = $2\nORDER BY embedding <=> $1   -- <=> is cosine distance\nLIMIT 10;"
+  },
+  "example": {
+    "en": "A B2B SaaS on Postgres has 3M chunks at 1536 dims: 3M × 6 KB ≈ 18 GB raw, and pgvector's HNSW index keeps its own copy that should stay in memory. A 64 GB instance serves it; the tenant check is a SQL `WHERE`, and deleting a document deletes its chunks in the same transaction. A year later a consumer product needs 300M vectors (~1.8 TB of float32). That no longer fits one node's RAM, so that workload moves to a sharded or object-storage engine (Milvus, Pinecone, turbopuffer) with int8 quantization (~460 GB), while the B2B side stays on pgvector.",
+    "es": "Un SaaS B2B sobre Postgres tiene 3M chunks de 1536 dimensiones: 3M × 6 KB ≈ 18 GB crudos, y el índice HNSW de pgvector guarda su propia copia, que conviene mantener en memoria. Una instancia de 64 GB lo sirve; el control por cliente es un `WHERE` de SQL, y borrar un documento borra sus chunks en la misma transacción. Un año después, un producto de consumo necesita 300M vectores (~1.8 TB en float32). Eso ya no cabe en la RAM de un nodo, así que esa carga se muda a un motor con sharding o sobre almacenamiento de objetos (Milvus, Pinecone, turbopuffer) con cuantización int8 (~460 GB), mientras el lado B2B se queda en pgvector."
+  },
+  "pros": [
+    { "en": "One query does k-NN plus metadata filters in milliseconds over millions of vectors.", "es": "Una sola consulta resuelve k-NN más filtros por metadatos en milisegundos sobre millones de vectores." },
+    { "en": "pgvector keeps vectors next to your data: joins, transactions and ACLs stay in SQL.", "es": "pgvector deja los vectores junto a tus datos: los joins, las transacciones y los permisos siguen en SQL." },
+    { "en": "Managed options (Pinecone, turbopuffer) remove index tuning and capacity planning.", "es": "Las opciones administradas (Pinecone, turbopuffer) te quitan el ajuste de índices y la planeación de capacidad." }
+  ],
+  "cons": [
+    { "en": "RAM-hungry: a 1536-dim float32 vector is ~6 KB before index overhead, and HNSW wants it in memory.", "es": "Consume mucha RAM: un vector float32 de 1536 dimensiones pesa ~6 KB antes del índice, y HNSW lo quiere en memoria." },
+    { "en": "Selective filters can silently starve results if the engine post-filters.", "es": "Los filtros muy selectivos pueden dejarte sin resultados, sin aviso, si el motor filtra después de buscar." },
+    { "en": "A separate store is another copy of your data to sync, secure and delete from.", "es": "Un almacén aparte es otra copia de tus datos que sincronizar, proteger y de la que borrar." }
+  ],
+  "whenToUse": {
+    "en": "Semantic retrieval over more than ~100k chunks with metadata or permission filters. Start with pgvector or your existing search engine; move to a dedicated engine when scale, filtered recall or tenant count outgrows it.",
+    "es": "Recuperación semántica sobre más de ~100k chunks con filtros de metadatos o permisos. Empieza con pgvector o con tu motor de búsqueda actual; pasa a un motor dedicado cuando la escala, el recall filtrado o la cantidad de clientes lo superen."
+  },
+  "whenNotToUse": {
+    "en": "Under ~100k vectors, a NumPy matrix with brute-force dot products is exact and fast enough. And never as a replacement for keyword search on IDs and error codes.",
+    "es": "Con menos de ~100k vectores, una matriz de NumPy con productos punto por fuerza bruta es exacta y suficientemente rápida. Y nunca como reemplazo de la búsqueda por palabras clave para IDs y códigos de error."
+  },
+  "numbers": [
+    { "en": "1M × 1536 dims × 4 B ≈ 6 GB of raw float32; int8 ≈ 1.5 GB; binary ≈ 0.2 GB.", "es": "1M × 1536 dimensiones × 4 B ≈ 6 GB de float32 crudo; int8 ≈ 1.5 GB; binario ≈ 0.2 GB." },
+    { "en": "pgvector indexes up to 2,000 dims for `vector` and 4,000 for `halfvec`.", "es": "pgvector indexa hasta 2,000 dimensiones con `vector` y 4,000 con `halfvec`." },
+    { "en": "pgvector HNSW defaults: m = 16, ef_construction = 64, hnsw.ef_search = 40.", "es": "Valores por defecto de HNSW en pgvector: m = 16, ef_construction = 64, hnsw.ef_search = 40." },
+    { "en": "HNSW links cost ~2·M × 4 B per vector (~130 B at M = 16): small next to a 6 KB vector.", "es": "Los enlaces de HNSW cuestan ~2·M × 4 B por vector (~130 B con M = 16): poco al lado de un vector de 6 KB." }
+  ],
+  "pitfalls": [
+    { "en": "Adding a new database before doing the math: a few million chunks fit comfortably in pgvector or the search engine you already run.", "es": "Sumar una base de datos nueva antes de hacer las cuentas: unos pocos millones de chunks caben de sobra en pgvector o en el motor de búsqueda que ya operas." },
+    { "en": "Benchmarking without filters: a selective tenant filter applied after ANN can return 2 results instead of 10. Test the filtered query you actually run.", "es": "Medir sin filtros: un filtro por cliente muy selectivo aplicado después del ANN puede devolver 2 resultados en vez de 10. Prueba la consulta filtrada que de verdad ejecutas." },
+    { "en": "Letting the index drift from the source: deleted or permission-revoked documents keep being retrieved.", "es": "Dejar que el índice se desincronice de la fuente: documentos borrados o con permisos revocados se siguen recuperando." },
+    { "en": "Mixing vectors from two embedding models or versions in one index: their distances are not comparable. Re-embed everything on a model change.", "es": "Mezclar en un índice vectores de dos modelos o versiones de embeddings: sus distancias no son comparables. Si cambias de modelo, regenera todos los embeddings." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "pgvector, Pinecone or Qdrant: how do you choose?", "es": "¿pgvector, Pinecone o Qdrant? ¿Cómo eliges?" },
+      "a": {
+        "en": "I start from what we already operate. If we run Postgres and the corpus stays under tens of millions of vectors, pgvector wins: one system, transactional deletes, permissions as SQL joins. I move to a dedicated engine when one of four things bites: vectors outgrow a node's RAM, selective filters hurt recall, thousands of tenants need isolation, or nobody can own index tuning, which points to a managed service. I decide with a benchmark on our data: filtered recall@10, p95 latency at peak QPS and monthly cost, not vendor charts.",
+        "es": "Parto de lo que ya operamos. Si corremos Postgres y el corpus se queda por debajo de decenas de millones de vectores, gana pgvector: un solo sistema, borrados transaccionales y permisos como joins de SQL. Paso a un motor dedicado cuando aparece una de cuatro cosas: los vectores ya no caben en la RAM de un nodo, los filtros selectivos dañan el recall, miles de clientes necesitan aislamiento o nadie puede hacerse cargo del ajuste de índices, y eso apunta a un servicio administrado. Decido con un benchmark sobre nuestros datos: recall@10 filtrado, latencia p95 en el pico de QPS y costo mensual, no con las gráficas del proveedor."
+      }
+    },
+    {
+      "q": { "en": "How much memory do 50M 1536-dim embeddings need, and what would you do about it?", "es": "¿Cuánta memoria necesitan 50M embeddings de 1536 dimensiones y qué harías al respecto?" },
+      "a": {
+        "en": "Back of the envelope: 50M × 1536 × 4 bytes ≈ 307 GB of float32. HNSW links add only ~130 bytes per vector at M = 16, so the vectors dominate. That is too much for one comfortable node, so I pull three levers: fewer dimensions (Matryoshka-trained models like text-embedding-3 can be shortened to 512), quantization (int8 is 4× smaller, binary 32× with full-precision rescoring), or a disk-based index like DiskANN. Then I check that recall@10 on real queries stays within a point or two of the baseline.",
+        "es": "Cuenta rápida: 50M × 1536 × 4 bytes ≈ 307 GB de float32. Los enlaces de HNSW suman solo ~130 bytes por vector con M = 16, así que dominan los vectores. Es demasiado para un nodo cómodo, así que muevo tres palancas: menos dimensiones (los modelos entrenados con Matryoshka, como text-embedding-3, se pueden recortar a 512), cuantización (int8 es 4× más chico; binario, 32× con un rescoring en precisión completa) o un índice en disco como DiskANN. Después verifico que el recall@10 con consultas reales no caiga más de uno o dos puntos frente a la línea base."
+      }
+    }
+  ],
+  "related": ["ann-indexes", "embedding-models", "hybrid-search", "permission-aware-retrieval", "index-lifecycle", "multi-tenancy"],
+  "sources": [
+    { "title": "pgvector — Open-source vector similarity search for Postgres", "url": "https://github.com/pgvector/pgvector" },
+    { "title": "Qdrant — Filtering", "url": "https://qdrant.tech/documentation/concepts/filtering/" },
+    { "title": "Pinecone — Documentation", "url": "https://docs.pinecone.io/" }
+  ]
+}

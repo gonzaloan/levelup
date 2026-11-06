@@ -1,0 +1,89 @@
+{
+  "id": "moe",
+  "domain": "foundations",
+  "level": "advanced",
+  "title": { "en": "Mixture of Experts (MoE)", "es": "Mixture of Experts (MoE)" },
+  "aliases": ["MoE", "sparse MoE", "experts", "router", "gating network", "active parameters", "expert parallelism"],
+  "tldr": {
+    "en": "Replace the dense feed-forward block with many expert FFNs and a router that sends each token to only the top-k, so total parameters (capacity) grow while compute per token stays at the active subset.",
+    "es": "Reemplaza el bloque feed-forward denso por muchos FFNs expertos y un router que manda cada token solo a los top-k, así los parámetros totales (capacidad) crecen mientras el cómputo por token se queda en el subconjunto activo."
+  },
+  "analogy": {
+    "en": "A firm with 64 consultants and a dispatcher who assigns each task to two of them: the firm knows a lot, each task costs two consultants' time, but all 64 still need a desk.",
+    "es": "Una consultora con 64 consultores y un despachador que asigna cada tarea a dos de ellos: la firma sabe mucho, cada tarea cuesta el tiempo de dos consultores, pero los 64 igual necesitan escritorio."
+  },
+  "explain": {
+    "en": "A **Mixture of Experts** model swaps the dense feed-forward (FFN) block in some or all [[transformer]] layers for **many FFNs (experts)** plus a **router**. For each token, at each MoE layer, the router scores the experts and sends the token to the **top-k** (often 1–8); their outputs are mixed using the router weights. Attention stays shared.\n\nThat splits model size into two numbers:\n\n- **Total parameters**: what you must store. Capacity and knowledge.\n- **Active parameters**: what each token computes. FLOPs per token.\n\nMixtral 8x7B has ~47B total but ~13B active (top-2 of 8; not 56B, because only the FFNs are replicated). DeepSeek-V3 has 671B total and 37B active (8 of 256 routed experts plus 1 shared). You get large-model quality at small-model compute per token.\n\nThe bill arrives elsewhere:\n\n- **Memory**: every expert must be loaded; Mixtral needs ~94 GB in bf16 though it computes like a 13B.\n- **Load balancing**: the router collapses onto a few favourite experts unless an auxiliary loss or bias term spreads tokens.\n- **Expert parallelism**: experts live on different GPUs, so each MoE layer does an all-to-all token exchange.\n- **Serving**: a batch's tokens together touch most experts, so decode still streams most weights from memory; the FLOP savings pay off at large, compute-bound batches.",
+    "es": "Un modelo **Mixture of Experts** cambia el bloque feed-forward (FFN) denso de algunas o todas las capas del [[transformer]] por **muchos FFNs (expertos)** más un **router**. Para cada token, en cada capa MoE, el router puntúa a los expertos y manda el token a los **top-k** (normalmente 1–8); sus salidas se combinan con los pesos del router. La atención sigue siendo compartida.\n\nEso divide el tamaño del modelo en dos números:\n\n- **Parámetros totales**: lo que tienes que almacenar. Capacidad y conocimiento.\n- **Parámetros activos**: lo que calcula cada token. FLOPs por token.\n\nMixtral 8x7B tiene ~47B totales pero ~13B activos (top-2 de 8; no son 56B porque solo se replican los FFNs). DeepSeek-V3 tiene 671B totales y 37B activos (8 de 256 expertos ruteados más 1 compartido). Obtienes calidad de modelo grande con cómputo por token de modelo chico.\n\nLa cuenta llega por otro lado:\n\n- **Memoria**: todos los expertos deben estar cargados; Mixtral necesita ~94 GB en bf16 aunque calcula como uno de 13B.\n- **Balance de carga**: el router colapsa sobre unos pocos expertos favoritos, salvo que una loss auxiliar o un término de sesgo reparta los tokens.\n- **Expert parallelism**: los expertos viven en GPUs distintas, así que cada capa MoE hace un intercambio all-to-all de tokens.\n- **Serving**: los tokens de un batch, juntos, tocan casi todos los expertos, así que el decode igual lee casi todos los pesos de memoria; el ahorro de FLOPs rinde con batches grandes, limitados por cómputo."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  A[\"Attention (shared)\"] --> T[Token hidden state]\n  T --> R{\"Router<br/>top-2 of 8\"}\n  R -->|weight 0.7| E2[\"Expert 2 (FFN)\"]\n  R -->|weight 0.3| E5[\"Expert 5 (FFN)\"]\n  R -.->|not computed| X[\"Experts 1,3,4,6,7,8\"]\n  E2 --> S[Weighted sum]\n  E5 --> S\n  S --> N[Next layer]",
+    "caption": {
+      "en": "Per token and per layer, only the chosen experts run; the others cost memory but no compute for this token.",
+      "es": "Por token y por capa solo corren los expertos elegidos; los demás cuestan memoria, pero no cómputo para ese token."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A top-2 MoE layer in NumPy", "es": "Una capa MoE top-2 en NumPy" },
+    "source": "import numpy as np\n\nd_model, n_experts, top_k = 64, 8, 2\nrng = np.random.default_rng(0)\nW_router = rng.normal(size=(d_model, n_experts)) * 0.02\nexperts = [  # each expert is an ordinary FFN: d -> 4d -> d\n    (rng.normal(size=(d_model, 4 * d_model)) * 0.02,\n     rng.normal(size=(4 * d_model, d_model)) * 0.02)\n    for _ in range(n_experts)\n]\n\ndef moe_layer(x):                                 # x: (tokens, d_model)\n    logits = x @ W_router                         # (tokens, n_experts)\n    chosen = np.argsort(logits, axis=1)[:, -top_k:]  # top-k experts per token\n    out = np.zeros_like(x)\n    for t, ids in enumerate(chosen):\n        w = np.exp(logits[t, ids] - logits[t, ids].max())\n        w /= w.sum()                              # softmax over the chosen k only\n        for weight, e in zip(w, ids):\n            W1, W2 = experts[e]\n            out[t] += weight * (np.maximum(x[t] @ W1, 0) @ W2)  # only k FFNs run\n    return out, chosen\n\ny, chosen = moe_layer(rng.normal(size=(16, d_model)))\nprint(chosen[:3])  # first 3 tokens, 2 of 8 experts each\nprint(np.bincount(chosen.ravel(), minlength=n_experts))  # load per expert\n# Uneven load is the norm: training adds a balancing loss or bias to fix it"
+  },
+  "example": {
+    "en": "Compare two self-hosted options. A dense Llama-3-70B: ~140 GB of bf16 weights and ~140 GFLOPs per token. DeepSeek-V3: 671B total parameters, ~671 GB even in its native FP8, so a full 8×H200 node, but only 37B active, ~74 GFLOPs per token. Per token the MoE does about half the math of the 70B while holding ~10× the parameters. At high traffic that saving becomes throughput; at low traffic you pay for a node of memory that sits mostly idle. Middle ground: gpt-oss-120b (~117B total, ~5.1B active) fits on one 80 GB GPU.",
+    "es": "Compara dos opciones self-hosted. Un Llama-3-70B denso: ~140 GB de pesos en bf16 y ~140 GFLOPs por token. DeepSeek-V3: 671B parámetros totales, ~671 GB incluso en su FP8 nativo, o sea un nodo completo de 8×H200, pero solo 37B activos, ~74 GFLOPs por token. Por token, el MoE hace más o menos la mitad de las cuentas que el 70B mientras guarda ~10× más parámetros. Con mucho tráfico, ese ahorro se vuelve throughput; con poco tráfico, pagas un nodo de memoria que pasa casi todo el tiempo ocioso. Punto intermedio: gpt-oss-120b (~117B totales, ~5.1B activos) cabe en una sola GPU de 80 GB."
+  },
+  "pros": [
+    { "en": "More capacity per FLOP: quality of a much larger dense model at the compute of a small one.", "es": "Más capacidad por FLOP: calidad de un modelo denso mucho más grande con el cómputo de uno chico." },
+    { "en": "Cheaper training to a given quality: Switch Transformer reported up to 7× faster pretraining at equal FLOPs per token.", "es": "Entrenar hasta cierta calidad sale más barato: Switch Transformer reportó pretraining hasta 7× más rápido con los mismos FLOPs por token." },
+    { "en": "High throughput at large batch sizes; most frontier open models now use it (DeepSeek-V3, Qwen3, Llama 4, gpt-oss).", "es": "Alto throughput con batches grandes; la mayoría de los modelos abiertos de frontera ya lo usan (DeepSeek-V3, Qwen3, Llama 4, gpt-oss)." }
+  ],
+  "cons": [
+    { "en": "Memory is sized by total parameters: you host 671B to compute 37B.", "es": "La memoria se dimensiona por parámetros totales: alojas 671B para calcular 37B." },
+    { "en": "Harder to train: load balancing, router instability, dropped tokens at expert capacity limits.", "es": "Más difícil de entrenar: balance de carga, inestabilidad del router y tokens descartados al llenarse la capacidad de un experto." },
+    { "en": "Harder to serve: expert parallelism, all-to-all traffic, hot experts that create tail latency.", "es": "Más difícil de servir: expert parallelism, tráfico all-to-all y expertos saturados que generan latencia de cola." }
+  ],
+  "whenToUse": {
+    "en": "High-throughput serving where you can fill large batches and afford the GPU memory: API providers, shared internal platforms. When comparing models, active params predict compute cost; total params predict memory.",
+    "es": "Serving de alto throughput donde puedes llenar batches grandes y pagar la memoria de GPU: proveedores de API y plataformas internas compartidas. Al comparar modelos, los parámetros activos predicen el costo de cómputo y los totales, la memoria."
+  },
+  "whenNotToUse": {
+    "en": "Memory-bound or edge deployments, low-traffic single-tenant services, or teams without multi-GPU serving experience: a dense model that fits on one GPU is simpler and cheaper to run.",
+    "es": "Despliegues en edge o limitados por memoria, servicios de un solo cliente con poco tráfico, o equipos sin experiencia sirviendo en varias GPUs: un modelo denso que cabe en una GPU es más simple y barato de operar."
+  },
+  "numbers": [
+    { "en": "Mixtral 8x7B: ~47B total, ~13B active (top-2 of 8 experts).", "es": "Mixtral 8x7B: ~47B totales, ~13B activos (top-2 de 8 expertos)." },
+    { "en": "DeepSeek-V3: 671B total, 37B active (8 of 256 routed experts + 1 shared).", "es": "DeepSeek-V3: 671B totales, 37B activos (8 de 256 expertos ruteados + 1 compartido)." },
+    { "en": "Qwen3-235B-A22B: 235B total, 22B active.", "es": "Qwen3-235B-A22B: 235B totales, 22B activos." },
+    { "en": "gpt-oss-120b: ~117B total, ~5.1B active; fits one 80 GB GPU with MXFP4 weights.", "es": "gpt-oss-120b: ~117B totales, ~5.1B activos; cabe en una GPU de 80 GB con pesos en MXFP4." },
+    { "en": "Compute per token ≈ 2 × active params; weight memory ≈ total params × bytes per param.", "es": "Cómputo por token ≈ 2 × parámetros activos; memoria de pesos ≈ parámetros totales × bytes por parámetro." }
+  ],
+  "pitfalls": [
+    { "en": "Sizing GPUs by active parameters; memory is set by total parameters.", "es": "Dimensionar GPUs por parámetros activos; la memoria la definen los parámetros totales." },
+    { "en": "Treating experts as topic specialists: routing is per token and per layer, and Mixtral's analysis found mostly syntactic, not domain, patterns.", "es": "Pensar que los expertos se especializan por tema: el ruteo es por token y por capa, y el análisis de Mixtral encontró patrones sobre todo sintácticos, no de dominio." },
+    { "en": "Benchmarking at batch 1 and extrapolating: MoE speed depends heavily on batch size and expert placement.", "es": "Medir con batch 1 y extrapolar: la velocidad de un MoE depende mucho del tamaño de batch y de cómo se reparten los expertos." },
+    { "en": "Using total parameters in 6ND or FLOP-per-token estimates; use active parameters.", "es": "Usar parámetros totales en 6ND o en estimaciones de FLOPs por token; usa los parámetros activos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why is Mixtral 8x7B ~47B parameters and not 56B, and what does it cost to serve?", "es": "¿Por qué Mixtral 8x7B tiene ~47B parámetros y no 56B, y cuánto cuesta servirlo?" },
+      "a": {
+        "en": "Only the feed-forward blocks are replicated into 8 experts; attention, embeddings and norms are shared, so the total is ~47B. Each token goes to 2 experts, so it computes ~13B parameters' worth, roughly the FLOPs of a 13B dense model. But all 47B must sit in memory: ~94 GB in bf16, so two 80 GB GPUs or quantization. The trade-off I'd state: MoE buys quality per FLOP and pays in memory and serving complexity.",
+        "es": "Solo los bloques feed-forward se replican en 8 expertos; la atención, los embeddings y las normalizaciones se comparten, por eso el total es ~47B. Cada token va a 2 expertos, así que calcula el equivalente a ~13B parámetros, más o menos los FLOPs de un modelo denso de 13B. Pero los 47B tienen que estar en memoria: ~94 GB en bf16, o sea dos GPUs de 80 GB o cuantización. El trade-off que plantearía: MoE compra calidad por FLOP y lo paga en memoria y complejidad de serving."
+      }
+    },
+    {
+      "q": { "en": "When would you choose an MoE over a dense model for self-hosting?", "es": "¿Cuándo elegirías un MoE en lugar de un modelo denso para self-hosting?" },
+      "a": {
+        "en": "When traffic fills large batches and I have the GPU memory, because then fewer FLOPs per token turn into real throughput. For low-traffic or edge deployments I'd pick dense: memory is my binding constraint, and MoE makes me store every parameter while each token uses a fraction. I'd also check the serving stack, since vLLM and SGLang support expert parallelism but load imbalance across GPUs shows up as tail latency, and I'd benchmark at my real batch sizes, never at batch 1.",
+        "es": "Cuando el tráfico llena batches grandes y tengo la memoria de GPU, porque ahí menos FLOPs por token se convierten en throughput real. Para despliegues de poco tráfico o en edge elegiría un modelo denso: la memoria es mi restricción principal y un MoE me obliga a guardar todos los parámetros aunque cada token use una fracción. También revisaría el stack de serving, porque vLLM y SGLang soportan expert parallelism pero el desbalance de carga entre GPUs aparece como latencia de cola, y haría benchmarks con mis tamaños de batch reales, nunca con batch 1."
+      }
+    }
+  ],
+  "related": ["transformer", "scaling-laws", "gpu-memory-math", "distributed-training", "serving-stack", "model-selection"],
+  "sources": [
+    { "title": "Shazeer et al. — Outrageously Large Neural Networks: The Sparsely-Gated MoE Layer", "url": "https://arxiv.org/abs/1701.06538" },
+    { "title": "Fedus et al. — Switch Transformers", "url": "https://arxiv.org/abs/2101.03961" },
+    { "title": "Jiang et al. — Mixtral of Experts", "url": "https://arxiv.org/abs/2401.04088" },
+    { "title": "DeepSeek-AI — DeepSeek-V3 Technical Report", "url": "https://arxiv.org/abs/2412.19437" }
+  ]
+}

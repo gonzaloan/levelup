@@ -1,0 +1,87 @@
+{
+  "id": "golden-datasets",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Golden datasets & test sets", "es": "Golden datasets y sets de prueba" },
+  "aliases": ["golden set", "eval set", "test set", "ground truth", "reference answers", "regression set", "eval dataset"],
+  "tldr": {
+    "en": "A curated, versioned set of inputs with expected outputs or grading criteria, covering the slices that matter. It's the fixed ruler every change is measured against; without it, scores aren't comparable.",
+    "es": "Un conjunto curado y versionado de entradas con salidas esperadas o criterios de calificación, que cubre los segmentos que importan. Es la regla fija contra la que se mide cada cambio; sin ella, los puntajes no son comparables."
+  },
+  "analogy": {
+    "en": "A standardized exam bank: experts write the questions, tag them by topic and difficulty, keep them away from students, and retire them when the syllabus changes.",
+    "es": "Un banco de preguntas de examen estandarizado: expertos redactan las preguntas, las etiquetan por tema y dificultad, las mantienen lejos de los alumnos y las retiran cuando cambia el temario."
+  },
+  "explain": {
+    "en": "A **golden dataset** is a curated set of eval cases. Each has an **input** (question, conversation or document, plus any context) and either an **expected output** (answer, label, SQL result, relevant doc ids) or **grading criteria** (\"must cite the refund policy\", \"must refuse\"). It is the fixed ruler that makes two runs comparable.\n\n**Where cases come from:**\n\n- **Production logs**: the most realistic, especially failures found in [[error-analysis]].\n- **Subject-matter experts**: write and verify reference answers.\n- **Synthetic generation**: an LLM drafts inputs along chosen dimensions (persona × intent × difficulty) and a human filters them; see [[synthetic-data]].\n- **Adversarial cases**: injections, ambiguity, out-of-scope requests.\n\n**Cover slices, not just volume.** Tag each case by user type, language, difficulty and channel, and include **no-answer** cases where the right behavior is to abstain or refuse. Report pass rates per slice; an average hides the slice that broke.\n\n**Treat it like code.** Version it, log which version produced each score, and review changes. Start with **~50–200 cases**, grow from production failures, and retire stale ones when the product changes. Keep it **disjoint from [[few-shot]] examples and fine-tuning data**, or you are grading against the answer key.",
+    "es": "Un **golden dataset** es un conjunto curado de casos de evaluación. Cada uno tiene una **entrada** (pregunta, conversación o documento, más el contexto necesario) y, o bien una **salida esperada** (respuesta, etiqueta, resultado SQL, ids de documentos relevantes), o bien **criterios de calificación** (\"debe citar la política de reembolsos\", \"debe negarse\"). Es la regla fija que hace comparables dos corridas.\n\n**De dónde salen los casos:**\n\n- **Logs de producción**: los más realistas, sobre todo las fallas halladas en el [[error-analysis]].\n- **Expertos en la materia**: escriben y verifican respuestas de referencia.\n- **Generación sintética**: un LLM redacta entradas según dimensiones elegidas (persona × intención × dificultad) y una persona las filtra; ver [[synthetic-data]].\n- **Casos adversarios**: inyecciones, ambigüedad, pedidos fuera de alcance.\n\n**Cubre segmentos, no solo volumen.** Etiqueta cada caso por tipo de usuario, idioma, dificultad y canal, e incluye casos **sin respuesta**, donde lo correcto es abstenerse o negarse. Reporta tasas de aprobación por segmento; un promedio esconde el segmento que se rompió.\n\n**Trátalo como código.** Versiónalo, registra qué versión produjo cada puntaje y revisa los cambios. Empieza con **~50–200 casos**, hazlo crecer con fallas de producción y retira los casos obsoletos cuando cambie el producto. Mantenlo **separado de los ejemplos [[few-shot]] y de los datos de fine-tuning**, o estarás calificando con la hoja de respuestas en la mano."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[Production failures] --> D[Candidate cases]\n  M[SME-written] --> D\n  Y[\"Synthetic, human-filtered\"] --> D\n  A[Adversarial] --> D\n  D --> R{Expert review}\n  R -->|label + slice tags| G[(Golden set v3)]\n  R -->|reject| X[Discard]\n  G --> E[\"Eval run<br/>pass rate per slice\"]\n  G -.-|no overlap| F[\"Few-shot & training data\"]",
+    "caption": {
+      "en": "Cases come from four sources, pass an expert gate, carry slice tags and a version, and never leak into prompts or training data.",
+      "es": "Los casos vienen de cuatro fuentes, pasan una revisión experta, llevan etiquetas de segmento y una versión, y nunca se filtran a prompts ni a datos de entrenamiento."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A typed eval case plus leak and coverage checks", "es": "Un caso de eval tipado con chequeos de fuga y cobertura" },
+    "source": "import json\nfrom collections import Counter\nfrom pydantic import BaseModel\n\nclass EvalCase(BaseModel):\n    id: str\n    input: str\n    expected: str | None = None   # exact answer, label or SQL result...\n    criteria: list[str] = []      # ...or rubric lines when there is no single answer\n    slices: dict[str, str]        # {\"lang\": \"es\", \"intent\": \"refund\", \"difficulty\": \"hard\"}\n    source: str                   # \"prod\" | \"sme\" | \"synthetic\" | \"adversarial\"\n    should_abstain: bool = False  # no-answer case: the right behavior is to refuse\n\nVERSION = \"v3\"  # bump on every edit and log it next to every score\ncases = [EvalCase.model_validate_json(l) for l in open(f\"golden/{VERSION}.jsonl\")]\n\n# Every case must be gradable one way or another\nassert all(c.expected or c.criteria or c.should_abstain for c in cases)\n\n# Never grade against the answer key\nshots = {ex[\"input\"] for ex in json.load(open(\"prompts/few_shot.json\"))}\nassert not shots & {c.input for c in cases}, \"golden case leaked into few-shot\"\n\n# Coverage: a pass rate over 4 cases is noise, so flag thin slices\nfor dim in (\"lang\", \"intent\", \"difficulty\"):\n    counts = Counter(c.slices.get(dim, \"?\") for c in cases)\n    thin = {k: n for k, n in counts.items() if n < 20}\n    print(dim, dict(counts))\n    if thin:\n        print(\"  thin slices (<20 cases):\", thin)\nprint(\"no-answer share:\", sum(c.should_abstain for c in cases) / len(cases))"
+  },
+  "example": {
+    "en": "A bank's support assistant starts with 150 golden cases: 90 sampled from chat logs, 30 written by compliance staff, 30 adversarial. Slice tags reveal only 6 Spanish cases, though 22% of traffic is Spanish, and zero no-answer cases. The team adds 40 Spanish and 25 \"we can't advise on that\" cases as v4. The next model upgrade scores +3 overall, but the Spanish slice drops from 88% to 71% and the abstain slice from 92% to 60%: the new model gives investment advice. The v3 average would have shipped it.",
+    "es": "El asistente de soporte de un banco arranca con 150 casos golden: 90 muestreados de logs de chat, 30 escritos por el equipo de cumplimiento y 30 adversarios. Las etiquetas de segmento revelan solo 6 casos en español, aunque el 22% del tráfico es en español, y ningún caso sin respuesta. El equipo agrega 40 casos en español y 25 de \"no podemos asesorarte sobre eso\" como v4. La siguiente actualización de modelo saca +3 en general, pero el segmento en español cae de 88% a 71% y el de abstención de 92% a 60%: el modelo nuevo da consejos de inversión. Con el promedio de v3, eso habría salido a producción."
+  },
+  "pros": [
+    { "en": "Makes runs comparable over time: same ruler, explicit version.", "es": "Hace comparables las corridas en el tiempo: la misma regla, con versión explícita." },
+    { "en": "Slice tags show whom a change hurts, not just the average.", "es": "Las etiquetas de segmento muestran a quién perjudica un cambio, no solo el promedio." },
+    { "en": "A durable asset that survives model, prompt and vendor changes.", "es": "Un activo duradero que sobrevive a cambios de modelo, prompt y proveedor." }
+  ],
+  "cons": [
+    { "en": "Expert-written reference answers are slow and expensive to produce.", "es": "Las respuestas de referencia escritas por expertos son lentas y caras de producir." },
+    { "en": "Goes stale as the product, policies and traffic mix change.", "es": "Se desactualiza a medida que cambian el producto, las políticas y la mezcla de tráfico." },
+    { "en": "Small sets give wide error bars; per-slice numbers on 10 cases are noise.", "es": "Los sets chicos tienen márgenes de error amplios; los números por segmento con 10 casos son ruido." }
+  ],
+  "whenToUse": {
+    "en": "From the first prototype of any LLM feature, and as the backbone of CI regression tests, model migrations and vendor comparisons. Grow it every time production shows a new failure.",
+    "es": "Desde el primer prototipo de cualquier feature con LLM, y como columna vertebral de los tests de regresión en CI, las migraciones de modelo y las comparaciones de proveedores. Hazlo crecer cada vez que producción muestre una falla nueva."
+  },
+  "whenNotToUse": {
+    "en": "As your only signal: offline sets miss what real traffic does, so pair them with online metrics. And don't chase size first: 100 reviewed, sliced cases beat 5,000 unreviewed synthetic ones.",
+    "es": "Como tu única señal: los sets offline no ven lo que hace el tráfico real, así que combínalos con métricas online. Y no persigas el tamaño primero: 100 casos revisados y segmentados valen más que 5.000 sintéticos sin revisar."
+  },
+  "numbers": [
+    { "en": "Rule of thumb: start with ~50–200 cases; grow toward several hundred to ~1,000 as slices multiply.", "es": "Regla práctica: empieza con ~50–200 casos; crece hacia varios cientos o ~1.000 a medida que se multiplican los segmentos." },
+    { "en": "At an 80% pass rate the 95% CI is ~±8 points with 100 cases and ~±4 with 400.", "es": "Con 80% de aprobación, el IC del 95% es de ~±8 puntos con 100 casos y de ~±4 con 400." },
+    { "en": "A 25-case slice at 80% carries a ~±16-point 95% CI: per-slice reads need more cases or bigger effects.", "es": "Un segmento de 25 casos con 80% tiene un IC del 95% de ~±16 puntos: leer por segmento exige más casos o efectos más grandes." },
+    { "en": "Rule of thumb: ~10–20% no-answer or out-of-scope cases, so abstention is actually tested.", "es": "Regla práctica: ~10–20% de casos sin respuesta o fuera de alcance, para que la abstención realmente se pruebe." }
+  ],
+  "pitfalls": [
+    { "en": "Reusing golden cases as few-shot examples or training data: scores inflate and stop predicting production.", "es": "Reutilizar casos golden como ejemplos few-shot o datos de entrenamiento: los puntajes se inflan y dejan de predecir producción." },
+    { "en": "Only happy-path cases: no ambiguity, no adversarial inputs, no no-answer questions.", "es": "Solo casos del camino feliz: sin ambigüedad, sin entradas adversarias, sin preguntas sin respuesta." },
+    { "en": "Unversioned edits: someone fixes a \"wrong\" label and last month's scores silently become incomparable.", "es": "Ediciones sin versión: alguien corrige una etiqueta \"mala\" y los puntajes del mes pasado dejan de ser comparables sin que nadie lo note." },
+    { "en": "Synthetic cases nobody reviewed: they inherit the generator's blind spots and are often too easy.", "es": "Casos sintéticos que nadie revisó: heredan los puntos ciegos del modelo generador y suelen ser demasiado fáciles." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you build a golden dataset for a product with no users yet?", "es": "¿Cómo armas un golden dataset para un producto que todavía no tiene usuarios?" },
+      "a": {
+        "en": "I start with about 50 cases from three places. Domain experts write realistic requests and reference answers. I generate synthetic inputs along explicit dimensions, persona, intent and difficulty, and filter them by hand. And I add adversarial and no-answer cases on purpose. Every case gets slice tags and either an expected output or grading criteria. The day we have beta users, production traces become the main source: each failure from error analysis becomes a case, and the synthetic share shrinks over time.",
+        "es": "Arranco con unos 50 casos de tres fuentes. Expertos del dominio escriben pedidos realistas y respuestas de referencia. Genero entradas sintéticas según dimensiones explícitas, persona, intención y dificultad, y las filtro a mano. Y agrego a propósito casos adversarios y sin respuesta. Cada caso lleva etiquetas de segmento y, o bien una salida esperada, o bien criterios de calificación. El día que tenemos usuarios beta, las trazas de producción pasan a ser la fuente principal: cada falla del análisis de errores se vuelve un caso, y la parte sintética se achica con el tiempo."
+      }
+    },
+    {
+      "q": { "en": "Your eval set says the new version is better, but production complaints rose. What went wrong?", "es": "Tu set de evaluación dice que la versión nueva es mejor, pero subieron las quejas en producción. ¿Qué falló?" },
+      "a": {
+        "en": "Most likely the set no longer represents traffic. I check three things. Distribution: compare slice proportions in the set with last month's logs, since new intents or languages appear all the time. Contamination: are golden cases also in few-shot examples or fine-tuning data, inflating scores? Staleness: policies or product facts changed, so some expected answers are now wrong. The fix is a new version seeded with fresh production failures, results reported per slice, and a frozen holdout that nobody tunes against.",
+        "es": "Lo más probable es que el set ya no represente el tráfico. Reviso tres cosas. Distribución: comparo las proporciones de cada segmento en el set con los logs del último mes, porque aparecen intenciones o idiomas nuevos todo el tiempo. Contaminación: ¿hay casos golden que también están en ejemplos few-shot o en datos de fine-tuning, inflando los puntajes? Obsolescencia: cambiaron políticas o datos del producto, así que algunas respuestas esperadas ya son incorrectas. La solución es una versión nueva alimentada con fallas recientes de producción, resultados por segmento y un holdout congelado contra el que nadie optimiza."
+      }
+    }
+  ],
+  "related": ["eval-driven-development", "error-analysis", "synthetic-data", "few-shot", "rag-evaluation", "eval-ci"],
+  "sources": [
+    { "title": "Hamel Husain — Your AI Product Needs Evals", "url": "https://hamel.dev/blog/posts/evals/" },
+    { "title": "Anthropic — Create strong empirical evaluations", "url": "https://docs.anthropic.com/en/docs/test-and-evaluate/develop-tests" },
+    { "title": "Hamel Husain & Shreya Shankar — Frequently Asked Questions About AI Evals", "url": "https://hamel.dev/blog/posts/evals-faq/" }
+  ]
+}

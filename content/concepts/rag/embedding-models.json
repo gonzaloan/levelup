@@ -1,0 +1,89 @@
+{
+  "id": "embedding-models",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Choosing an embedding model", "es": "Cómo elegir un modelo de embeddings" },
+  "aliases": ["embedding model", "text embeddings", "MTEB", "text-embedding-3", "BGE-M3", "Matryoshka embeddings", "bi-encoder", "sentence embeddings"],
+  "tldr": {
+    "en": "Pick the embedding model by measuring retrieval on your own queries, then weigh dimensions, max input, languages, latency and price; leaderboards only shortlist, and switching later means re-embedding everything.",
+    "es": "Elige el modelo de embeddings midiendo la recuperación con tus propias consultas y luego pondera dimensiones, entrada máxima, idiomas, latencia y precio; los leaderboards solo sirven para preseleccionar, y cambiar después implica regenerar todos los embeddings."
+  },
+  "analogy": {
+    "en": "Choosing a library's catalog system: a better one finds books faster, but switching means re-cataloguing every book on the shelves.",
+    "es": "Elegir el sistema de catalogación de una biblioteca: uno mejor encuentra los libros más rápido, pero cambiarlo implica volver a catalogar cada libro de los estantes."
+  },
+  "explain": {
+    "en": "An embedding model maps text to a fixed-length vector so that similar meanings land close together ([[embeddings]]). In RAG it decides what \"relevant\" means for first-stage retrieval, and it is expensive to change later.\n\nWhat to compare:\n\n- **Retrieval quality on your data.** The [MTEB leaderboard](https://huggingface.co/spaces/mteb/leaderboard) is a shortlist, not an answer: it averages many tasks and public datasets, some of which models have trained on. Label ~100–500 real queries and compare recall@10 and nDCG@10.\n- **Dimensions = storage.** float32 costs 4 bytes per dimension: 1,024 dims ≈ 4 KB per vector, ~4 GB per million chunks before index overhead. **Matryoshka**-trained models (OpenAI text-embedding-3, Nomic, recent Voyage and Jina) can be truncated to 256–512 dims with a small loss.\n- **Max input.** 512 tokens for many BERT-era models, ~8k for text-embedding-3 and BGE-M3. Longer chunks are silently truncated.\n- **Languages and domain.** Multilingual (BGE-M3, multilingual-E5, Cohere) vs English-first; code, legal, medical.\n- **Latency, price, hosting.** APIs (OpenAI, Cohere, Voyage, Google) are zero-ops; open models (BGE-M3, E5, GTE, Qwen3-Embedding) run on your GPUs, keep data in-house and can be fine-tuned ([[embedding-finetuning]]).\n\n**Vectors from different models are not comparable**, not even across versions of one model: switching means re-embedding the whole corpus ([[index-lifecycle]]).",
+    "es": "Un modelo de embeddings convierte un texto en un vector de longitud fija de modo que los significados parecidos queden cerca ([[embeddings]]). En RAG define qué significa \"relevante\" en la primera etapa de recuperación, y cambiarlo después sale caro.\n\nQué comparar:\n\n- **Calidad de recuperación con tus datos.** El [leaderboard de MTEB](https://huggingface.co/spaces/mteb/leaderboard) sirve para preseleccionar, no para decidir: promedia muchas tareas y datasets públicos, algunos de los cuales los modelos vieron al entrenar. Etiqueta ~100–500 consultas reales y compara recall@10 y nDCG@10.\n- **Dimensiones = almacenamiento.** En float32 cada dimensión ocupa 4 bytes: 1,024 dimensiones ≈ 4 KB por vector, ~4 GB por millón de chunks sin contar el índice. Los modelos entrenados con **Matryoshka** (OpenAI text-embedding-3, Nomic, versiones recientes de Voyage y Jina) se pueden truncar a 256–512 dimensiones con poca pérdida.\n- **Entrada máxima.** 512 tokens en muchos modelos de la era BERT, ~8k en text-embedding-3 y BGE-M3. Los chunks más largos se truncan sin aviso.\n- **Idiomas y dominio.** Multilingües (BGE-M3, multilingual-E5, Cohere) frente a modelos centrados en inglés; código, legal, médico.\n- **Latencia, precio y hosting.** Las APIs (OpenAI, Cohere, Voyage, Google) no requieren operación; los modelos abiertos (BGE-M3, E5, GTE, Qwen3-Embedding) corren en tus GPUs, mantienen los datos en casa y admiten fine-tuning ([[embedding-finetuning]]).\n\n**Los vectores de modelos distintos no son comparables**, ni siquiera entre versiones del mismo modelo: cambiar implica regenerar los embeddings de todo el corpus ([[index-lifecycle]])."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  M[MTEB retrieval scores] -->|shortlist 3-5| C{Hard constraints}\n  C -->|pass| S[Candidate models]\n  G[(\"Your eval set<br/>~200 queries\")] --> E\n  S --> E[\"Embed corpus sample<br/>per model\"]\n  E --> R[\"recall@10, nDCG@10\"]\n  R --> T{\"Quality vs cost<br/>and latency\"}\n  T --> P[\"Pick model + dims\"]\n  P --> V[\"Tag index<br/>with model id\"]",
+    "caption": {
+      "en": "Leaderboards shortlist; constraints (languages, max input, hosting) filter; your own labelled queries decide.",
+      "es": "Los leaderboards preseleccionan; las restricciones (idiomas, entrada máxima, hosting) filtran; tus propias consultas etiquetadas deciden."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Compare candidate models by recall@10 on your own data", "es": "Comparar modelos candidatos por recall@10 con tus datos" },
+    "source": "import numpy as np\nfrom sentence_transformers import SentenceTransformer\n\n# model -> (query prefix, document prefix). Forgetting E5's prefixes silently costs recall.\nCANDIDATES = {\n    \"BAAI/bge-m3\": (\"\", \"\"),\n    \"intfloat/multilingual-e5-large\": (\"query: \", \"passage: \"),\n}\n\ndef recall_at_k(model_id, queries, docs, relevant, k=10, dims=None) -> float:\n    \"\"\"relevant[i] = set of doc indices that answer queries[i].\"\"\"\n    q_pre, d_pre = CANDIDATES[model_id]\n    model = SentenceTransformer(model_id, truncate_dim=dims)  # dims: Matryoshka cut\n    D = model.encode(docs, prompt=d_pre, normalize_embeddings=True, batch_size=64)\n    Q = model.encode(queries, prompt=q_pre, normalize_embeddings=True)\n    top = np.argsort(-(Q @ D.T), axis=1)[:, :k]  # dot product = cosine on unit vectors\n    return float(np.mean([len(set(t) & rel) / len(rel) for t, rel in zip(top, relevant)]))\n\nqueries, docs, relevant = load_eval_set()  # ~200 real queries with labelled chunks\nfor model_id in CANDIDATES:\n    print(model_id, f\"recall@10 = {recall_at_k(model_id, queries, docs, relevant):.3f}\")\n# Then rerun the winner with dims=256/512 and weigh storage against recall."
+  },
+  "example": {
+    "en": "A LATAM fintech shortlists the top English model on MTEB for a Spanish and Portuguese support corpus. On 300 labelled real tickets its recall@10 trails BGE-M3, a multilingual model ranked lower overall. They self-host BGE-M3 on one GPU to keep customer data in-house: ~2M chunks × 1,024 dims × 4 bytes ≈ 8 GB of vectors. A year later a better model ships; adopting it means re-embedding all 2M chunks into a new index, writing to both while it backfills, and switching an alias once evals pass.",
+    "es": "Una fintech latinoamericana preselecciona el mejor modelo en inglés de MTEB para un corpus de soporte en español y portugués. Con 300 tickets reales etiquetados, su recall@10 queda por debajo de BGE-M3, un modelo multilingüe peor ubicado en el ranking general. Deciden autohospedar BGE-M3 en una GPU para que los datos de clientes no salgan de casa: ~2M de chunks × 1,024 dimensiones × 4 bytes ≈ 8 GB de vectores. Un año después sale un modelo mejor; adoptarlo implica regenerar los embeddings de los 2M de chunks en un índice nuevo, escribir en ambos mientras se completa y cambiar un alias cuando pasen las evaluaciones."
+  },
+  "pros": [
+    { "en": "Dense embeddings match meaning, not just words: synonyms, paraphrases, cross-lingual queries.", "es": "Los embeddings densos encuentran significado, no solo palabras: sinónimos, paráfrasis y consultas entre idiomas." },
+    { "en": "Documents are embedded once offline; each query costs one cheap call.", "es": "Los documentos se procesan una sola vez offline; cada consulta cuesta una llamada barata." },
+    { "en": "Matryoshka truncation and int8/binary quantization shrink storage 4–32× when needed, with a measurable recall cost.", "es": "El truncamiento Matryoshka y la cuantización int8/binaria reducen el almacenamiento 4–32× cuando hace falta, con un costo medible en recall." }
+  ],
+  "cons": [
+    { "en": "Lock-in: a new model means re-embedding the corpus and rebuilding the index.", "es": "Dependencia: un modelo nuevo implica regenerar los embeddings del corpus y reconstruir el índice." },
+    { "en": "Weak on exact identifiers, part numbers and rare terms; pair it with BM25.", "es": "Flojo con identificadores exactos, números de pieza y términos raros; combínalo con BM25." },
+    { "en": "Public benchmark scores often don't transfer to your domain or language.", "es": "Los puntajes de benchmarks públicos muchas veces no se trasladan a tu dominio o idioma." }
+  ],
+  "whenToUse": {
+    "en": "Every dense or hybrid retrieval system needs this decision. Revisit it when you add languages or a new domain (code, legal, medical), or when retrieval recall is the measured bottleneck.",
+    "es": "Todo sistema de recuperación densa o híbrida necesita esta decisión. Revísala cuando agregues idiomas o un dominio nuevo (código, legal, médico), o cuando el recall de recuperación sea el cuello de botella medido."
+  },
+  "whenNotToUse": {
+    "en": "Don't switch models to chase a one- or two-point leaderboard gain: re-embedding, dual indexing and re-tuning usually cost more. Fix chunking or add a reranker first.",
+    "es": "No cambies de modelo para ganar uno o dos puntos en un leaderboard: regenerar embeddings, mantener dos índices y reajustar suele costar más. Primero arregla el chunking o agrega un reranker."
+  },
+  "numbers": [
+    { "en": "OpenAI text-embedding-3-small: 1,536 dims, $0.02 per 1M tokens; -large: 3,072 dims, $0.13 per 1M; max input 8,191 tokens.", "es": "OpenAI text-embedding-3-small: 1,536 dimensiones, US$0.02 por millón de tokens; -large: 3,072 dimensiones, US$0.13 por millón; entrada máxima de 8,191 tokens." },
+    { "en": "float32 storage = dims × 4 bytes: 1,024 dims ≈ 4 KB per vector, ~4 GB per 1M chunks.", "es": "Almacenamiento en float32 = dimensiones × 4 bytes: 1,024 dimensiones ≈ 4 KB por vector, ~4 GB por millón de chunks." },
+    { "en": "OpenAI reports text-embedding-3-large cut to 256 dims still beats ada-002 at 1,536 dims on MTEB.", "es": "OpenAI reporta que text-embedding-3-large truncado a 256 dimensiones todavía supera en MTEB a ada-002 con 1,536." },
+    { "en": "BGE-M3: 1,024 dims, up to 8,192 input tokens, 100+ languages, dense + sparse + multi-vector outputs.", "es": "BGE-M3: 1,024 dimensiones, hasta 8,192 tokens de entrada, más de 100 idiomas y salidas densas, dispersas y multivector." },
+    { "en": "Quantization: int8 is 4× smaller than float32, binary is 32× smaller.", "es": "Cuantización: int8 ocupa 4× menos que float32 y binario, 32× menos." }
+  ],
+  "pitfalls": [
+    { "en": "Forgetting model-specific prefixes or instructions (E5's `query:` / `passage:`): recall drops with no error.", "es": "Olvidar los prefijos o instrucciones propios del modelo (`query:` / `passage:` en E5): el recall cae sin ningún error." },
+    { "en": "Mixing vectors from two models or versions in one index: similarities become meaningless.", "es": "Mezclar vectores de dos modelos o versiones en un mismo índice: las similitudes pierden todo sentido." },
+    { "en": "Chunks longer than the model's max input get truncated, so their tail is never searchable.", "es": "Los chunks más largos que la entrada máxima del modelo se truncan, y su final nunca se puede buscar." },
+    { "en": "Choosing on the MTEB average instead of its retrieval tasks in your language and domain.", "es": "Elegir por el promedio de MTEB en vez de por sus tareas de recuperación en tu idioma y dominio." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you choose an embedding model for a new RAG system?", "es": "¿Cómo elegirías el modelo de embeddings para un sistema RAG nuevo?" },
+      "a": {
+        "en": "I use MTEB's retrieval scores only to shortlist, then apply hard constraints: languages, max input versus my chunk size, data residency and budget. I take three or four candidates, at least one API and one open model, run them over a few hundred real queries with labelled relevant chunks, and compare recall@10 and nDCG@10 alongside p95 latency and cost per million tokens. I also test Matryoshka truncation, since halving dimensions halves storage. Then I pick the cheapest model within a point or two of the best: a reranker can recover precision, but nothing recovers lost recall.",
+        "es": "Uso los puntajes de recuperación de MTEB solo para preseleccionar y después aplico restricciones duras: idiomas, entrada máxima frente a mi tamaño de chunk, residencia de datos y presupuesto. Tomo tres o cuatro candidatos, al menos una API y un modelo abierto, los corro sobre unos cientos de consultas reales con chunks relevantes etiquetados y comparo recall@10 y nDCG@10 junto con la latencia p95 y el costo por millón de tokens. También pruebo el truncamiento Matryoshka, porque reducir las dimensiones a la mitad reduce el almacenamiento a la mitad. Al final elijo el modelo más barato que quede a uno o dos puntos del mejor: un reranker puede recuperar precisión, pero nada recupera el recall perdido."
+      }
+    },
+    {
+      "q": { "en": "We want to upgrade our embedding model. What's the plan?", "es": "Queremos actualizar nuestro modelo de embeddings. ¿Cuál es el plan?" },
+      "a": {
+        "en": "Vectors from different models live in different spaces, so this is a migration, not a config change. First I evaluate the new model offline on our eval set. If it wins clearly, I re-embed the whole corpus into a new index as a rate-limited, budgeted batch job, while the old index keeps serving and new documents are written to both. Then I shadow or A/B real traffic, compare retrieval and answer metrics, and flip an alias. The old index stays until rollback is no longer needed, and every index records its model id and version.",
+        "es": "Los vectores de modelos distintos viven en espacios distintos, así que esto es una migración, no un cambio de configuración. Primero evalúo el modelo nuevo offline con nuestro set de evaluación. Si gana con claridad, regenero los embeddings de todo el corpus en un índice nuevo como un job batch con rate limit y presupuesto, mientras el índice viejo sigue sirviendo y los documentos nuevos se escriben en ambos. Después hago shadow o A/B con tráfico real, comparo métricas de recuperación y de respuesta, y cambio un alias. El índice viejo se queda hasta que ya no haga falta un rollback, y cada índice registra el id y la versión de su modelo."
+      }
+    }
+  ],
+  "related": ["embeddings", "vector-databases", "embedding-finetuning", "hybrid-search", "index-lifecycle", "rag-evaluation"],
+  "sources": [
+    { "title": "Muennighoff et al. (2022) — MTEB: Massive Text Embedding Benchmark", "url": "https://arxiv.org/abs/2210.07316" },
+    { "title": "OpenAI — New embedding models and API updates", "url": "https://openai.com/index/new-embedding-models-and-api-updates/" },
+    { "title": "Kusupati et al. (2022) — Matryoshka Representation Learning", "url": "https://arxiv.org/abs/2205.13147" },
+    { "title": "Chen et al. (2024) — BGE M3-Embedding", "url": "https://arxiv.org/abs/2402.03216" }
+  ]
+}

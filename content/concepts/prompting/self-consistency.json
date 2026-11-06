@@ -1,0 +1,96 @@
+{
+  "id": "self-consistency",
+  "domain": "prompting",
+  "level": "advanced",
+  "title": { "en": "Self-consistency & best-of-N", "es": "Self-consistency y best-of-N" },
+  "aliases": ["self-consistency", "majority voting", "best-of-N", "BoN", "maj@k", "cons@64", "universal self-consistency", "verifier reranking"],
+  "tldr": {
+    "en": "Sample several reasoning paths at temperature > 0 and keep the answer most of them agree on, or let a verifier pick the best. Buys accuracy and a confidence signal for N× the tokens.",
+    "es": "Muestrea varios caminos de razonamiento con temperature > 0 y quédate con la respuesta en la que más coinciden, o deja que un verificador elija la mejor. Compras precisión y una señal de confianza a cambio de N× tokens."
+  },
+  "analogy": {
+    "en": "Five accountants do the same tax return independently. If four reach the same total, trust it; if all five disagree, the case is hard, so escalate it.",
+    "es": "Cinco contadores hacen la misma declaración de impuestos por separado. Si cuatro llegan al mismo total, confía en él; si los cinco discrepan, el caso es difícil y conviene escalarlo."
+  },
+  "explain": {
+    "en": "**Self-consistency** (Wang et al., 2022) replaces greedy decoding with a vote:\n\n1. Prompt with [[chain-of-thought]] and sample **N** completions at temperature ~0.7, so the reasoning paths actually differ.\n2. Parse each **final answer** (a number, a label, an option).\n3. Return the **majority** answer.\n\nIt works because wrong chains go wrong in many different ways, while correct chains tend to converge on the same answer. With PaLM 540B it added +17.9 points on GSM8K over single-path CoT. Returns diminish quickly; the paper used 40 samples.\n\n**Best-of-N** swaps the vote for a **verifier**: generate N candidates and keep the highest-scoring one. The verifier can be unit tests (code), SQL execution, a schema check, a reward model or an [[llm-as-judge]]. A deterministic verifier beats any vote; a weak judge just picks its favorite style.\n\n**Universal self-consistency** (Chen et al., 2023) covers free text, where answers can't be exact-matched: the model sees all N candidates and picks the one most consistent with the others.\n\nTwo bonuses: the **agreement rate** is a cheap confidence score (route low-agreement cases to a human), and samples run in **parallel**, so latency grows far less than cost.",
+    "es": "**Self-consistency** (Wang et al., 2022) reemplaza la decodificación greedy por una votación:\n\n1. Haces el prompt con [[chain-of-thought]] y muestreas **N** respuestas con temperature ~0.7, para que los caminos de razonamiento realmente difieran.\n2. Extraes la **respuesta final** de cada una (un número, una etiqueta, una opción).\n3. Devuelves la respuesta **mayoritaria**.\n\nFunciona porque las cadenas incorrectas fallan de muchas formas distintas, mientras que las correctas tienden a converger en la misma respuesta. Con PaLM 540B sumó +17.9 puntos en GSM8K frente a CoT de un solo camino. Los retornos decrecen rápido; el paper usó 40 muestras.\n\n**Best-of-N** cambia la votación por un **verificador**: generas N candidatos y te quedas con el de mayor puntaje. El verificador puede ser tests unitarios (código), ejecutar el SQL, validar un esquema, un reward model o un [[llm-as-judge]]. Un verificador determinista le gana a cualquier votación; un juez débil solo elige su estilo favorito.\n\n**Universal self-consistency** (Chen et al., 2023) cubre texto libre, donde las respuestas no se pueden comparar por igualdad exacta: el modelo ve los N candidatos y elige el más consistente con los demás.\n\nDos bonus: la **tasa de acuerdo** es un puntaje de confianza barato (los casos con poco acuerdo van a un humano), y las muestras corren en **paralelo**, así que la latencia crece mucho menos que el costo."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[Question] --> S1[\"Path 1: 42\"]\n  Q --> S2[\"Path 2: 42\"]\n  Q --> S3[\"Path 3: 38\"]\n  Q --> S4[\"Path 4: 42\"]\n  Q --> S5[\"Path 5: 40\"]\n  S1 --> V{\"Majority vote\"}\n  S2 --> V\n  S3 --> V\n  S4 --> V\n  S5 --> V\n  V -->|3 of 5 agree| A[\"Answer: 42\"]\n  V -.->|low agreement| H[\"Escalate or abstain\"]",
+    "caption": {
+      "en": "N independent paths at temperature > 0, one vote on the final answer; the agreement rate doubles as a confidence score.",
+      "es": "N caminos independientes con temperature > 0 y una votación sobre la respuesta final; la tasa de acuerdo sirve además como puntaje de confianza."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Majority vote over N sampled reasoning paths", "es": "Votación mayoritaria sobre N caminos muestreados" },
+    "source": "import re\nfrom collections import Counter\nfrom openai import OpenAI\n\nclient = OpenAI()\nMODEL = \"gpt-4.1-mini\"  # any chat model\n\ndef final_answer(text: str) -> str | None:\n    m = re.search(r\"ANSWER:\\s*\\$?(-?[\\d,]*\\.?\\d+)\", text)\n    return m.group(1).replace(\",\", \"\") if m else None   # normalize before voting\n\ndef solve(question: str, n: int = 7) -> tuple[str | None, float]:\n    resp = client.chat.completions.create(\n        model=MODEL,\n        temperature=0.7,   # diversity is the point; T=0 gives N copies\n        n=n,               # N independent reasoning paths in one call\n        messages=[{\"role\": \"user\", \"content\":\n                   f\"{question}\\nThink step by step, then end with 'ANSWER: <number>'.\"}],\n    )\n    votes = Counter(a for c in resp.choices if (a := final_answer(c.message.content)))\n    if not votes:\n        return None, 0.0\n    best, count = votes.most_common(1)[0]\n    return best, count / n   # agreement doubles as a confidence score\n\nanswer, agreement = solve(claim_question)\nif agreement < 5 / 7:\n    send_to_human_review(answer)   # low consensus: likely wrong or ambiguous"
+  },
+  "example": {
+    "en": "A claims bot computes reimbursement amounts from policy text. On a 500-claim golden set, single-sample CoT matches the adjuster's figure ~81% of the time. Sampling 7 paths at T=0.7 and voting lifts that to ~89%, at 7× the output tokens. The bigger win is routing: claims where fewer than 5 of 7 paths agree are ~15% of traffic but hold most of the remaining errors, so they go to a human and the auto-approved rest gets far more accurate.",
+    "es": "Un bot de reclamos calcula montos de reembolso a partir del texto de la póliza. En un golden set de 500 reclamos, CoT con una sola muestra coincide con la cifra del ajustador ~81% de las veces. Muestrear 7 caminos con T=0.7 y votar lo sube a ~89%, a cambio de 7× los tokens de salida. La ganancia mayor está en el ruteo: los reclamos donde menos de 5 de 7 caminos coinciden son ~15% del tráfico pero concentran la mayoría de los errores restantes, así que van a un humano y el resto, aprobado automáticamente, queda mucho más preciso."
+  },
+  "pros": [
+    { "en": "Large gains on tasks with a checkable final answer: math, extraction, classification, SQL.", "es": "Mejoras grandes en tareas con una respuesta final verificable: matemática, extracción, clasificación, SQL." },
+    { "en": "No training and no new model: a thin wrapper around any chat API.", "es": "Sin entrenamiento ni modelo nuevo: una capa delgada sobre cualquier API de chat." },
+    { "en": "Agreement rate is a free confidence signal for routing and abstention.", "es": "La tasa de acuerdo es una señal de confianza gratis para rutear o abstenerse." },
+    { "en": "Paths are independent and run in parallel: cost rises N×, latency much less.", "es": "Los caminos son independientes y corren en paralelo: el costo sube N×, la latencia mucho menos." }
+  ],
+  "cons": [
+    { "en": "N× tokens per request; at volume it can cost more than simply using a stronger model.", "es": "N× tokens por request; con volumen alto puede salir más caro que usar directamente un modelo más fuerte." },
+    { "en": "Voting needs comparable answers; free text needs a judge or USC, which are weaker selectors.", "es": "Votar requiere respuestas comparables; el texto libre necesita un juez o USC, que son selectores más débiles." },
+    { "en": "Can't fix systematic errors: if the model is confidently wrong, all N paths agree on it.", "es": "No corrige errores sistemáticos: si el modelo se equivoca con seguridad, los N caminos coinciden en el error." }
+  ],
+  "whenToUse": {
+    "en": "Low-volume, high-stakes decisions with a discrete answer (calculations, labels, extracted fields, offline data labeling), or when a cheap verifier such as tests or SQL execution exists for best-of-N.",
+    "es": "Decisiones de bajo volumen y alto impacto con una respuesta discreta (cálculos, etiquetas, campos extraídos, etiquetado offline), o cuando existe un verificador barato, como tests o ejecutar SQL, para best-of-N."
+  },
+  "whenNotToUse": {
+    "en": "High-volume chat, long free-form generation, tight latency or cost budgets. Always compare against a stronger or reasoning model at the same spend first.",
+    "es": "Chat de alto volumen, generación larga de texto libre, presupuestos ajustados de latencia o costo. Compara siempre primero contra un modelo más fuerte o de razonamiento con el mismo gasto."
+  },
+  "numbers": [
+    { "en": "Wang et al.: +17.9 points on GSM8K for PaLM 540B (40 sampled CoT paths vs greedy CoT).", "es": "Wang et al.: +17.9 puntos en GSM8K con PaLM 540B (40 caminos CoT muestreados vs CoT greedy)." },
+    { "en": "OpenAI o1 on AIME 2024: 74% with one sample, 83% with consensus over 64, 93% reranking 1,000 samples with a learned scorer.", "es": "OpenAI o1 en AIME 2024: 74% con una muestra, 83% con consenso sobre 64 y 93% reordenando 1.000 muestras con un scorer aprendido." },
+    { "en": "Cobbe et al.: a trained verifier on GSM8K gave roughly the boost of a 30× larger model.", "es": "Cobbe et al.: un verificador entrenado en GSM8K dio aproximadamente la mejora de un modelo 30× más grande." },
+    { "en": "In production, N ≈ 3–10 is the usual range; benchmarks report 32–64+, with diminishing returns.", "es": "En producción, N ≈ 3–10 es el rango habitual; los benchmarks reportan 32–64+, con retornos decrecientes." }
+  ],
+  "pitfalls": [
+    { "en": "Sampling at temperature 0: you get N copies of the same path and pay N× for nothing.", "es": "Muestrear con temperature 0: obtienes N copias del mismo camino y pagas N× por nada." },
+    { "en": "Voting on raw text: \"42\", \"$42.00\" and \"forty-two\" split the vote. Normalize before counting.", "es": "Votar sobre texto crudo: \"42\", \"$42.00\" y \"cuarenta y dos\" dividen el voto. Normaliza antes de contar." },
+    { "en": "Using an unvalidated LLM judge as the best-of-N verifier: it rewards length and style, not correctness.", "es": "Usar un LLM juez sin validar como verificador de best-of-N: premia la longitud y el estilo, no la corrección." },
+    { "en": "Not benchmarking the alternative: a stronger model at the same token budget often wins.", "es": "No comparar contra la alternativa: un modelo más fuerte con el mismo presupuesto de tokens suele ganar." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When is self-consistency worth N times the cost?", "es": "¿Cuándo vale la pena pagar N veces el costo por self-consistency?" },
+      "a": {
+        "en": "When three things hold: the task has a discrete, comparable answer, so votes mean something; errors are expensive relative to tokens, like financial calculations or labels that feed training; and volume is low enough that N× doesn't dominate the bill. I always benchmark it against the cheaper alternative at equal spend, because one call to a stronger or reasoning model often beats seven calls to a small one. And I sample adaptively: draw 3, stop if they agree, draw more only on disagreement.",
+        "es": "Cuando se cumplen tres cosas: la tarea tiene una respuesta discreta y comparable, así que el voto significa algo; los errores son caros en relación con los tokens, como cálculos financieros o etiquetas que alimentan un entrenamiento; y el volumen es lo bastante bajo para que N× no domine la factura. Siempre lo comparo con la alternativa más barata a igual gasto, porque una llamada a un modelo más fuerte o de razonamiento muchas veces le gana a siete llamadas a uno chico. Y muestreo de forma adaptativa: saco 3, paro si coinciden y saco más solo si hay desacuerdo."
+      }
+    },
+    {
+      "q": { "en": "How do you apply it when the output is free text, like a summary?", "es": "¿Cómo lo aplicas cuando la salida es texto libre, como un resumen?" },
+      "a": {
+        "en": "Exact-match voting breaks, so I have three options. Extract structured fields from each candidate and vote per field; that's my preference when the output contains checkable facts. Or universal self-consistency: show the model all N candidates and ask which agrees most with the others. Or best-of-N with a judge or reward model scoring each candidate. The last two are only as good as the selector, so I validate the judge against human labels first and watch its known biases toward length and position.",
+        "es": "La votación por igualdad exacta deja de funcionar, así que tengo tres opciones. Extraer campos estructurados de cada candidato y votar campo por campo; es mi preferida cuando la salida tiene hechos verificables. O universal self-consistency: mostrarle al modelo los N candidatos y preguntarle cuál coincide más con los demás. O best-of-N con un juez o un reward model que puntúe cada candidato. Las dos últimas valen lo que vale el selector, así que primero valido el juez contra etiquetas humanas y vigilo sus sesgos conocidos hacia la longitud y la posición."
+      }
+    },
+    {
+      "q": { "en": "Does self-consistency still matter with reasoning models?", "es": "¿Sigue importando self-consistency con modelos de razonamiento?" },
+      "a": {
+        "en": "Less, but yes. Reasoning models internalize much of the exploration, so each extra sample adds less while costing more. OpenAI's own o1 numbers still show the effect: 74% on AIME with one sample, 83% with consensus over 64. In production I rarely pay 64×. I use the agreement of 3–5 samples as a confidence signal for routing, and spend on best-of-N where a cheap deterministic verifier exists, like running the test suite on generated code.",
+        "es": "Menos, pero sí. Los modelos de razonamiento internalizan buena parte de la exploración, así que cada muestra extra aporta menos y cuesta más. Los propios números de o1 de OpenAI siguen mostrando el efecto: 74% en AIME con una muestra y 83% con consenso sobre 64. En producción rara vez pago 64×. Uso el acuerdo entre 3–5 muestras como señal de confianza para rutear, y gasto en best-of-N donde hay un verificador determinista barato, como correr la suite de tests sobre código generado."
+      }
+    }
+  ],
+  "related": ["chain-of-thought", "sampling", "reasoning-models", "llm-as-judge", "evaluator-optimizer", "nondeterminism"],
+  "sources": [
+    { "title": "Wang et al. — Self-Consistency Improves Chain of Thought Reasoning in Language Models", "url": "https://arxiv.org/abs/2203.11171" },
+    { "title": "Chen et al. — Universal Self-Consistency for Large Language Model Generation", "url": "https://arxiv.org/abs/2311.17311" },
+    { "title": "Cobbe et al. — Training Verifiers to Solve Math Word Problems", "url": "https://arxiv.org/abs/2110.14168" },
+    { "title": "OpenAI — Learning to Reason with LLMs", "url": "https://openai.com/index/learning-to-reason-with-llms/" }
+  ]
+}

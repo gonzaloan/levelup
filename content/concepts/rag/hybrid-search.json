@@ -1,0 +1,88 @@
+{
+  "id": "hybrid-search",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Hybrid search & RRF", "es": "Búsqueda híbrida y RRF" },
+  "aliases": ["hybrid retrieval", "RRF", "Reciprocal Rank Fusion", "sparse + dense", "rank fusion", "score fusion"],
+  "tldr": {
+    "en": "Run keyword (BM25) and vector search in parallel and merge the two rankings, usually with Reciprocal Rank Fusion. Each covers the other's blind spots, so recall rises for little extra cost.",
+    "es": "Ejecuta en paralelo la búsqueda por palabras clave (BM25) y la vectorial, y fusiona los dos rankings, casi siempre con Reciprocal Rank Fusion. Cada una cubre los puntos ciegos de la otra, así que el recall sube con poco costo extra."
+  },
+  "analogy": {
+    "en": "Two witnesses: one remembers the license plate exactly, the other remembers what the car looked like. A suspect both of them point to is a far better bet than either witness's favorite.",
+    "es": "Dos testigos: uno recuerda la placa exacta y el otro cómo se veía el carro. Un sospechoso que señalan los dos es una apuesta mucho mejor que el favorito de cualquiera de ellos."
+  },
+  "explain": {
+    "en": "Hybrid search runs **keyword search ([[bm25]]) and vector search in parallel** and merges the two ranked lists. Vectors catch paraphrase (\"terminate subscription\" ≈ \"cancel my plan\") but blur exact tokens; BM25 nails `PENDING_REVIEW` or `SKU-4471` but knows no synonyms. Together they cover each other's blind spots.\n\nYou can't just add the scores: cosine similarity is bounded and often packed into a narrow band, while BM25 is unbounded and its range changes per query. Two fixes:\n\n**Reciprocal Rank Fusion (RRF)** ignores scores and uses ranks only:\n\n`RRF(d) = Σ over lists 1 / (k + rank(d))`, with **k = 60** (from the original 2009 paper).\n\nRanked #1 by both lists: 2/61 ≈ 0.033. Ranked #1 by only one: 1/61 ≈ 0.016. Agreement between retrievers beats one retriever's enthusiasm. No normalization, no labels, no tuning: that is why it's the usual default, built into Elasticsearch, OpenSearch, Qdrant, Weaviate and Azure AI Search.\n\n**Weighted score fusion**: min-max normalize each list, then `α·vector + (1 − α)·bm25`. It can beat RRF when α is tuned on labeled queries, but it's fragile to outliers and the best α drifts as the corpus changes.\n\nTypical pipeline: top ~50 from each retriever → fuse → [[reranking]] → keep 3–8.",
+    "es": "La búsqueda híbrida ejecuta **en paralelo la búsqueda por palabras clave ([[bm25]]) y la vectorial** y fusiona las dos listas ordenadas. Los vectores captan paráfrasis (\"dar de baja la suscripción\" ≈ \"cancelar mi plan\") pero difuminan los tokens exactos; BM25 acierta con `PENDING_REVIEW` o `SKU-4471` pero no conoce sinónimos. Juntas cubren los puntos ciegos de cada una.\n\nNo basta con sumar los puntajes: la similitud coseno está acotada y suele concentrarse en una franja estrecha, mientras que BM25 no tiene tope y su rango cambia con cada consulta. Hay dos soluciones:\n\n**Reciprocal Rank Fusion (RRF)** ignora los puntajes y usa solo las posiciones:\n\n`RRF(d) = Σ sobre las listas 1 / (k + rank(d))`, con **k = 60** (del paper original de 2009).\n\nPrimero en ambas listas: 2/61 ≈ 0.033. Primero en una sola: 1/61 ≈ 0.016. El acuerdo entre recuperadores vale más que el entusiasmo de uno solo. Sin normalizar, sin etiquetas y sin ajustes: por eso es la opción por defecto habitual, integrada en Elasticsearch, OpenSearch, Qdrant, Weaviate y Azure AI Search.\n\n**Fusión ponderada de puntajes**: normalizas cada lista con min-max y luego calculas `α·vector + (1 − α)·bm25`. Puede superar a RRF si ajustas α con consultas etiquetadas, pero es frágil ante valores atípicos y el mejor α cambia a medida que cambia el corpus.\n\nPipeline típico: top ~50 de cada recuperador → fusión → [[reranking]] → te quedas con 3–8."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[User query] --> B[\"BM25 search<br/>top 50\"]\n  Q --> V[\"Vector search<br/>top 50\"]\n  II[(Inverted index)] -.-> B\n  VI[(Vector index)] -.-> V\n  B -->|ranks| F[\"RRF fusion<br/>Σ 1/(60 + rank)\"]\n  V -->|ranks| F\n  F --> R[\"Reranker<br/>keep top 5\"]\n  R --> L[LLM answer]",
+    "caption": {
+      "en": "Both retrievers run in parallel; RRF merges by rank, so their incompatible score scales never meet.",
+      "es": "Los dos recuperadores corren en paralelo; RRF fusiona por posición, así que sus escalas de puntaje incompatibles nunca se mezclan."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "RRF, plus the weighted alternative", "es": "RRF y la alternativa ponderada" },
+    "source": "from collections import defaultdict\n\ndef rrf(rankings: list[list[str]], k: int = 60, top_n: int = 50) -> list[tuple[str, float]]:\n    \"\"\"Reciprocal Rank Fusion: uses ranks only, raw scores are ignored.\"\"\"\n    fused: dict[str, float] = defaultdict(float)\n    for ranking in rankings:                    # one ranked list of doc ids per retriever\n        for rank, doc_id in enumerate(ranking, start=1):\n            fused[doc_id] += 1.0 / (k + rank)   # k = 60 flattens the gap between #1 and #10\n    return sorted(fused.items(), key=lambda x: x[1], reverse=True)[:top_n]\n\ndef weighted(bm25: dict[str, float], vec: dict[str, float], alpha: float = 0.5):\n    \"\"\"Alternative: min-max normalize each list, then blend. Tune alpha on labeled queries.\"\"\"\n    def norm(s: dict[str, float]) -> dict[str, float]:\n        lo, hi = min(s.values()), max(s.values())\n        return {d: (v - lo) / ((hi - lo) or 1.0) for d, v in s.items()}\n    b, v = norm(bm25), norm(vec)\n    blended = {d: alpha * v.get(d, 0.0) + (1 - alpha) * b.get(d, 0.0) for d in b | v}\n    return sorted(blended.items(), key=lambda x: x[1], reverse=True)\n\nbm25_ids   = [\"kb-17\", \"kb-03\", \"kb-88\", \"kb-42\"]   # from the inverted index\nvector_ids = [\"kb-42\", \"kb-17\", \"kb-91\", \"kb-05\"]   # from the ANN index\n\nfor doc_id, score in rrf([bm25_ids, vector_ids])[:3]:\n    print(f\"{doc_id}  {score:.4f}\")\n# kb-17 0.0325 (ranks 1 and 2), kb-42 0.0320 (ranks 4 and 1), kb-03 0.0161 (one list only)"
+  },
+  "example": {
+    "en": "A billing help center has 40k articles. Query: *\"invoice stuck in PENDING_REVIEW after upgrading\"*. BM25 ranks the one article that mentions `PENDING_REVIEW` #1; vector search has it #31, because the status code means little to the embedding. Vector search ranks *\"Why hasn't my invoice updated after a plan change?\"* #1; BM25 has it #12. With RRF (k = 60) they score 1/61 + 1/91 ≈ 0.027 and 1/61 + 1/72 ≈ 0.030, both above anything found by one list only (at most 1/61 ≈ 0.016). The reranker then decides between them.",
+    "es": "Un centro de ayuda de facturación tiene 40k artículos. Consulta: *\"factura atascada en PENDING_REVIEW después de cambiar de plan\"*. BM25 pone primero el único artículo que menciona `PENDING_REVIEW`; la búsqueda vectorial lo deja en el puesto 31, porque el código de estado significa poco para el embedding. La búsqueda vectorial pone primero *\"¿Por qué no se actualizó mi factura tras un cambio de plan?\"*; BM25 lo tiene en el puesto 12. Con RRF (k = 60) obtienen 1/61 + 1/91 ≈ 0.027 y 1/61 + 1/72 ≈ 0.030, los dos por encima de cualquier documento que encontró una sola lista (como máximo 1/61 ≈ 0.016). Después el reranker decide entre ellos."
+  },
+  "pros": [
+    { "en": "Covers both exact-term and paraphrase queries; usually higher recall than either retriever alone.", "es": "Cubre tanto consultas de términos exactos como paráfrasis; suele dar más recall que cualquiera de los dos recuperadores por separado." },
+    { "en": "RRF needs no score normalization and no labeled data to work well.", "es": "RRF no necesita normalizar puntajes ni datos etiquetados para funcionar bien." },
+    { "en": "Cheap: two parallel queries plus microseconds of fusion math.", "es": "Es barato: dos consultas en paralelo más microsegundos de cálculo para la fusión." }
+  ],
+  "cons": [
+    { "en": "Two indexes to build, keep in sync and secure, deletes included.", "es": "Dos índices que construir, mantener sincronizados y proteger, borrados incluidos." },
+    { "en": "RRF discards score magnitudes: a near-perfect match and a weak one at the same rank count the same.", "es": "RRF descarta la magnitud de los puntajes: una coincidencia casi perfecta y una débil en la misma posición valen lo mismo." },
+    { "en": "Weighted fusion needs labeled queries to tune α, and the best α varies by query type.", "es": "La fusión ponderada necesita consultas etiquetadas para ajustar α, y el mejor α varía según el tipo de consulta." }
+  ],
+  "whenToUse": {
+    "en": "The default first stage for production RAG and search, especially when IDs, codes, names or domain jargon mix with natural-language questions.",
+    "es": "La primera etapa por defecto para RAG y búsqueda en producción, sobre todo cuando IDs, códigos, nombres o jerga del dominio se mezclan con preguntas en lenguaje natural."
+  },
+  "whenNotToUse": {
+    "en": "Purely conversational corpora with no exact-term queries (measure before assuming), cross-lingual retrieval where BM25 cannot match, or when you cannot operate a second index.",
+    "es": "Corpus puramente conversacionales sin consultas de términos exactos (mide antes de suponer), recuperación entre idiomas donde BM25 no puede coincidir, o cuando no puedes operar un segundo índice."
+  },
+  "numbers": [
+    { "en": "RRF: score = Σ 1/(k + rank), with k = 60 from Cormack et al. (2009).", "es": "RRF: puntaje = Σ 1/(k + rank), con k = 60 según Cormack et al. (2009)." },
+    { "en": "With k = 60: #1 in both lists ≈ 0.033; #1 in only one list ≈ 0.016; rank 10 is worth ~13% less than rank 1.", "es": "Con k = 60: primero en ambas listas ≈ 0.033; primero en una sola ≈ 0.016; el puesto 10 vale ~13% menos que el 1." },
+    { "en": "Typical shape: top ~50 per retriever → fuse → rerank → keep 3–8.", "es": "Forma típica: top ~50 por recuperador → fusionar → reordenar → conservar 3–8." },
+    { "en": "Anthropic: contextual embeddings + contextual BM25 cut top-20 retrieval failures by 49%, and by 67% with reranking.", "es": "Anthropic: embeddings contextuales + BM25 contextual reducen en 49% las fallas de recuperación en el top 20, y en 67% con reranking." }
+  ],
+  "pitfalls": [
+    { "en": "Adding raw scores (cosine 0.82 + BM25 14.3): BM25 silently dominates. Fuse ranks, or normalize first.", "es": "Sumar puntajes crudos (coseno 0.82 + BM25 14.3): BM25 domina sin que lo notes. Fusiona posiciones o normaliza primero." },
+    { "en": "Fetching only the top 5 per list: fusion has nothing to rescue. Fetch 20–100 from each.", "es": "Traer solo el top 5 de cada lista: la fusión no tiene nada que rescatar. Trae entre 20 y 100 de cada una." },
+    { "en": "Applying the tenant or ACL filter in the vector leg but not the BM25 leg: a data leak through keyword search.", "es": "Aplicar el filtro de cliente o de permisos en la parte vectorial pero no en la de BM25: una fuga de datos a través de la búsqueda por palabras clave." },
+    { "en": "Tuning α on 20 queries and hard-coding it forever.", "es": "Ajustar α con 20 consultas y dejarlo fijo para siempre." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why RRF instead of adding the two scores?", "es": "¿Por qué RRF en lugar de sumar los dos puntajes?" },
+      "a": {
+        "en": "Because the scores live on different scales: cosine similarity is bounded and compressed, BM25 is unbounded and its range changes per query, so a naive sum is dominated by BM25. RRF sidesteps calibration by using ranks, 1/(60 + rank) summed across lists. It is robust to outliers and needs no labeled data, which makes it my default. If I have a few hundred labeled queries, I try normalized weighted fusion and keep it only if nDCG@10 beats RRF on a held-out set.",
+        "es": "Porque los puntajes viven en escalas distintas: la similitud coseno está acotada y comprimida, BM25 no tiene tope y su rango cambia con cada consulta, así que una suma ingenua queda dominada por BM25. RRF evita calibrar porque usa posiciones: 1/(60 + rank) sumado entre listas. Aguanta bien los valores atípicos y no necesita datos etiquetados, por eso es mi opción por defecto. Si tengo unos cientos de consultas etiquetadas, pruebo la fusión ponderada normalizada y me quedo con ella solo si su nDCG@10 supera a RRF en un conjunto reservado."
+      }
+    },
+    {
+      "q": { "en": "What does k = 60 actually do?", "es": "¿Qué hace realmente k = 60?" },
+      "a": {
+        "en": "It sets how top-heavy the fusion is. With k = 60, rank 1 is worth 1/61 and rank 10 is worth 1/70, only ~13% less, so agreement across lists matters more than one list's favorite. With k = 1, rank 1 is worth 1/2 against 1/11 for rank 10, so a single retriever's top pick dominates. 60 came from the original paper's experiments and holds up well across datasets; I would only change it with an eval that shows why.",
+        "es": "Define qué tanto pesa la parte alta del ranking. Con k = 60, el puesto 1 vale 1/61 y el 10 vale 1/70, apenas ~13% menos, así que el acuerdo entre listas importa más que el favorito de una sola. Con k = 1, el puesto 1 vale 1/2 contra 1/11 del puesto 10, y la primera opción de un solo recuperador domina. El 60 salió de los experimentos del paper original y se sostiene bien entre datasets; solo lo cambiaría con una evaluación que muestre por qué."
+      }
+    }
+  ],
+  "related": ["bm25", "vector-databases", "reranking", "contextual-retrieval", "permission-aware-retrieval", "rag-evaluation"],
+  "sources": [
+    { "title": "Cormack, Clarke & Büttcher — Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods (SIGIR 2009)", "url": "https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf" },
+    { "title": "Elasticsearch — Reciprocal rank fusion", "url": "https://www.elastic.co/guide/en/elasticsearch/reference/current/rrf.html" },
+    { "title": "Anthropic — Introducing Contextual Retrieval", "url": "https://www.anthropic.com/news/contextual-retrieval" },
+    { "title": "Qdrant — Hybrid queries", "url": "https://qdrant.tech/documentation/concepts/hybrid-queries/" }
+  ]
+}

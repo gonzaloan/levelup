@@ -1,0 +1,89 @@
+{
+  "id": "llm-training-pipeline",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "How LLMs are trained", "es": "Cómo se entrenan los LLMs" },
+  "aliases": ["pretraining", "post-training", "base model", "instruct model", "SFT", "RLHF", "DPO", "RLVR"],
+  "tldr": {
+    "en": "Pretraining on trillions of tokens builds knowledge into a base model; SFT teaches it to follow instructions; preference tuning (RLHF/DPO) shapes style and safety; RL with verifiable rewards teaches it to reason on checkable problems.",
+    "es": "El pretraining con billones de tokens mete el conocimiento en un modelo base; el SFT le enseña a seguir instrucciones; el ajuste por preferencias (RLHF/DPO) moldea estilo y seguridad; el RL con recompensas verificables le enseña a razonar en problemas comprobables."
+  },
+  "analogy": {
+    "en": "Pretraining is reading the whole library; SFT is an apprenticeship with worked examples; preference tuning is an editor picking the better of two drafts; RLVR is a problem set graded by an answer key.",
+    "es": "El pretraining es leerse toda la biblioteca; el SFT es una pasantía con ejemplos resueltos; el ajuste por preferencias es un editor que elige el mejor de dos borradores; el RLVR es una guía de ejercicios calificada con la hoja de respuestas."
+  },
+  "explain": {
+    "en": "A modern LLM is built in stages. Each is far cheaper than the one before and changes *behaviour* more than *knowledge*.\n\n1. **Pretraining.** Predict the next token over trillions of tokens of web, code, books and papers (~15T for Llama 3, ~36T for Qwen3). Knowledge and skills come from here, and so does nearly all the compute: months on thousands of GPUs. The output is a **base model**, a superb autocompleter that may answer a question with more questions.\n2. **Supervised fine-tuning ([[sft]]).** Train on tens of thousands to millions of curated (prompt, ideal response) conversations in a chat template. The model learns the *format* of being an assistant.\n3. **Preference tuning.** Humans or AI judges pick the better of two responses. [[rlhf]] trains a reward model and optimizes against it with RL (PPO); [[dpo]] skips the reward model and learns from the pairs directly. This shapes helpfulness, tone and refusals.\n4. **RL with verifiable rewards ([[rlvr]]).** Sample many attempts at math, code or other checkable tasks and reward the ones a program verifies (tests pass, answer matches). This produced the long chain-of-thought [[reasoning-models]] such as o1 and DeepSeek-R1.\n\nAn **instruct/chat model** is a base model plus stages 2–4. Labs also add mid-training (long-context extension, annealing on high-quality data) and [[distillation]] into smaller models.",
+    "es": "Un LLM moderno se construye por etapas. Cada una es mucho más barata que la anterior y cambia más el *comportamiento* que el *conocimiento*.\n\n1. **Pretraining.** Predecir el siguiente token sobre billones de tokens de web, código, libros y papers (~15T en Llama 3, ~36T en Qwen3). De aquí salen el conocimiento y las habilidades, y también casi todo el cómputo: meses en miles de GPUs. El resultado es un **modelo base**, un autocompletador excelente que puede responder una pregunta con más preguntas.\n2. **Supervised fine-tuning ([[sft]]).** Entrenar con decenas de miles a millones de conversaciones curadas (prompt, respuesta ideal) en un chat template. El modelo aprende el *formato* de ser un asistente.\n3. **Ajuste por preferencias.** Personas o jueces de IA eligen la mejor de dos respuestas. [[rlhf]] entrena un reward model y optimiza contra él con RL (PPO); [[dpo]] se salta el reward model y aprende directo de los pares. Esto moldea utilidad, tono y negativas.\n4. **RL con recompensas verificables ([[rlvr]]).** Se muestrean muchos intentos en matemáticas, código u otras tareas comprobables y se premian los que un programa verifica (pasan los tests, coincide la respuesta). Así surgieron los [[reasoning-models]] con cadenas de razonamiento largas, como o1 y DeepSeek-R1.\n\nUn **modelo instruct/chat** es un modelo base más las etapas 2 a 4. Los labs además agregan mid-training (extensión de contexto largo, annealing con datos de alta calidad) y [[distillation]] hacia modelos más chicos."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[(\"Web, code, books<br/>~15T tokens\")] --> P[\"Pretraining<br/>next-token loss\"]\n  P --> B[Base model]\n  B --> S[\"SFT<br/>prompt to ideal answer\"]\n  S --> R[\"Preference tuning<br/>RLHF or DPO\"]\n  H[(Preference pairs)] --> R\n  R --> V[\"RLVR<br/>verifier rewards\"]\n  T[\"Tests and checkers\"] --> V\n  V --> M[\"Instruct or<br/>reasoning model\"]",
+    "caption": {
+      "en": "Left to right, compute drops by orders of magnitude while the change shifts from knowledge to behaviour.",
+      "es": "De izquierda a derecha, el cómputo cae órdenes de magnitud y el cambio pasa del conocimiento al comportamiento."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "One training example per stage (TRL-style formats)", "es": "Un ejemplo de entrenamiento por etapa (formatos estilo TRL)" },
+    "source": "# Pretraining: raw text, loss on every next token. No notion of question or answer.\npretraining = \"The Treaty of Westphalia was signed in 1648, ending the Thirty Years' War ...\"\n\n# SFT: conversations; loss usually only on the assistant tokens\nsft = {\"messages\": [\n    {\"role\": \"user\", \"content\": \"Summarize this ticket in one line: ...\"},\n    {\"role\": \"assistant\", \"content\": \"Customer can't reset password: SSO redirect loop.\"},\n]}\n\n# Preference tuning (DPO): prefer chosen over rejected, stay close to the SFT model\ndpo = {\n    \"prompt\": [{\"role\": \"user\", \"content\": \"Explain recursion to a 10-year-old.\"}],\n    \"chosen\": [{\"role\": \"assistant\", \"content\": \"Picture nesting dolls ...\"}],\n    \"rejected\": [{\"role\": \"assistant\", \"content\": \"Recursion is a function invoking itself ...\"}],\n}\n\n# RLVR: a program, not a person, grades each sampled attempt\ndef math_reward(completions, answer, **kwargs):\n    return [1.0 if extract_final_answer(c) == a else 0.0\n            for c, a in zip(completions, answer)]\n\n# trainer = trl.GRPOTrainer(model=sft_model, reward_funcs=[math_reward],\n#                           train_dataset=math_problems)"
+  },
+  "example": {
+    "en": "DeepSeek-V3 reported its final training run at ~2.79M H800 GPU-hours (~$5.6M at an assumed $2/hour, excluding earlier research and ablations). Pretraining on 14.8T tokens took ~2.66M of those hours, context extension ~119K, and all post-training (SFT + RL) only ~5K. That ratio is the lesson: pretraining buys knowledge and >95% of the compute; post-training is cheap and changes behaviour. DeepSeek-R1 then ran large-scale RL with rule-based rewards on top of V3-Base, and R1-Zero showed pure RL, with no SFT at all, can elicit long reasoning, at the cost of poor readability and language mixing.",
+    "es": "DeepSeek-V3 reportó su corrida final de entrenamiento en ~2.79M horas-GPU H800 (~$5.6M suponiendo $2 por hora, sin contar investigación previa ni ablaciones). El pretraining con 14.8T tokens se llevó ~2.66M de esas horas, la extensión de contexto ~119K y todo el post-training (SFT + RL) apenas ~5K. Esa proporción es la lección: el pretraining compra el conocimiento y más del 95% del cómputo; el post-training es barato y cambia el comportamiento. Después, DeepSeek-R1 aplicó RL a gran escala con recompensas basadas en reglas sobre V3-Base, y R1-Zero mostró que el RL puro, sin nada de SFT, puede producir razonamiento largo, a costa de mala legibilidad y mezcla de idiomas."
+  },
+  "pros": [
+    { "en": "Separates expensive knowledge acquisition from cheap behaviour shaping: post-training can be redone in days.", "es": "Separa la adquisición de conocimiento, que es cara, del moldeado de comportamiento, que es barato: el post-training se puede rehacer en días." },
+    { "en": "Each stage is a reusable lever; most companies only touch SFT or DPO on an open model.", "es": "Cada etapa es una palanca reutilizable; la mayoría de las empresas solo toca SFT o DPO sobre un modelo abierto." },
+    { "en": "RLVR scales with compute alone wherever answers are checkable, with no human labels.", "es": "El RLVR escala solo con cómputo donde las respuestas son comprobables, sin etiquetas humanas." }
+  ],
+  "cons": [
+    { "en": "Post-training adds little knowledge: facts missing from pretraining stay missing, and forcing them in raises hallucinations.", "es": "El post-training aporta poco conocimiento: lo que faltó en el pretraining sigue faltando, y forzarlo aumenta las alucinaciones." },
+    { "en": "Preference tuning can over-optimize the reward: sycophancy, verbosity, over-refusal.", "es": "El ajuste por preferencias puede sobreoptimizar la recompensa: complacencia, verbosidad y negativas de más." },
+    { "en": "RLVR only works where a program can verify the answer; open-ended quality still needs human or AI judges.", "es": "El RLVR solo funciona donde un programa puede verificar la respuesta; la calidad en tareas abiertas sigue necesitando jueces humanos o de IA." }
+  ],
+  "whenToUse": {
+    "en": "Use this map to pick what to change: missing knowledge → retrieval or continued pretraining; wrong format or behaviour → SFT; tone or preferences → DPO; reasoning on checkable tasks → RLVR. Also when choosing base vs instruct checkpoints.",
+    "es": "Usa este mapa para decidir qué cambiar: falta conocimiento → recuperación o continued pretraining; formato o comportamiento incorrecto → SFT; tono o preferencias → DPO; razonamiento en tareas comprobables → RLVR. También al elegir entre checkpoints base e instruct."
+  },
+  "whenNotToUse": {
+    "en": "Don't plan to pretrain unless you're a frontier lab or own a truly unusual corpus and a multi-million budget; products start from an API or open instruct model, then prompt, retrieve or fine-tune.",
+    "es": "No planees hacer pretraining salvo que seas un lab de frontera o tengas un corpus realmente inusual y un presupuesto de millones; los productos parten de una API o un modelo instruct abierto, y luego hacen prompting, recuperación o fine-tuning."
+  },
+  "numbers": [
+    { "en": "Pretraining data: Llama 3 ~15T tokens; DeepSeek-V3 14.8T.", "es": "Datos de pretraining: Llama 3 ~15T tokens; DeepSeek-V3 14.8T." },
+    { "en": "Llama 3.1 405B: ~3.8×10^25 FLOPs on up to 16k H100 GPUs.", "es": "Llama 3.1 405B: ~3.8×10^25 FLOPs en hasta 16k GPUs H100." },
+    { "en": "DeepSeek-V3: ~2.79M H800 GPU-hours in total, only ~5K of them post-training.", "es": "DeepSeek-V3: ~2.79M horas-GPU H800 en total, y solo ~5K de ellas de post-training." },
+    { "en": "InstructGPT: labelers preferred the 1.3B instruct model over the 175B GPT-3 base.", "es": "InstructGPT: los anotadores prefirieron el modelo instruct de 1.3B sobre el GPT-3 base de 175B." },
+    { "en": "LIMA: 1,000 curated SFT examples turned a 65B base model into a strong assistant.", "es": "LIMA: 1,000 ejemplos curados de SFT convirtieron un modelo base de 65B en un asistente sólido." }
+  ],
+  "pitfalls": [
+    { "en": "Using a base model for chat (it continues text instead of answering) or an instruct model for raw likelihood scoring.", "es": "Usar un modelo base para chat (continúa el texto en vez de responder) o uno instruct para medir verosimilitud cruda." },
+    { "en": "Fine-tuning to inject facts: SFT changes behaviour, not knowledge; use retrieval.", "es": "Hacer fine-tuning para meter datos: el SFT cambia comportamiento, no conocimiento; usa recuperación." },
+    { "en": "Ignoring the chat template: wrong special tokens in fine-tuning or prompting silently degrade quality.", "es": "Ignorar el chat template: tokens especiales incorrectos al hacer fine-tuning o prompting degradan la calidad en silencio." },
+    { "en": "Assuming aligned means safe: preference tuning is shallow, and jailbreaks route around it.", "es": "Suponer que alineado significa seguro: el ajuste por preferencias es superficial y los jailbreaks lo esquivan." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "What's the difference between a base model and an instruct model, and when would you use each?", "es": "¿Cuál es la diferencia entre un modelo base y uno instruct, y cuándo usarías cada uno?" },
+      "a": {
+        "en": "A base model is pure pretraining: it predicts plausible continuations, so it holds the knowledge but doesn't follow instructions or know when to stop. An instruct model adds SFT and preference tuning, plus RLVR for reasoning models, so it follows instructions in a chat format. I use instruct models for almost every product. I'd start from a base model for my own heavy fine-tune or continued pretraining, or for scoring tasks like perplexity, where chat tuning distorts the probabilities.",
+        "es": "Un modelo base es puro pretraining: predice continuaciones plausibles, así que tiene el conocimiento pero no sigue instrucciones ni sabe cuándo parar. Un modelo instruct agrega SFT y ajuste por preferencias, más RLVR en los modelos de razonamiento, así que sigue instrucciones en formato de chat. Uso modelos instruct en casi todos los productos. Partiría de un modelo base para un fine-tuning pesado propio o un continued pretraining, o para tareas de scoring como perplexity, donde el ajuste para chat distorsiona las probabilidades."
+      }
+    },
+    {
+      "q": { "en": "Your team wants to fine-tune a model so it knows the internal product docs. What do you tell them?", "es": "Tu equipo quiere hacer fine-tuning de un modelo para que conozca la documentación interna del producto. ¿Qué les dices?" },
+      "a": {
+        "en": "That fine-tuning mostly changes behaviour, not knowledge. Knowledge comes from pretraining; a few thousand SFT examples teach format and style, and training on facts the model didn't know tends to increase hallucinations rather than give reliable recall. The docs also change weekly. So I'd use retrieval for the knowledge, and SFT or DPO only if we need a consistent format, tone or tool-calling behaviour that prompting can't reach. Continued pretraining is the heavy option, for a large, stable domain corpus.",
+        "es": "Que el fine-tuning cambia sobre todo el comportamiento, no el conocimiento. El conocimiento viene del pretraining; unos miles de ejemplos de SFT enseñan formato y estilo, y entrenar con datos que el modelo no conocía tiende a aumentar las alucinaciones en vez de dar un recuerdo confiable. Además, la documentación cambia cada semana. Así que usaría recuperación para el conocimiento, y SFT o DPO solo si necesitamos un formato, tono o forma de llamar tools consistente que el prompting no logra. El continued pretraining es la opción pesada, para un corpus de dominio grande y estable."
+      }
+    }
+  ],
+  "related": ["sft", "rlhf", "dpo", "rlvr", "reasoning-models", "scaling-laws"],
+  "sources": [
+    { "title": "Ouyang et al. — Training language models to follow instructions with human feedback (InstructGPT)", "url": "https://arxiv.org/abs/2203.02155" },
+    { "title": "Rafailov et al. — Direct Preference Optimization", "url": "https://arxiv.org/abs/2305.18290" },
+    { "title": "DeepSeek-AI — DeepSeek-V3 Technical Report", "url": "https://arxiv.org/abs/2412.19437" },
+    { "title": "DeepSeek-AI — DeepSeek-R1: Incentivizing Reasoning Capability via RL", "url": "https://arxiv.org/abs/2501.12948" }
+  ]
+}

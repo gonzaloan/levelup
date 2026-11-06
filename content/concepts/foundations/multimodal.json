@@ -1,0 +1,85 @@
+{
+  "id": "multimodal",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Multimodal models", "es": "Modelos multimodales" },
+  "aliases": ["VLM", "vision-language model", "LMM", "vision encoder", "ViT", "image tokens", "speech-to-speech", "CLIP"],
+  "tldr": {
+    "en": "Images and audio are encoded into token-like vectors the LLM reads alongside text. They cost tokens (~85 to ~1,600 per image) and fail on tiny text, counting and precise spatial reasoning.",
+    "es": "Las imágenes y el audio se codifican en vectores tipo token que el LLM lee junto con el texto. Cuestan tokens (de ~85 a ~1,600 por imagen) y fallan con texto diminuto, conteos y razonamiento espacial preciso."
+  },
+  "explain": {
+    "en": "A **multimodal model** accepts more than text (images, audio, video, PDFs) and sometimes produces more than text. The common recipe turns each modality into tokens the LLM can already read.\n\n**Vision, step by step**\n1. A **vision encoder** (usually a ViT, often CLIP-pretrained) cuts the image into patches, e.g. 14×14 px, and turns each into a vector.\n2. A small **projector** (linear layer or MLP) maps those vectors into the LLM's embedding space.\n3. The LLM attends over image and text tokens as one sequence. LLaVA-1.5 turns a 336×336 image into 576 tokens.\n\nSo **images cost tokens**: ~85 to ~1,600 per image depending on provider, size and detail setting. Providers downscale large images first, so fine print can vanish.\n\n**Audio** comes in two architectures. A **cascade** (ASR such as Whisper → text LLM → TTS) is debuggable, swappable and leaves a transcript, but adds latency and drops tone. **Native speech-to-speech** (GPT-4o realtime, Gemini Live) hears prosody and replies in ~0.3 s, but is harder to control and audit.\n\n**Strong at:** documents, charts, tables, UI screenshots, photos → JSON. **Weak at:** tiny text, counting objects, precise spatial relations and measurements, and it fails confidently.",
+    "es": "Un **modelo multimodal** acepta más que texto (imágenes, audio, video, PDFs) y a veces produce más que texto. La receta común convierte cada modalidad en tokens que el LLM ya sabe leer.\n\n**Visión, paso a paso**\n1. Un **encoder de visión** (normalmente un ViT, a menudo preentrenado con CLIP) corta la imagen en parches, p. ej. de 14×14 px, y convierte cada uno en un vector.\n2. Un **proyector** pequeño (capa lineal o MLP) lleva esos vectores al espacio de embeddings del LLM.\n3. El LLM atiende a los tokens de imagen y de texto como una sola secuencia. LLaVA-1.5 convierte una imagen de 336×336 en 576 tokens.\n\nPor eso **las imágenes cuestan tokens**: de ~85 a ~1,600 por imagen según el proveedor, el tamaño y el nivel de detalle. Los proveedores reducen las imágenes grandes antes de procesarlas, así que la letra pequeña puede desaparecer.\n\nEl **audio** tiene dos arquitecturas. Una **cascada** (ASR como Whisper → LLM de texto → TTS) es fácil de depurar, sus piezas se reemplazan y deja una transcripción, pero agrega latencia y pierde el tono. El **speech-to-speech nativo** (GPT-4o realtime, Gemini Live) escucha la entonación y responde en ~0.3 s, pero es más difícil de controlar y auditar.\n\n**Fuerte en:** documentos, gráficas, tablas, capturas de pantalla, fotos → JSON. **Débil en:** texto diminuto, contar objetos, relaciones espaciales precisas y medidas, y se equivoca con total seguridad."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  I[Image] --> P[\"Split into patches<br/>e.g. 14×14 px\"]\n  P --> V[\"Vision encoder<br/>(ViT)\"]\n  V --> J[\"Projector<br/>(MLP)\"]\n  J --> T[\"Image tokens<br/>~85–1,600\"]\n  X[Text prompt] --> K[Text tokens]\n  T --> L[LLM decoder]\n  K --> L\n  L --> O[Text answer]",
+    "caption": {
+      "en": "The image becomes a sequence of vectors in the LLM's own embedding space; from there it is just a longer prompt.",
+      "es": "La imagen se vuelve una secuencia de vectores en el propio espacio de embeddings del LLM; desde ahí es solo un prompt más largo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Image to JSON, with a token estimate", "es": "De imagen a JSON, con estimación de tokens" },
+    "source": "import base64\nimport anthropic\nfrom PIL import Image\n\nclient = anthropic.Anthropic()\nMODEL = \"claude-sonnet-4-5\"  # any vision-capable model\n\ndef image_tokens(path: str) -> int:\n    # Anthropic's published estimate: w*h/750, capped ~1,600 after auto-resize\n    w, h = Image.open(path).size\n    return min(int(w * h / 750), 1600)\n\ndef extract_receipt(path: str) -> str:\n    data = base64.standard_b64encode(open(path, \"rb\").read()).decode()\n    msg = client.messages.create(\n        model=MODEL,\n        max_tokens=512,\n        messages=[{\"role\": \"user\", \"content\": [\n            # Image first, then the instruction: the recommended order for vision\n            {\"type\": \"image\", \"source\": {\"type\": \"base64\",\n                                         \"media_type\": \"image/png\", \"data\": data}},\n            {\"type\": \"text\", \"text\": \"Return JSON {vendor, date, total, currency}. \"\n                                     \"Use null for anything you cannot read clearly.\"},\n        ]}],\n    )\n    return msg.content[0].text\n\nprint(image_tokens(\"receipt.png\"), \"approx. input tokens for the image\")\nprint(extract_receipt(\"receipt.png\"))"
+  },
+  "example": {
+    "en": "A finance team extracts totals from 10,000 photographed receipts. Each ~1000×1000 px photo costs ~1,330 image tokens on Claude (w×h/750): ~13M input tokens, ~$40 at $3 per million. Totals come out well, but faded thermal-paper line items get misread or invented. Downscaling to save tokens makes it worse; sending a second, cropped image of the line-item region at full resolution fixes most misses. Anything that fails a sum check (items ≠ total) goes to a human.",
+    "es": "Un equipo de finanzas extrae totales de 10,000 recibos fotografiados. Cada foto de ~1000×1000 px cuesta ~1,330 tokens de imagen en Claude (ancho×alto/750): ~13M tokens de entrada, ~$40 a $3 por millón. Los totales salen bien, pero los conceptos impresos en papel térmico desteñido se leen mal o se inventan. Bajar la resolución para ahorrar tokens lo empeora; enviar una segunda imagen recortada de la zona de conceptos, a resolución completa, corrige la mayoría de los errores. Lo que no pasa la verificación de suma (conceptos ≠ total) va a revisión humana."
+  },
+  "pros": [
+    { "en": "One model reads scans, screenshots, charts and photos, replacing brittle OCR + layout pipelines for many documents.", "es": "Un solo modelo lee escaneos, capturas, gráficas y fotos, y reemplaza pipelines frágiles de OCR + layout en muchos documentos." },
+    { "en": "Images keep layout, tables and visual cues that plain text extraction loses.", "es": "Las imágenes conservan el layout, las tablas y las señales visuales que la extracción de texto plano pierde." },
+    { "en": "Native audio keeps tone and emotion and brings voice replies to the ~300 ms range.", "es": "El audio nativo conserva tono y emoción, y lleva las respuestas de voz al rango de ~300 ms." }
+  ],
+  "cons": [
+    { "en": "Token-hungry: a 20-page PDF sent as images can cost ~20–30k input tokens.", "es": "Consume muchos tokens: un PDF de 20 páginas enviado como imágenes puede costar ~20–30k tokens de entrada." },
+    { "en": "Weak at tiny text, counting, spatial relations and exact measurements, with confident errors.", "es": "Débil con texto diminuto, conteos, relaciones espaciales y medidas exactas, y se equivoca con seguridad." },
+    { "en": "Harder to evaluate: you need labeled image or audio test sets, not just text.", "es": "Más difícil de evaluar: necesitas sets de prueba etiquetados con imágenes o audio, no solo texto." }
+  ],
+  "whenToUse": {
+    "en": "Documents where layout matters (forms, invoices, tables), charts, UI screenshots, photo-driven workflows, and voice products where latency and tone matter.",
+    "es": "Documentos donde importa el layout (formularios, facturas, tablas), gráficas, capturas de UI, flujos basados en fotos y productos de voz donde importan la latencia y el tono."
+  },
+  "whenNotToUse": {
+    "en": "When clean text exists (digital PDFs, HTML), extract it: cheaper and more precise. For exact counts, measurements or pixel positions, use classic OCR or computer vision.",
+    "es": "Si ya existe texto limpio (PDFs digitales, HTML), extráelo: es más barato y más preciso. Para conteos exactos, medidas o posiciones en píxeles, usa OCR o visión por computadora clásica."
+  },
+  "numbers": [
+    { "en": "LLaVA-1.5: one 336×336 image → 576 visual tokens (24×24 patches of 14 px).", "es": "LLaVA-1.5: una imagen de 336×336 → 576 tokens visuales (24×24 parches de 14 px)." },
+    { "en": "Claude: image tokens ≈ width × height / 750, ~1,600 max after resizing.", "es": "Claude: tokens de imagen ≈ ancho × alto / 750, máximo ~1,600 tras redimensionar." },
+    { "en": "GPT-4o: 85 tokens at low detail; a 1024×1024 image at high detail ≈ 765 tokens.", "es": "GPT-4o: 85 tokens en detalle bajo; una imagen de 1024×1024 en detalle alto ≈ 765 tokens." },
+    { "en": "Gemini 2.x: 258 tokens for an image ≤384 px per side (larger ones are tiled); audio ≈ 32 tokens/s.", "es": "Gemini 2.x: 258 tokens por imagen de ≤384 px por lado (las más grandes se dividen en mosaicos); audio ≈ 32 tokens/s." },
+    { "en": "GPT-4o voice: ~320 ms average reply vs 2.8–5.4 s for the earlier ASR→LLM→TTS Voice Mode.", "es": "Voz de GPT-4o: ~320 ms de respuesta promedio frente a 2.8–5.4 s del Voice Mode anterior con ASR→LLM→TTS." }
+  ],
+  "pitfalls": [
+    { "en": "Sending page images when a text layer exists: you pay image tokens for less precision.", "es": "Enviar páginas como imágenes cuando existe la capa de texto: pagas tokens de imagen por menos precisión." },
+    { "en": "Ignoring server-side downscaling: fine print becomes unreadable. Crop or tile the region you need.", "es": "Ignorar que el servidor reduce la imagen: la letra pequeña se vuelve ilegible. Recorta o divide la zona que necesitas." },
+    { "en": "Trusting counts and spatial claims (\"third row, left column\") without a deterministic check.", "es": "Confiar en conteos y afirmaciones espaciales (\"tercera fila, columna izquierda\") sin una verificación determinista." },
+    { "en": "Going speech-to-speech with no plan for transcripts, guardrails and audit logs.", "es": "Pasar a speech-to-speech sin un plan para transcripciones, guardrails y registros de auditoría." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How does an LLM \"see\" an image?", "es": "¿Cómo \"ve\" una imagen un LLM?" },
+      "a": {
+        "en": "It never sees pixels directly. A vision encoder, typically a ViT, splits the image into fixed-size patches and embeds each one; a projector maps those embeddings into the same space as the LLM's word embeddings; then the LLM attends over image and text tokens as one sequence. The practical consequences: each image costs hundreds to ~1,600 tokens, resolution is capped so small text can disappear, and counting or geometry is weak because patches are coarse.",
+        "es": "Nunca ve los píxeles directamente. Un encoder de visión, típicamente un ViT, divide la imagen en parches de tamaño fijo y genera un embedding para cada uno; un proyector lleva esos embeddings al mismo espacio que los embeddings de palabras del LLM; luego el LLM atiende a los tokens de imagen y de texto como una sola secuencia. Consecuencias prácticas: cada imagen cuesta de cientos a ~1,600 tokens, la resolución tiene tope y el texto pequeño puede desaparecer, y los conteos o la geometría fallan porque los parches son gruesos."
+      }
+    },
+    {
+      "q": { "en": "Designing a voice agent: cascade or native speech-to-speech?", "es": "Diseñas un agente de voz: ¿cascada o speech-to-speech nativo?" },
+      "a": {
+        "en": "I'd default to a cascade: streaming ASR, a text LLM, streaming TTS. Every hop is swappable, I get transcripts for guardrails, evals and audits, and I can use the strongest text model with tools. With streaming at each stage I can get turns to roughly a second. I'd pick native speech-to-speech when tone, interruptions and ~300 ms responsiveness are the product, like coaching, and accept less control and harder debugging. Either way, I still log a transcript.",
+        "es": "Por defecto elegiría una cascada: ASR en streaming, un LLM de texto y TTS en streaming. Cada pieza se puede cambiar, tengo transcripciones para guardrails, evaluaciones y auditoría, y puedo usar el mejor modelo de texto con herramientas. Con streaming en cada etapa llego a turnos de alrededor de un segundo. Elegiría speech-to-speech nativo cuando el tono, las interrupciones y la respuesta en ~300 ms son el producto, como en coaching, y aceptaría menos control y una depuración más difícil. En ambos casos, igual guardo una transcripción."
+      }
+    }
+  ],
+  "related": ["tokens", "transformer", "document-parsing", "case-document-extraction", "case-voice-agent", "token-economics"],
+  "sources": [
+    { "title": "Dosovitskiy et al. — An Image is Worth 16x16 Words (ViT)", "url": "https://arxiv.org/abs/2010.11929" },
+    { "title": "Liu et al. — Visual Instruction Tuning (LLaVA)", "url": "https://arxiv.org/abs/2304.08485" },
+    { "title": "Anthropic — Vision", "url": "https://docs.anthropic.com/en/docs/build-with-claude/vision" },
+    { "title": "OpenAI — Hello GPT-4o", "url": "https://openai.com/index/hello-gpt-4o/" }
+  ]
+}

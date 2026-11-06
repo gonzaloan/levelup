@@ -1,0 +1,95 @@
+{
+  "id": "model-selection",
+  "domain": "foundations",
+  "level": "advanced",
+  "title": { "en": "Choosing a model", "es": "Cómo elegir un modelo" },
+  "aliases": ["model selection", "LLM selection", "model bake-off", "frontier vs small models", "open-weights vs API", "model evaluation"],
+  "tldr": {
+    "en": "Pick the cheapest model that clears your quality bar on your own evals, within latency, cost and compliance limits. Prove value with the best model, then route or distill down behind a swappable abstraction.",
+    "es": "Elige el modelo más barato que pase tu umbral de calidad en tus propias evaluaciones, dentro de tus límites de latencia, costo y cumplimiento. Demuestra valor con el mejor modelo, luego enruta o destila hacia modelos más baratos detrás de una abstracción intercambiable."
+  },
+  "analogy": {
+    "en": "Hiring: résumés and certifications (benchmarks) build the shortlist, but the work-sample test on your actual job (your evals) decides. And you don't pay a senior's salary for work an intern does well.",
+    "es": "Contratar: el CV y las certificaciones (benchmarks) arman la lista corta, pero decide la prueba práctica con tu trabajo real (tus evaluaciones). Y no pagas sueldo de senior por algo que un practicante hace bien."
+  },
+  "explain": {
+    "en": "**Choosing a model** means picking the cheapest model that clears your quality bar on *your* task, within latency, compliance and ops constraints, while keeping the freedom to switch.\n\n**Criteria, roughly in the order they decide**\n1. **Quality on your evals:** a golden set built from real traffic. Public benchmarks only build the shortlist: they're contaminated, saturated and rarely your task.\n2. **Latency:** time-to-first-token and tokens/s at your p95, not in the demo.\n3. **Cost per task:** $/M input and output tokens × your real token mix, including hidden reasoning tokens and retries.\n4. **Capabilities:** context length, modalities, tool calling, structured outputs, fine-tuning.\n5. **Constraints:** license terms, data residency, retention and zero-data-retention, on-prem needs.\n6. **Open weights vs API:** control and per-token cost at scale vs zero ops and frontier quality ([[api-vs-self-host]]).\n\n**The strategy**\n- **Prove value with the best model.** If the frontier model can't do it, a small one won't; if it can, you get a quality ceiling and labeled outputs.\n- **Then go down-market:** try smaller tiers on the same evals, send easy traffic through [[model-routing]], or [[distillation]] from the big model's outputs.\n- **Stay portable:** call models through a thin interface or [[llm-gateway]], keep prompts and evals per model, and pin versions, because aliases move and old models get retired.",
+    "es": "**Elegir un modelo** es encontrar el más barato que pase tu umbral de calidad en *tu* tarea, dentro de tus restricciones de latencia, cumplimiento y operación, sin perder la libertad de cambiarlo.\n\n**Criterios, más o menos en el orden en que deciden**\n1. **Calidad en tus evaluaciones:** un golden set armado con tráfico real. Los benchmarks públicos solo sirven para la lista corta: están contaminados, saturados y casi nunca miden tu tarea.\n2. **Latencia:** time-to-first-token y tokens/s en tu p95, no en la demo.\n3. **Costo por tarea:** $/M de tokens de entrada y salida × tu mezcla real de tokens, incluyendo tokens de razonamiento ocultos y reintentos.\n4. **Capacidades:** longitud de contexto, modalidades, tool calling, salidas estructuradas, fine-tuning.\n5. **Restricciones:** términos de licencia, residencia de datos, retención y zero-data-retention, necesidad de on-prem.\n6. **Pesos abiertos vs API:** control y costo por token a escala frente a cero operación y calidad de frontera ([[api-vs-self-host]]).\n\n**La estrategia**\n- **Demuestra valor con el mejor modelo.** Si el modelo de frontera no puede, uno pequeño tampoco; si puede, obtienes un techo de calidad y salidas etiquetadas.\n- **Luego baja de gama:** prueba niveles más pequeños con las mismas evaluaciones, manda el tráfico fácil por [[model-routing]] o aplica [[distillation]] con las salidas del modelo grande.\n- **Mantente portable:** llama a los modelos a través de una interfaz delgada o un [[llm-gateway]], guarda prompts y evaluaciones por modelo y fija versiones, porque los alias cambian y los modelos viejos se retiran."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  B[\"Benchmarks +<br/>hard constraints\"] --> S[\"Shortlist<br/>3–5 models\"]\n  S --> E[\"Run YOUR evals<br/>golden set\"]\n  E --> F[\"Best model:<br/>prove value\"]\n  F --> C{\"Cheaper model<br/>passes evals?\"}\n  C -->|yes| R[\"Switch or route<br/>easy traffic\"]\n  C -->|no| D[\"Distill or keep<br/>frontier model\"]\n  R --> G[\"Ship behind<br/>model gateway\"]\n  D --> G\n  G -.->|new model released| E",
+    "caption": {
+      "en": "Benchmarks narrow the field, your evals decide, and a gateway keeps the decision reversible.",
+      "es": "Los benchmarks reducen las opciones, tus evaluaciones deciden y un gateway mantiene la decisión reversible."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A minimal bake-off: quality, p95 latency, cost per task", "es": "Una comparación mínima: calidad, latencia p95, costo por tarea" },
+    "source": "import statistics, time\nimport litellm  # one interface over OpenAI, Anthropic, Gemini, Bedrock, vLLM...\n\n# Example ids: one frontier model and cheaper candidates\nCANDIDATES = [\"gpt-4.1\", \"gpt-4.1-mini\", \"anthropic/claude-haiku-4-5\", \"gemini/gemini-2.5-flash\"]\n\ndef evaluate(model: str, golden: list[dict]) -> dict:\n    passed, cost, lat = 0, 0.0, []\n    for case in golden:\n        t0 = time.perf_counter()\n        resp = litellm.completion(model=model, temperature=0,\n                                  messages=[{\"role\": \"user\", \"content\": case[\"input\"]}])\n        lat.append(time.perf_counter() - t0)\n        cost += litellm.completion_cost(completion_response=resp)\n        passed += grade(resp.choices[0].message.content, case)  # your task's grader\n    return {\"model\": model,\n            \"accuracy\": passed / len(golden),\n            \"p95_s\": statistics.quantiles(lat, n=20)[18],\n            \"usd_per_1k_tasks\": 1000 * cost / len(golden)}\n\nresults = [evaluate(m, golden_set) for m in CANDIDATES]\n\n# Cheapest model within ~1 point of the best that also meets the latency SLO\nbest = max(r[\"accuracy\"] for r in results)\nok = [r for r in results if r[\"accuracy\"] >= best - 0.01 and r[\"p95_s\"] < 3.0]\nprint(min(ok, key=lambda r: r[\"usd_per_1k_tasks\"]) if ok else \"nothing meets the SLO\")"
+  },
+  "example": {
+    "en": "A team builds contract-clause extraction. On a 300-case golden set, the frontier tier scores 94% at ~$12 per 1k contracts, the mini tier 91% at ~$2.40, the nano tier 78%. They launch on the frontier model to prove value, then route short, standard contracts (~70% of traffic) to the mini tier, where it matches the frontier model on evals. Cost drops ~55%. When a new model ships, the same harness re-runs overnight and the switch is a gateway config change.",
+    "es": "Un equipo construye extracción de cláusulas de contratos. En un golden set de 300 casos, el nivel de frontera saca 94% a ~$12 por cada 1k contratos, el nivel mini 91% a ~$2.40 y el nano 78%. Lanzan con el modelo de frontera para demostrar valor y luego enrutan los contratos cortos y estándar (~70% del tráfico) al nivel mini, donde iguala al de frontera en las evaluaciones. El costo baja ~55%. Cuando sale un modelo nuevo, el mismo harness corre durante la noche y el cambio es solo configuración del gateway."
+  },
+  "pros": [
+    { "en": "Decisions rest on your data, not leaderboard gaps that don't transfer to your task.", "es": "Las decisiones se apoyan en tus datos, no en diferencias de leaderboard que no se trasladan a tu tarea." },
+    { "en": "Starting with the best model quickly separates \"the task is impossible\" from \"the model is too weak\".", "es": "Empezar con el mejor modelo separa rápido \"la tarea es imposible\" de \"el modelo es muy débil\"." },
+    { "en": "A portable interface turns each new release into an eval re-run, not a rewrite.", "es": "Una interfaz portable convierte cada lanzamiento nuevo en volver a correr evaluaciones, no en reescribir." }
+  ],
+  "cons": [
+    { "en": "Building and maintaining a golden set and graders is real upfront work.", "es": "Armar y mantener un golden set y sus evaluadores es trabajo real desde el inicio." },
+    { "en": "Frontier-first prototypes can set cost expectations the business later rejects.", "es": "Los prototipos con modelo de frontera pueden fijar expectativas de costo que el negocio después rechaza." },
+    { "en": "Abstraction layers can hide provider-specific features (prompt caching, special tool modes) unless you leave escape hatches.", "es": "Las capas de abstracción pueden ocultar funciones propias de cada proveedor (prompt caching, modos de herramientas) si no dejas salidas de escape." }
+  ],
+  "whenToUse": {
+    "en": "At project start, when a new model generation ships, when cost or latency budgets change, and before any long-term commitment. Re-run the same evals every time.",
+    "es": "Al iniciar un proyecto, cuando sale una nueva generación de modelos, cuando cambian los presupuestos de costo o latencia, y antes de cualquier compromiso de largo plazo. Corre siempre las mismas evaluaciones."
+  },
+  "whenNotToUse": {
+    "en": "Skip a full bake-off for a throwaway prototype or a low-volume internal tool: pick a strong default model, ship, and revisit if usage grows.",
+    "es": "No hagas una comparación completa para un prototipo desechable o una herramienta interna de bajo volumen: elige un buen modelo por defecto, lanza y revisa si el uso crece."
+  },
+  "numbers": [
+    { "en": "FrugalGPT: LLM cascades matched GPT-4 quality with up to 98% lower cost on its benchmarks.", "es": "FrugalGPT: las cascadas de LLMs igualaron la calidad de GPT-4 con hasta 98% menos costo en sus benchmarks." },
+    { "en": "List-price spread within one family: GPT-4.1 $2 vs GPT-4.1-nano $0.10 per M input tokens (20×).", "es": "Diferencia de precio de lista dentro de una familia: GPT-4.1 $2 vs GPT-4.1-nano $0.10 por M de tokens de entrada (20×)." },
+    { "en": "200 eval cases at ~90% accuracy → ±~4 points 95% confidence interval: smaller gaps are noise.", "es": "200 casos de evaluación con ~90% de precisión → intervalo de confianza del 95% de ±~4 puntos: diferencias menores son ruido." },
+    { "en": "Llama community license: services above 700M monthly active users need a separate license from Meta.", "es": "Licencia comunitaria de Llama: los servicios con más de 700M de usuarios activos mensuales necesitan otra licencia de Meta." }
+  ],
+  "pitfalls": [
+    { "en": "Choosing by leaderboard rank, or by vibes from five hand-picked prompts.", "es": "Elegir por el ranking del leaderboard o por intuición con cinco prompts escogidos a mano." },
+    { "en": "Comparing $/token instead of $/task: a cheaper model that needs retries, longer outputs or more reasoning can cost more.", "es": "Comparar $/token en vez de $/tarea: un modelo más barato que necesita reintentos, salidas más largas o más razonamiento puede salir más caro." },
+    { "en": "Hard-coding one provider's SDK, prompt quirks and model id everywhere: migration becomes a quarter-long project.", "es": "Acoplar en todo el código el SDK, las mañas de prompt y el id de modelo de un proveedor: migrar se vuelve un proyecto de un trimestre." },
+    { "en": "Discovering residency, retention, license or rate-limit blockers after the build.", "es": "Descubrir bloqueos de residencia de datos, retención, licencia o rate limits después de construir." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you choose an LLM for a new product?", "es": "¿Cómo eliges un LLM para un producto nuevo?" },
+      "a": {
+        "en": "I start with the constraints that eliminate options: data residency, license, on-prem, modalities, context length. Then I shortlist three to five models from public benchmarks and pricing. The decision comes from our own golden set, a few hundred real cases with a grader, scored on quality, p95 latency and cost per task. I prototype with the strongest model to prove value and set the ceiling, then test cheaper tiers, routing and distillation against the same evals, all behind a gateway so switching is a config change.",
+        "es": "Empiezo por las restricciones que eliminan opciones: residencia de datos, licencia, on-prem, modalidades, longitud de contexto. Luego armo una lista corta de tres a cinco modelos con benchmarks públicos y precios. La decisión sale de nuestro propio golden set, unos cientos de casos reales con un evaluador, midiendo calidad, latencia p95 y costo por tarea. Prototipo con el modelo más fuerte para demostrar valor y fijar el techo, y después pruebo niveles más baratos, ruteo y destilación contra las mismas evaluaciones, todo detrás de un gateway para que cambiar sea solo configuración."
+      }
+    },
+    {
+      "q": { "en": "Open-weights model or API?", "es": "¿Modelo de pesos abiertos o API?" },
+      "a": {
+        "en": "It's a trade between control and operations. APIs give frontier quality, zero infrastructure and fast iteration, so they're my default until something forces a move. Open weights win when data can't leave our boundary, when we need deep fine-tuning, or when volume is high and steady enough that well-utilized GPUs beat per-token pricing. The hidden cost is the team: serving, scaling, evals and upgrades become ours. I decide with a TCO at our real volume, not list prices.",
+        "es": "Es un trade-off entre control y operación. Las APIs dan calidad de frontera, cero infraestructura e iteración rápida, así que son mi opción por defecto hasta que algo me obligue a cambiar. Los pesos abiertos ganan cuando los datos no pueden salir de nuestro perímetro, cuando necesitamos fine-tuning profundo, o cuando el volumen es alto y estable y las GPUs bien aprovechadas le ganan al precio por token. El costo oculto es el equipo: el serving, el escalamiento, las evaluaciones y las actualizaciones pasan a ser nuestros. Decido con un TCO a nuestro volumen real, no con precios de lista."
+      }
+    },
+    {
+      "q": { "en": "A new model tops the leaderboard. Do we switch?", "es": "Un modelo nuevo encabeza el leaderboard. ¿Cambiamos?" },
+      "a": {
+        "en": "Not on that alone. Leaderboards measure someone else's task, suffer from contamination, and arena rankings partly reward style. I add it to the shortlist and re-run our suite: quality, latency, cost per task, plus a diff on the cases we pass today. If it wins by more than the noise, which with 200 cases is about four points, and clears our constraints, we switch behind the gateway with a canary and roll back if online metrics drop.",
+        "es": "No solo por eso. Los leaderboards miden la tarea de otro, sufren contaminación y los rankings tipo arena premian en parte el estilo. Lo agrego a la lista corta y vuelvo a correr nuestra suite: calidad, latencia, costo por tarea, más un diff de los casos que hoy pasamos. Si gana por más que el ruido, que con 200 casos ronda los cuatro puntos, y cumple nuestras restricciones, cambiamos detrás del gateway con un canary y hacemos rollback si caen las métricas en línea."
+      }
+    }
+  ],
+  "related": ["benchmarks", "golden-datasets", "model-routing", "api-vs-self-host", "llm-gateway", "distillation"],
+  "sources": [
+    { "title": "Chen, Zaharia, Zou — FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance", "url": "https://arxiv.org/abs/2305.05176" },
+    { "title": "Chiang et al. — Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference", "url": "https://arxiv.org/abs/2403.04132" },
+    { "title": "OpenAI — Model selection guide", "url": "https://platform.openai.com/docs/guides/model-selection" },
+    { "title": "LiteLLM documentation", "url": "https://docs.litellm.ai/" }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "id": "embeddings",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "Embeddings", "es": "Embeddings" },
+  "aliases": ["embedding", "vector embedding", "dense vector", "text embedding", "sentence embedding", "cosine similarity", "semantic vector"],
+  "tldr": {
+    "en": "An embedding model turns text into a fixed-length vector so that similar meanings land close together; compare vectors with cosine similarity to search, cluster, classify or deduplicate by meaning instead of keywords.",
+    "es": "Un modelo de embeddings convierte un texto en un vector de longitud fija para que los significados parecidos queden cerca; comparas vectores con similitud coseno para buscar, agrupar, clasificar o deduplicar por significado y no por palabras clave."
+  },
+  "analogy": {
+    "en": "GPS coordinates for meaning: every text gets a point on a map with hundreds of dimensions, and \"how related are these?\" becomes \"how far apart are these points?\"",
+    "es": "Coordenadas GPS para el significado: cada texto recibe un punto en un mapa de cientos de dimensiones, y \"¿qué tan relacionados están?\" se vuelve \"¿qué tan lejos están estos puntos?\""
+  },
+  "explain": {
+    "en": "An **embedding** is a dense vector, typically 384 to 3,072 floats, that an encoder model produces from a piece of text (or an image). The model is trained, usually with contrastive learning on pairs like (question, answer), so that texts with similar meaning get vectors pointing in similar directions. *\"Reset my password\"* and *\"I can't log in\"* share no keywords but land close together.\n\nYou compare vectors with a **similarity metric**:\n\n- **Cosine**: angle between vectors, ignores length. The default for text.\n- **Dot product**: angle *and* magnitude; cheapest to compute.\n- **Euclidean (L2)**: straight-line distance.\n\nIf you **normalize vectors to unit length**, cosine equals dot product and L2 gives the same ranking, so most systems normalize once and use dot product. Use the metric the model was trained with.\n\nTypical uses: semantic search and RAG retrieval (via [[vector-databases]] and [[ann-indexes]]), topic clustering, classification with a small model on top of the vectors, near-duplicate detection, recommendations and [[semantic-caching]].\n\nTwo rules: vectors from **different models are not comparable**, so changing models means re-embedding everything; and embeddings blur **exact tokens** (SKUs, error codes, names), which is why production search adds BM25 via [[hybrid-search]].",
+    "es": "Un **embedding** es un vector denso, normalmente de 384 a 3,072 números, que un modelo encoder genera a partir de un texto (o una imagen). El modelo se entrena, casi siempre con aprendizaje contrastivo sobre pares como (pregunta, respuesta), para que los textos con significado parecido den vectores que apuntan en direcciones parecidas. *\"Restablecer mi contraseña\"* y *\"No puedo iniciar sesión\"* no comparten palabras clave, pero quedan cerca.\n\nLos vectores se comparan con una **métrica de similitud**:\n\n- **Coseno**: el ángulo entre los vectores, ignora la longitud. Es la opción por defecto para texto.\n- **Producto punto**: ángulo *y* magnitud; es el más barato de calcular.\n- **Euclidiana (L2)**: la distancia en línea recta.\n\nSi **normalizas los vectores a longitud 1**, el coseno es igual al producto punto y L2 da el mismo ranking, por eso la mayoría de los sistemas normaliza una vez y usa producto punto. Usa la métrica con la que se entrenó el modelo.\n\nUsos típicos: búsqueda semántica y recuperación para RAG (con [[vector-databases]] y [[ann-indexes]]), agrupación de temas, clasificación con un modelo pequeño encima de los vectores, detección de casi duplicados, recomendaciones y [[semantic-caching]].\n\nDos reglas: los vectores de **modelos distintos no son comparables**, así que cambiar de modelo obliga a regenerar todos los embeddings; y los embeddings difuminan los **tokens exactos** (SKUs, códigos de error, nombres), por eso la búsqueda en producción agrega BM25 con [[hybrid-search]]."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[Documents] -->|offline| E1[Embedding model]\n  E1 --> I[(Vector index)]\n  Q[Query text] -->|query time| E2[Same embedding model]\n  E2 --> V[\"Query vector<br/>e.g. 768 floats\"]\n  V --> S[\"Cosine similarity<br/>vs stored vectors\"]\n  I --> S\n  S --> K[Top-k neighbors]\n  K --> U[\"Search, RAG,<br/>dedup, clustering\"]",
+    "caption": {
+      "en": "Documents are embedded once, offline; at query time only the query is embedded, with the same model.",
+      "es": "Los documentos se procesan una sola vez, offline; en tiempo de consulta solo se genera el embedding de la consulta, con el mismo modelo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Embed and rank by cosine similarity with sentence-transformers", "es": "Generar embeddings y ordenar por similitud coseno con sentence-transformers" },
+    "source": "import numpy as np\nfrom sentence_transformers import SentenceTransformer\n\nmodel = SentenceTransformer(\"all-MiniLM-L6-v2\")  # 384 dims, small and fast; any embedding model\n\ndocs = [\n    \"How do I reset my password?\",\n    \"Steps to recover access to your account\",\n    \"Our office is closed on public holidays\",\n]\nquery = \"I forgot my login credentials\"\n\n# Unit-length vectors: cosine similarity becomes a plain dot product\nD = model.encode(docs, normalize_embeddings=True)   # shape (3, 384)\nq = model.encode(query, normalize_embeddings=True)  # shape (384,)\n\nscores = D @ q  # cosine similarities in [-1, 1]\nfor i in np.argsort(-scores):\n    print(f\"{scores[i]:.3f}  {docs[i]}\")\n\n# The general formula, for vectors that are not normalized\ndef cosine(a: np.ndarray, b: np.ndarray) -> float:\n    return float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b)))\n\n# Near-duplicate check: threshold must be calibrated per model on labeled pairs\nis_dup = cosine(D[0], D[1]) > 0.9"
+  },
+  "example": {
+    "en": "An internal help-center search fails on *\"my laptop won't turn on\"* because the right article says *\"notebook does not power up\"*: no shared keywords, so BM25 never surfaces it. You embed 200k article chunks with a 768-dim model: 200k × 768 × 4 bytes ≈ 0.6 GB of float32, which fits in RAM. At query time you embed the question and take the top 10 by cosine; the article now ranks first. Then *\"error E-4012\"* fails the other way, ranked below generic error pages, because embeddings blur exact codes. That's the cue for [[hybrid-search]].",
+    "es": "La búsqueda del centro de ayuda interno falla con *\"mi laptop no prende\"* porque el artículo correcto dice *\"el portátil no enciende\"*: ninguna palabra clave en común, así que BM25 nunca lo encuentra. Generas embeddings para 200k chunks de artículos con un modelo de 768 dimensiones: 200k × 768 × 4 bytes ≈ 0.6 GB en float32, que cabe en RAM. En tiempo de consulta generas el embedding de la pregunta y tomas el top 10 por coseno; ahora el artículo sale primero. Después *\"error E-4012\"* falla al revés, por debajo de páginas genéricas de errores, porque los embeddings difuminan los códigos exactos. Esa es la señal para usar [[hybrid-search]]."
+  },
+  "pros": [
+    { "en": "Matches meaning across paraphrases, synonyms and, with a multilingual model, languages.", "es": "Encuentra el significado a través de paráfrasis, sinónimos y, con un modelo multilingüe, idiomas." },
+    { "en": "Compute once offline; query-time comparison is a fast vector operation.", "es": "Se calcula una vez offline; la comparación en tiempo de consulta es una operación vectorial rápida." },
+    { "en": "One representation serves search, clustering, classification and dedup.", "es": "Una sola representación sirve para búsqueda, agrupación, clasificación y deduplicación." }
+  ],
+  "cons": [
+    { "en": "Weak on exact tokens, negation and numbers: \"not refundable\" sits close to \"refundable\".", "es": "Débil con tokens exactos, negaciones y números: \"no reembolsable\" queda cerca de \"reembolsable\"." },
+    { "en": "Locked to one model: an upgrade means re-embedding and re-indexing the whole corpus.", "es": "Atado a un modelo: actualizarlo implica regenerar los embeddings y reindexar todo el corpus." },
+    { "en": "Memory adds up: 1M vectors × 1,536 dims in float32 ≈ 6 GB before index overhead.", "es": "La memoria se acumula: 1M de vectores × 1,536 dimensiones en float32 ≈ 6 GB antes del overhead del índice." }
+  ],
+  "whenToUse": {
+    "en": "Whenever the same idea shows up in different words: semantic search and RAG retrieval, clustering feedback, few-label classification, dedup, recommendations. The default for any \"find similar\" feature over unstructured text.",
+    "es": "Siempre que la misma idea aparezca con palabras distintas: búsqueda semántica y recuperación para RAG, agrupar feedback, clasificación con pocas etiquetas, deduplicación, recomendaciones. Es la opción por defecto para cualquier función de \"encontrar parecidos\" sobre texto no estructurado."
+  },
+  "whenNotToUse": {
+    "en": "Exact lookups (IDs, SKUs, error codes, names), structured filters, or logic such as negation and date ranges. Use keyword search, SQL, or a cross-encoder or LLM on top.",
+    "es": "Búsquedas exactas (IDs, SKUs, códigos de error, nombres), filtros estructurados o lógica como negaciones y rangos de fechas. Usa búsqueda por palabras clave, SQL, o un cross-encoder o LLM encima."
+  },
+  "numbers": [
+    { "en": "Common dims: 384 (all-MiniLM-L6-v2), 768 (BERT-base class), 1,024, 1,536 and 3,072 (OpenAI text-embedding-3-small / -large).", "es": "Dimensiones comunes: 384 (all-MiniLM-L6-v2), 768 (clase BERT-base), 1,024, 1,536 y 3,072 (OpenAI text-embedding-3-small / -large)." },
+    { "en": "Storage: dims × 4 bytes per float32 vector; 1M × 1,536 ≈ 6.1 GB. int8 is 4× smaller, binary 32×.", "es": "Almacenamiento: dimensiones × 4 bytes por vector en float32; 1M × 1,536 ≈ 6.1 GB. En int8 es 4× menos, en binario 32×." },
+    { "en": "Unit vectors: cosine = dot product, and L2² = 2 − 2·cosine, so all three rank identically.", "es": "Con vectores unitarios: coseno = producto punto y L2² = 2 − 2·coseno, así que las tres métricas ordenan igual." },
+    { "en": "Max input: text-embedding-3 takes 8,191 tokens; all-MiniLM-L6-v2 truncates at 256 word pieces.", "es": "Entrada máxima: text-embedding-3 acepta 8,191 tokens; all-MiniLM-L6-v2 trunca en 256 word pieces." }
+  ],
+  "pitfalls": [
+    { "en": "Mixing vectors from two models or versions in one index: similarities become meaningless and nothing errors.", "es": "Mezclar vectores de dos modelos o versiones en un índice: las similitudes pierden sentido y nada da error." },
+    { "en": "Silent truncation: text past the model's max input is dropped, so that content becomes unsearchable.", "es": "Truncamiento silencioso: el texto que pasa la entrada máxima del modelo se descarta y ese contenido ya no se encuentra." },
+    { "en": "Reusing a similarity threshold across models: score ranges differ widely, so calibrate on labeled pairs per model.", "es": "Reusar un umbral de similitud entre modelos: los rangos de puntaje varían mucho, así que calíbralo con pares etiquetados para cada modelo." },
+    { "en": "Skipping the query/document prefixes that asymmetric models such as E5 expect (\"query: \", \"passage: \").", "es": "Omitir los prefijos de consulta y documento que esperan los modelos asimétricos como E5 (\"query: \", \"passage: \")." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Cosine, dot product or Euclidean distance: which would you use?", "es": "Coseno, producto punto o distancia euclidiana: ¿cuál usarías?" },
+      "a": {
+        "en": "Whatever the model was trained with, which for most text models is cosine. In practice I normalize every vector to unit length at write time; then cosine and dot product are identical and Euclidean gives the same ranking, so I use dot product because it's the cheapest and every vector database optimizes it. The case to watch is a model trained with unnormalized dot product, where magnitude carries signal: normalizing would throw that away, so I check the model card first.",
+        "es": "La que se usó para entrenar el modelo, que en la mayoría de los modelos de texto es coseno. En la práctica normalizo cada vector a longitud 1 al escribirlo; así coseno y producto punto son idénticos y la euclidiana da el mismo ranking, por eso uso producto punto: es el más barato y toda base de datos vectorial lo optimiza. El caso a vigilar es un modelo entrenado con producto punto sin normalizar, donde la magnitud lleva señal: normalizar la borraría, así que primero reviso la model card."
+      }
+    },
+    {
+      "q": { "en": "We want to switch to a better embedding model. What does that involve?", "es": "Queremos cambiar a un mejor modelo de embeddings. ¿Qué implica?" },
+      "a": {
+        "en": "A migration, not a config change. Vectors from different models live in different spaces, so I re-embed the whole corpus into a new index. First I prove the gain on our own labeled queries, recall@10 on our data rather than a leaderboard score. Then I backfill the new index in parallel, dual-write new documents, shadow or A/B the traffic, and cut over keeping the old index for rollback. The API bill is usually small: 100M chunks × ~500 tokens at ~$0.02 per 1M tokens is ~$1,000. The real cost is reindex time and eval work.",
+        "es": "Una migración, no un cambio de configuración. Los vectores de modelos distintos viven en espacios distintos, así que regenero los embeddings de todo el corpus en un índice nuevo. Primero demuestro la mejora con nuestras propias consultas etiquetadas, recall@10 sobre nuestros datos y no un puntaje de leaderboard. Luego lleno el índice nuevo en paralelo, escribo los documentos nuevos en ambos, hago shadow o A/B del tráfico y cambio dejando el índice viejo para hacer rollback. La factura de la API suele ser chica: 100M chunks × ~500 tokens a ~$0.02 por 1M de tokens son ~$1,000. El costo real es el tiempo de reindexado y el trabajo de evaluación."
+      }
+    }
+  ],
+  "related": ["embedding-models", "vector-databases", "ann-indexes", "hybrid-search", "semantic-caching", "embedding-finetuning"],
+  "sources": [
+    { "title": "Reimers & Gurevych — Sentence-BERT: Sentence Embeddings using Siamese BERT-Networks", "url": "https://arxiv.org/abs/1908.10084" },
+    { "title": "OpenAI — Embeddings guide", "url": "https://platform.openai.com/docs/guides/embeddings" },
+    { "title": "Muennighoff et al. — MTEB: Massive Text Embedding Benchmark", "url": "https://arxiv.org/abs/2210.07316" },
+    { "title": "Sentence Transformers documentation", "url": "https://www.sbert.net/" }
+  ]
+}

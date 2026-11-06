@@ -1,0 +1,88 @@
+{
+  "id": "kv-cache",
+  "domain": "foundations",
+  "level": "core",
+  "title": { "en": "KV cache", "es": "KV cache" },
+  "aliases": ["key-value cache", "KV caching", "attention cache", "prefix caching", "KV memory", "past_key_values"],
+  "tldr": {
+    "en": "During generation, store every token's attention keys and values so each new token reuses them instead of recomputing the prefix; the price is GPU memory that grows with context length × concurrent requests.",
+    "es": "Durante la generación, guarda las keys y values de atención de cada token para que el siguiente los reutilice en vez de recalcular el prefijo; el precio es memoria de GPU que crece con longitud de contexto × requests concurrentes."
+  },
+  "analogy": {
+    "en": "Keeping running notes while reading a book instead of re-reading from page 1 before every new sentence: much faster, but the notebook keeps growing and has to fit on your desk.",
+    "es": "Tomar notas mientras lees un libro en lugar de releer desde la página 1 antes de cada oración nueva: mucho más rápido, pero el cuaderno no deja de crecer y tiene que caber en tu escritorio."
+  },
+  "explain": {
+    "en": "The **KV cache** stores the attention **keys** and **values** of every token already processed, so generating the next token doesn't recompute them.\n\nIn [[attention]], each new token's query is compared with the keys of *all* previous tokens and mixes their values. In a causal model those K and V vectors never change once computed, so the server computes them once (for the whole prompt during **prefill**, then one token per step during **decode**) and appends them to the cache. Each decode step then does new work for one token, not the whole sequence.\n\nThe cost is memory, linear in context length:\n\n`bytes per token = 2 (K and V) × layers × kv_heads × head_dim × bytes per value`\n\nLlama-3-8B (32 layers, 8 KV heads, head_dim 128, fp16): 2×32×8×128×2 = **128 KiB per token**. A full 128k context is **~16 GiB**, as much as the model's weights, for *one* sequence. Multiply by concurrent requests and the KV cache, not the weights, sets your batch size and throughput.\n\nThat's why most of [[gpu-memory-math]] is KV math, and why so many tricks target it: **GQA** shares KV heads (8 instead of 32 above, 4× less), [[paged-attention]] removes fragmentation, FP8 KV halves it, and **prefix caching** reuses the KV of a shared prompt prefix across requests, the mechanism behind [[prompt-caching]].",
+    "es": "El **KV cache** guarda las **keys** y **values** de atención de cada token ya procesado, para que generar el siguiente token no obligue a recalcularlos.\n\nEn [[attention]], la query de cada token nuevo se compara con las keys de *todos* los tokens anteriores y combina sus values. En un modelo causal esos vectores K y V no cambian una vez calculados, así que el servidor los calcula una sola vez (para todo el prompt durante el **prefill** y luego un token por paso durante el **decode**) y los agrega al cache. Cada paso de decode hace trabajo nuevo solo para un token, no para toda la secuencia.\n\nEl costo es memoria, lineal en la longitud del contexto:\n\n`bytes por token = 2 (K y V) × capas × kv_heads × head_dim × bytes por valor`\n\nLlama-3-8B (32 capas, 8 KV heads, head_dim 128, fp16): 2×32×8×128×2 = **128 KiB por token**. Un contexto completo de 128k ocupa **~16 GiB**, tanto como los pesos del modelo, y eso para *una* sola secuencia. Multiplícalo por los requests concurrentes y verás que es el KV cache, no los pesos, lo que define tu tamaño de batch y tu throughput.\n\nPor eso casi todo el [[gpu-memory-math]] es cálculo de KV, y por eso tantas técnicas lo atacan: **GQA** comparte KV heads (8 en vez de 32 arriba, 4× menos), [[paged-attention]] elimina la fragmentación, el KV en FP8 lo reduce a la mitad y el **prefix caching** reutiliza el KV de un prefijo de prompt compartido entre requests, el mecanismo detrás del [[prompt-caching]]."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[Prompt tokens] --> F[\"Prefill<br/>all tokens in parallel\"]\n  F -->|write K and V| C[(KV cache)]\n  N[New token] --> D[\"Decode step<br/>compute q, k, v\"]\n  D -->|append k and v| C\n  C -->|read all K and V| A[\"Attention<br/>q against cache\"]\n  D --> A\n  A --> O[Next token]\n  O -.->|loop| N",
+    "caption": {
+      "en": "Prefill fills the cache once; each decode step adds one entry and reads all of them, so memory and bandwidth grow with context.",
+      "es": "El prefill llena el cache una vez; cada paso de decode agrega una entrada y las lee todas, así que memoria y ancho de banda crecen con el contexto."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "KV cache sizing calculator", "es": "Calculadora de tamaño del KV cache" },
+    "source": "def kv_bytes_per_token(layers, kv_heads, head_dim, bytes_per_value=2):\n    # 2 = one K and one V vector per layer per KV head; fp16/bf16 = 2 bytes\n    return 2 * layers * kv_heads * head_dim * bytes_per_value\n\nMODELS = {  # (num_hidden_layers, num_key_value_heads, head_dim) from config.json\n    \"Llama-2-7B (MHA)\": (32, 32, 128),\n    \"Llama-3-8B (GQA)\": (32, 8, 128),\n    \"Llama-3-70B (GQA)\": (80, 8, 128),\n}\n\ndef kv_gib(model, context_tokens, concurrent_seqs=1, bytes_per_value=2):\n    per_token = kv_bytes_per_token(*MODELS[model], bytes_per_value)\n    return per_token * context_tokens * concurrent_seqs / 2**30\n\nfor name, cfg in MODELS.items():\n    kib = kv_bytes_per_token(*cfg) / 1024\n    print(f\"{name}: {kib:.0f} KiB/token, {kv_gib(name, 128 * 1024):.0f} GiB per 128k seq\")\n# Llama-2-7B (MHA): 512 KiB/token, 64 GiB per 128k seq  (4x: no GQA)\n# Llama-3-8B (GQA): 128 KiB/token, 16 GiB per 128k seq\n# Llama-3-70B (GQA): 320 KiB/token, 40 GiB per 128k seq\n\n# Capacity planning: 32 users x 8k tokens on Llama-3-8B\nprint(kv_gib(\"Llama-3-8B (GQA)\", 8192, 32))     # 32.0 GiB in bf16\nprint(kv_gib(\"Llama-3-8B (GQA)\", 8192, 32, 1))  # 16.0 GiB with FP8 KV"
+  },
+  "example": {
+    "en": "You serve Llama-3-8B in bf16 on one 80 GB H100. Weights take ~16 GB; after runtime overhead and headroom, say ~55 GB is left for KV. At 128 KiB/token that's ~420k cached tokens in total: ~50 concurrent chats at 8k context, but only ~3 at the full 128k. A product decision to \"give everyone 128k context\" cuts concurrency per GPU ~16× for that traffic. FP8 KV doubles both numbers; a model with 32 KV heads instead of 8 would cut them 4×.",
+    "es": "Sirves Llama-3-8B en bf16 sobre una H100 de 80 GB. Los pesos ocupan ~16 GB; después del overhead del runtime y un margen, quedan unos ~55 GB para el KV. A 128 KiB por token son ~420k tokens en cache en total: ~50 chats concurrentes con 8k de contexto, pero apenas ~3 con los 128k completos. Una decisión de producto como \"darle 128k de contexto a todos\" reduce ~16× la concurrencia por GPU para ese tráfico. Con KV en FP8 ambos números se duplican; un modelo con 32 KV heads en vez de 8 los dividiría entre 4."
+  },
+  "pros": [
+    { "en": "Each decode step computes K and V for one new token instead of the whole sequence: what makes generation practical.", "es": "Cada paso de decode calcula K y V solo para un token nuevo y no para toda la secuencia: es lo que hace viable la generación." },
+    { "en": "Enables prefix caching: a shared system prompt or document is prefilled once and reused across requests.", "es": "Habilita el prefix caching: un system prompt o documento compartido se procesa una vez y se reutiliza entre requests." },
+    { "en": "Pure systems optimization: identical outputs, no quality trade-off unless you quantize it.", "es": "Es pura optimización de sistemas: salidas idénticas, sin trade-off de calidad salvo que lo cuantices." }
+  ],
+  "cons": [
+    { "en": "Memory grows linearly with context × concurrent sequences, capping batch size and throughput.", "es": "La memoria crece linealmente con contexto × secuencias concurrentes, lo que limita el tamaño de batch y el throughput." },
+    { "en": "Decode becomes memory-bandwidth-bound: every step reads the weights plus the whole cache.", "es": "El decode queda limitado por el ancho de banda de memoria: cada paso lee los pesos más todo el cache." },
+    { "en": "Needs a smart allocator and scheduler (paging, eviction, preemption) or memory is wasted and requests stall.", "es": "Requiere un allocator y un scheduler inteligentes (paginación, desalojo, preemption) o se desperdicia memoria y los requests se atascan." }
+  ],
+  "whenToUse": {
+    "en": "Always on for autoregressive decoding. The real decisions are sizing and managing it: capacity planning, max context per tier, picking GQA/MLA models, FP8 KV, and prefix caching for shared prompts.",
+    "es": "Siempre está activo en el decoding autorregresivo. Las decisiones reales son cómo dimensionarlo y gestionarlo: capacity planning, contexto máximo por plan, elegir modelos con GQA/MLA, KV en FP8 y prefix caching para prompts compartidos."
+  },
+  "whenNotToUse": {
+    "en": "Single-pass workloads with no generation (embeddings, classifiers, rerankers) don't need it. And don't hold 128k windows open per user \"just in case\": long-context KV is exactly what you pay for.",
+    "es": "Las cargas de una sola pasada sin generación (embeddings, clasificadores, rerankers) no lo necesitan. Y no mantengas ventanas de 128k abiertas por usuario \"por si acaso\": el KV de contexto largo es justo lo que pagas."
+  },
+  "numbers": [
+    { "en": "Per token: 2 × layers × kv_heads × head_dim × bytes per value.", "es": "Por token: 2 × capas × kv_heads × head_dim × bytes por valor." },
+    { "en": "Llama-3-8B fp16: 128 KiB/token → ~16 GiB at 128k tokens, about the size of its weights.", "es": "Llama-3-8B en fp16: 128 KiB/token → ~16 GiB con 128k tokens, más o menos lo que pesan sus pesos." },
+    { "en": "Llama-3-70B fp16: 320 KiB/token → ~40 GiB per 128k-token sequence.", "es": "Llama-3-70B en fp16: 320 KiB/token → ~40 GiB por secuencia de 128k tokens." },
+    { "en": "GQA with 8 KV heads instead of 32: 4× smaller cache; FP8 KV: another 2×.", "es": "GQA con 8 KV heads en vez de 32: cache 4× más chico; KV en FP8: otro 2×." },
+    { "en": "vLLM paper: earlier servers used only ~20–38% of KV memory for real tokens; PagedAttention wastes under 4%.", "es": "Paper de vLLM: los servidores previos usaban solo ~20–38% de la memoria de KV para tokens reales; PagedAttention desperdicia menos del 4%." }
+  ],
+  "pitfalls": [
+    { "en": "Sizing GPUs by model weights alone; at long context and real concurrency the KV cache is the bigger number.", "es": "Dimensionar GPUs solo por los pesos del modelo; con contexto largo y concurrencia real, el KV cache es el número más grande." },
+    { "en": "Using the query head count instead of num_key_value_heads, overestimating GQA models 4–8×.", "es": "Usar el número de query heads en lugar de num_key_value_heads, lo que sobreestima 4–8× los modelos con GQA." },
+    { "en": "Breaking prefix caching with a timestamp or user ID at the top of the prompt; only an identical prefix hits.", "es": "Romper el prefix caching con un timestamp o un ID de usuario al inicio del prompt; solo un prefijo idéntico genera un hit." },
+    { "en": "Raising max context per request without re-testing concurrency and p99 latency.", "es": "Subir el contexto máximo por request sin volver a probar concurrencia y latencia p99." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Estimate the KV cache for 100 concurrent users on a 70B model with 8k context.", "es": "Estima el KV cache para 100 usuarios concurrentes en un modelo de 70B con 8k de contexto." },
+      "a": {
+        "en": "I use 2 × layers × KV heads × head_dim × bytes. Llama-3-70B has 80 layers, 8 KV heads thanks to GQA, and head_dim 128, so in bf16 that's 320 KiB per token. 8k tokens is ~2.5 GiB per user, so 100 users need ~250 GiB of KV on top of ~140 GB of weights: ~410 GB in total. That's one 8×H100 node with tensor parallelism, not two or four GPUs. Then I'd check whether real contexts average far below 8k and whether FP8 KV halves the cache.",
+        "es": "Uso 2 × capas × KV heads × head_dim × bytes. Llama-3-70B tiene 80 capas, 8 KV heads gracias a GQA y head_dim 128, así que en bf16 son 320 KiB por token. 8k tokens son ~2.5 GiB por usuario, y 100 usuarios necesitan ~250 GiB de KV además de ~140 GB de pesos: ~410 GB en total. Eso es un nodo de 8×H100 con tensor parallelism, no dos ni cuatro GPUs. Después revisaría si los contextos reales promedian muy por debajo de 8k y si el KV en FP8 reduce el cache a la mitad."
+      }
+    },
+    {
+      "q": { "en": "How does the KV cache relate to the prompt caching providers sell?", "es": "¿Qué relación tiene el KV cache con el prompt caching que venden los proveedores?" },
+      "a": {
+        "en": "Prompt caching is KV-cache reuse across requests. If two requests start with exactly the same tokens (system prompt, tool definitions, a long document), the server keeps the KV for that prefix and skips its prefill, the compute-heavy part of a long prompt. Providers pass on the saving: Anthropic bills cache reads at 10% of the input price. The design rule follows: stable content first, volatile content last, and never a timestamp at the top, because one changed token invalidates everything after it.",
+        "es": "El prompt caching es reutilizar el KV cache entre requests. Si dos requests empiezan exactamente con los mismos tokens (system prompt, definiciones de tools, un documento largo), el servidor conserva el KV de ese prefijo y se salta su prefill, la parte de cómputo pesado de un prompt largo. Los proveedores trasladan el ahorro: Anthropic cobra las lecturas de cache al 10% del precio de input. De ahí sale la regla de diseño: contenido estable primero, contenido variable al final y nunca un timestamp al inicio, porque un solo token distinto invalida todo lo que viene después."
+      }
+    }
+  ],
+  "related": ["attention", "prefill-decode", "paged-attention", "gpu-memory-math", "prompt-caching", "context-window"],
+  "sources": [
+    { "title": "Ainslie et al. — GQA: Training Generalized Multi-Query Transformer Models", "url": "https://arxiv.org/abs/2305.13245" },
+    { "title": "Kwon et al. — Efficient Memory Management for LLM Serving with PagedAttention (vLLM)", "url": "https://arxiv.org/abs/2309.06180" },
+    { "title": "Meta — The Llama 3 Herd of Models", "url": "https://arxiv.org/abs/2407.21783" }
+  ]
+}

@@ -1,102 +1,40 @@
-# level-up
+# levelup — AI Architect Field Guide
 
-**The definitive guide to the part of engineering coding practice can't teach you** —
-the judgment, scope, direction, and leverage that move an engineer from Senior
-toward Staff and Principal. Bilingual EN/ES. Sibling of `get-certified`.
+**Everything a Staff/Principal AI Architect is expected to know, explained simply.**
+A bilingual (ES/EN) study guide you can also keep open as a cheatsheet in an interview.
 
-## The thesis
+Live: https://levelup.skillrealm.dev
 
-Getting better at writing code stops being enough somewhere around Senior. AI
-now writes the routine 70%; the promotion past Senior is decided in the 30% it
-can't judge for you — failure modes, the security hole, the p99 cliff, the design
-nobody wrote down. **level-up measures your 30% and trains it.**
+## What's inside
 
-## Three pillars
-
-1. **Diagnostic assessment** — a client-side, adaptive (MST) instrument that
-   places you across five competency axes (Technical Depth · Systems &
-   Architecture Judgment · Execution & Delivery Craft · Direction & Influence ·
-   Leveling Up Others & Scope). It reports one of three honest bands per axis
-   (never a false-precise single level), surfaces a calibration gap only when it
-   exceeds measurement error, and names the *one behavioral delta* to your next
-   level. See [`/method`](src/app/[locale]/method) for how it scores.
-2. **Modular roadmap** — module → recall (retrieval practice) → **The Room** (a
-   situational-judgment scenario with downstream consequences) → **Field Work**
-   (proof-of-work, incl. the signature *30% Gauntlet*: harden AI-generated code
-   against prompt injection, the p99 cliff, and swallowed errors).
-3. **The Star Chart** — an observatory star map of the curriculum: bright stars
-   are earned, dim ones are ahead, the clay constellation is the flagship AI
-   track.
-
-## The curriculum spine (the ordered plan)
-
-The `/path` view is the definitive, ordered climb: **6 domains × 5 levels
-(L3→L7) × 152 concepts**, every concept grounded in a named, checkable source
-(roadmap.sh, Kleppmann's DDIA, StaffEng/Larson, Reilly, Google SRE, DORA, OWASP
-LLM Top 10, Shostack threat-modeling, NIST AI RMF / EU AI Act, …) and ordered by
-a within-domain prerequisite DAG. The five ladder levels are spiral depth bands;
-the recommended path interleaves by level band. **30 checkpoint quizzes** (157
-judgment items, gated "miss at most one") sit at each domain×level cluster.
-Authored + adversarially fact-checked by multi-agent fleets, with a completeness
-audit closing 10 gaps (security/threat-modeling, large-scale migrations,
-execution leadership, stream processing, chaos engineering, self-scope, AI
-governance, performance engineering, decision-rights, agent orchestration).
-
-## Lessons (the teachable layer)
-
-Each domain×level cluster is a **Lesson** (`/lesson/{domain}-{level}`, 30 total,
-`src/content/data/lessons.json`): a single clean flow — overview ("the big
-picture") → each concept in order (plain explanation + an authored inline-SVG
-schematic + key takeaways) → a mid-lesson quick check → the checkpoint as the
-graded final test → the next lesson. `/path` opens with one unmistakable
-**Start here** entry point and a guided L3→L7 climb.
-
-## Themes
-
-Two full themes, toggled in the nav and persisted to `localStorage`:
-**Studio** (get-certified's editorial look — DM Serif Display, amber accent,
-vivid dark-navy, mono stats) and **Pixel** (a Mario-3 "overworld" reskin — Press
-Start 2P / Pixelify Sans, DawnBringer palette, zero-radius pixel frames). Both
-fully usable in EN/ES; theme tokens + `[data-theme="pixel"]` live in
-`globals.css`, applied pre-paint by a boot script in `layout.tsx`.
-
-## Two tracks
-
-- **General Engineering** — the five non-AI domains, charted L3→L7; the L5
-  "Staff Threshold" band is seeded to full module depth (9 modules).
-- **Real World AI Engineering** (flagship) — fully charted L3→L7; the 30%
-  Gauntlet is live, and its L5 modules are seeded deep.
-
-## Stack
-
-- **Next.js** static export (like `personal-platform`), React 19, TypeScript.
-- **Content-as-data**: `src/content/data/curriculum.json` (the L3→L7 spine +
-  checkpoints) and `general-l5.json` / `ai-l5.json` (deep modules) — every
-  learner-facing string is `{en, es}`. Authored, not machine-translated.
-- **Progress in `localStorage`** (`src/lib/store.ts`); Cognito+DynamoDB sync is a
-  future phase.
-- **Hand-authored inline SVG** for the Radar and Star Chart. No raster this build.
-
-## Design
-
-Dark-only "Observatory / Engineering-Instrument" system in `src/app/globals.css`,
-governed by [`src/design/anti-slop-checklist.md`](src/design/anti-slop-checklist.md)
-and [`src/design/voice-and-copy.md`](src/design/voice-and-copy.md). The #1 rule:
-it must not read as AI-generated.
+- **12 topics, ~180 concepts**, in study order: LLM fundamentals · prompting & context
+  engineering · RAG · agents · evals · fine-tuning · inference & cost · security & governance ·
+  MLOps · distributed systems · AI system-design cases · Staff/Principal leadership.
+- **Every concept on one page, same shape every time:** the one sentence you'd say in an interview,
+  how it works, a diagram, runnable-ish code, a real example with numbers, what you gain / what you
+  pay, when (not) to use it, numbers to remember, common pitfalls, interview questions with model
+  answers, related concepts and sources.
+- **Search everything** with `/` or `⌘K`: titles, acronyms (RAG, HNSW, LoRA, TTFT…), one-liners,
+  questions. Accent-insensitive, works offline.
+- **Cheatsheet:** every concept as its one-liner plus key numbers. Filter by topic/level, print it.
+- **Interview mode:** the 45-minute GenAI system-design framework, worked designs (enterprise RAG,
+  support agent, coding assistant, voice agent…), every number worth having at hand, and the full
+  question bank.
+- **Practice:** flashcards from every interview question with a simple spaced-repetition loop.
+- Progress ("mastered", practice boxes) lives only in your browser.
 
 ## Develop
 
 ```bash
 npm install
-npm run dev          # http://localhost:3000  → redirects to /en
-npm run build        # static export to out/
-npm test             # vitest: engine unit tests + Monte-Carlo band accuracy
-npm run test:visual  # playwright: EN+ES screens, contrast, no-overflow, anti-slop
+npm run dev
 ```
 
-## How it was built
+```bash
+npm run verify      # content gate + typecheck + lint + unit tests
+npm run build       # static export to out/
+npm run e2e         # Playwright smoke tests against out/
+```
 
-Design → research (6-track web fleet + 4 adversarial reviewers) → engine +
-visualizations + app shell (hand-built for coherence) → content (13-agent fleet,
-Principal-fact-checked, then a polish pass for voice + Spanish) → adversarial
-product review + Playwright verification. See `docs/specs/` and `research/`.
+Adding or editing a concept: see [`docs/AUTHORING.md`](docs/AUTHORING.md). Project conventions:
+[`CLAUDE.md`](CLAUDE.md). Deploy: [`deploy/README.md`](deploy/README.md).

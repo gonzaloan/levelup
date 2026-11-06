@@ -1,0 +1,94 @@
+{
+  "id": "context-engineering",
+  "domain": "prompting",
+  "level": "advanced",
+  "title": { "en": "Context engineering", "es": "Context engineering" },
+  "aliases": ["context management", "context curation", "compaction", "just-in-time retrieval", "context window budget", "agent context"],
+  "tldr": {
+    "en": "Deciding, at every step of an agent or pipeline, exactly which tokens enter the window (instructions, tools, documents, tool results, memory, history), aiming for the smallest set of high-signal tokens.",
+    "es": "Decidir, en cada paso de un agente o pipeline, exactamente qué tokens entran a la ventana (instrucciones, herramientas, documentos, resultados de herramientas, memoria, historial), buscando el conjunto más pequeño de tokens de alta señal."
+  },
+  "analogy": {
+    "en": "A surgeon's tray: the nurse doesn't dump the whole supply room on it, but lays out the instruments for this step and swaps them as the operation moves on.",
+    "es": "La bandeja de un cirujano: la instrumentista no vacía todo el almacén encima, sino que pone los instrumentos de este paso y los cambia a medida que avanza la operación."
+  },
+  "explain": {
+    "en": "Prompt engineering is writing one good instruction. **Context engineering** is curating *everything* the model sees on every turn of a multi-step system: system prompt, tool definitions, retrieved documents, tool results, memory and history. In an agent, that context is rebuilt dozens of times per task and grows with every tool call.\n\nThe constraint: attention is a finite budget. As the window fills, recall and reasoning degrade ([[context-rot]]) while cost and latency rise. Anthropic frames the goal as finding *the smallest set of high-signal tokens* that maximizes the chance of the desired outcome.\n\nTechniques that work:\n\n- **Just-in-time retrieval**: keep lightweight references (file paths, URLs, query ids) and let the agent load content with tools (`grep`, `head`, search) when needed, instead of pre-loading everything.\n- **Trim tool output**: return IDs and summaries, paginate, truncate; clear stale tool results.\n- **Compaction**: near the limit, summarize history (decisions, open bugs, next steps) and continue from the summary.\n- **Structured notes**: the agent writes progress to a file (`NOTES.md`, a to-do list) outside the window and re-reads it.\n- **Sub-agents**: delegate a search to an agent with a clean context; it returns a 1–2k-token summary, not its 50k tokens of exploration.\n- **Lean system prompt and toolset**: guidance at the \"right altitude\", few non-overlapping tools.",
+    "es": "El prompt engineering consiste en escribir una buena instrucción. El **context engineering** consiste en curar *todo* lo que el modelo ve en cada turno de un sistema de varios pasos: system prompt, definiciones de herramientas, documentos recuperados, resultados de herramientas, memoria e historial. En un agente, ese contexto se reconstruye decenas de veces por tarea y crece con cada llamada a una herramienta.\n\nLa restricción: la atención es un presupuesto finito. A medida que se llena la ventana, el recall y el razonamiento se degradan ([[context-rot]]) mientras suben el costo y la latencia. Anthropic plantea el objetivo como encontrar *el conjunto más pequeño de tokens de alta señal* que maximice la probabilidad del resultado buscado.\n\nTécnicas que funcionan:\n\n- **Recuperación just-in-time**: guarda referencias livianas (rutas de archivos, URLs, ids de consultas) y deja que el agente cargue el contenido con herramientas (`grep`, `head`, búsqueda) cuando lo necesite, en lugar de precargarlo todo.\n- **Recorta la salida de las herramientas**: devuelve IDs y resúmenes, pagina, trunca; borra los resultados viejos.\n- **Compactación**: cerca del límite, resume el historial (decisiones, bugs abiertos, siguientes pasos) y continúa desde el resumen.\n- **Notas estructuradas**: el agente escribe su avance en un archivo (`NOTES.md`, una lista de pendientes) fuera de la ventana y lo vuelve a leer.\n- **Subagentes**: delega una búsqueda a un agente con contexto limpio; te devuelve un resumen de 1–2k tokens, no sus 50k tokens de exploración.\n- **System prompt y herramientas austeros**: una guía a la \"altitud correcta\" y pocas herramientas que no se traslapen."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  S[System prompt] --> W[Context window]\n  T[Tool definitions] --> W\n  N[(\"Notes / memory\")] -->|just in time| W\n  D[(\"Docs / search\")] -->|just in time| W\n  H[History] --> C[\"Compaction<br/>summary\"]\n  C --> W\n  W --> L[LLM step]\n  L -->|tool call| X[Raw tool result]\n  X --> TR[\"Trim + clear old\"]\n  TR --> H\n  L -->|delegate| SA[\"Sub-agent<br/>clean context\"]\n  SA -->|\"1-2k token summary\"| H\n  L -->|write progress| N",
+    "caption": {
+      "en": "Every step rebuilds the window from curated sources; bulky material is trimmed, summarized, or kept outside and loaded on demand.",
+      "es": "Cada paso reconstruye la ventana desde fuentes curadas; lo voluminoso se recorta, se resume o se guarda afuera y se carga cuando hace falta."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Trim tool output and compact history on a budget", "es": "Recortar salidas y compactar el historial con presupuesto" },
+    "source": "import anthropic\n\nclient = anthropic.Anthropic()\nMODEL = \"claude-sonnet-4-5\"  # any long-context model\nBUDGET = 100_000             # compact well before the hard window limit\nKEEP_RECENT = 8              # latest messages stay verbatim\n\ndef trim_tool_result(text: str, limit: int = 4_000) -> str:\n    # Tool output is the usual bloat: keep head + tail, tell the agent how to get more\n    if len(text) <= limit:\n        return text\n    note = \"\\n[... truncated; call read_file with an offset for more ...]\\n\"\n    return text[: limit // 2] + note + text[-limit // 2 :]\n\ndef compact(history: list[dict]) -> list[dict]:\n    # Real code: split on a turn boundary, never between tool_use and tool_result\n    old, recent = history[:-KEEP_RECENT], history[-KEEP_RECENT:]\n    summary = client.messages.create(\n        model=MODEL, max_tokens=2_000,\n        messages=[{\"role\": \"user\", \"content\":\n            \"Summarize this agent transcript for your future self: goal, decisions, \"\n            \"open bugs, files touched, next step. Drop raw tool output.\\n\\n\"\n            + render(old)}],  # render(): messages -> plain text\n    ).content[0].text\n    return [{\"role\": \"user\", \"content\": f\"<progress>{summary}</progress>\"}] + recent\n\ndef prepare_context(system: str, history: list[dict]) -> list[dict]:\n    used = client.messages.count_tokens(\n        model=MODEL, system=system, messages=history\n    ).input_tokens\n    return compact(history) if used > BUDGET else history"
+  },
+  "example": {
+    "en": "A coding agent fixing a broken test suite ran out of window after ~40 tool calls: 70% of its 180k tokens were raw `pytest` and `cat` output it had already acted on. Changes: tool results capped at ~4k characters with a pointer to read more; results older than 10 turns cleared; a `NOTES.md` holding the plan and findings; codebase search delegated to a sub-agent that returns a ~1.5k-token summary. The same tasks now peak at ~60k tokens of context, each step is cheaper, and the \"forgot what it was doing\" loops mostly disappeared.",
+    "es": "Un agente de código que arreglaba una suite de tests rota se quedaba sin ventana después de ~40 llamadas a herramientas: 70% de sus 180k tokens eran salida cruda de `pytest` y `cat` sobre la que ya había actuado. Cambios: resultados de herramientas limitados a ~4k caracteres con una indicación de cómo leer más; se borran los resultados de más de 10 turnos; un `NOTES.md` con el plan y los hallazgos; la búsqueda en el código se delega a un subagente que devuelve un resumen de ~1.5k tokens. Las mismas tareas ahora llegan a un pico de ~60k tokens de contexto, cada paso es más barato y casi desaparecieron los ciclos de \"olvidé qué estaba haciendo\"."
+  },
+  "pros": [
+    { "en": "Often the biggest quality lever for agents, bigger than swapping models.", "es": "Suele ser la mayor palanca de calidad para agentes, mayor que cambiar de modelo." },
+    { "en": "Cuts cost and latency on every one of the dozens of calls an agent makes.", "es": "Reduce costo y latencia en cada una de las decenas de llamadas que hace un agente." },
+    { "en": "Makes long-horizon tasks possible beyond a single context window.", "es": "Hace posibles las tareas largas que no caben en una sola ventana de contexto." }
+  ],
+  "cons": [
+    { "en": "Every summary or trim is lossy: drop the wrong detail and the agent repeats work or contradicts itself.", "es": "Todo resumen o recorte pierde información: si se va el detalle equivocado, el agente repite trabajo o se contradice." },
+    { "en": "More moving parts (summarizers, memory stores, sub-agents), each needing its own evals.", "es": "Más piezas móviles (resumidores, almacenes de memoria, subagentes), y cada una necesita sus propias evals." },
+    { "en": "Sub-agents multiply tokens: Anthropic's multi-agent research system used ~15× the tokens of a chat.", "es": "Los subagentes multiplican los tokens: el sistema multiagente de investigación de Anthropic usó ~15× los tokens de un chat." }
+  ],
+  "whenToUse": {
+    "en": "Any agent or multi-step pipeline that makes more than a handful of tool calls, accumulates history, or pulls several sources into one window.",
+    "es": "Cualquier agente o pipeline de varios pasos que haga más que unas pocas llamadas a herramientas, acumule historial o junte varias fuentes en una sola ventana."
+  },
+  "whenNotToUse": {
+    "en": "Single-shot calls with small, fixed inputs: a well-written prompt is enough, and summarization or memory layers only add failure modes.",
+    "es": "Llamadas únicas con entradas pequeñas y fijas: basta con un buen prompt, y las capas de resumen o memoria solo agregan formas de fallar."
+  },
+  "numbers": [
+    { "en": "Anthropic: a sub-agent may explore with tens of thousands of tokens but returns a condensed summary of ~1,000–2,000 tokens.", "es": "Anthropic: un subagente puede explorar con decenas de miles de tokens, pero devuelve un resumen condensado de ~1,000–2,000 tokens." },
+    { "en": "Anthropic's multi-agent researcher: ~15× chat tokens; token usage alone explained ~80% of performance variance on BrowseComp.", "es": "El investigador multiagente de Anthropic: ~15× los tokens de un chat; el uso de tokens por sí solo explicó ~80% de la variación de desempeño en BrowseComp." },
+    { "en": "Anthropic reported that clearing stale tool results cut token use by 84% in a 100-turn web-search eval.", "es": "Anthropic reportó que borrar los resultados viejos de herramientas redujo 84% el uso de tokens en una eval de búsqueda web de 100 turnos." }
+  ],
+  "pitfalls": [
+    { "en": "Dumping a full 50 KB API response into the window when the next step needs 5 fields.", "es": "Meter a la ventana una respuesta completa de 50 KB de una API cuando el siguiente paso necesita 5 campos." },
+    { "en": "Compaction prompts that drop decisions and open bugs, so the agent retries what already failed.", "es": "Prompts de compactación que pierden las decisiones y los bugs abiertos, así que el agente reintenta lo que ya falló." },
+    { "en": "Loading the whole knowledge base and every tool upfront \"just in case\": more distractors, more confusion between overlapping tools.", "es": "Cargar toda la base de conocimiento y todas las herramientas desde el inicio \"por si acaso\": más distractores y más confusión entre herramientas que se traslapan." },
+    { "en": "Never measuring context composition: log tokens per source (system, tools, history, tool results) at every step.", "es": "No medir la composición del contexto: registra los tokens por fuente (system, herramientas, historial, resultados) en cada paso." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How is context engineering different from prompt engineering?", "es": "¿En qué se diferencia el context engineering del prompt engineering?" },
+      "a": {
+        "en": "Prompt engineering optimizes one static instruction. Context engineering is a systems problem: in an agent, the window is rebuilt on every step from many sources (system prompt, tools, retrieved docs, tool results, memory, history) and it grows on its own. So I design it like a cache with a budget: what is always present, what loads just in time, what gets summarized, what gets evicted. The typical failure isn't a badly worded instruction; it's the right instruction drowned in 150k tokens of stale tool output.",
+        "es": "El prompt engineering optimiza una instrucción estática. El context engineering es un problema de sistemas: en un agente, la ventana se reconstruye en cada paso desde muchas fuentes (system prompt, herramientas, documentos recuperados, resultados de herramientas, memoria, historial) y crece sola. Por eso la diseño como una caché con presupuesto: qué está siempre, qué se carga just-in-time, qué se resume y qué se desaloja. La falla típica no es una instrucción mal escrita; es la instrucción correcta ahogada en 150k tokens de salida vieja de herramientas."
+      }
+    },
+    {
+      "q": { "en": "Your agent gets worse after ~40 steps. How do you fix it?", "es": "Tu agente empeora después de ~40 pasos. ¿Cómo lo arreglas?" },
+      "a": {
+        "en": "First I measure tokens per step by source; usually tool results dominate. Then, cheapest first: trim tool output at the source (IDs and summaries, pagination), clear old tool results, add structured notes so progress survives outside the window, and compact history with a summary that keeps decisions and open issues. If the task has independent sub-searches, I move them to sub-agents with clean contexts. I validate each change on long-horizon evals, because compaction can silently drop the one detail that matters.",
+        "es": "Primero mido los tokens por paso y por fuente; casi siempre dominan los resultados de herramientas. Luego, de lo más barato a lo más caro: recorto la salida de las herramientas en el origen (IDs y resúmenes, paginación), borro los resultados viejos, agrego notas estructuradas para que el avance sobreviva fuera de la ventana y compacto el historial con un resumen que conserve decisiones y pendientes. Si la tarea tiene búsquedas independientes, las paso a subagentes con contexto limpio. Valido cada cambio con evals de tareas largas, porque la compactación puede perder en silencio justo el detalle que importa."
+      }
+    },
+    {
+      "q": { "en": "When would you avoid sub-agents?", "es": "¿Cuándo evitarías los subagentes?" },
+      "a": {
+        "en": "When subtasks are tightly coupled, like edits across one codebase: each sub-agent sees only its slice and makes decisions that conflict with the others. They shine on breadth-first, parallelizable work such as research, where each branch can be summarized independently. They also cost a lot (Anthropic reported ~15× chat tokens for its multi-agent system), so the value of the task has to justify the bill.",
+        "es": "Cuando las subtareas están muy acopladas, como editar una misma base de código: cada subagente ve solo su parte y toma decisiones que chocan con las de los demás. Brillan en trabajo amplio y paralelizable como la investigación, donde cada rama se puede resumir por separado. Además cuestan mucho (Anthropic reportó ~15× los tokens de un chat en su sistema multiagente), así que el valor de la tarea tiene que justificar la factura."
+      }
+    }
+  ],
+  "related": ["context-rot", "agent-memory", "multi-agent", "prompt-caching", "tool-design", "context-window"],
+  "sources": [
+    { "title": "Anthropic — Effective context engineering for AI agents", "url": "https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents" },
+    { "title": "Anthropic — How we built our multi-agent research system", "url": "https://www.anthropic.com/engineering/built-multi-agent-research-system" },
+    { "title": "Anthropic — Managing context on the Claude Developer Platform", "url": "https://www.anthropic.com/news/context-management" },
+    { "title": "Chroma Research — Context Rot", "url": "https://research.trychroma.com/context-rot" }
+  ]
+}

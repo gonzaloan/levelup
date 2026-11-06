@@ -1,0 +1,88 @@
+{
+  "id": "rag-evaluation",
+  "domain": "rag",
+  "level": "core",
+  "title": { "en": "Evaluating RAG", "es": "Evaluar un sistema RAG" },
+  "aliases": ["RAG evals", "retrieval metrics", "recall@k", "MRR", "nDCG", "faithfulness", "RAGAS", "RAG triad"],
+  "tldr": {
+    "en": "Score retrieval and generation separately: recall@k and MRR tell you whether the evidence was found, faithfulness and correctness tell you whether the model used it. One blended score hides which stage to fix.",
+    "es": "Mide la recuperación y la generación por separado: recall@k y MRR te dicen si se encontró la evidencia; faithfulness y corrección, si el modelo la usó bien. Un único puntaje mezclado esconde qué etapa arreglar."
+  },
+  "analogy": {
+    "en": "Grading an open-book exam: first check the student opened the right pages, then whether the answer actually follows from them. A wrong answer means something different in each case.",
+    "es": "Es como corregir un examen a libro abierto: primero revisas si el alumno abrió las páginas correctas y después si la respuesta realmente se desprende de ellas. Una respuesta mala significa algo distinto en cada caso."
+  },
+  "explain": {
+    "en": "Evaluate RAG as **two systems**, because a bad answer has two causes: retrieval didn't find the evidence, or generation misused it. One end-to-end score can't tell you which to fix.\n\n**Retrieval metrics** (need labeled relevant doc ids per question):\n\n- **Recall@k** — share of the relevant docs that appear in the top k. The ceiling for everything downstream.\n- **Precision@k** — share of the top k that is relevant: the noise you pay for in the prompt.\n- **Hit rate@k** — share of questions with at least one relevant doc in the top k.\n- **MRR** — mean of 1/rank of the first relevant doc. **nDCG@k** — rank-aware, supports graded relevance.\n\n**Generation metrics** (usually an LLM judge, calibrated on human labels):\n\n- **Faithfulness / groundedness** — is every claim supported by the retrieved context?\n- **Answer relevance** — does it address the question?\n- **Correctness** — does it match the reference answer?\n- **Citation accuracy** — does each cited source actually support its sentence?\n\nThe **eval set** is the real asset: question → relevant doc ids → reference answer, drawn from real queries and covering lookups, multi-hop, numeric and **no-answer** questions, where the right behavior is to abstain. **RAGAS**, **TruLens** (its \"RAG triad\") and **ARES** automate the judging; they don't replace the labeled set.",
+    "es": "Evalúa un RAG como **dos sistemas**, porque una mala respuesta tiene dos causas: la recuperación no encontró la evidencia o la generación la usó mal. Un solo puntaje de punta a punta no te dice cuál arreglar.\n\n**Métricas de recuperación** (requieren ids de documentos relevantes etiquetados por pregunta):\n\n- **Recall@k**: proporción de los documentos relevantes que aparecen en el top k. Es el techo de todo lo que viene después.\n- **Precision@k**: proporción del top k que es relevante: el ruido que pagas en el prompt.\n- **Hit rate@k**: proporción de preguntas con al menos un documento relevante en el top k.\n- **MRR**: promedio de 1/posición del primer documento relevante. **nDCG@k**: sensible a la posición y admite relevancia graduada.\n\n**Métricas de generación** (por lo general un LLM juez, calibrado con etiquetas humanas):\n\n- **Faithfulness / groundedness**: ¿cada afirmación está respaldada por el contexto recuperado?\n- **Relevancia de la respuesta**: ¿responde lo que se preguntó?\n- **Corrección**: ¿coincide con la respuesta de referencia?\n- **Precisión de las citas**: ¿cada fuente citada respalda de verdad su oración?\n\nEl **set de evaluación** es el activo real: pregunta → ids de documentos relevantes → respuesta de referencia, tomado de consultas reales y con búsquedas puntuales, multi-hop, numéricas y preguntas **sin respuesta**, donde lo correcto es abstenerse. **RAGAS**, **TruLens** (su \"RAG triad\") y **ARES** automatizan el juicio; no reemplazan el set etiquetado."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  E[(Eval set)] --> Q[Question]\n  Q --> R[Retriever]\n  R --> C[Top-k chunks]\n  C --> G[Generator]\n  G --> A[Answer]\n  E -.->|relevant doc ids| RM[\"Retrieval metrics<br/>recall@k, MRR, nDCG\"]\n  C --> RM\n  E -.->|reference answer| GM[\"Generation metrics<br/>faithfulness, correctness\"]\n  C --> GM\n  A --> GM",
+    "caption": {
+      "en": "Retrieval is scored against labeled doc ids; generation is scored against the retrieved context (faithfulness) and the reference answer (correctness).",
+      "es": "La recuperación se mide contra ids de documentos etiquetados; la generación, contra el contexto recuperado (faithfulness) y la respuesta de referencia (corrección)."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Recall@k, MRR and hit rate over an eval set", "es": "Recall@k, MRR y hit rate sobre un set de evaluación" },
+    "source": "def recall_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:\n    return len(set(retrieved[:k]) & relevant) / len(relevant)\n\ndef reciprocal_rank(retrieved: list[str], relevant: set[str]) -> float:\n    for rank, doc_id in enumerate(retrieved, start=1):\n        if doc_id in relevant:\n            return 1.0 / rank\n    return 0.0  # never found\n\ndef evaluate(eval_set: list[dict], search, k: int = 10) -> dict:\n    # No-answer items (empty relevant_doc_ids) are scored on abstention instead\n    answerable = [ex for ex in eval_set if ex[\"relevant_doc_ids\"]]\n    recall, rr, hits = 0.0, 0.0, 0.0\n    for ex in answerable:\n        rel = set(ex[\"relevant_doc_ids\"])\n        # Collapse chunk hits to doc ids, keeping rank order: labels survive re-chunking\n        retrieved = list(dict.fromkeys(c.doc_id for c in search(ex[\"question\"], k=k)))\n        recall += recall_at_k(retrieved, rel, k)\n        rr += reciprocal_rank(retrieved, rel)\n        hits += float(bool(rel & set(retrieved[:k])))\n    n = len(answerable)\n    return {f\"recall@{k}\": recall / n, \"mrr\": rr / n, f\"hit_rate@{k}\": hits / n}\n\n# eval item: {\"question\": \"...\", \"relevant_doc_ids\": [\"policy-17\"], \"reference_answer\": \"...\"}\nprint(evaluate(eval_set, hybrid_search, k=10))  # run in CI on every retrieval change"
+  },
+  "example": {
+    "en": "An HR assistant scores 71% answer correctness, but where is the loss? Splitting the eval (250 questions) shows hit rate@10 of 0.93 and faithfulness of 0.97, yet MRR is only 0.48: the relevant policy often sits at rank 6–10, and the prompt only includes the top 5. Adding a reranker lifts MRR to 0.81 and correctness to 86% without touching the generator. Meanwhile 30 no-answer questions reveal the bot invents a parental-leave policy for contractors in 12 of them; a prompt rule plus an abstain check fixes that.",
+    "es": "Un asistente de RR. HH. tiene 71% de corrección en sus respuestas, pero ¿dónde se pierde? Separar la evaluación (250 preguntas) muestra un hit rate@10 de 0,93 y una faithfulness de 0,97, pero un MRR de apenas 0,48: la política relevante suele quedar entre los puestos 6 y 10, y el prompt solo incluye el top 5. Agregar un reranker sube el MRR a 0,81 y la corrección a 86% sin tocar el generador. A la vez, 30 preguntas sin respuesta revelan que el bot inventa una política de licencia parental para contratistas en 12 de ellas; una regla en el prompt más una verificación de abstención lo corrige."
+  },
+  "pros": [
+    { "en": "Pinpoints the stage to fix: retrieval, ranking or generation.", "es": "Señala qué etapa arreglar: recuperación, ranking o generación." },
+    { "en": "Retrieval metrics are cheap and deterministic: rerun them on every chunking or embedding change.", "es": "Las métricas de recuperación son baratas y deterministas: córrelas con cada cambio de chunking o de embeddings." },
+    { "en": "A labeled set turns debates (\"the new embedder feels better\") into numbers.", "es": "Un set etiquetado convierte los debates (\"el nuevo embedder se siente mejor\") en números." }
+  ],
+  "cons": [
+    { "en": "Labeling relevant doc ids and reference answers takes real expert time.", "es": "Etiquetar ids de documentos relevantes y respuestas de referencia exige tiempo real de expertos." },
+    { "en": "LLM-judged generation metrics are noisy and biased unless calibrated against human labels.", "es": "Las métricas de generación con LLM juez son ruidosas y sesgadas si no se calibran contra etiquetas humanas." },
+    { "en": "Offline scores drift from production as the corpus and the query mix change.", "es": "Los puntajes offline se alejan de producción a medida que cambian el corpus y el tipo de consultas." }
+  ],
+  "whenToUse": {
+    "en": "Always, before tuning anything: chunk size, embedding model, hybrid weights, reranker, prompt. Run retrieval metrics in CI on every change and generation metrics before each release.",
+    "es": "Siempre, antes de ajustar cualquier cosa: tamaño de chunk, modelo de embeddings, pesos de la búsqueda híbrida, reranker, prompt. Corre las métricas de recuperación en CI con cada cambio y las de generación antes de cada release."
+  },
+  "whenNotToUse": {
+    "en": "Never skip it, but don't over-invest early: ~100 real questions with labeled doc ids are worth more than thousands of synthetic ones nobody has checked.",
+    "es": "Nunca te lo saltes, pero no sobreinviertas al inicio: ~100 preguntas reales con ids de documentos etiquetados valen más que miles de preguntas sintéticas que nadie revisó."
+  },
+  "numbers": [
+    { "en": "MRR per question: first relevant doc at rank 1 → 1.0, rank 2 → 0.5, rank 5 → 0.2, not found → 0.", "es": "MRR por pregunta: primer documento relevante en el puesto 1 → 1,0; puesto 2 → 0,5; puesto 5 → 0,2; no encontrado → 0." },
+    { "en": "Hit rate@50 of 0.80 means ~20% of questions never see a relevant doc: no generator can fix those.", "es": "Un hit rate@50 de 0,80 significa que ~20% de las preguntas nunca ve un documento relevante: ningún generador puede arreglar eso." },
+    { "en": "RAGAS core metrics: faithfulness, answer relevancy, context precision, context recall.", "es": "Métricas centrales de RAGAS: faithfulness, answer relevancy, context precision, context recall." },
+    { "en": "TruLens RAG triad: context relevance, groundedness, answer relevance.", "es": "RAG triad de TruLens: context relevance, groundedness, answer relevance." }
+  ],
+  "pitfalls": [
+    { "en": "Measuring only end-to-end answer quality, so every regression turns into guesswork.", "es": "Medir solo la calidad de la respuesta final, así cada regresión se vuelve adivinanza." },
+    { "en": "Labeling chunk ids: the next re-chunking invalidates the whole set. Label doc ids or text spans.", "es": "Etiquetar ids de chunks: el siguiente cambio de chunking invalida todo el set. Etiqueta ids de documentos o fragmentos de texto." },
+    { "en": "Trusting an LLM judge's faithfulness score without checking its agreement with human labels.", "es": "Confiar en el puntaje de faithfulness de un LLM juez sin revisar su acuerdo con etiquetas humanas." },
+    { "en": "No no-answer questions: abstaining is never rewarded, so hallucination goes unmeasured.", "es": "No incluir preguntas sin respuesta: abstenerse nunca suma puntos y la alucinación queda sin medir." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you set up evaluation for a new RAG system?", "es": "¿Cómo armarías la evaluación de un sistema RAG nuevo?" },
+      "a": {
+        "en": "I start with the eval set, not the framework. I collect ~100 real or realistic questions, label the relevant doc ids and a short reference answer, and include no-answer and multi-hop cases. Then I measure two layers. Retrieval: recall@k, hit rate and MRR, deterministic and cheap enough for CI on every chunking or embedding change. Generation: faithfulness, correctness and citation accuracy with an LLM judge I calibrate against human labels. The split tells me where to spend: low recall means retrieval work; high recall with unfaithful answers means prompting or the model.",
+        "es": "Empiezo por el set de evaluación, no por el framework. Junto ~100 preguntas reales o realistas, etiqueto los ids de documentos relevantes y una respuesta de referencia corta, e incluyo casos sin respuesta y multi-hop. Después mido dos capas. Recuperación: recall@k, hit rate y MRR, deterministas y lo bastante baratas para correr en CI con cada cambio de chunking o de embeddings. Generación: faithfulness, corrección y precisión de citas con un LLM juez que calibro contra etiquetas humanas. La separación me dice dónde invertir: recall bajo significa trabajo en recuperación; recall alto con respuestas infieles significa prompt o modelo."
+      }
+    },
+    {
+      "q": { "en": "Recall@10 is 0.95 but users say answers are wrong. What do you check?", "es": "El recall@10 es 0,95 pero los usuarios dicen que las respuestas están mal. ¿Qué revisas?" },
+      "a": {
+        "en": "Retrieval finds the evidence, so I look downstream. First, does it reach the prompt? If I only pass the top 5, recall@5 or MRR may be much lower, and a reranker fixes that. Second, faithfulness: is the model ignoring or contradicting the context, maybe because of distracting chunks or ordering? Third, representativeness: if production queries differ from the eval set, offline recall means little, so I sample failing production traces and add them. Finally, citation accuracy: users may be reacting to wrong sources rather than wrong answers.",
+        "es": "La recuperación encuentra la evidencia, así que miro más adelante. Primero, ¿llega al prompt? Si solo paso el top 5, el recall@5 o el MRR pueden ser mucho menores, y un reranker lo arregla. Segundo, faithfulness: ¿el modelo ignora o contradice el contexto, quizá por chunks que distraen o por el orden? Tercero, representatividad: si las consultas de producción difieren del set de evaluación, el recall offline dice poco, así que muestreo trazas de producción que fallan y las agrego. Por último, la precisión de las citas: puede que los usuarios reaccionen a fuentes erróneas y no a respuestas erróneas."
+      }
+    }
+  ],
+  "related": ["rag", "reranking", "golden-datasets", "llm-as-judge", "groundedness", "citations-grounding"],
+  "sources": [
+    { "title": "Es et al. — RAGAS: Automated Evaluation of Retrieval Augmented Generation (2023)", "url": "https://arxiv.org/abs/2309.15217" },
+    { "title": "Saad-Falcon et al. — ARES: An Automated Evaluation Framework for Retrieval-Augmented Generation Systems (2023)", "url": "https://arxiv.org/abs/2311.09476" },
+    { "title": "TruLens documentation", "url": "https://www.trulens.org/" },
+    { "title": "Gao et al. — Enabling Large Language Models to Generate Text with Citations (2023)", "url": "https://arxiv.org/abs/2305.14627" }
+  ]
+}
