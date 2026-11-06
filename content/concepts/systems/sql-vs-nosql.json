@@ -1,0 +1,97 @@
+{
+  "id": "sql-vs-nosql",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "SQL vs NoSQL", "es": "SQL vs NoSQL" },
+  "aliases": ["relational vs non-relational", "RDBMS", "document store", "key-value store", "wide-column", "NewSQL", "polyglot persistence", "just use Postgres"],
+  "tldr": {
+    "en": "Pick the store from your access patterns, consistency needs and scale, not the label: Postgres by default (JSONB, pgvector), a specialized NoSQL store when one access pattern outgrows a single primary.",
+    "es": "Elige el almacén según tus patrones de acceso, necesidades de consistencia y escala, no por la etiqueta: Postgres por defecto (JSONB, pgvector) y un NoSQL especializado cuando un patrón de acceso supera a un solo primario."
+  },
+  "analogy": {
+    "en": "A relational database is a library with a full catalog: you can ask new questions later. A key-value store is a coat check: hand over a ticket, get your coat instantly, but never ask for \"all the red coats\".",
+    "es": "Una base relacional es una biblioteca con catálogo completo: puedes hacer preguntas nuevas después. Un almacén clave-valor es un guardarropa: entregas el ticket y recibes tu abrigo al instante, pero nunca puedes pedir \"todos los abrigos rojos\"."
+  },
+  "explain": {
+    "en": "**SQL (relational)** databases store rows in tables with a declared schema, enforce constraints, join across tables and give you **ACID** transactions. Postgres and MySQL are the defaults. **NoSQL** is an umbrella for stores that give up some of that for an easier scale-out story or a better fit for one access pattern:\n\n- **Key-value** (Redis, DynamoDB): get/put by key, flat latency at any scale.\n- **Document** (MongoDB): one nested JSON record per entity, schema-on-read.\n- **Wide-column** (Cassandra, Bigtable): partition key + sorted clustering key, built for huge write rates.\n- **Graph** (Neo4j): multi-hop relationship queries.\n\nThe real question is **which queries you must serve, how consistent they must be, and at what scale**. NoSQL makes you design tables around known queries up front (DynamoDB single-table design); relational lets you ask new questions later.\n\nMy default is **just use Postgres**: JSONB gives you documents with GIN indexes, `pgvector` keeps embeddings next to the rows they describe, and one transaction covers both. Move a workload out when you *measure* a limit: write throughput beyond one primary, multi-region writes, or ANN at [[vector-databases]] scale. **NewSQL** (Spanner, CockroachDB) keeps SQL and serializable transactions while sharding automatically, paying with consensus latency on every commit.",
+    "es": "Las bases **SQL (relacionales)** guardan filas en tablas con un esquema declarado, hacen cumplir restricciones, permiten joins entre tablas y te dan transacciones **ACID**. Postgres y MySQL son la opción por defecto. **NoSQL** es un paraguas para almacenes que sacrifican parte de eso a cambio de escalar horizontalmente con menos esfuerzo o de ajustarse mejor a un patrón de acceso:\n\n- **Clave-valor** (Redis, DynamoDB): get/put por clave, latencia estable a cualquier escala.\n- **Documentos** (MongoDB): un registro JSON anidado por entidad, esquema al leer.\n- **Columnas anchas** (Cassandra, Bigtable): partition key + clustering key ordenada, pensadas para tasas de escritura enormes.\n- **Grafos** (Neo4j): consultas de relaciones de varios saltos.\n\nLa pregunta real es **qué consultas debes servir, qué tan consistentes deben ser y a qué escala**. NoSQL te obliga a diseñar las tablas alrededor de consultas conocidas desde el inicio (single-table design en DynamoDB); lo relacional te deja hacer preguntas nuevas después.\n\nMi opción por defecto es **usar Postgres y ya**: JSONB te da documentos con índices GIN, `pgvector` guarda los embeddings junto a las filas que describen, y una sola transacción cubre ambos. Saca una carga de trabajo solo cuando *midas* un límite: throughput de escritura mayor al de un primario, escrituras multirregión o ANN a escala de [[vector-databases]]. **NewSQL** (Spanner, CockroachDB) conserva SQL y transacciones serializables mientras particiona automáticamente, y lo paga con latencia de consenso en cada commit."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  A[New workload] --> B{\"Joins, transactions<br/>or ad-hoc queries?\"}\n  B -->|yes| C{\"Fits one primary<br/>plus replicas?\"}\n  C -->|yes| PG[(\"Postgres<br/>+ JSONB + pgvector\")]\n  C -->|no| NS[(\"Spanner / CockroachDB\")]\n  B -->|no| D{Dominant access pattern}\n  D -->|\"get/put by key\"| KV[(\"DynamoDB / Redis\")]\n  D -->|nested documents| DOC[(MongoDB)]\n  D -->|massive write volume| WC[(Cassandra)]\n  D -->|multi-hop relationships| G[(Neo4j)]",
+    "caption": {
+      "en": "Start from the queries, not the label: relational by default, a specialized store only when one access pattern dominates.",
+      "es": "Parte de las consultas, no de la etiqueta: relacional por defecto y un almacén especializado solo cuando domina un patrón de acceso."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "One Postgres: relational + JSONB + pgvector", "es": "Un solo Postgres: relacional + JSONB + pgvector" },
+    "source": "-- One Postgres for an AI app: relational + document + vector\nCREATE EXTENSION IF NOT EXISTS vector;\n\nCREATE TABLE messages (\n  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n  tenant_id   bigint      NOT NULL,\n  convo_id    uuid        NOT NULL,\n  role        text        NOT NULL,\n  content     text        NOT NULL,\n  meta        jsonb       NOT NULL DEFAULT '{}',  -- model, tool calls, token counts\n  embedding   vector(1536),                       -- pgvector\n  created_at  timestamptz NOT NULL DEFAULT now()\n);\n\nCREATE INDEX ON messages (tenant_id, convo_id, created_at);       -- load a thread\nCREATE INDEX ON messages USING gin (meta jsonb_path_ops);          -- filter metadata\nCREATE INDEX ON messages USING hnsw (embedding vector_cosine_ops); -- ANN recall\n\n-- Semantic memory recall for one tenant, filtered on JSONB, in one query\nSELECT id, content\nFROM messages\nWHERE tenant_id = 42\n  AND meta @> '{\"kind\": \"memory\"}'\nORDER BY embedding <=> $1   -- cosine distance to the query embedding\nLIMIT 5;"
+  },
+  "example": {
+    "en": "A chat assistant with ~50k daily users runs on one Postgres: users and conversations as relational tables, each message's tool calls and token counts in a JSONB column, and 1536-dim embeddings in `pgvector` for memory recall. One transaction writes the message and its embedding, so recall never sees half a turn. LLM traces (append-only, ~2 KB per call, queried as aggregates) outgrow it first and move to a columnar store like ClickHouse. At ~40M embeddings with per-tenant filters, ANN latency climbs and vectors move to a dedicated vector DB; conversations stay in Postgres.",
+    "es": "Un asistente de chat con ~50k usuarios diarios corre sobre un solo Postgres: usuarios y conversaciones como tablas relacionales, las tool calls y el conteo de tokens de cada mensaje en una columna JSONB, y embeddings de 1536 dimensiones en `pgvector` para recuperar memoria. Una sola transacción escribe el mensaje y su embedding, así que la búsqueda nunca ve un turno a medias. Las trazas del LLM (append-only, ~2 KB por llamada, consultadas con agregaciones) son lo primero que lo desborda y pasan a un almacén columnar como ClickHouse. Con ~40M de embeddings y filtros por tenant, la latencia del ANN sube y los vectores se mudan a una base vectorial dedicada; las conversaciones se quedan en Postgres."
+  },
+  "pros": [
+    { "en": "Relational: new queries without redesign; constraints and transactions catch bugs at write time.", "es": "Relacional: consultas nuevas sin rediseñar; las restricciones y transacciones atrapan errores al escribir." },
+    { "en": "Key-value and wide-column stores scale writes horizontally with predictable latency built in.", "es": "Los almacenes clave-valor y de columnas anchas escalan escrituras horizontalmente con latencia predecible de fábrica." },
+    { "en": "Postgres covers relations, documents (JSONB) and vectors (pgvector): one system to back up, secure and operate.", "es": "Postgres cubre relaciones, documentos (JSONB) y vectores (pgvector): un solo sistema que respaldar, asegurar y operar." }
+  ],
+  "cons": [
+    { "en": "One Postgres primary caps write throughput; sharding it (Citus or app-level) is real work.", "es": "Un primario de Postgres limita el throughput de escritura; particionarlo (Citus o en la aplicación) es trabajo serio." },
+    { "en": "NoSQL: queries are designed up front; a new access pattern can mean a new table and a backfill.", "es": "NoSQL: las consultas se diseñan desde el inicio; un patrón de acceso nuevo puede implicar otra tabla y un backfill." },
+    { "en": "NoSQL: weaker or single-item transactions, and joins move into application code.", "es": "NoSQL: transacciones más débiles o de un solo ítem, y los joins se mudan al código de la aplicación." },
+    { "en": "Every extra store adds ops, backups and consistency gaps between stores.", "es": "Cada almacén extra suma operación, respaldos y huecos de consistencia entre almacenes." }
+  ],
+  "whenToUse": {
+    "en": "Postgres by default for transactional app data, including AI metadata and moderate vector counts. A NoSQL store when one access pattern dominates at a write rate, size or latency a single primary can't serve.",
+    "es": "Postgres por defecto para datos transaccionales, incluidos metadatos de IA y una cantidad moderada de vectores. Un NoSQL cuando un patrón de acceso domina con una tasa de escritura, tamaño o latencia que un solo primario no aguanta."
+  },
+  "whenNotToUse": {
+    "en": "Don't pick NoSQL for \"schema flexibility\" or because \"it scales\" before you've measured. Don't force analytics (traces, logs) into OLTP Postgres either: use a columnar store.",
+    "es": "No elijas NoSQL por \"flexibilidad de esquema\" ni porque \"escala\" antes de medir. Tampoco metas analítica (trazas, logs) en el Postgres OLTP: usa un almacén columnar."
+  },
+  "numbers": [
+    { "en": "DynamoDB: 400 KB max item; each partition serves up to 3,000 RCU and 1,000 WCU per second.", "es": "DynamoDB: ítem máximo de 400 KB; cada partición sirve hasta 3,000 RCU y 1,000 WCU por segundo." },
+    { "en": "MongoDB: 16 MB max document size.", "es": "MongoDB: tamaño máximo de documento de 16 MB." },
+    { "en": "pgvector indexes (HNSW, IVFFlat) support up to 2,000 dimensions for `vector`, 4,000 for `halfvec`.", "es": "Los índices de pgvector (HNSW, IVFFlat) soportan hasta 2,000 dimensiones con `vector` y 4,000 con `halfvec`." },
+    { "en": "Postgres default isolation is Read Committed, not Serializable.", "es": "El aislamiento por defecto de Postgres es Read Committed, no Serializable." },
+    { "en": "Rule of thumb: pgvector on one well-sized node is comfortable up to ~10M vectors; beyond that, plan partitioning or a dedicated vector DB.", "es": "Regla práctica: pgvector en un nodo bien dimensionado va cómodo hasta ~10M de vectores; más allá, planea particionar o una base vectorial dedicada." }
+  ],
+  "pitfalls": [
+    { "en": "Picking MongoDB for \"flexibility\", then rebuilding joins, constraints and transactions in application code.", "es": "Elegir MongoDB por \"flexibilidad\" y luego reconstruir joins, restricciones y transacciones en el código de la aplicación." },
+    { "en": "A hot partition key (e.g. `tenant_id` when one tenant is 40% of traffic): one partition throttles while the rest idle.", "es": "Una partition key caliente (p. ej. `tenant_id` cuando un tenant es el 40% del tráfico): una partición se estrangula mientras las demás están ociosas." },
+    { "en": "Assuming Postgres is serializable by default: under Read Committed, read-modify-write races lose updates.", "es": "Suponer que Postgres es serializable por defecto: con Read Committed, las carreras de leer-modificar-escribir pierden actualizaciones." },
+    { "en": "Embeddings in a separate store with no sync plan: deleted or re-permissioned rows live on as orphan vectors.", "es": "Embeddings en otro almacén sin plan de sincronización: las filas borradas o con permisos cambiados siguen vivas como vectores huérfanos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you choose the database for a new AI product?", "es": "¿Cómo eliges la base de datos para un producto nuevo de IA?" },
+      "a": {
+        "en": "I start from access patterns, not the label: the top queries, their latency, consistency needs and expected volume. Most of it — users, conversations, billing — is relational and transactional, so I start with Postgres, JSONB for flexible metadata and pgvector for embeddings. One system, one backup, one transaction boundary. I split a workload out only on a measured limit: traces to a columnar store because they're append-only analytics, vectors to a dedicated DB past ~10M with heavy filtering, hot key lookups to Redis or DynamoDB.",
+        "es": "Parto de los patrones de acceso, no de la etiqueta: las consultas principales, su latencia, necesidades de consistencia y volumen esperado. Casi todo (usuarios, conversaciones, facturación) es relacional y transaccional, así que empiezo con Postgres, JSONB para metadatos flexibles y pgvector para embeddings. Un sistema, un respaldo, un límite transaccional. Solo saco una carga cuando mido un límite: trazas a un almacén columnar porque son analítica append-only, vectores a una base dedicada pasando ~10M con mucho filtrado, lecturas por clave muy calientes a Redis o DynamoDB."
+      }
+    },
+    {
+      "q": { "en": "When is NoSQL clearly the right answer?", "es": "¿Cuándo NoSQL es claramente la respuesta correcta?" },
+      "a": {
+        "en": "When one access pattern dominates and its scale beats a single primary. Say every agent step for millions of sessions: very high write rates, always read by session id in time order. DynamoDB or Cassandra with partition key `session_id` and sort key `timestamp` serves that with flat latency and no sharding work on my side. The price: no ad-hoc queries, so analytics goes through a stream into a warehouse, and I must choose a partition key without hot spots.",
+        "es": "Cuando un patrón de acceso domina y su escala supera a un solo primario. Por ejemplo, cada paso de agente de millones de sesiones: tasas de escritura muy altas, siempre leídas por id de sesión en orden temporal. DynamoDB o Cassandra con partition key `session_id` y sort key `timestamp` lo sirve con latencia estable y sin que yo tenga que particionar. El precio: no hay consultas ad hoc, así que la analítica va por un stream hacia un warehouse, y debo elegir una partition key sin puntos calientes."
+      }
+    },
+    {
+      "q": { "en": "What does NewSQL buy you, and what does it cost?", "es": "¿Qué te da NewSQL y cuánto cuesta?" },
+      "a": {
+        "en": "Spanner and CockroachDB keep SQL and serializable transactions while sharding and replicating automatically with Paxos or Raft, so I get relational semantics across regions. The cost is commit latency: every write needs a consensus round, and cross-region writes add tens to hundreds of milliseconds. I reach for it for multi-region writes that must be strongly consistent, like ledgers or quotas, not as a default for a product that fits on one Postgres.",
+        "es": "Spanner y CockroachDB conservan SQL y transacciones serializables mientras particionan y replican automáticamente con Paxos o Raft, así que obtengo semántica relacional entre regiones. El costo es latencia en el commit: cada escritura necesita una ronda de consenso, y las escrituras entre regiones suman de decenas a cientos de milisegundos. Lo uso para escrituras multirregión que deben ser fuertemente consistentes, como ledgers o cuotas, no como opción por defecto para un producto que cabe en un Postgres."
+      }
+    }
+  ],
+  "related": ["indexes", "sharding", "consistency-models", "vector-databases", "cap-pacelc", "agent-memory"],
+  "sources": [
+    { "title": "PostgreSQL docs — JSON Types", "url": "https://www.postgresql.org/docs/current/datatype-json.html" },
+    { "title": "pgvector — Open-source vector similarity search for Postgres", "url": "https://github.com/pgvector/pgvector" },
+    { "title": "AWS — NoSQL design for DynamoDB", "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-general-nosql-design.html" },
+    { "title": "Martin Kleppmann — Designing Data-Intensive Applications", "url": "https://dataintensive.net/" }
+  ]
+}

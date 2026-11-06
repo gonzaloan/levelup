@@ -1,0 +1,88 @@
+{
+  "id": "recsys",
+  "domain": "mlops",
+  "level": "advanced",
+  "title": { "en": "Recommendation systems", "es": "Sistemas de recomendación" },
+  "aliases": ["recommender systems", "RecSys", "two-tower model", "candidate generation", "collaborative filtering", "learning to rank", "YouTube DNN"],
+  "tldr": {
+    "en": "A funnel: cheaply retrieve hundreds of candidates from millions (two-tower embeddings + ANN), rank them with a heavy model on rich features, then re-rank for diversity and business rules.",
+    "es": "Un embudo: recupera de forma barata cientos de candidatos entre millones (embeddings two-tower + ANN), ordénalos con un modelo pesado y features ricas, y luego reordena por diversidad y reglas de negocio."
+  },
+  "analogy": {
+    "en": "A bookstore: the clerk grabs 30 books from the right shelves in seconds, then thinks hard about which 5 suit you, and finally makes sure they aren't all by one author.",
+    "es": "Una librería: el vendedor saca 30 libros de los estantes correctos en segundos, luego piensa con calma cuáles 5 te van, y al final cuida que no sean todos del mismo autor."
+  },
+  "explain": {
+    "en": "A recommender picks the few items a user will most value from a catalog too large to score exhaustively, so it runs as a **multi-stage funnel** (Covington et al., YouTube, 2016):\n\n1. **Candidate generation** (millions → hundreds, milliseconds): several cheap retrievers in parallel. A **two-tower** model embeds users and items into one space and an [[ann-indexes]] lookup finds the nearest items; add collaborative filtering, trending, 'more from this creator'.\n2. **Ranking** (hundreds → dozens): a GBDT or deep model scores each candidate with rich features (user history, item stats, context, crosses) to predict clicks, watch time or purchases.\n3. **Re-ranking**: diversity, freshness, dedup, business and safety rules.\n\nHard parts: **cold start** (no interactions yet: use content features and popularity), **feedback loops** (you only learn from what you showed, which amplifies popularity bias: reserve exploration), and **metrics** (NDCG and recall@k offline, but only an online A/B test on CTR, watch time or retention decides).\n\nLLMs help with item understanding, cold-start embeddings and explanations; rarely as the ranker at scale.",
+    "es": "Un recomendador elige los pocos ítems que más valorará un usuario dentro de un catálogo demasiado grande para puntuarlo completo, así que funciona como un **embudo de varias etapas** (Covington et al., YouTube, 2016):\n\n1. **Generación de candidatos** (millones → cientos, milisegundos): varios recuperadores baratos en paralelo. Un modelo **two-tower** lleva usuarios e ítems al mismo espacio de embeddings y una búsqueda en [[ann-indexes]] encuentra los ítems más cercanos; se suman filtrado colaborativo, tendencias y 'más de este creador'.\n2. **Ranking** (cientos → decenas): un GBDT o un modelo profundo puntúa cada candidato con features ricas (historial del usuario, estadísticas del ítem, contexto, cruces) para predecir clics, tiempo de visualización o compras.\n3. **Re-ranking**: diversidad, novedad, deduplicación, reglas de negocio y de seguridad.\n\nLo difícil: **cold start** (sin interacciones todavía: usa features de contenido y popularidad), **ciclos de retroalimentación** (solo aprendes de lo que mostraste, lo que amplifica el sesgo de popularidad: reserva exploración) y **métricas** (NDCG y recall@k offline, pero solo un A/B test online sobre CTR, tiempo de visualización o retención decide).\n\nLos LLMs ayudan a entender ítems, generar embeddings para cold start y explicar recomendaciones; rara vez como ranker a escala."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[\"User + context\"] --> TT[Two-tower ANN]\n  U --> CF[Collaborative filtering]\n  U --> PO[\"Trending / popular\"]\n  TT --> C[\"Candidates<br/>~500 of millions\"]\n  CF --> C\n  PO --> C\n  C --> RK[\"Ranker: GBDT or DNN<br/>rich features\"]\n  RK --> RR[\"Re-rank: diversity,<br/>rules\"]\n  RR --> S[Top 20 shown]\n  S -->|\"clicks, watch time\"| L[(Interaction logs)]\n  L -.->|retrain| TT\n  L -.->|retrain| RK",
+    "caption": {
+      "en": "Cheap, high-recall retrieval feeds an expensive ranker; logged feedback retrains both, which is also how bias loops in.",
+      "es": "Una recuperación barata y de alto recall alimenta un ranker caro; el feedback registrado reentrena ambos, y por ahí también entra el sesgo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Two-tower retrieval, then ranking and re-ranking", "es": "Recuperación two-tower, luego ranking y re-ranking" },
+    "source": "import faiss\n\n# Offline: the item tower embeds the whole catalog; rebuild the index on refresh\nitem_vecs = item_tower(catalog_features).astype(\"float32\")   # (5M, 64)\nfaiss.normalize_L2(item_vecs)\nindex = faiss.IndexHNSWFlat(64, 32, faiss.METRIC_INNER_PRODUCT)\nindex.add(item_vecs)\n\ndef recommend(user, k: int = 20):\n    # Stage 1: user tower + ANN -> ~500 candidates in a few ms\n    u = user_tower(user_features(user)).astype(\"float32\").reshape(1, -1)\n    faiss.normalize_L2(u)\n    _, ids = index.search(u, 500)\n    seen = seen_items(user)\n    cands = [i for i in ids[0] if i not in seen]\n    # Stage 2: heavy ranker (e.g. LightGBM or a DNN) only on the candidates\n    scores = ranker.predict(rank_features(user, cands))\n    ranked = [c for _, c in sorted(zip(scores, cands), reverse=True)]\n    # Stage 3: diversity and business rules\n    return rerank_diverse(ranked, max_per_creator=2)[:k]"
+  },
+  "example": {
+    "en": "A video app with 10M items retrains its ranker on clicks. Offline NDCG@10 rises 3%, yet the A/B test shows retention flat: the model now favors clickbait abandoned after 10 seconds. The team switches the ranking objective to expected watch time, as YouTube did, and caps re-ranking at 2 items per creator. For new uploads with zero views, an LLM writes a description that is embedded into the item space, so they enter the candidate pool on day one.",
+    "es": "Una app de video con 10M de ítems reentrena su ranker con clics. El NDCG@10 offline sube 3%, pero el A/B test muestra la retención plana: el modelo ahora favorece clickbait que se abandona a los 10 segundos. El equipo cambia el objetivo del ranking al tiempo de visualización esperado, como hizo YouTube, y limita el re-ranking a 2 ítems por creador. Para videos nuevos sin vistas, un LLM escribe una descripción que se lleva al espacio de embeddings, así entran al conjunto de candidatos desde el primer día."
+  },
+  "pros": [
+    { "en": "The funnel makes millions of items tractable within a ~100–200 ms page budget.", "es": "El embudo hace manejables millones de ítems dentro de un presupuesto de ~100–200 ms por página." },
+    { "en": "Each stage optimizes one thing: recall, then precision, then policy.", "es": "Cada etapa optimiza una sola cosa: recall, luego precisión, luego política." },
+    { "en": "Directly drives core business metrics: engagement, retention, revenue.", "es": "Mueve directamente las métricas centrales del negocio: engagement, retención, ingresos." }
+  ],
+  "cons": [
+    { "en": "Feedback loops: the model learns only from what it showed, reinforcing popularity.", "es": "Ciclos de retroalimentación: el modelo solo aprende de lo que mostró y refuerza la popularidad." },
+    { "en": "Cold start for new users and new items needs separate strategies.", "es": "El cold start de usuarios e ítems nuevos necesita estrategias aparte." },
+    { "en": "Offline metrics often fail to predict online wins; you need A/B testing infrastructure.", "es": "Las métricas offline muchas veces no predicen las mejoras online; necesitas infraestructura de A/B testing." },
+    { "en": "Many models, features and indexes to keep consistent: heavy operational load.", "es": "Muchos modelos, features e índices que mantener consistentes: alta carga operativa." }
+  ],
+  "whenToUse": {
+    "en": "Large catalogs where personalization moves engagement or revenue, and you have enough repeat interaction data to learn from.",
+    "es": "Catálogos grandes donde la personalización mueve el engagement o los ingresos, y tienes suficientes datos de interacciones repetidas para aprender."
+  },
+  "whenNotToUse": {
+    "en": "Small catalogs or low traffic: popularity lists, simple rules or item-to-item co-occurrence beat a deep funnel you can't even evaluate.",
+    "es": "Catálogos chicos o poco tráfico: listas de populares, reglas simples o co-ocurrencia entre ítems le ganan a un embudo profundo que ni siquiera puedes evaluar."
+  },
+  "numbers": [
+    { "en": "Covington et al. (YouTube, 2016): candidate generation narrows millions of videos to hundreds; ranking scores those to show dozens.", "es": "Covington et al. (YouTube, 2016): la generación de candidatos reduce millones de videos a cientos; el ranking los puntúa para mostrar decenas." },
+    { "en": "Netflix (Gomez-Uribe & Hunt, 2015): ~80% of hours streamed come from recommendations.", "es": "Netflix (Gomez-Uribe y Hunt, 2015): ~80% de las horas vistas provienen de recomendaciones." },
+    { "en": "Netflix Prize: $1M for a 10% RMSE gain (2009); the winning ensemble was never fully deployed, as the engineering cost outweighed the gain.", "es": "Netflix Prize: US$1M por mejorar 10% el RMSE (2009); el ensamble ganador nunca se desplegó completo porque el costo de ingeniería superaba la ganancia." }
+  ],
+  "pitfalls": [
+    { "en": "Optimizing CTR alone trains a clickbait machine; optimize watch time, purchases or retention.", "es": "Optimizar solo CTR entrena una máquina de clickbait; optimiza tiempo de visualización, compras o retención." },
+    { "en": "Random train/test splits leak the future; split by time.", "es": "Dividir train/test al azar filtra el futuro; divide por tiempo." },
+    { "en": "Shipping on an offline NDCG gain without an online A/B test.", "es": "Publicar por una mejora de NDCG offline sin un A/B test online." },
+    { "en": "No exploration: new items never get impressions, so they never get data.", "es": "Sin exploración: los ítems nuevos nunca reciben impresiones, así que nunca generan datos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why a multi-stage architecture instead of one great model?", "es": "¿Por qué una arquitectura de varias etapas en lugar de un solo gran modelo?" },
+      "a": {
+        "en": "Compute. Scoring 10 million items with a rich model per request can't fit a 200 ms budget. So I split by cost: candidate generation uses models whose item side is precomputed, like two-tower embeddings with ANN, co-occurrence and trending, to get a few hundred high-recall candidates in milliseconds. The ranker can then afford hundreds of features on just those, and re-ranking applies diversity and policy. The trade-off: the ranker can't recover what retrieval missed, so I monitor recall per source.",
+        "es": "Cómputo. Puntuar 10 millones de ítems con un modelo rico en cada request no cabe en 200 ms. Así que divido por costo: la generación de candidatos usa modelos cuyo lado de ítems está precalculado, como embeddings two-tower con ANN, co-ocurrencia y tendencias, para obtener unos cientos de candidatos con alto recall en milisegundos. El ranker puede entonces usar cientos de features solo sobre esos, y el re-ranking aplica diversidad y políticas. El trade-off: el ranker no recupera lo que la recuperación perdió, así que monitoreo el recall de cada fuente."
+      }
+    },
+    {
+      "q": { "en": "How do you handle cold start and popularity bias?", "es": "¿Cómo manejas el cold start y el sesgo de popularidad?" },
+      "a": {
+        "en": "For new items I lean on content: text, images and LLM-written descriptions embedded into the same space, so they're retrievable on day one, plus a small exploration slot of impressions. For new users, contextual popularity and onboarding signals, switching to personalized as interactions accumulate. Popularity bias is a feedback loop, since we only learn from what we showed. I counter it with exploration traffic, logged propensities for off-policy correction, and diversity constraints in re-ranking.",
+        "es": "Para ítems nuevos me apoyo en el contenido: texto, imágenes y descripciones escritas por un LLM llevadas al mismo espacio de embeddings, para que se puedan recuperar desde el primer día, más un pequeño cupo de impresiones para exploración. Para usuarios nuevos, popularidad según contexto y señales del onboarding, y paso a lo personalizado a medida que se acumulan interacciones. El sesgo de popularidad es un ciclo de retroalimentación, porque solo aprendemos de lo que mostramos. Lo contrarresto con tráfico de exploración, propensiones registradas para corrección off-policy y restricciones de diversidad en el re-ranking."
+      }
+    }
+  ],
+  "related": ["case-recommendations", "embeddings", "ann-indexes", "feature-store", "ab-testing", "batch-vs-realtime"],
+  "sources": [
+    { "title": "Covington, Adams, Sargin — Deep Neural Networks for YouTube Recommendations (RecSys 2016)", "url": "https://dl.acm.org/doi/10.1145/2959100.2959190" },
+    { "title": "Gomez-Uribe, Hunt — The Netflix Recommender System: Algorithms, Business Value, and Innovation (2015)", "url": "https://dl.acm.org/doi/10.1145/2843948" },
+    { "title": "Eugene Yan — System Design for Recommendations and Search", "url": "https://eugeneyan.com/writing/system-design-for-discovery/" },
+    { "title": "Google — Recommendation Systems course", "url": "https://developers.google.com/machine-learning/recommendation" }
+  ]
+}

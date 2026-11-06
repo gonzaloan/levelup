@@ -1,0 +1,103 @@
+{
+  "id": "llmops",
+  "domain": "mlops",
+  "level": "core",
+  "title": { "en": "LLMOps vs MLOps", "es": "LLMOps vs MLOps" },
+  "aliases": ["LLMOps", "GenAIOps", "MLOps for LLMs", "foundation model ops", "model pinning", "model deprecation", "release bundle"],
+  "tldr": {
+    "en": "LLMOps is MLOps where you mostly compose instead of train: the release unit is a pinned model plus prompts, retrieval index and tools, gated by eval suites, priced per token, and exposed to vendor deprecations.",
+    "es": "LLMOps es MLOps donde casi siempre compones en vez de entrenar: la unidad de release es un modelo fijado más prompts, índice de recuperación y herramientas, con evals como compuerta, costo por token y riesgo de deprecaciones del proveedor."
+  },
+  "analogy": {
+    "en": "MLOps is running a bakery that bakes its own bread; LLMOps is running a restaurant that buys bread from a supplier: your recipes and tasting matter more, and you need a plan for when the supplier changes the loaf.",
+    "es": "MLOps es manejar una panadería que hornea su propio pan; LLMOps es manejar un restaurante que compra el pan a un proveedor: tus recetas y tus catas importan más, y necesitas un plan para cuando el proveedor cambie el pan."
+  },
+  "explain": {
+    "en": "**LLMOps** is the practice of shipping and operating applications built on foundation models. The discipline is the same as MLOps; the artifacts, metrics and risks move.\n\n**What changes**\n\n- **You compose more than you train.** The release unit is a pinned model id, prompt templates, a retrieval index (embedding model + chunking), tool schemas, guardrails and decoding params. Fine-tuning is the exception.\n- **Evals replace a single accuracy number.** Outputs are open-ended, so quality is a suite: deterministic checks, [[llm-as-judge]] and human review, sliced by task ([[eval-driven-development]]).\n- **Cost is per token and per request**, and it moves with every prompt edit and context length.\n- **Non-determinism**: the same input can give different outputs, so scores need error bars ([[nondeterminism]]).\n- **New attack surface**: prompt injection, data leakage and unsafe output need [[guardrails]].\n- **Your model is someone else's release.** Providers retire snapshots on their own schedule, and floating aliases change behavior silently.\n- **Monitoring means traces**: multi-step calls, tokens, latency and user feedback ([[llm-observability]]).\n\n**What stays the same**\n\nVersion everything, CI/CD with a quality gate, canary and rollback, monitoring of inputs and outcomes, and data quality — now of the retrieval corpus and the eval sets more than of training data.",
+    "es": "**LLMOps** es la práctica de desplegar y operar aplicaciones construidas sobre modelos fundacionales. La disciplina es la misma que en MLOps; lo que se mueve son los artefactos, las métricas y los riesgos.\n\n**Qué cambia**\n\n- **Compones más de lo que entrenas.** La unidad de release es un id de modelo fijado, plantillas de prompt, un índice de recuperación (modelo de embeddings + chunking), esquemas de herramientas, guardrails y parámetros de decodificación. El fine-tuning es la excepción.\n- **Las evals reemplazan a una única métrica de exactitud.** Las salidas son abiertas, así que la calidad es una suite: chequeos deterministas, [[llm-as-judge]] y revisión humana, separadas por tarea ([[eval-driven-development]]).\n- **El costo es por token y por request**, y se mueve con cada cambio de prompt y con el largo del contexto.\n- **No determinismo**: la misma entrada puede dar salidas distintas, así que los puntajes necesitan barras de error ([[nondeterminism]]).\n- **Nueva superficie de ataque**: prompt injection, fuga de datos y salidas inseguras exigen [[guardrails]].\n- **Tu modelo es el release de otro.** Los proveedores retiran snapshots según su propio calendario, y los alias flotantes cambian el comportamiento sin avisar.\n- **Monitorear es seguir trazas**: llamadas de varios pasos, tokens, latencia y feedback de usuarios ([[llm-observability]]).\n\n**Qué se mantiene igual**\n\nVersionar todo, CI/CD con una compuerta de calidad, canary y rollback, monitoreo de entradas y resultados, y calidad de datos: ahora más del corpus de recuperación y de los sets de evaluación que de los datos de entrenamiento."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  P[\"Prompt templates\"] --> B[\"Release bundle\"]\n  I[(Index snapshot)] --> B\n  T[\"Tool schemas\"] --> B\n  M[\"Pinned model id\"] --> B\n  B --> E{\"Eval suite<br/>passes?\"}\n  E -->|no| P\n  E -->|yes| C[\"Canary 5%\"]\n  C --> PR[Production]\n  PR --> TR[\"Traces, cost, feedback\"]\n  TR -->|failures become cases| G[(Golden set)]\n  G --> E",
+    "caption": {
+      "en": "Everything that changes behavior ships as one versioned bundle; production failures flow back into the golden set that gates the next release.",
+      "es": "Todo lo que cambia el comportamiento se despliega como un solo paquete versionado; las fallas en producción vuelven al golden set que controla el siguiente release."
+    }
+  },
+  "code": {
+    "lang": "yaml",
+    "title": { "en": "A release manifest that pins every behavior-changing artifact", "es": "Manifiesto de release que fija todo lo que cambia el comportamiento" },
+    "source": "# One versioned bundle: rolling back = pointing the gateway at the previous file\napp: support-assistant\nrelease: 2026.11.3\nmodel:\n  id: gpt-4o-2024-08-06        # dated snapshot (example), never a floating alias\n  fallback: claude-sonnet-4-5-20250929  # second provider (example), same evals\n  temperature: 0.2\n  max_output_tokens: 800\nprompt:\n  system: prompts/support/system@v14\n  few_shot: prompts/support/examples@v6\nretrieval:\n  index: kb-snapshot-2026-11-01  # immutable; re-embedding = new snapshot\n  embedding_model: text-embedding-3-large\n  chunking: { size_tokens: 512, overlap: 64 }\n  top_k: 40\n  reranker: BAAI/bge-reranker-v2-m3\ntools:\n  - refund_lookup@v3\n  - order_status@v5\nguardrails:\n  input: [pii_redaction, injection_classifier]\n  output: [json_schema_check, policy_judge]\neval_gate:\n  suite: evals/support@v9        # ~400 cases sampled from real traces\n  min_pass_rate: 0.92\n  max_slice_regression_pts: 2\n  max_cost_per_request_usd: 0.004\n  max_p95_latency_ms: 3500"
+  },
+  "example": {
+    "en": "A support assistant runs on a dated snapshot when the provider announces its retirement in four months. The team runs its 400-case eval suite on the replacement: overall pass rate holds (91% → 92%), but the refund slice drops from 94% to 81% because the new model answers in prose instead of the required JSON, and median output grows 35%, adding ~$0.002 per conversation. They tighten the format instruction, add two few-shot examples, re-run (refund slice 95%), canary at 5% for a week while watching traces and thumbs-down rate, then flip the gateway config. No code deploy needed.",
+    "es": "Un asistente de soporte corre sobre un snapshot fechado cuando el proveedor anuncia que lo retira en cuatro meses. El equipo corre su suite de 400 casos sobre el reemplazo: el pass rate general se mantiene (91% → 92%), pero el segmento de reembolsos cae de 94% a 81% porque el nuevo modelo responde en prosa en lugar del JSON requerido, y la salida mediana crece 35%, lo que suma ~$0.002 por conversación. Ajustan la instrucción de formato, agregan dos ejemplos few-shot, vuelven a correr (reembolsos en 95%), hacen canary al 5% durante una semana mirando trazas y la tasa de pulgares abajo, y luego cambian la configuración del gateway. Sin desplegar código."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "Pin, then migrate on purpose", "es": "Fija la versión y migra a propósito" },
+      "body": {
+        "en": "Call a dated snapshot (`gpt-4o-2024-08-06`), never a floating alias (`gpt-4o`), in production: an alias can point to a new model overnight and your JSON parser finds out first. Treat every deprecation notice as a scheduled migration: run the full eval suite on the candidate, replay a sample of real traffic and diff by slice, re-tune prompts where format or verbosity changed, then canary. Put an [[llm-gateway]] in front of providers so the switch is configuration, and keep a second-provider fallback tested, because outages and retirements both happen on someone else's calendar.",
+        "es": "En producción llama a un snapshot fechado (`gpt-4o-2024-08-06`), nunca a un alias flotante (`gpt-4o`): un alias puede apuntar a otro modelo de un día para otro y tu parser de JSON es el primero en enterarse. Trata cada aviso de deprecación como una migración planificada: corre la suite completa sobre el candidato, reproduce una muestra de tráfico real y compara por segmento, reajusta los prompts donde cambió el formato o la verbosidad, y después haz canary. Pon un [[llm-gateway]] delante de los proveedores para que el cambio sea configuración, y mantén probado un fallback con otro proveedor, porque las caídas y los retiros ocurren en el calendario de otro."
+      }
+    },
+    {
+      "title": { "en": "The release gate is an eval suite", "es": "La compuerta de release es una suite de evals" },
+      "body": {
+        "en": "In MLOps a candidate ships if it beats the champion's AUC on a holdout. In LLMOps a *prompt edit* is a release, and it can fix one case while breaking ten. So every change (prompt, model, chunking, tool schema) runs the same gate in CI ([[eval-ci]]): a golden set of a few hundred real cases, deterministic checks first (schema, citations, refusals), an LLM judge for open-ended quality, cost and latency budgets, and a per-slice regression threshold. Failures found in production traces become new cases, so the suite grows from incidents, not imagination.",
+        "es": "En MLOps un candidato sale a producción si supera el AUC del campeón en un holdout. En LLMOps un *cambio de prompt* es un release, y puede arreglar un caso mientras rompe diez. Por eso cada cambio (prompt, modelo, chunking, esquema de herramienta) pasa por la misma compuerta en CI ([[eval-ci]]): un golden set de unos cientos de casos reales, primero chequeos deterministas (esquema, citas, rechazos), un juez LLM para la calidad abierta, presupuestos de costo y latencia, y un umbral de regresión por segmento. Las fallas que aparecen en las trazas de producción se vuelven casos nuevos, así que la suite crece a partir de incidentes, no de la imaginación."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "Changes ship in hours: a prompt or index update needs no training run.", "es": "Los cambios salen en horas: actualizar un prompt o un índice no requiere entrenar." },
+    { "en": "Versioned bundles make rollback a config flip, including prompts and index snapshots.", "es": "Los paquetes versionados convierten el rollback en un cambio de configuración, incluidos prompts y snapshots del índice." },
+    { "en": "Eval suites built from real traces catch regressions an aggregate metric would average away.", "es": "Las suites de evals construidas con trazas reales detectan regresiones que una métrica agregada diluiría en el promedio." }
+  ],
+  "cons": [
+    { "en": "Evals cost money and time: a judge-based suite can mean thousands of model calls per run.", "es": "Las evals cuestan dinero y tiempo: una suite con juez puede implicar miles de llamadas al modelo por corrida." },
+    { "en": "Vendor dependency: deprecations, price changes and silent behavior shifts are outside your control.", "es": "Dependencia del proveedor: deprecaciones, cambios de precio y cambios silenciosos de comportamiento quedan fuera de tu control." },
+    { "en": "More artifacts than classic MLOps tooling expects; most model registries ignore prompts and indexes.", "es": "Más artefactos de los que espera el tooling clásico de MLOps; la mayoría de los model registries ignoran prompts e índices." }
+  ],
+  "whenToUse": {
+    "en": "Any LLM feature past the demo stage: once real users depend on it, version the bundle, gate releases on evals and trace production.",
+    "es": "Cualquier funcionalidad con LLM que ya pasó la etapa de demo: cuando usuarios reales dependen de ella, versiona el paquete, usa evals como compuerta y traza producción."
+  },
+  "whenNotToUse": {
+    "en": "A throwaway prototype or one-off internal script, where the full gate is overhead. And don't build a parallel LLMOps stack: extend the CI/CD, registry and monitoring you already run.",
+    "es": "Un prototipo descartable o un script interno puntual, donde la compuerta completa sobra. Y no construyas un stack de LLMOps paralelo: extiende el CI/CD, el registro y el monitoreo que ya operas."
+  },
+  "numbers": [
+    { "en": "Output tokens list at ~4–5× input: $3 vs $15 per 1M on Claude Sonnet, $2.50 vs $10 on GPT-4o.", "es": "Los tokens de salida cuestan ~4–5× los de entrada: $3 vs $15 por 1M en Claude Sonnet, $2.50 vs $10 en GPT-4o." },
+    { "en": "Batch APIs (OpenAI, Anthropic) cut price ~50% for jobs that can wait up to 24 h.", "es": "Las APIs batch (OpenAI, Anthropic) bajan el precio ~50% para trabajos que pueden esperar hasta 24 h." },
+    { "en": "At n = 100 cases and a 50% pass rate, the 95% CI is about ±10 points: small eval sets can't see small regressions.", "es": "Con n = 100 casos y 50% de aciertos, el IC del 95% es de unos ±10 puntos: un set chico no ve regresiones chicas." },
+    { "en": "Rule of thumb: start a golden set with ~50–200 cases sampled from real traffic, then grow it from failures.", "es": "Regla práctica: arranca el golden set con ~50–200 casos tomados del tráfico real y hazlo crecer con las fallas." }
+  ],
+  "pitfalls": [
+    { "en": "Calling a floating model alias in production, so behavior changes without any deploy.", "es": "Llamar a un alias flotante en producción, de modo que el comportamiento cambia sin ningún despliegue." },
+    { "en": "Gating releases on a handful of vibe-checked examples instead of a versioned eval suite.", "es": "Aprobar releases con un puñado de ejemplos revisados a ojo en lugar de una suite de evals versionada." },
+    { "en": "Versioning the prompt but not the index, embedding model or tool schemas it depends on.", "es": "Versionar el prompt pero no el índice, el modelo de embeddings ni los esquemas de herramientas de los que depende." },
+    { "en": "Tracking cost per month instead of per request, so a prompt change that doubles tokens goes unnoticed.", "es": "Medir el costo por mes y no por request, así un cambio de prompt que duplica los tokens pasa desapercibido." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "What's actually different between MLOps and LLMOps?", "es": "¿Qué cambia realmente entre MLOps y LLMOps?" },
+      "a": {
+        "en": "The discipline is the same (version, test, ship gradually, monitor) but three things move. The artifact: I ship a bundle of pinned model id, prompts, retrieval index and tools rather than weights I trained. The metric: open-ended output needs an eval suite with deterministic checks, a judge and human review instead of one accuracy number, and scores need error bars because outputs are non-deterministic. The risk profile: cost per token, prompt injection, and a vendor who can retire my model. I extend the existing CI/CD and observability stack rather than build a parallel one.",
+        "es": "La disciplina es la misma (versionar, probar, desplegar gradualmente, monitorear), pero se mueven tres cosas. El artefacto: despliego un paquete con id de modelo fijado, prompts, índice de recuperación y herramientas, no pesos que entrené. La métrica: una salida abierta necesita una suite de evals con chequeos deterministas, un juez y revisión humana en vez de una sola métrica de exactitud, y los puntajes llevan barras de error porque las salidas no son deterministas. El perfil de riesgo: costo por token, prompt injection y un proveedor que puede retirar mi modelo. Extiendo el CI/CD y la observabilidad que ya existen en lugar de armar un stack paralelo."
+      }
+    },
+    {
+      "q": { "en": "Your provider is retiring the model you run in production. What's your plan?", "es": "Tu proveedor va a retirar el modelo que usas en producción. ¿Cuál es tu plan?" },
+      "a": {
+        "en": "I treat it as a planned release, not an emergency. Because we pin snapshots behind a gateway, I can point an offline run at candidates the day the notice lands. I run the full eval suite plus a replay of a week of real traffic and diff by slice: format compliance, refusals, verbosity and cost per request are what usually break. I fix prompts where needed, canary at a few percent while watching traces and feedback, then flip config. The trade-off is eval spend, which is cheap insurance next to learning about regressions from users.",
+        "es": "Lo trato como un release planificado, no como una emergencia. Como fijamos snapshots detrás de un gateway, puedo apuntar una corrida offline a los candidatos el mismo día que llega el aviso. Corro la suite completa más un replay de una semana de tráfico real y comparo por segmento: el cumplimiento de formato, los rechazos, la verbosidad y el costo por request son lo que suele romperse. Ajusto prompts donde haga falta, hago canary con un pequeño porcentaje mirando trazas y feedback, y después cambio la configuración. El trade-off es el gasto en evals, un seguro barato comparado con enterarte de las regresiones por los usuarios."
+      }
+    }
+  ],
+  "related": ["ml-lifecycle", "eval-driven-development", "prompt-management", "llm-observability", "llm-gateway", "guardrails"],
+  "sources": [
+    { "title": "Chip Huyen — Building LLM applications for production", "url": "https://huyenchip.com/2023/04/11/llm-engineering.html" },
+    { "title": "Eugene Yan — Patterns for Building LLM-based Systems & Products", "url": "https://eugeneyan.com/writing/llm-patterns/" },
+    { "title": "OpenAI — Deprecations", "url": "https://platform.openai.com/docs/deprecations" }
+  ]
+}

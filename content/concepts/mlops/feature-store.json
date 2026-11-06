@@ -1,0 +1,85 @@
+{
+  "id": "feature-store",
+  "domain": "mlops",
+  "level": "advanced",
+  "title": { "en": "Feature stores", "es": "Feature stores" },
+  "aliases": ["feature store", "Feast", "Tecton", "online store", "offline store", "point-in-time join", "feature registry", "Michelangelo"],
+  "tldr": {
+    "en": "A feature store defines each feature once and serves it two ways: an offline store for point-in-time-correct training sets and an online store for millisecond lookups at inference, so training and serving agree.",
+    "es": "Un feature store define cada feature una sola vez y la sirve de dos formas: un store offline para sets de entrenamiento correctos en el tiempo y uno online para lecturas en milisegundos al inferir, así entrenamiento y serving coinciden."
+  },
+  "analogy": {
+    "en": "One kitchen, one recipe per sauce: the archive keeps a dated jar of every past batch for testing, the counter keeps today's jar within reach for service, and both were filled from the same pot.",
+    "es": "Una cocina, una receta por salsa: el archivo guarda un frasco fechado de cada tanda pasada para hacer pruebas, el mostrador tiene a mano el frasco de hoy para el servicio, y ambos salieron de la misma olla."
+  },
+  "explain": {
+    "en": "A **feature store** is a central system that defines, computes, stores and serves ML features, so every model uses the same logic in training and in production.\n\nIt has four parts:\n\n- **Registry**: feature definitions (entity, source, transformation, owner, TTL), versioned like code and searchable for reuse.\n- **Offline store**: full history in a warehouse or lake (BigQuery, Snowflake, Parquet/Delta) for building training sets.\n- **Online store**: only the latest value per entity, in a key-value store (Redis, DynamoDB, Bigtable) for millisecond reads at inference.\n- **Materialization**: batch or streaming jobs that compute each feature once and write both stores.\n\nThe key operation is the **point-in-time join**. Each training row is an entity plus a timestamp (*user 42 at 14:03*) and gets the latest feature value *as of that moment*, never a later one. Joining today's table onto last year's labels leaks the future: offline AUC soars and production falls flat ([[training-serving-skew]]).\n\nTools: **Feast** (open source), **Tecton**, and the managed stores in Databricks, Vertex AI and SageMaker. Uber's Michelangelo platform popularized the pattern in 2017.\n\nIt earns its keep when many models share entity features under real-time serving: fraud, ranking, pricing, [[recsys]]. A single batch model is fine with a well-modeled warehouse table.",
+    "es": "Un **feature store** es un sistema central que define, calcula, almacena y sirve features de ML, para que todos los modelos usen la misma lógica en entrenamiento y en producción.\n\nTiene cuatro partes:\n\n- **Registro**: las definiciones de features (entidad, fuente, transformación, dueño, TTL), versionadas como código y buscables para reutilizarlas.\n- **Store offline**: el historial completo en un warehouse o lake (BigQuery, Snowflake, Parquet/Delta) para armar sets de entrenamiento.\n- **Store online**: solo el último valor por entidad, en un almacén clave-valor (Redis, DynamoDB, Bigtable) para lecturas en milisegundos al inferir.\n- **Materialización**: jobs batch o de streaming que calculan cada feature una vez y escriben en ambos stores.\n\nLa operación clave es el **point-in-time join**. Cada fila de entrenamiento es una entidad más un timestamp (*usuario 42 a las 14:03*) y recibe el último valor de la feature *a ese momento*, nunca uno posterior. Unir la tabla de hoy con las etiquetas del año pasado filtra el futuro: el AUC offline se dispara y en producción el modelo se cae ([[training-serving-skew]]).\n\nHerramientas: **Feast** (open source), **Tecton** y los stores administrados de Databricks, Vertex AI y SageMaker. La plataforma Michelangelo de Uber popularizó el patrón en 2017.\n\nSe justifica cuando muchos modelos comparten features de entidades y sirven en tiempo real: fraude, ranking, pricing, [[recsys]]. Para un solo modelo batch alcanza con una tabla bien modelada en el warehouse."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  S[(\"Warehouse / lake\")] --> T[\"Feature definitions<br/>transform once\"]\n  K[Event stream] --> T\n  T --> O[(\"Offline store<br/>full history\")]\n  T -->|materialize| N[(\"Online store<br/>latest value\")]\n  L[\"Labels with timestamps\"] --> J[\"Point-in-time join\"]\n  O --> J\n  J --> TR[Training set]\n  N -->|ms lookup| M[Model serving]\n  R[Registry] -.-> T",
+    "caption": {
+      "en": "One definition feeds both stores: full history for point-in-time training joins, latest values for low-latency serving.",
+      "es": "Una sola definición alimenta ambos stores: el historial completo para los joins de entrenamiento y los últimos valores para servir con baja latencia."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Feast: one definition, a training join and an online read", "es": "Feast: una definición, un join de entrenamiento y una lectura online" },
+    "source": "from datetime import timedelta\nfrom feast import Entity, FeatureStore, FeatureView, Field, FileSource\nfrom feast.types import Float32, Int64\n\n# Definition (lives in the feature repo; `feast apply` registers it)\ndriver = Entity(name=\"driver\", join_keys=[\"driver_id\"])\nstats = FeatureView(\n    name=\"driver_hourly_stats\",\n    entities=[driver],\n    ttl=timedelta(days=1),  # older values count as missing, not as current\n    schema=[Field(name=\"conv_rate\", dtype=Float32),\n            Field(name=\"trips_today\", dtype=Int64)],\n    source=FileSource(path=\"driver_stats.parquet\", timestamp_field=\"event_timestamp\"),\n)\nFEATURES = [\"driver_hourly_stats:conv_rate\", \"driver_hourly_stats:trips_today\"]\nstore = FeatureStore(repo_path=\".\")\n\n# Training: point-in-time join. Each label row gets values AS OF its own timestamp.\ntrain_df = store.get_historical_features(\n    entity_df=labels_df,  # columns: driver_id, event_timestamp, label\n    features=FEATURES,\n).to_df()\n\n# Serving: same definitions, read from the online store (after `feast materialize`)\nrow = store.get_online_features(\n    features=FEATURES,\n    entity_rows=[{\"driver_id\": 1001}],\n).to_dict()"
+  },
+  "example": {
+    "en": "A food-delivery ETA model uses `restaurant_avg_prep_time_7d`. Before the feature store, training computed it in Spark over the *final* orders table, while serving computed it in Go from a cache refreshed hourly, and training rows silently included orders placed *after* the prediction time. Offline MAE was 3.1 minutes; production MAE was 5.4. After moving the feature into Feast, training uses point-in-time joins against the offline store and serving reads the same definition from Redis in ~2 ms. The offline/online gap shrinks to 0.2 minutes, and two other teams reuse the feature instead of rewriting it.",
+    "es": "Un modelo de tiempo de entrega de comida usa `restaurant_avg_prep_time_7d`. Antes del feature store, el entrenamiento la calculaba en Spark sobre la tabla *final* de pedidos, mientras que serving la calculaba en Go desde un cache que se refrescaba cada hora, y las filas de entrenamiento incluían en silencio pedidos hechos *después* del momento de la predicción. El MAE offline era de 3.1 minutos; el de producción, 5.4. Tras mover la feature a Feast, el entrenamiento usa point-in-time joins contra el store offline y serving lee la misma definición desde Redis en ~2 ms. La brecha offline/online baja a 0.2 minutos, y otros dos equipos reutilizan la feature en vez de reescribirla."
+  },
+  "pros": [
+    { "en": "One definition for training and serving removes a whole class of skew bugs.", "es": "Una sola definición para entrenamiento y serving elimina toda una clase de bugs de skew." },
+    { "en": "Point-in-time joins make leakage-free training sets the default, not a heroic effort.", "es": "Los point-in-time joins hacen que los sets sin fuga de información sean lo normal, no un esfuerzo heroico." },
+    { "en": "Reuse and discovery across teams: compute a feature once, use it in many models.", "es": "Reutilización y descubrimiento entre equipos: calculas una feature una vez y la usas en muchos modelos." }
+  ],
+  "cons": [
+    { "en": "Real infrastructure: two stores, materialization jobs, backfills and an on-call rotation.", "es": "Infraestructura de verdad: dos stores, jobs de materialización, backfills y una guardia." },
+    { "en": "Streaming and on-demand features remain hard; most stores shine for batch features.", "es": "Las features de streaming y on-demand siguen siendo difíciles; la mayoría de los stores brilla con features batch." },
+    { "en": "Overkill for a few batch models, where a warehouse table plus a shared library does the job.", "es": "Es demasiado para unos pocos modelos batch, donde una tabla en el warehouse y una librería compartida bastan." }
+  ],
+  "whenToUse": {
+    "en": "Several models share entity features (user, merchant, item) and at least one serves in real time under a tight latency budget: fraud, ranking, pricing, ads.",
+    "es": "Varios modelos comparten features de entidades (usuario, comercio, ítem) y al menos uno sirve en tiempo real con un presupuesto de latencia ajustado: fraude, ranking, pricing, anuncios."
+  },
+  "whenNotToUse": {
+    "en": "Batch-only scoring, one or two models, or features computed from the request itself. Most LLM apps don't need one: RAG needs an index, not a feature store.",
+    "es": "Scoring solo batch, uno o dos modelos, o features que salen del propio request. La mayoría de las apps con LLM no lo necesitan: RAG necesita un índice, no un feature store."
+  },
+  "numbers": [
+    { "en": "Rule of thumb: online feature reads should be single-digit ms at p99, since a whole fraud or ranking call often gets ~50–100 ms.", "es": "Regla práctica: las lecturas online deberían tardar pocos ms en p99, porque una llamada completa de fraude o ranking suele tener ~50–100 ms." },
+    { "en": "Point-in-time rule: use the latest value with feature_ts ≤ label_ts, and only if it is within the feature's TTL.", "es": "Regla del point-in-time: usa el último valor con feature_ts ≤ label_ts, y solo si está dentro del TTL de la feature." },
+    { "en": "Uber's Michelangelo (2017) popularized the offline/online feature store split.", "es": "Michelangelo de Uber (2017) popularizó la separación entre feature store offline y online." }
+  ],
+  "pitfalls": [
+    { "en": "Plain joins on entity id to build training sets: you leak future values and inflate offline metrics.", "es": "Armar sets de entrenamiento con joins simples por id de entidad: filtras valores futuros e inflas las métricas offline." },
+    { "en": "Feeding the online store from a different pipeline than the offline one, which brings back the skew you meant to kill.", "es": "Alimentar el store online con un pipeline distinto al del offline, lo que trae de vuelta el skew que querías eliminar." },
+    { "en": "No TTLs: a three-week-old value is served as if it were current.", "es": "No definir TTLs: un valor de hace tres semanas se sirve como si fuera actual." },
+    { "en": "Buying a platform before you have two models that share a feature.", "es": "Comprar una plataforma antes de tener dos modelos que compartan una feature." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "What problem does a feature store actually solve?", "es": "¿Qué problema resuelve realmente un feature store?" },
+      "a": {
+        "en": "Two problems. Consistency: the same feature logic must produce training data and serving inputs, or you get training-serving skew, so the store owns one definition and materializes it into an offline and an online store. Time: training rows need feature values as they were at prediction time, and the point-in-time join does that by default, which kills a common leakage bug. Reuse across teams is a bonus. The cost is real infrastructure, so I adopt one when several real-time models share entities, not for one batch model.",
+        "es": "Dos problemas. Consistencia: la misma lógica de features tiene que producir los datos de entrenamiento y las entradas de serving, o aparece el training-serving skew; por eso el store es dueño de una sola definición y la materializa en un store offline y uno online. Tiempo: las filas de entrenamiento necesitan los valores tal como estaban al momento de la predicción, y el point-in-time join lo hace por defecto, lo que elimina un bug de fuga muy común. La reutilización entre equipos es un extra. El costo es infraestructura real, así que lo adopto cuando varios modelos en tiempo real comparten entidades, no para un solo modelo batch."
+      }
+    },
+    {
+      "q": { "en": "Explain a point-in-time join. Why is a normal join wrong?", "es": "Explica un point-in-time join. ¿Por qué un join normal está mal?" },
+      "a": {
+        "en": "Each training example is an entity plus the timestamp when the prediction would have happened. A point-in-time join picks, per row, the latest feature value at or before that moment, within a TTL. A normal join on user id grabs the current value, which can include events after the label's timestamp; in fraud, chargebacks that only arrived weeks later. The model learns from information it will never have in production, offline metrics look great, and online performance drops. Feast's get_historical_features or an ASOF JOIN in the warehouse does it correctly.",
+        "es": "Cada ejemplo de entrenamiento es una entidad más el timestamp en que se habría hecho la predicción. Un point-in-time join elige, por fila, el último valor de la feature en ese momento o antes, dentro de un TTL. Un join normal por id de usuario toma el valor actual, que puede incluir eventos posteriores al timestamp de la etiqueta; en fraude, contracargos que llegaron semanas después. El modelo aprende de información que nunca tendrá en producción, las métricas offline se ven geniales y el desempeño online cae. get_historical_features de Feast o un ASOF JOIN en el warehouse lo hacen bien."
+      }
+    }
+  ],
+  "related": ["training-serving-skew", "batch-vs-realtime", "data-platform", "recsys", "ml-lifecycle", "case-recommendations"],
+  "sources": [
+    { "title": "Feast documentation", "url": "https://docs.feast.dev/" },
+    { "title": "Uber Engineering — Meet Michelangelo: Uber's Machine Learning Platform", "url": "https://www.uber.com/blog/michelangelo-machine-learning-platform/" }
+  ]
+}

@@ -1,0 +1,86 @@
+{
+  "id": "training-serving-skew",
+  "domain": "mlops",
+  "level": "core",
+  "title": { "en": "Training–serving skew", "es": "Training–serving skew" },
+  "aliases": ["train/serve skew", "training-serving skew", "online-offline skew", "feature skew", "data leakage", "label leakage", "log and wait"],
+  "tldr": {
+    "en": "The model sees different data or logic in production than it saw in training, so quality drops silently with no error. Fix it with one shared transformation path, logged serving features and automated skew checks.",
+    "es": "El modelo recibe en producción datos o lógica distintos a los que vio al entrenar, así que la calidad cae en silencio y sin errores. Se arregla con un solo camino de transformación, features de serving registradas y chequeos automáticos de skew."
+  },
+  "analogy": {
+    "en": "A pilot trained in a simulator whose altimeter reads feet flies a plane whose altimeter reads meters. Every skill is right; every decision is wrong.",
+    "es": "Un piloto entrenado en un simulador cuyo altímetro marca pies vuela un avión cuyo altímetro marca metros. Cada habilidad es correcta; cada decisión es incorrecta."
+  },
+  "explain": {
+    "en": "**Training–serving skew** is any difference between the data or code a model saw in training and what it receives in production. The model still returns a confident prediction with HTTP 200; only quality drops, so nothing alerts.\n\n**Common causes**\n\n- **Two code paths**: features written in Python or SQL for training and re-implemented in Java or Go for serving. A different null default, log base or time unit is enough.\n- **Time-travel leakage**: training rows include information that did not exist at prediction time, like a value joined from today's table or a field filled in after the outcome.\n- **Preprocessing mismatch**: different normalization stats, vocabulary, tokenizer version or image resize.\n- **Stale or missing features**: training used fresh values; serving reads a daily cache, or falls back to defaults on timeout.\n\n**Fixes, best first**\n\n1. One transformation code path imported by both sides, or baked into the model graph.\n2. **Log features at serving time and train on those logs** (Google's Rules of ML #29).\n3. A [[feature-store]] with point-in-time joins.\n4. Automated checks: compare serving and training distributions per feature, and recompute a sample of logged requests offline to diff values.\n\n**LLM analog**: evals on clean questions with hand-picked context, while production gets typos, long chats, a different prompt template and real retrieval. Build eval sets from production traces and run them through the production prompt-assembly code.",
+    "es": "El **training–serving skew** es cualquier diferencia entre los datos o el código que el modelo vio al entrenar y lo que recibe en producción. El modelo igual devuelve una predicción segura con HTTP 200; solo baja la calidad, así que nada alerta.\n\n**Causas comunes**\n\n- **Dos caminos de código**: features escritas en Python o SQL para entrenar y reimplementadas en Java o Go para servir. Basta un default distinto para nulos, otra base de logaritmo u otra unidad de tiempo.\n- **Fuga temporal**: las filas de entrenamiento incluyen información que no existía al momento de predecir, como un valor unido desde la tabla de hoy o un campo que se llena después del resultado.\n- **Preprocesamiento distinto**: otras estadísticas de normalización, otro vocabulario, otra versión del tokenizer u otro redimensionado de imágenes.\n- **Features viejas o faltantes**: el entrenamiento usó valores frescos; serving lee un cache diario o usa defaults cuando hay timeout.\n\n**Soluciones, de mejor a peor**\n\n1. Un solo camino de transformación que importan ambos lados, o integrado en el grafo del modelo.\n2. **Registrar las features al servir y entrenar con esos logs** (Rules of ML #29 de Google).\n3. Un [[feature-store]] con point-in-time joins.\n4. Chequeos automáticos: comparar las distribuciones de serving y de entrenamiento por feature, y recalcular offline una muestra de requests registrados para comparar valores.\n\n**Análogo en LLMs**: evals con preguntas limpias y contexto elegido a mano, mientras producción recibe errores de tipeo, chats largos, otra plantilla de prompt y recuperación real. Arma los sets de evaluación con trazas de producción y córrelos por el mismo código que arma el prompt en producción."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  R[Live request] --> T[\"Shared transform<br/>one code path\"]\n  T --> M[Model serving]\n  M --> P[Prediction]\n  T -->|log features| L[(Feature log)]\n  O[Outcome labels] --> J[\"Join on request id\"]\n  L --> J\n  J --> TR[Training job]\n  TR -->|new model| M\n  L --> V{\"Skew check<br/>vs training stats\"}\n  V -->|mismatch| A[Alert on-call]",
+    "caption": {
+      "en": "Serving computes features once and logs them; training learns from exactly what production saw, and a skew check compares the two continuously.",
+      "es": "Serving calcula las features una vez y las registra; el entrenamiento aprende de exactamente lo que vio producción, y un chequeo de skew compara ambos de forma continua."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Feature parity check: logged online values vs offline recompute", "es": "Chequeo de paridad: valores online registrados vs recálculo offline" },
+    "source": "import numpy as np\nimport pandas as pd\n\nFEATURES = [\"distance_km\", \"user_orders_30d\", \"avg_basket_usd\"]\n\n# What the model actually saw in production, logged at serving time\nonline = pd.read_parquet(\"serving_feature_log/2026-11-05.parquet\")\n# The same requests pushed through the TRAINING feature code\noffline = recompute_features(online[[\"request_id\", \"user_id\", \"ts\"]])\n\ndf = online.merge(offline, on=\"request_id\", suffixes=(\"_on\", \"_off\"))\nfor f in FEATURES:\n    a, b = df[f + \"_on\"].to_numpy(), df[f + \"_off\"].to_numpy()\n    bad = ~np.isclose(a, b, rtol=1e-3, equal_nan=True)\n    rate = bad.mean()\n    if rate > 0.01:  # >1% of rows disagree: a code-path bug, not noise\n        i = np.flatnonzero(bad)[0]\n        print(f\"SKEW {f}: {rate:.1%} rows differ, e.g. online={a[i]} offline={b[i]}\")"
+  },
+  "example": {
+    "en": "A ride-pricing model trains on `distance_km` computed in Spark from GPS traces; the mobile backend re-implements it in Go as straight-line distance. Offline the model looks great; in production conversion drops 4% and nobody can explain it for two weeks. A parity check on 10,000 logged requests shows `distance_km` disagrees on 38% of rows, by ~30% on average. The team moves the computation into one shared service, logs the features the model actually receives, and retrains on those logs. The next skew is caught by the daily parity job before launch.",
+    "es": "Un modelo de precios de viajes entrena con `distance_km` calculada en Spark a partir de trazas GPS; el backend móvil la reimplementa en Go como distancia en línea recta. Offline el modelo se ve genial; en producción la conversión cae 4% y nadie logra explicarlo durante dos semanas. Un chequeo de paridad sobre 10,000 requests registrados muestra que `distance_km` no coincide en el 38% de las filas, con ~30% de diferencia promedio. El equipo mueve el cálculo a un servicio compartido, registra las features que el modelo realmente recibe y reentrena con esos logs. El siguiente skew lo detecta el job diario de paridad antes del lanzamiento."
+  },
+  "pros": [
+    { "en": "Logging served features makes training data match production by construction.", "es": "Registrar las features servidas hace que los datos de entrenamiento coincidan con producción por construcción." },
+    { "en": "A shared transform deletes a duplicate codebase along with its bugs.", "es": "Una transformación compartida elimina una base de código duplicada junto con sus bugs." },
+    { "en": "Parity checks catch skew before launch, not after a two-week revenue dip.", "es": "Los chequeos de paridad detectan el skew antes del lanzamiento, no después de dos semanas de ingresos en baja." }
+  ],
+  "cons": [
+    { "en": "Log-and-train is slow to start: a new feature has no history until weeks of logs accumulate.", "es": "Entrenar con logs tarda en arrancar: una feature nueva no tiene historial hasta acumular semanas de logs." },
+    { "en": "Sharing code across languages is hard; it often means a feature service that adds latency and ops.", "es": "Compartir código entre lenguajes es difícil; muchas veces implica un servicio de features que suma latencia y operación." },
+    { "en": "Feature logs at serving volume cost storage and need PII handling.", "es": "Los logs de features al volumen de serving cuestan almacenamiento y exigen manejo de datos personales." }
+  ],
+  "whenToUse": {
+    "en": "Check before every launch and after any change to features, preprocessing or data sources. Mandatory when training and serving are owned by different teams or written in different languages.",
+    "es": "Revísalo antes de cada lanzamiento y después de cualquier cambio en features, preprocesamiento o fuentes de datos. Es obligatorio cuando entrenamiento y serving son de equipos distintos o están en lenguajes distintos."
+  },
+  "whenNotToUse": {
+    "en": "Don't blame skew for every online drop: if live and training distributions match and parity checks pass, look at drift, feedback loops or an offline metric that doesn't reflect the business.",
+    "es": "No culpes al skew de cada caída online: si las distribuciones coinciden y los chequeos de paridad pasan, mira drift, ciclos de retroalimentación o una métrica offline que no refleja el negocio."
+  },
+  "numbers": [
+    { "en": "Google's Rules of ML #29: log the features used at serving and train on them; #32: reuse code between training and serving.", "es": "Rules of ML de Google #29: registra las features usadas al servir y entrena con ellas; #32: reutiliza código entre entrenamiento y serving." },
+    { "en": "Rule of thumb: in a parity check, more than ~1% of rows disagreeing on a feature means a code-path bug, not noise.", "es": "Regla práctica: en un chequeo de paridad, si más de ~1% de las filas no coincide en una feature, es un bug de código, no ruido." },
+    { "en": "TFDV flags categorical skew by L-infinity distance between training and serving distributions; its tutorial uses a 0.01 threshold.", "es": "TFDV detecta skew en features categóricas con la distancia L-infinito entre las distribuciones de entrenamiento y serving; su tutorial usa un umbral de 0.01." }
+  ],
+  "pitfalls": [
+    { "en": "Validating only on offline data produced by the same buggy pipeline the model was trained on.", "es": "Validar solo con datos offline producidos por el mismo pipeline con bugs con el que se entrenó el modelo." },
+    { "en": "Different handling of missing values: training drops nulls, serving fills 0.", "es": "Manejar distinto los valores faltantes: el entrenamiento descarta nulos y serving los llena con 0." },
+    { "en": "Building training features from the current snapshot of a mutable table (Rules of ML #31).", "es": "Construir features de entrenamiento con el snapshot actual de una tabla mutable (Rules of ML #31)." },
+    { "en": "LLM: evaluating with a notebook prompt that differs from the deployed one, or the wrong chat template on a self-hosted model.", "es": "En LLMs: evaluar con un prompt de notebook distinto al desplegado, o con la plantilla de chat equivocada en un modelo self-hosted." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Offline AUC is 0.91 but the model performs far worse online. How do you debug it?", "es": "El AUC offline es 0.91 pero online el modelo rinde mucho peor. ¿Cómo lo depuras?" },
+      "a": {
+        "en": "I suspect skew or leakage before I blame the model. First, leakage: does any feature use information unavailable at prediction time, like a join on today's table? A suspiciously high offline score is a hint. Second, parity: I take a sample of logged production requests, recompute their features with the training code and diff value by value. Third, distributions: compare live inputs with the training set per feature. If all three are clean, I look at drift and at whether the offline metric matches the business outcome. Long term, I log served features and train on them.",
+        "es": "Sospecho de skew o de fuga antes de culpar al modelo. Primero, fuga: ¿alguna feature usa información que no existe al predecir, como un join con la tabla de hoy? Un puntaje offline sospechosamente alto es una pista. Segundo, paridad: tomo una muestra de requests de producción registrados, recalculo sus features con el código de entrenamiento y comparo valor por valor. Tercero, distribuciones: comparo las entradas en vivo con el set de entrenamiento por feature. Si las tres cosas están limpias, miro drift y si la métrica offline refleja el resultado de negocio. A largo plazo, registro las features servidas y entreno con ellas."
+      }
+    },
+    {
+      "q": { "en": "What's the LLM equivalent of training–serving skew?", "es": "¿Cuál es el equivalente en LLMs del training–serving skew?" },
+      "a": {
+        "en": "Eval–production skew. Teams evaluate with clean single-turn questions, hand-picked context and a notebook prompt, while production has typos, long conversations, real retrieval results, a different system prompt and truncated context. The eval says 92% and users disagree. The fix mirrors classic ML: sample eval sets from production traces, run them through the exact production prompt-assembly and retrieval code, and for self-hosted models make sure the chat template and tokenizer match what the model was tuned with.",
+        "es": "El skew entre evals y producción. Los equipos evalúan con preguntas limpias de un solo turno, contexto elegido a mano y un prompt de notebook, mientras producción tiene errores de tipeo, conversaciones largas, resultados de recuperación reales, otro system prompt y contexto truncado. La eval dice 92% y los usuarios opinan otra cosa. La solución es la misma que en ML clásico: muestrear los sets de evaluación de trazas de producción, correrlos por el mismo código que arma el prompt y recupera en producción, y en modelos self-hosted verificar que la plantilla de chat y el tokenizer sean los mismos con los que se ajustó el modelo."
+      }
+    }
+  ],
+  "related": ["feature-store", "drift", "ml-monitoring", "offline-online-evals", "golden-datasets", "ml-lifecycle"],
+  "sources": [
+    { "title": "Google — Rules of Machine Learning", "url": "https://developers.google.com/machine-learning/guides/rules-of-ml" },
+    { "title": "TensorFlow Data Validation guide", "url": "https://www.tensorflow.org/tfx/guide/tfdv" },
+    { "title": "Google Cloud — Vertex AI Model Monitoring overview", "url": "https://cloud.google.com/vertex-ai/docs/model-monitoring/overview" }
+  ]
+}

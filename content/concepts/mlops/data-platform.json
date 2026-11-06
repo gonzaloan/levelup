@@ -1,0 +1,88 @@
+{
+  "id": "data-platform",
+  "domain": "mlops",
+  "level": "advanced",
+  "title": { "en": "Data platform for AI", "es": "Plataforma de datos para IA" },
+  "aliases": ["lakehouse", "Delta Lake", "Apache Iceberg", "Apache Hudi", "data contracts", "data lineage", "dbt", "Airflow"],
+  "tldr": {
+    "en": "Models are only as good as the data plumbing: a lakehouse with ACID tables, orchestrated pipelines, contracts, quality tests and lineage gives AI reproducible training data, fresh RAG sources and auditable evals.",
+    "es": "Los modelos valen lo que vale la plomería de datos: un lakehouse con tablas ACID, pipelines orquestados, contratos, pruebas de calidad y linaje le dan a la IA datos de entrenamiento reproducibles, fuentes de RAG frescas y evals auditables."
+  },
+  "analogy": {
+    "en": "A city's water system: treatment plants (pipelines), quality tests at each stage, pipe maps (lineage) and supply agreements (contracts). Nobody admires it until the tap runs brown.",
+    "es": "El sistema de agua de una ciudad: plantas de tratamiento (pipelines), análisis de calidad en cada etapa, planos de cañerías (linaje) y acuerdos de suministro (contratos). Nadie lo admira hasta que el agua sale turbia."
+  },
+  "explain": {
+    "en": "A **data platform** is the shared plumbing that moves data from sources to every consumer (dashboards, training jobs, RAG indexes) reliably and under governance.\n\n- **Lakehouse**: Parquet files on cheap object storage (S3, GCS, ADLS) managed by an **open table format** (Delta Lake, Apache Iceberg or Hudi) that adds ACID transactions, schema evolution and **time travel**. One copy serves both SQL and ML.\n- **Pipelines**: ingest with batch ELT, CDC or streaming (Kafka); transform in SQL with dbt; orchestrate with Airflow or Dagster.\n- **Data contracts**: producers commit to a schema and its meaning, enforced in their CI, so an upstream rename breaks *their* build, not your model.\n- **Quality tests**: nulls, uniqueness, freshness and ranges (dbt tests, Great Expectations) gate every step.\n- **Catalog and lineage**: Unity Catalog, DataHub, OpenLineage answer who owns this, where it came from and who may read it.\n\nWhy AI depends on it: RAG ingestion needs fresh, permission-tagged documents; training needs versioned snapshots; evals need stable golden sets; governance needs lineage from source to prediction.",
+    "es": "Una **plataforma de datos** es la plomería compartida que lleva los datos desde las fuentes hasta cada consumidor (dashboards, jobs de entrenamiento, índices de RAG) de forma confiable y gobernada.\n\n- **Lakehouse**: archivos Parquet en almacenamiento de objetos barato (S3, GCS, ADLS) gestionados por un **formato de tabla abierto** (Delta Lake, Apache Iceberg o Hudi) que agrega transacciones ACID, evolución de esquema y **time travel**. Una sola copia sirve tanto a SQL como a ML.\n- **Pipelines**: ingesta con ELT batch, CDC o streaming (Kafka); transformación en SQL con dbt; orquestación con Airflow o Dagster.\n- **Contratos de datos**: los productores se comprometen con un esquema y su significado, validado en su CI, para que un cambio de nombre aguas arriba rompa *su* build y no tu modelo.\n- **Pruebas de calidad**: nulos, unicidad, frescura y rangos (tests de dbt, Great Expectations) frenan cada etapa si fallan.\n- **Catálogo y linaje**: Unity Catalog, DataHub y OpenLineage responden quién es dueño de esto, de dónde salió y quién puede leerlo.\n\nPor qué la IA depende de esto: la ingesta de RAG necesita documentos frescos y etiquetados con permisos; el entrenamiento necesita snapshots versionados; los evals necesitan golden sets estables; la gobernanza necesita linaje desde la fuente hasta la predicción."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  S[\"Apps, SaaS, DBs\"] -->|\"CDC / ELT\"| B[(\"Bronze: raw\")]\n  K[Kafka events] --> B\n  B -->|\"dbt + quality tests\"| SV[(\"Silver: clean\")]\n  SV --> G[(\"Gold: curated\")]\n  G --> BI[BI dashboards]\n  G --> T[Training snapshots]\n  G --> R[RAG ingestion]\n  G --> E[Eval datasets]\n  C[\"Catalog + lineage\"] -.-> SV\n  C -.-> G",
+    "caption": {
+      "en": "One governed lakehouse (bronze, silver, gold layers) feeds BI and every AI consumer; quality gates sit between layers.",
+      "es": "Un solo lakehouse gobernado (capas bronze, silver y gold) alimenta a BI y a cada consumidor de IA; las compuertas de calidad están entre capas."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "Pin a training snapshot and gate it on quality", "es": "Fijar un snapshot de entrenamiento y validar su calidad" },
+    "source": "-- 1) Training reads a pinned table version, never \"whatever is there now\".\n--    Materialize it: Delta time travel ends when VACUUM removes old files.\nCREATE OR REPLACE TABLE ml.churn_train_2026_11 AS\nSELECT * FROM gold.customer_features VERSION AS OF 412;\n\n-- 2) Quality gate before training or indexing (fail the job on breach)\nSELECT\n  COUNT(*)                                             AS row_count,\n  AVG(CASE WHEN tenure_days IS NULL THEN 1 ELSE 0 END) AS null_rate_tenure,\n  COUNT(*) - COUNT(DISTINCT customer_id)               AS duplicate_ids,\n  MAX(updated_at)                                      AS freshest_row\nFROM ml.churn_train_2026_11;\n-- orchestrator asserts: null_rate_tenure < 0.01, duplicate_ids = 0,\n-- freshest_row within 24 h; then logs table + version 412 to the run"
+  },
+  "example": {
+    "en": "A RAG assistant starts citing a discontinued pricing page. Root cause: the CMS team renamed `is_archived` to `status`, the ingestion job read the missing field as 'live', and 1,200 archived pages were re-embedded. A data contract would have failed the CMS team's CI on the rename; a null-rate test would have stopped ingestion before indexing; lineage finds every index and model that consumed the bad batch in minutes, so only those are rebuilt from the last good table version.",
+    "es": "Un asistente con RAG empieza a citar una página de precios descontinuada. Causa raíz: el equipo del CMS renombró `is_archived` a `status`, el job de ingesta leyó el campo faltante como 'vigente' y se volvieron a generar embeddings de 1,200 páginas archivadas. Un contrato de datos habría hecho fallar el CI del equipo del CMS con el cambio de nombre; una prueba de tasa de nulos habría frenado la ingesta antes de indexar; el linaje encuentra en minutos cada índice y modelo que consumió el lote malo, así que solo se reconstruyen esos desde la última versión buena de la tabla."
+  },
+  "pros": [
+    { "en": "One governed copy of data for BI, training, RAG and evals: no shadow exports.", "es": "Una sola copia gobernada de los datos para BI, entrenamiento, RAG y evals: sin exportaciones paralelas." },
+    { "en": "Time travel and snapshots make training data and evals reproducible.", "es": "El time travel y los snapshots hacen reproducibles los datos de entrenamiento y los evals." },
+    { "en": "Contracts and tests move breakage left, into the producer's CI.", "es": "Los contratos y las pruebas mueven las roturas hacia la izquierda, al CI del productor." },
+    { "en": "Lineage answers audit and GDPR deletion requests across models and indexes.", "es": "El linaje responde auditorías y pedidos de borrado del GDPR a través de modelos e índices." }
+  ],
+  "cons": [
+    { "en": "A large investment: it needs a platform team and organizational buy-in to own contracts.", "es": "Una inversión grande: necesita un equipo de plataforma y respaldo de la organización para sostener los contratos." },
+    { "en": "Open table formats need upkeep: compaction, vacuum, small-file tuning.", "es": "Los formatos de tabla abiertos requieren mantenimiento: compactación, vacuum, ajuste de archivos pequeños." },
+    { "en": "Unstructured data for AI (PDFs, audio, images) fits less naturally than tables.", "es": "Los datos no estructurados para IA (PDFs, audio, imágenes) encajan con menos naturalidad que las tablas." }
+  ],
+  "whenToUse": {
+    "en": "Once several teams or models share data, when training must be reproducible or auditable, or when RAG indexes must track changing, permissioned sources.",
+    "es": "Cuando varios equipos o modelos comparten datos, cuando el entrenamiento debe ser reproducible o auditable, o cuando los índices de RAG deben seguir fuentes cambiantes y con permisos."
+  },
+  "whenNotToUse": {
+    "en": "One small app with one database, or a prototype RAG over a few hundred documents: a script and a bucket are fine until consumers multiply.",
+    "es": "Una app chica con una sola base de datos, o un prototipo de RAG sobre unos cientos de documentos: un script y un bucket alcanzan hasta que se multipliquen los consumidores."
+  },
+  "numbers": [
+    { "en": "Delta Lake defaults: `VACUUM` keeps 7 days of old files, the transaction log 30 days; older time travel needs an explicit snapshot.", "es": "Valores por defecto de Delta Lake: `VACUUM` conserva 7 días de archivos viejos y el log de transacciones 30 días; un time travel más antiguo necesita un snapshot explícito." },
+    { "en": "Target file sizes: Iceberg defaults to 512 MB, Delta `OPTIMIZE` to ~1 GB; thousands of tiny files wreck scan speed.", "es": "Tamaños de archivo objetivo: Iceberg usa 512 MB por defecto y Delta `OPTIMIZE` ~1 GB; miles de archivos diminutos arruinan la velocidad de lectura." },
+    { "en": "Origins worth knowing: Delta Lake came from Databricks, Iceberg from Netflix, Hudi from Uber.", "es": "Orígenes que conviene saber: Delta Lake nació en Databricks, Iceberg en Netflix y Hudi en Uber." }
+  ],
+  "pitfalls": [
+    { "en": "Training on a mutable table without pinning a version: the model can't be reproduced.", "es": "Entrenar sobre una tabla mutable sin fijar una versión: el modelo no se puede reproducir." },
+    { "en": "RAG ingestion that ignores deletes and ACL changes: removed or restricted documents stay retrievable.", "es": "Una ingesta de RAG que ignora borrados y cambios de ACL: documentos eliminados o restringidos siguen apareciendo." },
+    { "en": "Quality tests only at the end of the pipeline, after bad data has already fanned out.", "es": "Pruebas de calidad solo al final del pipeline, cuando los datos malos ya se propagaron." },
+    { "en": "Lineage that stops at the warehouse instead of reaching features, vector indexes and models.", "es": "Un linaje que se detiene en el warehouse en vez de llegar a las features, los índices vectoriales y los modelos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why should an AI architect care about the data platform?", "es": "¿Por qué a un arquitecto de IA debería importarle la plataforma de datos?" },
+      "a": {
+        "en": "Because most AI failures I've seen were data failures with a model-shaped symptom. Training needs versioned, reproducible snapshots; RAG needs fresh documents with permissions and deletions propagated; evals need golden sets that don't silently change; and governance, from GDPR deletion to EU AI Act documentation, needs lineage from source to prediction. So I push for an open table format on object storage, contracts on critical sources, quality gates before training or indexing, and lineage that reaches models and vector indexes.",
+        "es": "Porque la mayoría de las fallas de IA que he visto eran fallas de datos con síntoma de modelo. El entrenamiento necesita snapshots versionados y reproducibles; el RAG necesita documentos frescos con permisos y borrados propagados; los evals necesitan golden sets que no cambien en silencio; y la gobernanza, desde el borrado por GDPR hasta la documentación del EU AI Act, necesita linaje desde la fuente hasta la predicción. Por eso impulso un formato de tabla abierto sobre almacenamiento de objetos, contratos en las fuentes críticas, compuertas de calidad antes de entrenar o indexar, y un linaje que llegue a modelos e índices vectoriales."
+      }
+    },
+    {
+      "q": { "en": "A user exercises their right to erasure. How do you handle it across AI systems?", "es": "Un usuario ejerce su derecho de supresión. ¿Cómo lo manejas en los sistemas de IA?" },
+      "a": {
+        "en": "Lineage makes it tractable: the catalog lists every table, feature, vector index and training set derived from that user's records. I delete from source and lakehouse tables, remembering time travel keeps old files until vacuum runs, then remove the user's chunks from vector indexes by ID or metadata filter. For models already trained on the data, I agree a policy with legal, typically excluding the user from the next scheduled retrain rather than retraining immediately, and I document it.",
+        "es": "El linaje lo vuelve manejable: el catálogo lista cada tabla, feature, índice vectorial y set de entrenamiento derivado de los registros de ese usuario. Borro en las tablas de origen y del lakehouse, recordando que el time travel conserva archivos viejos hasta que corre el vacuum, y luego elimino sus chunks de los índices vectoriales por ID o con un filtro de metadatos. Para modelos ya entrenados con esos datos, acuerdo una política con el área legal, normalmente excluirlo del siguiente reentrenamiento programado en vez de reentrenar de inmediato, y la documento."
+      }
+    }
+  ],
+  "related": ["feature-store", "index-lifecycle", "data-curation", "pii-privacy", "golden-datasets", "queues-streams"],
+  "sources": [
+    { "title": "Armbrust et al. — Lakehouse: A New Generation of Open Platforms (CIDR 2021)", "url": "https://www.cidrdb.org/cidr2021/papers/cidr2021_paper17.pdf" },
+    { "title": "Armbrust et al. — Delta Lake: High-Performance ACID Table Storage over Cloud Object Stores (VLDB 2020)", "url": "https://www.vldb.org/pvldb/vol13/p3411-armbrust.pdf" },
+    { "title": "Apache Iceberg — Documentation", "url": "https://iceberg.apache.org/docs/latest/" },
+    { "title": "OpenLineage — Documentation", "url": "https://openlineage.io/docs/" }
+  ]
+}

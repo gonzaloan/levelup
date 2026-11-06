@@ -1,0 +1,94 @@
+{
+  "id": "microservices",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Monolith vs microservices", "es": "Monolito vs microservicios" },
+  "aliases": ["monolith", "modular monolith", "microservice architecture", "Conway's law", "MonolithFirst", "distributed monolith", "strangler fig", "service decomposition"],
+  "tldr": {
+    "en": "Start with a modular monolith; split out a service only when a team needs independent deploys or a part needs different scaling, because every split pays for autonomy with network hops and distributed data.",
+    "es": "Empieza con un monolito modular; separa un servicio solo cuando un equipo necesita deploys independientes o una parte necesita escalar distinto, porque cada separación paga la autonomía con saltos de red y datos distribuidos."
+  },
+  "analogy": {
+    "en": "One restaurant kitchen vs a food court: each food-court stall changes its menu and hours alone, but a combo meal now needs three counters, three queues and someone to reconcile the bill.",
+    "es": "Una cocina de restaurante vs un patio de comidas: cada local del patio cambia su menú y su horario por su cuenta, pero un combo ahora necesita tres mostradores, tres filas y alguien que cuadre la cuenta."
+  },
+  "explain": {
+    "en": "A **monolith** is one deployable unit: one codebase, one process type, usually one database. A **modular monolith** keeps the single deploy but enforces internal boundaries: modules with explicit interfaces that never read each other's tables. **Microservices** split those modules into separately deployed services that own their data and talk over the network (HTTP/gRPC or events).\n\nWhat you buy:\n\n- **Team autonomy**: a team ships without a shared release train.\n- **Independent deploys and fault isolation**: a bad search deploy doesn't take down checkout.\n- **Different scaling profiles**: scale the hot or GPU-bound part alone.\n\nWhat you pay:\n\n- **Network hops**: an in-process call (nanoseconds) becomes a remote call (~0.5 ms+) that can time out, so you need timeouts, [[retries-backoff]] and [[idempotency]].\n- **Distributed data**: no cross-service JOINs or transactions; enter [[sagas-outbox]] and eventual consistency.\n- **Operational overhead**: per-service CI/CD, dashboards, on-call and [[observability]].\n\n**Conway's law**: systems mirror the communication structure of the org that builds them. Draw service boundaries along team boundaries, or you get a *distributed monolith*: services that must deploy together.\n\nFowler's **MonolithFirst**: boundaries are hard to guess before you understand the domain, so start modular and extract once the seams are proven.\n\n**AI angle**: GPU inference is the textbook extraction. It differs from the CPU app tier in hardware, scaling, deploy cadence and failure modes.",
+    "es": "Un **monolito** es una sola unidad de deploy: un código, un tipo de proceso y, por lo general, una base de datos. Un **monolito modular** mantiene ese único deploy pero impone fronteras internas: módulos con interfaces explícitas que nunca leen las tablas de otro módulo. Los **microservicios** separan esos módulos en servicios que se despliegan por separado, son dueños de sus datos y se comunican por la red (HTTP/gRPC o eventos).\n\nQué compras:\n\n- **Autonomía de equipos**: cada equipo publica sin un tren de releases compartido.\n- **Deploys independientes y aislamiento de fallas**: un mal deploy de búsqueda no tumba el checkout.\n- **Perfiles de escalamiento distintos**: escalas solo la parte más cargada o la que usa GPU.\n\nQué pagas:\n\n- **Saltos de red**: una llamada en proceso (nanosegundos) se vuelve una llamada remota (~0.5 ms o más) que puede expirar; necesitas timeouts, [[retries-backoff]] e [[idempotency]].\n- **Datos distribuidos**: no hay JOINs ni transacciones entre servicios; llegan las [[sagas-outbox]] y la consistencia eventual.\n- **Carga operativa**: CI/CD, dashboards, guardias y [[observability]] por cada servicio.\n\n**Ley de Conway**: los sistemas reflejan la estructura de comunicación de la organización que los construye. Traza las fronteras de servicio siguiendo las de los equipos o terminarás con un *monolito distribuido*: servicios que deben desplegarse juntos.\n\n**MonolithFirst** de Fowler: es difícil adivinar las fronteras antes de entender el dominio, así que empieza modular y extrae cuando las costuras estén probadas.\n\n**Ángulo IA**: la inferencia en GPU es la extracción de manual. Se diferencia del app tier en CPU en hardware, escalamiento, ritmo de deploy y modos de falla."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  C[Web and mobile clients] --> G[API gateway]\n  subgraph M[\"Modular monolith (CPU)\"]\n    O[Orders module]\n    B[Billing module]\n    T[Tickets module]\n  end\n  G --> M\n  O --> DB[(\"Postgres<br/>schema per module\")]\n  B --> DB\n  T --> DB\n  T -->|\"HTTP, timeout + fallback\"| I[\"Inference service<br/>GPU pool, autoscaled\"]\n  I --> W[(Model weights)]",
+    "caption": {
+      "en": "Keep CPU business logic in one modular deploy; extract the GPU inference path, which scales, deploys and fails differently.",
+      "es": "Mantén la lógica de negocio en CPU en un solo deploy modular; extrae la ruta de inferencia en GPU, que escala, se despliega y falla de otra forma."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Calling an extracted GPU inference service", "es": "Llamar a un servicio de inferencia en GPU extraído" },
+    "source": "import asyncio\nimport httpx\n\n# Before: summary = model.generate(text)  -- in-process, it could not time out.\n# After: a network hop to a separately scaled GPU service (vLLM, OpenAI-compatible).\nINFERENCE_URL = \"http://inference.internal:8000/v1/chat/completions\"\nMODEL = \"meta-llama/Llama-3.1-8B-Instruct\"  # any model the GPU service serves\n\nclient = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=1.0))\n\nasync def summarize(text: str) -> str | None:\n    payload = {\"model\": MODEL, \"max_tokens\": 200,\n               \"messages\": [{\"role\": \"user\", \"content\": f\"Summarize: {text}\"}]}\n    for attempt in range(3):\n        try:\n            r = await client.post(INFERENCE_URL, json=payload)\n            if r.status_code in (429, 503):       # GPU pool saturated: back off\n                await asyncio.sleep(0.5 * 2 ** attempt)\n                continue\n            r.raise_for_status()\n            return r.json()[\"choices\"][0][\"message\"][\"content\"]\n        except httpx.TransportError:               # timeouts, refused connections\n            await asyncio.sleep(0.5 * 2 ** attempt)\n    return None  # degrade: render the ticket without a summary"
+  },
+  "example": {
+    "en": "A 25-engineer SaaS runs a Django monolith. To add AI ticket summaries, they first load a 7B model inside the web workers: every web pod now needs a GPU, deploys take 10+ minutes to load weights, and a CUDA out-of-memory error crashes checkout requests too. They extract *only* inference into a vLLM service on an autoscaled GPU pool, called over HTTP with a 30 s timeout and a \"summary unavailable\" fallback. Web pods go back to cheap CPU nodes with 2-minute deploys; everything else stays in the monolith, now with enforced module boundaries.",
+    "es": "Un SaaS de 25 ingenieros corre un monolito en Django. Para agregar resúmenes de tickets con IA, primero cargan un modelo de 7B dentro de los workers web: cada pod web ahora necesita GPU, los deploys tardan más de 10 minutos en cargar los pesos y un error de memoria de CUDA también tumba las peticiones de checkout. Extraen *solo* la inferencia a un servicio vLLM sobre un pool de GPUs con autoescalado, al que llaman por HTTP con un timeout de 30 s y un fallback de \"resumen no disponible\". Los pods web vuelven a nodos CPU baratos con deploys de 2 minutos; todo lo demás sigue en el monolito, ahora con fronteras de módulo impuestas."
+  },
+  "pros": [
+    { "en": "Teams deploy independently, without a shared release train.", "es": "Los equipos despliegan de forma independiente, sin un tren de releases compartido." },
+    { "en": "Each service gets its own hardware and scaling: CPU web tier, GPU inference.", "es": "Cada servicio tiene su propio hardware y escalamiento: app tier en CPU, inferencia en GPU." },
+    { "en": "Smaller blast radius, as long as callers have timeouts and fallbacks.", "es": "Menor radio de impacto, siempre que quien llama tenga timeouts y fallbacks." }
+  ],
+  "cons": [
+    { "en": "Every call becomes a network hop: added latency, timeouts and partial failure.", "es": "Cada llamada se vuelve un salto de red: más latencia, timeouts y fallas parciales." },
+    { "en": "No cross-service transactions or JOINs: you need sagas, an outbox and eventual consistency.", "es": "No hay transacciones ni JOINs entre servicios: necesitas sagas, outbox y consistencia eventual." },
+    { "en": "An operational tax per service: pipelines, dashboards, on-call, version skew.", "es": "Un impuesto operativo por servicio: pipelines, dashboards, guardias y desfase de versiones." }
+  ],
+  "whenToUse": {
+    "en": "Several teams blocking each other in one codebase, parts with clearly different scaling or hardware needs (GPU inference), or hard isolation boundaries, once the module seams are already proven.",
+    "es": "Varios equipos que se bloquean entre sí en un mismo código, partes con necesidades de escalamiento o hardware claramente distintas (inferencia en GPU), o fronteras de aislamiento estrictas, cuando las costuras entre módulos ya están probadas."
+  },
+  "whenNotToUse": {
+    "en": "A single team, an early product whose domain boundaries still move, or when the reason is \"it's modern\" rather than a concrete deploy, scaling or ownership pain.",
+    "es": "Un solo equipo, un producto temprano cuyas fronteras de dominio todavía cambian, o cuando la razón es \"es moderno\" y no un dolor concreto de deploy, escalamiento o propiedad."
+  },
+  "numbers": [
+    { "en": "Jeff Dean's latency numbers: ~100 ns for a main-memory reference vs ~500 µs for a round trip within a datacenter, thousands of times more.", "es": "Números de latencia de Jeff Dean: ~100 ns por una referencia a memoria principal vs ~500 µs por un viaje de ida y vuelta dentro de un datacenter, miles de veces más." },
+    { "en": "Availability compounds: 5 sequential dependencies at 99.9% each give ~99.5% end to end (0.999^5).", "es": "La disponibilidad se multiplica: 5 dependencias en serie al 99.9% cada una dan ~99.5% de punta a punta (0.999^5)." },
+    { "en": "Amazon's two-pizza rule: a service is owned by a team small enough to feed with two pizzas.", "es": "Regla de las dos pizzas de Amazon: un servicio pertenece a un equipo tan pequeño que se alimenta con dos pizzas." }
+  ],
+  "pitfalls": [
+    { "en": "The distributed monolith: services that share one database or must deploy in lockstep. All the costs, none of the autonomy.", "es": "El monolito distribuido: servicios que comparten una base de datos o deben desplegarse a la par. Todos los costos y nada de autonomía." },
+    { "en": "Splitting by technical layer (UI, logic, data service) instead of business capability, so every feature touches every service.", "es": "Separar por capa técnica (UI, lógica, servicio de datos) en vez de por capacidad de negocio, así cada feature toca todos los servicios." },
+    { "en": "Chatty synchronous chains (A → B → C → D) that multiply latency and failure probability.", "es": "Cadenas síncronas muy conversadoras (A → B → C → D) que multiplican la latencia y la probabilidad de falla." },
+    { "en": "Splitting before you have per-service CI/CD, distributed tracing and clear on-call ownership.", "es": "Separar antes de tener CI/CD por servicio, tracing distribuido y una propiedad clara de las guardias." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Would you build a new AI product as microservices?", "es": "¿Construirías un producto de IA nuevo con microservicios?" },
+      "a": {
+        "en": "No. I'd start with a modular monolith: one deploy, but modules with explicit interfaces and no shared tables, enforced in CI. Boundaries are cheap to move inside one codebase and expensive across a network, and early on I don't know them yet; that's Fowler's MonolithFirst. The exception I'd make on day one is model inference: GPU serving has different hardware, scaling, deploy cadence and failure modes, so it lives behind its own API. I'd extract more only when a team or a scaling profile clearly demands it.",
+        "es": "No. Empezaría con un monolito modular: un solo deploy, pero con módulos de interfaces explícitas y sin tablas compartidas, verificado en CI. Mover fronteras dentro de un mismo código es barato y a través de la red es caro, y al principio todavía no las conozco; eso es el MonolithFirst de Fowler. La excepción que haría desde el día uno es la inferencia del modelo: servir en GPU tiene hardware, escalamiento, ritmo de deploy y modos de falla distintos, así que vive detrás de su propia API. Extraería más solo cuando un equipo o un perfil de escalamiento lo exija claramente."
+      }
+    },
+    {
+      "q": { "en": "Your org has 40 microservices and every feature needs five teams to coordinate. What's wrong?", "es": "Tu organización tiene 40 microservicios y cada feature requiere coordinar a cinco equipos. ¿Qué está mal?" },
+      "a": {
+        "en": "Conway's law is working against them: service boundaries don't match how work flows, so they've built a distributed monolith. I'd look for three signals: lockstep deploys, shared databases, and long synchronous call chains in traces. The fix is to redraw boundaries around business capabilities so one team can ship one feature, and to merge services that always change together. Fewer, larger services owned by stable teams usually beat many tiny ones. I'd also shape teams to the architecture I want, the inverse Conway maneuver.",
+        "es": "La ley de Conway está jugando en su contra: las fronteras de los servicios no coinciden con cómo fluye el trabajo, así que construyeron un monolito distribuido. Buscaría tres señales: deploys a la par, bases de datos compartidas y cadenas largas de llamadas síncronas en las trazas. La solución es redibujar las fronteras alrededor de capacidades de negocio para que un equipo entregue una feature completa, y fusionar los servicios que siempre cambian juntos. Pocos servicios más grandes con equipos estables suelen ganarle a muchos diminutos. También ajustaría los equipos a la arquitectura que quiero: la maniobra inversa de Conway."
+      }
+    },
+    {
+      "q": { "en": "How do you extract a service from a monolith safely?", "es": "¿Cómo extraes un servicio de un monolito de forma segura?" },
+      "a": {
+        "en": "With the strangler fig pattern. First I make the module a clean boundary inside the monolith: its own tables, reached only through an interface. Then I stand up the new service behind that same interface, route a slice of traffic to it through a proxy or feature flag, compare results and ramp up. Data moves last: the service becomes the owner, and everyone else reads through its API or its events, never its tables. Every step stays reversible until the old code is deleted.",
+        "es": "Con el patrón strangler fig. Primero convierto el módulo en una frontera limpia dentro del monolito: sus propias tablas, a las que solo se llega por una interfaz. Después levanto el servicio nuevo detrás de esa misma interfaz, le mando una porción del tráfico con un proxy o un feature flag, comparo resultados y voy subiendo. Los datos se mueven al final: el servicio pasa a ser el dueño y los demás leen por su API o sus eventos, nunca por sus tablas. Cada paso es reversible hasta que borro el código viejo."
+      }
+    }
+  ],
+  "related": ["api-design", "observability", "sagas-outbox", "event-driven", "serving-stack", "slos"],
+  "sources": [
+    { "title": "Martin Fowler — MonolithFirst", "url": "https://martinfowler.com/bliki/MonolithFirst.html" },
+    { "title": "James Lewis & Martin Fowler — Microservices", "url": "https://martinfowler.com/articles/microservices.html" },
+    { "title": "Martin Fowler — Conway's Law", "url": "https://martinfowler.com/bliki/ConwaysLaw.html" },
+    { "title": "Martin Fowler — Strangler Fig Application", "url": "https://martinfowler.com/bliki/StranglerFigApplication.html" }
+  ]
+}

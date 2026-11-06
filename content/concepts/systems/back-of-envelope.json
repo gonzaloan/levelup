@@ -1,0 +1,89 @@
+{
+  "id": "back-of-envelope",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Back-of-the-envelope estimation", "es": "Estimaciones de servilleta (back-of-the-envelope)" },
+  "aliases": ["back-of-the-envelope", "napkin math", "capacity estimation", "latency numbers", "Fermi estimation", "QPS estimation", "GPU sizing"],
+  "tldr": {
+    "en": "Order-of-magnitude arithmetic (latency, QPS, storage, tokens/s) done in two minutes to decide whether a design is feasible and which component dominates, before anyone builds anything.",
+    "es": "Aritmética de orden de magnitud (latencia, QPS, almacenamiento, tokens/s) hecha en dos minutos para saber si un diseño es viable y qué componente domina, antes de construir nada."
+  },
+  "analogy": {
+    "en": "A contractor paces a room, says \"about 40 m², so roughly 30 boxes of tiles\" and only then orders. Off by 10% is fine; off by 10× is not.",
+    "es": "Un albañil mide el cuarto a pasos, dice \"unos 40 m², o sea unas 30 cajas de piso\" y recién entonces hace el pedido. Fallar por 10% está bien; fallar por 10× no."
+  },
+  "explain": {
+    "en": "**Back-of-the-envelope estimation** is rough arithmetic that gets the *power of ten* right for latency, throughput, storage and cost. That power of ten decides the architecture: one Postgres box or a sharded cluster, 4 GPUs or 400.\n\nThe recipe:\n\n1. **Latency** — memorize the ladder: main memory is ~100× slower than L1, an SSD random read ~100–1,000× slower than memory, a cross-continent round trip ~300× slower than one inside a datacenter. Count the hops on the critical path.\n2. **Traffic** — `DAU × requests per user ÷ 86,400 s` = average QPS. Multiply by **2–5×** for peak.\n3. **Storage** — `items/day × bytes × retention × replication factor`.\n4. **Bandwidth** — `QPS × payload size`. Watch bits vs bytes (×8).\n\nFor LLM systems, **count tokens, not requests**. Peak tokens/s = peak QPS × tokens per request, with prefill (input) and decode (output) sized separately; decode is usually the bottleneck. Then `GPUs = peak output tokens/s ÷ tokens/s per GPU`, where the per-GPU figure is *measured* at your latency SLO, plus headroom. See [[gpu-memory-math]] for whether the model fits at all and [[token-economics]] for the bill.\n\nRound aggressively (86,400 ≈ 10⁵), say every assumption out loud, and sanity-check the result against something you know.",
+    "es": "Una **estimación de servilleta** es aritmética aproximada para acertar la *potencia de diez* en latencia, throughput, almacenamiento y costo. Esa potencia de diez es la que decide la arquitectura: un solo Postgres o un clúster con sharding, 4 GPUs o 400.\n\nLa receta:\n\n1. **Latencia**: memoriza la escalera. La memoria principal es ~100× más lenta que la caché L1, una lectura aleatoria en SSD es ~100–1,000× más lenta que la memoria y un round trip entre continentes es ~300× más lento que uno dentro del mismo datacenter. Cuenta los saltos en el camino crítico.\n2. **Tráfico**: `DAU × requests por usuario ÷ 86,400 s` = QPS promedio. Multiplica por **2–5×** para el pico.\n3. **Almacenamiento**: `elementos/día × bytes × retención × factor de replicación`.\n4. **Ancho de banda**: `QPS × tamaño del payload`. Cuidado con bits contra bytes (×8).\n\nEn sistemas con LLMs, **cuenta tokens, no requests**. Tokens/s en el pico = QPS pico × tokens por request, dimensionando por separado el prefill (entrada) y el decode (salida); el decode suele ser el cuello de botella. Luego `GPUs = tokens de salida/s pico ÷ tokens/s por GPU`, donde la cifra por GPU se *mide* con tu SLO de latencia, y suma holgura. Revisa [[gpu-memory-math]] para saber si el modelo siquiera cabe y [[token-economics]] para la factura.\n\nRedondea sin miedo (86,400 ≈ 10⁵), di cada supuesto en voz alta y contrasta el resultado con algo que ya conozcas."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  D[\"DAU × requests per user\"] --> R[Requests per day]\n  R -->|\"÷ 86,400 s\"| A[Average QPS]\n  A -->|\"× 2–5\"| P[Peak QPS]\n  P -->|\"× output tokens\"| T[\"Peak tokens/s\"]\n  T -->|\"÷ measured tokens/s per GPU\"| G[\"GPUs at 100%\"]\n  G -->|\"÷ target utilization\"| F[GPU fleet]\n  R -->|\"× bytes × retention\"| S[Raw storage]\n  S -->|\"× replication\"| ST[Total storage]",
+    "caption": {
+      "en": "Requests become tokens and then GPUs; the same request count drives storage. Each arrow is one multiplication you can say out loud.",
+      "es": "Los requests se convierten en tokens y luego en GPUs; el mismo conteo define el almacenamiento. Cada flecha es una multiplicación que puedes decir en voz alta."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Capacity estimate for an LLM chat feature", "es": "Estimación de capacidad para un chat con LLM" },
+    "source": "import math\n\nSECONDS_PER_DAY = 86_400  # ~1e5 for mental math\n\ndef peak_qps(dau: int, req_per_user: float, peak_factor: float = 3.0) -> float:\n    return dau * req_per_user / SECONDS_PER_DAY * peak_factor\n\ndef gpus_needed(qps: float, out_tokens: int, tok_s_per_gpu: float,\n                target_util: float = 0.7) -> int:\n    # Decode dominates. tok_s_per_gpu must be MEASURED at your p95 latency SLO:\n    # it swings by an order of magnitude with model, batch size and context length\n    return math.ceil(qps * out_tokens / (tok_s_per_gpu * target_util))\n\ndef storage_tb(req_per_day: float, bytes_each: int, days: int, replicas: int = 3) -> float:\n    return req_per_day * bytes_each * days * replicas / 1e12\n\ndau, rpu = 1_000_000, 10\nqps = peak_qps(dau, rpu)                                      # ~116 avg -> ~347 peak\ngpus = gpus_needed(qps, out_tokens=500, tok_s_per_gpu=2_500)  # assumption from a load test\ntb = storage_tb(dau * rpu, bytes_each=2_000, days=365)        # chat turns kept 1 year\nprint(f\"peak {qps:.0f} QPS, {gpus} GPUs, {tb:.0f} TB/yr\")      # peak 347 QPS, 100 GPUs, 22 TB/yr"
+  },
+  "example": {
+    "en": "A product team wants an assistant for **1M DAU, 10 messages each**. That's 10M requests/day ÷ 86,400 ≈ **116 QPS**, ~**350 QPS** at a 3× peak. At ~500 output tokens per reply, peak decode is ~**175k tokens/s**. If a load test shows one GPU sustaining ~2,500 tokens/s within the p95 latency target, that's 70 GPUs busy, **~100** at 70% target utilization. Storage is small: 2 KB per turn × 10M × 365 × 3 replicas ≈ **22 TB/year**. Conclusion in two minutes: the GPUs are the cost and the risk; the database is not.",
+    "es": "Un equipo de producto quiere un asistente para **1M de DAU con 10 mensajes cada uno**. Son 10M requests/día ÷ 86,400 ≈ **116 QPS**, ~**350 QPS** con un pico de 3×. Con ~500 tokens de salida por respuesta, el decode en el pico es de ~**175k tokens/s**. Si una prueba de carga muestra que una GPU sostiene ~2,500 tokens/s dentro del objetivo de latencia p95, son 70 GPUs ocupadas y **~100** con una utilización objetivo de 70%. El almacenamiento es poco: 2 KB por turno × 10M × 365 × 3 réplicas ≈ **22 TB/año**. Conclusión en dos minutos: las GPUs son el costo y el riesgo; la base de datos no."
+  },
+  "pros": [
+    { "en": "Kills infeasible designs in two minutes, before anyone writes a design doc.", "es": "Descarta diseños inviables en dos minutos, antes de que alguien escriba un design doc." },
+    { "en": "Shows which component dominates cost and latency, so you optimize the right one.", "es": "Muestra qué componente domina el costo y la latencia, para que optimices el correcto." },
+    { "en": "Makes assumptions explicit, so people challenge the inputs instead of the conclusion.", "es": "Hace explícitos los supuestos, así la discusión es sobre las entradas y no sobre la conclusión." }
+  ],
+  "cons": [
+    { "en": "Only gets the order of magnitude; it never replaces a load test.", "es": "Solo acierta el orden de magnitud; nunca reemplaza una prueba de carga." },
+    { "en": "One bad input (peak factor, tokens per request) shifts the answer by 5–10×.", "es": "Un solo dato malo (factor de pico, tokens por request) mueve el resultado 5–10×." },
+    { "en": "Per-GPU throughput depends heavily on model, batch size and context length, so it must be benchmarked.", "es": "El throughput por GPU depende mucho del modelo, el tamaño de batch y el largo de contexto, así que hay que medirlo." }
+  ],
+  "whenToUse": {
+    "en": "At the start of every design and interview question: before picking a database, a shard count or a GPU fleet, and whenever one number decides the architecture.",
+    "es": "Al inicio de cada diseño y de cada pregunta de entrevista: antes de elegir base de datos, número de shards o flota de GPUs, y siempre que un número decida la arquitectura."
+  },
+  "whenNotToUse": {
+    "en": "As a substitute for load tests or real capacity planning. Once you have production traffic and benchmarks, use the measured numbers.",
+    "es": "Como sustituto de pruebas de carga o de una planificación de capacidad real. Cuando tengas tráfico de producción y benchmarks, usa los números medidos."
+  },
+  "numbers": [
+    { "en": "L1 cache ~1 ns · main memory ~100 ns · SSD random read ~16–100 µs.", "es": "Caché L1 ~1 ns · memoria principal ~100 ns · lectura aleatoria en SSD ~16–100 µs." },
+    { "en": "Round trip: same datacenter ~0.5 ms; California ↔ Netherlands ~150 ms.", "es": "Round trip: mismo datacenter ~0.5 ms; California ↔ Países Bajos ~150 ms." },
+    { "en": "1 day = 86,400 s ≈ 10⁵ s, so 1M requests/day ≈ 12 QPS average.", "es": "1 día = 86,400 s ≈ 10⁵ s, así que 1M de requests/día ≈ 12 QPS de promedio." },
+    { "en": "2¹⁰ ≈ 10³ (KB), 2²⁰ ≈ 10⁶ (MB), 2³⁰ ≈ 10⁹ (GB), 2⁴⁰ ≈ 10¹² (TB): thousand, million, billion, trillion.", "es": "2¹⁰ ≈ 10³ (KB), 2²⁰ ≈ 10⁶ (MB), 2³⁰ ≈ 10⁹ (GB), 2⁴⁰ ≈ 10¹² (TB): mil, millón, mil millones, billón." },
+    { "en": "Rule of thumb: 1 token ≈ 4 characters ≈ 0.75 English words.", "es": "Regla práctica: 1 token ≈ 4 caracteres ≈ 0.75 palabras en inglés (en español suele haber más tokens por palabra)." }
+  ],
+  "pitfalls": [
+    { "en": "Sizing for the average day: peak hours run 2–5× higher, and launches or batch jobs spike further.", "es": "Dimensionar para el día promedio: las horas pico corren 2–5× más alto, y los lanzamientos o jobs batch suben todavía más." },
+    { "en": "Counting requests instead of tokens: a 20k-token RAG prompt is ~100× the prefill work of a 200-token chat turn.", "es": "Contar requests en lugar de tokens: un prompt RAG de 20k tokens es ~100× el trabajo de prefill de un turno de chat de 200 tokens." },
+    { "en": "Using a vendor's peak tokens/s instead of throughput measured at your latency SLO and context length.", "es": "Usar los tokens/s máximos del proveedor en vez del throughput medido con tu SLO de latencia y tu largo de contexto." },
+    { "en": "Forgetting replicas, indexes and backups: stored bytes are a multiple of raw bytes (×3 for replication alone).", "es": "Olvidar réplicas, índices y backups: los bytes almacenados son un múltiplo de los bytes crudos (×3 solo por replicación)." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Estimate the GPUs needed to serve a chat assistant to 1M daily users.", "es": "Estima cuántas GPUs necesitas para servir un asistente de chat a 1M de usuarios diarios." },
+      "a": {
+        "en": "I'd state assumptions first: 10 messages per user per day, ~500 output tokens per reply, 3× peak. That's 10M requests a day, about 116 QPS average and ~350 at peak, so ~175k output tokens per second. Then the one number I won't guess: per-GPU throughput for our model at our p95 latency target. Say a benchmark gives 2,500 tokens/s: 70 GPUs busy, ~100 with 30% headroom, before redundancy across zones. Next I'd check how much routing easy turns to a smaller model cuts that.",
+        "es": "Primero digo los supuestos: 10 mensajes por usuario al día, ~500 tokens de salida por respuesta, pico de 3×. Son 10M de requests al día, unos 116 QPS de promedio y ~350 en el pico, o sea ~175k tokens de salida por segundo. Luego, el único número que no adivino: el throughput por GPU de nuestro modelo con nuestro objetivo de latencia p95. Si un benchmark da 2,500 tokens/s, son 70 GPUs ocupadas, ~100 con 30% de holgura, sin contar redundancia entre zonas. Después reviso cuánto baja eso si enruto los turnos fáciles a un modelo más chico."
+      }
+    },
+    {
+      "q": { "en": "An agent turn makes 8 sequential tool calls to a service in another region. What latency do you expect?", "es": "Un turno de un agente hace 8 llamadas secuenciales a herramientas en otra región. ¿Qué latencia esperas?" },
+      "a": {
+        "en": "Before any model time, 8 cross-region round trips at ~70–150 ms each is roughly 0.6–1.2 s of pure network, plus each tool's own work and the LLM calls between them. That's why I count hops on the critical path first. I'd co-locate the tools with the agent runtime, run independent calls in parallel and batch reads, which brings the network part down to a few milliseconds. Latency numbers tell you where the time goes before a profiler does.",
+        "es": "Antes de contar el tiempo del modelo, 8 round trips entre regiones a ~70–150 ms cada uno son unos 0.6–1.2 s solo de red, más el trabajo de cada herramienta y las llamadas al LLM entre ellas. Por eso cuento primero los saltos en el camino crítico. Pondría las herramientas en la misma región que el runtime del agente, correría en paralelo las llamadas independientes y agruparía lecturas, con lo que la parte de red baja a unos pocos milisegundos. Los números de latencia te dicen dónde se va el tiempo antes que un profiler."
+      }
+    }
+  ],
+  "related": ["gpu-memory-math", "token-economics", "inference-metrics", "slos", "design-framework", "sharding"],
+  "sources": [
+    { "title": "Colin Scott — Latency Numbers Every Programmer Should Know (interactive)", "url": "https://colin-scott.github.io/personal_website/research/interactive_latency.html" },
+    { "title": "Peter Norvig — Teach Yourself Programming in Ten Years (timing table)", "url": "https://norvig.com/21-days.html" },
+    { "title": "Google SRE Workbook — Non-Abstract Large System Design", "url": "https://sre.google/workbook/non-abstract-design/" },
+    { "title": "OpenAI Help — What are tokens and how to count them?", "url": "https://help.openai.com/en/articles/4936856-what-are-tokens-and-how-to-count-them" }
+  ]
+}

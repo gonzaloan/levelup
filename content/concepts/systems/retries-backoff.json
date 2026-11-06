@@ -1,0 +1,97 @@
+{
+  "id": "retries-backoff",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Retries, backoff & circuit breakers", "es": "Reintentos, backoff y circuit breakers" },
+  "aliases": ["exponential backoff", "jitter", "circuit breaker", "retry budget", "bulkhead", "Retry-After", "retry storm", "529 overloaded"],
+  "tldr": {
+    "en": "Retry only transient errors, with exponential backoff plus jitter, within a deadline and a retry budget; when a dependency is clearly down, a circuit breaker fails fast or falls back instead of piling on.",
+    "es": "Reintenta solo errores transitorios, con backoff exponencial más jitter, dentro de un deadline y un presupuesto de reintentos; si una dependencia está claramente caída, un circuit breaker falla rápido o usa un fallback en vez de sumar carga."
+  },
+  "analogy": {
+    "en": "Calling a busy restaurant: you don't redial every second (backoff), you don't all call at 7:00 sharp (jitter), and after five busy signals you eat somewhere else tonight (circuit breaker).",
+    "es": "Llamar a un restaurante lleno: no remarcas cada segundo (backoff), no llaman todos justo a las 7:00 (jitter) y, después de cinco tonos de ocupado, esa noche comes en otro lugar (circuit breaker)."
+  },
+  "explain": {
+    "en": "A **retry** turns a transient failure into a success; a bad retry policy turns a small outage into a big one.\n\n**Classify first.** Retry *transient* errors: timeouts, connection resets, 429, 500/502/503/504 and the LLM-specific **529 overloaded**. Never retry *permanent* ones (400, 401, 403, context too long): they fail the same way every time. Retry writes only if they are idempotent ([[idempotency]]).\n\n**Back off with jitter.** Wait `base × 2^attempt`, capped, and randomize it (*full jitter*: a uniform draw between 0 and that value). Without jitter, clients that failed together retry together, in waves. If the server sends **Retry-After**, obey it.\n\n**Bound everything.**\n\n- A **timeout** on every network call and a total deadline per request. For streaming LLM calls, time out on the first token and on idle gaps, not on total duration.\n- A **retry budget**: ~3 attempts per request, retries ≤ 10% of traffic. Retry at *one* layer: 3 layers × 4 attempts = 64 calls on the bottom service.\n\n**Stop calling a dead dependency.** A **circuit breaker** is *closed* (normal), trips *open* after N failures (fail fast, or [[model-routing]] to a fallback model, for e.g. 30 s), then goes *half-open* and lets a few probes test recovery. **Bulkheads** give each dependency its own concurrency pool, so one slow LLM provider cannot exhaust every worker.",
+    "es": "Un **reintento** convierte una falla transitoria en un éxito; una mala política de reintentos convierte una caída pequeña en una grande.\n\n**Primero clasifica.** Reintenta errores *transitorios*: timeouts, conexiones reiniciadas, 429, 500/502/503/504 y el **529 overloaded** propio de las APIs de LLM. Nunca reintentes los *permanentes* (400, 401, 403, contexto demasiado largo): fallan igual cada vez. Reintenta escrituras solo si son idempotentes ([[idempotency]]).\n\n**Espera con backoff y jitter.** Espera `base × 2^intento`, con un tope, y aleatorízalo (*full jitter*: un valor uniforme entre 0 y ese tope). Sin jitter, los clientes que fallaron juntos reintentan juntos, en oleadas. Si el servidor envía **Retry-After**, respétalo.\n\n**Acota todo.**\n\n- Un **timeout** en cada llamada de red y un deadline total por request. En llamadas de LLM con streaming, pon timeout al primer token y a los silencios entre tokens, no a la duración total.\n- Un **presupuesto de reintentos**: ~3 intentos por request y reintentos ≤ 10% del tráfico. Reintenta en *una sola* capa: 3 capas × 4 intentos = 64 llamadas al servicio de abajo.\n\n**Deja de llamar a una dependencia caída.** Un **circuit breaker** está *cerrado* (normal), pasa a *abierto* tras N fallas (falla rápido o usa [[model-routing]] hacia un modelo de respaldo durante, por ejemplo, 30 s) y luego a *semiabierto*, donde deja pasar unas pocas pruebas para confirmar la recuperación. Los **bulkheads** dan a cada dependencia su propio pool de concurrencia, para que un proveedor de LLM lento no agote todos tus workers."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  A[LLM call] --> B{\"Breaker open?\"}\n  B -->|yes| F[\"Fallback model<br/>or cached answer\"]\n  B -->|no| C[Call with timeout]\n  C -->|2xx| OK[Return response]\n  C -->|error| D{\"Transient?<br/>429, 5xx, 529\"}\n  D -->|permanent 4xx| X[Fail fast]\n  D -->|yes| E{\"Attempts and<br/>budget left?\"}\n  E -->|no| F\n  E -->|yes| W[\"Wait Retry-After<br/>or backoff + jitter\"]\n  W --> C\n  C -.->|failures counted| B",
+    "caption": {
+      "en": "Classify, bound and back off; the breaker turns a sustained failure into an instant fallback instead of more load.",
+      "es": "Clasifica, acota y espera; el breaker convierte una falla sostenida en un fallback inmediato en lugar de más carga."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Full-jitter retries, Retry-After and a fallback model", "es": "Reintentos con full jitter, Retry-After y modelo de respaldo" },
+    "source": "import random, time\nimport anthropic\n\nclient = anthropic.Anthropic(max_retries=0)  # exactly one layer owns retries: this one\nPRIMARY = \"claude-sonnet-4-5\"                # example ids: any two models\nFALLBACK = \"claude-haiku-4-5\"\nTRANSIENT = {408, 429, 500, 502, 503, 504, 529}\n\ndef full_jitter(attempt: int, base: float = 0.5, cap: float = 20.0) -> float:\n    # Uniform in [0, base*2^n]: de-synchronizes clients that failed together\n    return random.uniform(0, min(cap, base * 2 ** attempt))\n\ndef ask(messages, model=PRIMARY, attempts=3, deadline_s=45.0):\n    start = time.monotonic()\n    for n in range(attempts):\n        try:\n            return client.messages.create(model=model, max_tokens=1024,\n                                          messages=messages, timeout=30.0)\n        except anthropic.APIStatusError as e:\n            if e.status_code not in TRANSIENT:\n                raise                                   # 400/401/403: permanent\n            hint = e.response.headers.get(\"retry-after\")\n            wait = float(hint) if hint else full_jitter(n)  # server knows best\n        except anthropic.APIConnectionError:            # also covers timeouts\n            wait = full_jitter(n)\n        if n + 1 == attempts or time.monotonic() - start + wait > deadline_s:\n            break                                       # out of attempts or time\n        time.sleep(wait)\n    if model != FALLBACK:                               # degrade instead of failing\n        return ask(messages, FALLBACK, attempts=2, deadline_s=15.0)\n    raise RuntimeError(\"primary and fallback both unavailable\")"
+  },
+  "example": {
+    "en": "Monday 9:00: your LLM provider returns 529 *overloaded* on ~30% of calls. With no policy, each of 3 layers retries 3 times immediately: one failed call becomes up to 64 calls and the overload deepens. With a policy, only the gateway retries, at most twice, with full jitter and Retry-After; after 20 failures in 10 s the breaker opens and sends traffic to a fallback model for 30 s. Users see ~1.5 s extra latency on some answers, slightly lower quality on others, and almost no errors.",
+    "es": "Lunes 9:00: tu proveedor de LLM devuelve 529 *overloaded* en ~30% de las llamadas. Sin política, cada una de 3 capas reintenta 3 veces de inmediato: una llamada fallida se vuelve hasta 64 llamadas y la sobrecarga empeora. Con política, solo el gateway reintenta, máximo 2 veces, con full jitter y respetando Retry-After; tras 20 fallas en 10 s el breaker se abre y manda el tráfico a un modelo de respaldo durante 30 s. Los usuarios ven ~1.5 s más de latencia en algunas respuestas, algo menos de calidad en otras y casi ningún error."
+  },
+  "pros": [
+    { "en": "Absorbs the transient failures that are normal at scale: network blips, deploys, brief throttling.", "es": "Absorbe las fallas transitorias que son normales a escala: cortes breves de red, deploys, throttling momentáneo." },
+    { "en": "Circuit breakers turn slow timeouts into instant failures or fallbacks, freeing workers and giving the dependency room to recover.", "es": "Los circuit breakers convierten timeouts lentos en fallas o fallbacks inmediatos, liberan workers y le dan espacio a la dependencia para recuperarse." },
+    { "en": "Fallback models keep the product up when one provider is degraded.", "es": "Los modelos de respaldo mantienen el producto arriba cuando un proveedor está degradado." }
+  ],
+  "cons": [
+    { "en": "Every retry adds latency; without a deadline, tail latency is unbounded.", "es": "Cada reintento agrega latencia; sin un deadline, la latencia de cola no tiene límite." },
+    { "en": "Misconfigured, retries amplify load exactly when the dependency is weakest.", "es": "Mal configurados, los reintentos amplifican la carga justo cuando la dependencia está más débil." },
+    { "en": "Breakers need tuning: too sensitive and they flap on noise, too lax and they never trip.", "es": "Los breakers requieren ajuste: muy sensibles oscilan con el ruido, muy laxos nunca se abren." },
+    { "en": "A fallback model changes quality and cost; it needs its own evals.", "es": "Un modelo de respaldo cambia la calidad y el costo; necesita sus propias evaluaciones." }
+  ],
+  "whenToUse": {
+    "en": "Every call that crosses a network: LLM APIs, vector databases, internal services. Add breakers and bulkheads wherever one slow dependency could stall many callers.",
+    "es": "En toda llamada que cruce la red: APIs de LLM, bases vectoriales, servicios internos. Agrega breakers y bulkheads donde una dependencia lenta pueda bloquear a muchos llamadores."
+  },
+  "whenNotToUse": {
+    "en": "Permanent errors, non-idempotent writes without an idempotency key, or a layer whose callee already retries. Don't retry when the user's deadline has no room left.",
+    "es": "Ante errores permanentes, escrituras no idempotentes sin idempotency key o en una capa cuyo servicio de abajo ya reintenta. No reintentes cuando el deadline del usuario ya no tiene margen."
+  },
+  "numbers": [
+    { "en": "Full jitter: sleep = random(0, min(cap, base × 2^attempt)) — AWS Architecture Blog.", "es": "Full jitter: espera = random(0, min(tope, base × 2^intento)), según el AWS Architecture Blog." },
+    { "en": "Google SRE: at most 3 attempts per request, and a per-client budget keeping retries under 10% of requests.", "es": "Google SRE: máximo 3 intentos por request y un presupuesto por cliente que mantiene los reintentos por debajo del 10% de los requests." },
+    { "en": "Retries multiply across layers: 3 layers × 4 attempts each = 4³ = 64 calls on the bottom service.", "es": "Los reintentos se multiplican entre capas: 3 capas × 4 intentos = 4³ = 64 llamadas al servicio de abajo." },
+    { "en": "OpenAI and Anthropic Python SDKs retry 2 times by default with exponential backoff (429, 5xx, connection errors).", "es": "Los SDKs de Python de OpenAI y Anthropic reintentan 2 veces por defecto con backoff exponencial (429, 5xx, errores de conexión)." },
+    { "en": "Anthropic returns 429 for rate limits (with a retry-after header) and 529 when the API is overloaded.", "es": "Anthropic devuelve 429 por límite de tasa (con header retry-after) y 529 cuando la API está sobrecargada." }
+  ],
+  "pitfalls": [
+    { "en": "Retrying at every layer (SDK, gateway, service): attempts multiply and the storm lands on the weakest service.", "es": "Reintentar en todas las capas (SDK, gateway, servicio): los intentos se multiplican y la tormenta cae sobre el servicio más débil." },
+    { "en": "No jitter: thousands of clients retry in synchronized waves that look like a DDoS.", "es": "Sin jitter: miles de clientes reintentan en oleadas sincronizadas que parecen un DDoS." },
+    { "en": "Retrying an agent's tool call or a payment without an idempotency key: double charges, duplicate emails.", "es": "Reintentar la llamada a una herramienta de un agente o un pago sin idempotency key: cobros dobles, correos duplicados." },
+    { "en": "One total timeout on a streaming LLM call: it either kills long valid answers or waits minutes on a hung one.", "es": "Un único timeout total en una llamada de LLM con streaming: o corta respuestas largas válidas o espera minutos a una colgada." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your LLM provider starts returning 529 overloaded at peak. What does your system do?", "es": "Tu proveedor de LLM empieza a devolver 529 overloaded en el pico. ¿Qué hace tu sistema?" },
+      "a": {
+        "en": "I treat 429 and 529 as transient, but as a signal to back off, not push harder. The gateway, and only the gateway, retries up to twice with full jitter, honoring Retry-After. If failures cross a threshold, a circuit breaker opens and routes to a fallback: a second provider or a smaller model whose quality we've already evaluated. Meanwhile I shed or queue low-priority work like batch jobs so interactive users keep the capacity. The trade-off is lower quality or higher cost on the fallback path versus an outright error.",
+        "es": "Trato 429 y 529 como transitorios, pero como una señal para bajar el ritmo, no para presionar más. El gateway, y solo el gateway, reintenta hasta dos veces con full jitter y respetando Retry-After. Si las fallas superan un umbral, un circuit breaker se abre y enruta a un fallback: otro proveedor o un modelo más chico cuya calidad ya evaluamos. Mientras tanto, descarto o encolo trabajo de baja prioridad, como jobs batch, para que los usuarios interactivos conserven la capacidad. El trade-off es menos calidad o más costo en el camino de respaldo frente a un error directo."
+      }
+    },
+    {
+      "q": { "en": "How can retries make an outage worse, and how do you prevent it?", "es": "¿Cómo pueden los reintentos empeorar una caída y cómo lo evitas?" },
+      "a": {
+        "en": "Retries add load exactly when the dependency is saturated. If three layers each make four attempts, one user action becomes 64 calls at the bottom, and clients that failed together retry together. I prevent it with four rules: retry at one layer only, exponential backoff with jitter, a retry budget such as retries under 10% of traffic, and circuit breakers that fail fast once the error rate is clearly high. I also make deadlines shrink down the stack, so nobody keeps working on a request the caller already abandoned.",
+        "es": "Los reintentos agregan carga justo cuando la dependencia está saturada. Si tres capas hacen cuatro intentos cada una, una acción del usuario se vuelve 64 llamadas abajo, y los clientes que fallaron juntos reintentan juntos. Lo evito con cuatro reglas: reintentar en una sola capa, backoff exponencial con jitter, un presupuesto de reintentos como mantenerlos bajo el 10% del tráfico, y circuit breakers que fallan rápido cuando la tasa de error ya es claramente alta. Además hago que los deadlines se achiquen hacia abajo en la pila, para que nadie siga trabajando en un request que el llamador ya abandonó."
+      }
+    },
+    {
+      "q": { "en": "Retries and circuit breakers seem contradictory. Why use both?", "es": "Reintentos y circuit breakers parecen contradictorios. ¿Por qué usar ambos?" },
+      "a": {
+        "en": "They cover different time scales. Retries handle short, independent blips: one call failed, the next will likely succeed. A breaker handles sustained failure: if half of the last 100 calls failed, the next one probably will too, so retrying only adds latency and load. The breaker opens, callers get an instant error or fallback, and after a cooldown it half-opens to probe. I put the retry loop inside the breaker, so a tripped breaker stops the retries too.",
+        "es": "Cubren escalas de tiempo distintas. Los reintentos manejan fallas cortas e independientes: una llamada falló y la siguiente probablemente funcione. Un breaker maneja fallas sostenidas: si la mitad de las últimas 100 llamadas falló, la siguiente probablemente también, así que reintentar solo suma latencia y carga. El breaker se abre, los llamadores reciben un error o fallback inmediato y, tras un enfriamiento, pasa a semiabierto para probar. Pongo el ciclo de reintentos dentro del breaker, así un breaker abierto también corta los reintentos."
+      }
+    }
+  ],
+  "related": ["idempotency", "rate-limiting", "llm-gateway", "model-routing", "slos", "agent-reliability"],
+  "sources": [
+    { "title": "AWS Architecture Blog — Exponential Backoff And Jitter", "url": "https://aws.amazon.com/blogs/architecture/exponential-backoff-and-jitter/" },
+    { "title": "Amazon Builders' Library — Timeouts, retries, and backoff with jitter", "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/" },
+    { "title": "Google SRE Book — Handling Overload", "url": "https://sre.google/sre-book/handling-overload/" },
+    { "title": "Martin Fowler — CircuitBreaker", "url": "https://martinfowler.com/bliki/CircuitBreaker.html" }
+  ]
+}

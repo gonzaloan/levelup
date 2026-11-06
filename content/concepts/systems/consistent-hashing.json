@@ -1,0 +1,88 @@
+{
+  "id": "consistent-hashing",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Consistent hashing", "es": "Consistent hashing" },
+  "aliases": ["hash ring", "virtual nodes", "vnodes", "rendezvous hashing", "HRW hashing", "jump hash", "ketama", "hashing consistente"],
+  "tldr": {
+    "en": "Place nodes and keys on the same hash ring and give each key to the next node clockwise, so adding or removing a node moves only ~1/N of the keys.",
+    "es": "Coloca nodos y claves en el mismo anillo de hash y asigna cada clave al siguiente nodo en sentido horario; así, agregar o quitar un nodo mueve solo ~1/N de las claves."
+  },
+  "analogy": {
+    "en": "Waiters stand at points around a round table; each serves the guests seated between the previous waiter and themselves. A new waiter takes guests from just one neighbour; everyone else keeps theirs.",
+    "es": "Los meseros se paran en puntos alrededor de una mesa redonda; cada uno atiende a los invitados sentados entre el mesero anterior y él. Un mesero nuevo solo le quita invitados a un vecino; los demás conservan el suyo."
+  },
+  "explain": {
+    "en": "**Consistent hashing** assigns keys to nodes so that changing the node count moves only ~1/N of the keys. The naive `hash(key) % N` remaps almost everything on resize: going from 10 to 11 nodes moves ~91% of keys, so a cache cluster turns cold at once and the database behind it takes the full load.\n\nHow the ring works:\n\n1. Hash nodes and keys into the same circular space (e.g. 64-bit integers).\n2. A key belongs to the **first node clockwise** from its hash: a binary search over the sorted node positions.\n3. A joining node takes over only the arc just before it; a leaving node hands its arc to its successor. Every other key stays put.\n\nOne point per node gives uneven arcs, so each server gets many **virtual nodes** (tens to hundreds of points). Load evens out, a dead node's keys spread over many peers, and a bigger machine gets more vnodes. **Replication** keeps walking clockwise: the next R distinct nodes hold copies (Dynamo, Cassandra).\n\nAlternatives: **rendezvous (HRW) hashing** scores `hash(key, node)` for every node and picks the highest — no ring, O(N) per lookup, ideal for tens of nodes. **Jump hash** and **Maglev** serve numbered shards and load balancers.\n\nIn LLM serving, hashing the session id or prompt prefix sends repeat requests to the replica that already holds their [[kv-cache]].",
+    "es": "El **consistent hashing** asigna claves a nodos de modo que cambiar la cantidad de nodos mueva solo ~1/N de las claves. El ingenuo `hash(key) % N` reasigna casi todo al redimensionar: pasar de 10 a 11 nodos mueve ~91% de las claves, así que un clúster de caché se enfría de golpe y la base de datos detrás recibe toda la carga.\n\nCómo funciona el anillo:\n\n1. Aplica hash a nodos y claves en el mismo espacio circular (por ejemplo, enteros de 64 bits).\n2. Una clave pertenece al **primer nodo en sentido horario** desde su hash: una búsqueda binaria sobre las posiciones ordenadas de los nodos.\n3. Un nodo que entra toma solo el arco justo antes de él; uno que sale le cede su arco a su sucesor. Las demás claves no se mueven.\n\nCon un solo punto por nodo los arcos quedan desiguales, así que cada servidor recibe muchos **nodos virtuales** (de decenas a cientos de puntos). La carga se equilibra, las claves de un nodo caído se reparten entre muchos pares y una máquina más grande recibe más vnodes. La **replicación** sigue avanzando en sentido horario: los siguientes R nodos distintos guardan copias (Dynamo, Cassandra).\n\nAlternativas: el **rendezvous hashing (HRW)** calcula `hash(key, node)` para cada nodo y elige el más alto: sin anillo, O(N) por búsqueda, ideal para decenas de nodos. **Jump hash** y **Maglev** sirven para shards numerados y balanceadores de carga.\n\nEn serving de LLMs, aplicar hash al id de sesión o al prefijo del prompt envía las peticiones repetidas a la réplica que ya tiene su [[kv-cache]]."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  R[\"Request key<br/>(conversation id)\"] --> H[\"Hash to 64-bit int\"]\n  H --> B[\"Binary search<br/>sorted vnode tokens\"]\n  B --> N[First token clockwise]\n  N --> P[Owning GPU replica]\n  P --> C[(Warm KV cache)]\n  J[\"New replica joins<br/>with 128 vnodes\"] -.->|\"claims ~1/N of keys\"| B",
+    "caption": {
+      "en": "A lookup is a binary search over sorted vnode tokens; a joining node only claims the arcs just before its own tokens.",
+      "es": "Una búsqueda es binaria sobre los tokens ordenados de los vnodes; un nodo nuevo solo reclama los arcos justo antes de sus propios tokens."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Hash ring with virtual nodes", "es": "Anillo de hash con nodos virtuales" },
+    "source": "import bisect, hashlib\n\ndef h(s: str) -> int:\n    # Stable across processes, unlike Python's salted built-in hash()\n    return int.from_bytes(hashlib.md5(s.encode()).digest()[:8], \"big\")\n\nclass HashRing:\n    def __init__(self, nodes: list[str], vnodes: int = 128):\n        self.vnodes, self.ring = vnodes, []  # ring: sorted (token, node)\n        for n in nodes:\n            self.add(n)\n\n    def add(self, node: str) -> None:\n        for i in range(self.vnodes):  # many points per node evens out load\n            bisect.insort(self.ring, (h(f\"{node}#{i}\"), node))\n\n    def remove(self, node: str) -> None:\n        self.ring = [(t, n) for t, n in self.ring if n != node]\n\n    def get(self, key: str) -> str:\n        i = bisect.bisect(self.ring, (h(key), \"\"))  # first token clockwise\n        return self.ring[i % len(self.ring)][1]     # wrap around the ring\n\nring = HashRing([f\"gpu-{i}\" for i in range(10)])\nkeys = [f\"session:{i}\" for i in range(100_000)]\nbefore = {k: ring.get(k) for k in keys}\nring.add(\"gpu-10\")\nmoved = sum(before[k] != ring.get(k) for k in keys) / len(keys)\nprint(f\"{moved:.1%} of sessions moved\")  # ~9-10% (ideal 1/11); hash % N moves ~91%"
+  },
+  "example": {
+    "en": "You serve a support assistant on 8 vLLM replicas with prefix caching on. Conversations average 6 turns and reach ~20k tokens, so round-robin sends each new turn to a replica that never saw the earlier ones, and it re-prefills the whole history. Routing on a consistent hash of `conversation_id` keeps each conversation on one replica, so its KV cache is reused every turn. When autoscaling adds a 9th replica, ~1/9 of conversations move and pay one cold prefill; with `% N`, ~8/9 would. A bounded-load cap (each replica ≤1.25× the average) spills overflow to the next replica when a burst of long conversations lands on one.",
+    "es": "Sirves un asistente de soporte en 8 réplicas de vLLM con prefix caching activado. Las conversaciones promedian 6 turnos y llegan a ~20k tokens, así que con round-robin cada turno nuevo cae en una réplica que nunca vio los anteriores y vuelve a hacer prefill de todo el historial. Enrutar con consistent hashing sobre `conversation_id` mantiene cada conversación en una réplica, y su KV cache se reutiliza en cada turno. Cuando el autoscaling agrega una 9.ª réplica, ~1/9 de las conversaciones se mueve y paga un solo prefill en frío; con `% N`, se moverían ~8/9. Un tope de carga acotada (cada réplica ≤1.25× el promedio) desvía el exceso a la siguiente réplica cuando una ráfaga de conversaciones largas cae en una sola."
+  },
+  "pros": [
+    { "en": "Resizing moves ~1/N of keys, so caches stay warm and rebalancing traffic stays small.", "es": "Redimensionar mueve ~1/N de las claves: las cachés siguen calientes y el tráfico de rebalanceo es pequeño." },
+    { "en": "No central directory: any client with the member list computes the owner locally.", "es": "Sin directorio central: cualquier cliente con la lista de miembros calcula el dueño localmente." },
+    { "en": "Vnodes give weighted capacity and spread a dead node's load over many peers.", "es": "Los vnodes permiten capacidad ponderada y reparten la carga de un nodo caído entre muchos pares." }
+  ],
+  "cons": [
+    { "en": "Hot keys still land on one node; skew needs bounded loads or key splitting.", "es": "Las claves calientes siguen cayendo en un solo nodo; el sesgo requiere carga acotada o dividir claves." },
+    { "en": "Clients must agree on membership (gossip, etcd); different views route the same key differently.", "es": "Los clientes deben coincidir en la membresía (gossip, etcd); con vistas distintas, la misma clave va a nodos distintos." },
+    { "en": "No range scans: adjacent keys land on unrelated nodes.", "es": "Sin range scans: claves adyacentes caen en nodos sin relación." }
+  ],
+  "whenToUse": {
+    "en": "Partitioning a cache, key-value store or sticky routing (sessions, KV-cache affinity) across a node set that changes with autoscaling and failures.",
+    "es": "Para particionar una caché, un almacén clave-valor o un enrutamiento con afinidad (sesiones, KV cache) sobre un conjunto de nodos que cambia con el autoscaling y las fallas."
+  },
+  "whenNotToUse": {
+    "en": "Range queries (use range partitioning), a fixed slot count you rebalance explicitly (Redis Cluster's 16,384 slots), or a small static pool where `% N` is fine.",
+    "es": "Consultas por rango (usa particionamiento por rangos), un número fijo de slots que rebalanceas de forma explícita (los 16,384 de Redis Cluster) o un pool pequeño y estático donde `% N` alcanza."
+  },
+  "numbers": [
+    { "en": "Growing from N to N+1 nodes: consistent hashing moves ~1/(N+1) of keys, `% N` moves ~N/(N+1). 10→11 is ~9% vs ~91%.", "es": "Pasar de N a N+1 nodos: consistent hashing mueve ~1/(N+1) de las claves y `% N` mueve ~N/(N+1). De 10 a 11 es ~9% contra ~91%." },
+    { "en": "Rule of thumb: with V vnodes per node, load spread ≈ 1/√V, so 100 vnodes ≈ 10% standard deviation.", "es": "Regla práctica: con V vnodes por nodo, la dispersión de carga ≈ 1/√V; 100 vnodes ≈ 10% de desviación estándar." },
+    { "en": "Cassandra: 256 vnodes per node by default before 4.0, 16 since 4.0 (paired with a smarter token allocator).", "es": "Cassandra: 256 vnodes por nodo por defecto antes de la 4.0 y 16 desde la 4.0 (junto con un asignador de tokens más inteligente)." },
+    { "en": "Redis Cluster skips the ring: 16,384 fixed slots (CRC16 of the key mod 16384) assigned to nodes.", "es": "Redis Cluster no usa anillo: 16,384 slots fijos (CRC16 de la clave mod 16384) asignados a los nodos." },
+    { "en": "Bounded loads (Google, 2016): cap each node at (1+ε)× the average load; overflow walks clockwise to the next node.", "es": "Carga acotada (Google, 2016): limita cada nodo a (1+ε)× la carga promedio; el exceso avanza en sentido horario al siguiente nodo." }
+  ],
+  "pitfalls": [
+    { "en": "Hashing with Python's `hash()` or another per-process salted hash: every worker builds a different ring.", "es": "Usar el `hash()` de Python u otro hash con semilla por proceso: cada worker construye un anillo distinto." },
+    { "en": "One point per node: with 10 nodes the largest arc is typically ~2–3× the average. Use vnodes.", "es": "Un solo punto por nodo: con 10 nodos el arco más grande suele ser ~2–3× el promedio. Usa vnodes." },
+    { "en": "Hashing on a prefix every request shares (one system prompt) routes the whole app to a single replica.", "es": "Aplicar hash sobre un prefijo que comparten todas las peticiones (un único system prompt) manda toda la app a una sola réplica." },
+    { "en": "In a datastore, letting a new node serve its arc before the data has been streamed to it.", "es": "En un almacén de datos, dejar que un nodo nuevo sirva su arco antes de que se le hayan transferido los datos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why not just use `hash(key) % N`?", "es": "¿Por qué no usar simplemente `hash(key) % N`?" },
+      "a": {
+        "en": "Because N changes. Going from 10 to 11 nodes remaps ~91% of keys: for a cache that's a cold cluster and a stampede on the database; for a datastore it's moving almost the whole dataset. Consistent hashing bounds movement to ~1/N. I'd use vnodes for balance and add bounded loads if traffic is skewed. If the shard count is fixed or I rebalance explicitly, I prefer fixed slots like Redis Cluster's 16,384: simpler to reason about.",
+        "es": "Porque N cambia. Pasar de 10 a 11 nodos reasigna ~91% de las claves: en una caché eso es un clúster frío y una estampida sobre la base de datos; en un almacén de datos es mover casi todo el dataset. Consistent hashing limita el movimiento a ~1/N. Usaría vnodes para balancear y agregaría carga acotada si el tráfico tiene sesgo. Si la cantidad de shards es fija o rebalanceo de forma explícita, prefiero slots fijos como los 16,384 de Redis Cluster: son más fáciles de razonar."
+      }
+    },
+    {
+      "q": { "en": "How would you route LLM requests across GPU replicas to maximize KV-cache reuse?", "es": "¿Cómo enrutarías peticiones a un LLM entre réplicas de GPU para maximizar la reutilización del KV cache?" },
+      "a": {
+        "en": "First I pick the affinity key: conversation id for multi-turn chat, or a hash of the first few thousand tokens when many requests share a document. I route it with consistent hashing so autoscaling only invalidates ~1/N of the caches. Pure affinity melts a replica when one prefix is hot, so I cap load per replica and spill to the next one. At scale I'd use a cache-aware router, like SGLang's router or NVIDIA Dynamo's KV-aware routing, and watch prefix hit rate and p95 TTFT.",
+        "es": "Primero elijo la clave de afinidad: el id de conversación para chat multiturno, o un hash de los primeros miles de tokens cuando muchas peticiones comparten un documento. La enruto con consistent hashing para que el autoscaling solo invalide ~1/N de las cachés. La afinidad pura funde una réplica cuando un prefijo está caliente, así que limito la carga por réplica y desvío el exceso a la siguiente. A escala usaría un router consciente de la caché, como el router de SGLang o el enrutamiento KV-aware de NVIDIA Dynamo, y vigilaría el hit rate de prefijos y el TTFT p95."
+      }
+    }
+  ],
+  "related": ["sharding", "replication", "load-balancing", "caching", "kv-cache", "prompt-caching"],
+  "sources": [
+    { "title": "DeCandia et al. — Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)", "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf" },
+    { "title": "Mirrokni, Thorup, Zadimoghaddam — Consistent Hashing with Bounded Loads", "url": "https://arxiv.org/abs/1608.01350" },
+    { "title": "Lamping, Veach — A Fast, Minimal Memory, Consistent Hash Algorithm (Jump hash)", "url": "https://arxiv.org/abs/1406.2294" }
+  ]
+}

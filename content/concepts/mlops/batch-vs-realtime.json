@@ -1,0 +1,86 @@
+{
+  "id": "batch-vs-realtime",
+  "domain": "mlops",
+  "level": "core",
+  "title": { "en": "Batch vs real-time inference", "es": "Inferencia batch vs en tiempo real" },
+  "aliases": ["batch inference", "online inference", "real-time inference", "streaming inference", "offline scoring", "precomputed predictions", "Kafka", "Flink"],
+  "tldr": {
+    "en": "Batch precomputes predictions on a schedule (cheap, stale); online computes them per request (fresh, latency-bound); streaming keeps features fresh from events. Choose by how fresh the decision must be, and usually mix them.",
+    "es": "Batch precalcula predicciones según un calendario (barato, desactualizado); online las calcula en cada request (fresco, limitado por latencia); streaming mantiene las features frescas a partir de eventos. Elige según cuán fresca deba ser la decisión, y casi siempre combínalos."
+  },
+  "analogy": {
+    "en": "A bakery bakes bread at 5 a.m. (batch), makes sandwiches to order (online), and a runner tells the counter when the oven tray just came out (streaming).",
+    "es": "Una panadería hornea el pan a las 5 a.m. (batch), arma sándwiches al momento (online), y alguien avisa al mostrador cuando acaba de salir una bandeja del horno (streaming)."
+  },
+  "explain": {
+    "en": "Three ways to serve predictions:\n\n- **Batch**: a scheduled job scores everything (e.g. all users, nightly) and writes results to a table or key-value store; the app just looks them up. Cheapest per prediction, easy to validate before anyone sees it, but stale by up to one cycle, and it wastes compute on users who never show up.\n- **Online (real-time)**: the model runs per request behind an API. Fresh, and it handles inputs you can't enumerate (a search query, a chat message), but every millisecond counts against a latency budget and you pay for peak capacity.\n- **Streaming**: events flow through Kafka into Flink or Spark Streaming, which update features within seconds for the online model. This is what makes 'the user just clicked X' usable.\n\nChoose by **freshness need × cost**. Most real systems are **hybrid**: precompute candidates or embeddings in batch, then rank in real time with fresh features.\n\nFor LLMs, nightly enrichment (tagging, summaries, embeddings) goes through [[batch-inference]] APIs at about half price; live chat is online and streamed.",
+    "es": "Hay tres formas de servir predicciones:\n\n- **Batch**: un job programado calcula todo (por ejemplo, todos los usuarios cada noche) y escribe los resultados en una tabla o en un almacén clave-valor; la app solo los consulta. Es lo más barato por predicción y puedes validarlo antes de que alguien lo vea, pero queda desactualizado hasta un ciclo completo y gasta cómputo en usuarios que nunca aparecen.\n- **Online (tiempo real)**: el modelo corre en cada request detrás de una API. Es fresco y maneja entradas que no puedes enumerar (una búsqueda, un mensaje de chat), pero cada milisegundo cuenta contra un presupuesto de latencia y pagas capacidad para el pico.\n- **Streaming**: los eventos pasan por Kafka hacia Flink o Spark Streaming, que actualizan features en segundos para el modelo online. Esto es lo que vuelve útil 'el usuario acaba de hacer clic en X'.\n\nElige según **necesidad de frescura × costo**. La mayoría de los sistemas reales son **híbridos**: precalculan candidatos o embeddings en batch y luego rankean en tiempo real con features frescas.\n\nCon LLMs, el enriquecimiento nocturno (etiquetado, resúmenes, embeddings) pasa por APIs de [[batch-inference]] a cerca de la mitad del precio; el chat en vivo es online y con streaming."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  S[Nightly scheduler] --> J[Batch scoring job]\n  J --> KV[(Precomputed candidates)]\n  E[User events] --> K[Kafka]\n  K --> F[\"Flink: fresh features\"]\n  F --> FS[(Online feature store)]\n  R[App request] --> O[\"Online ranker<br/>~100 ms budget\"]\n  KV -->|lookup| O\n  FS -->|fresh features| O\n  O --> A[Response]",
+    "caption": {
+      "en": "The hybrid most teams end up with: batch precomputes the expensive part, streaming keeps features fresh, the online model decides per request.",
+      "es": "El híbrido al que llega la mayoría: batch precalcula lo caro, streaming mantiene frescas las features y el modelo online decide en cada request."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Hybrid serving: batch candidates, real-time ranking", "es": "Serving híbrido: candidatos batch, ranking en tiempo real" },
+    "source": "import redis\nfrom fastapi import FastAPI\n\napp = FastAPI()\nkv = redis.Redis(decode_responses=True)\n\n@app.get(\"/recs/{user_id}\")\ndef recs(user_id: str, k: int = 10):\n    # Batch: ~500 candidates precomputed nightly (cheap, up to a day old)\n    cands = kv.lrange(f\"cands:{user_id}\", 0, 499) or popular_fallback()\n    # Streaming: session features updated by Flink seconds after each click\n    fresh = online_features(user_id, [\"last_5_clicks\", \"session_len\"])\n    try:\n        # Online: rank only the candidates, inside the latency budget\n        scores = rank_with_timeout(user_id, cands, fresh, timeout_ms=40)\n    except TimeoutError:\n        return cands[:k]  # degrade to the batch order, never to an error\n    ranked = sorted(zip(scores, cands), reverse=True)\n    return [item for _, item in ranked[:k]]"
+  },
+  "example": {
+    "en": "An e-commerce site recomputes 'recommended for you' nightly for 20M users in a two-hour Spark job. But a shopper who just bought a tent still sees tents all morning. The fix is hybrid, not a rewrite: keep nightly candidate generation (500 items per user), stream clicks and purchases through Kafka into an online feature store, and re-rank the 500 per request in ~30 ms using session features. Serving cost stays close to batch, because only active users trigger the ranker.",
+    "es": "Un e-commerce recalcula cada noche 'recomendado para ti' para 20M de usuarios con un job de Spark de dos horas. Pero alguien que acaba de comprar una carpa sigue viendo carpas toda la mañana. La solución es híbrida, no una reescritura: se mantiene la generación nocturna de candidatos (500 productos por usuario), los clics y compras se envían por Kafka a un feature store online y los 500 se reordenan en cada request en ~30 ms con features de la sesión. El costo de serving queda cerca del de batch, porque solo los usuarios activos disparan el ranker."
+  },
+  "pros": [
+    { "en": "Batch: cheapest per prediction, easy to backfill and validate before users see it.", "es": "Batch: lo más barato por predicción, fácil de recalcular y validar antes de que lo vean los usuarios." },
+    { "en": "Online: fresh, handles unbounded inputs (queries, chat) and reacts to the current session.", "es": "Online: fresco, maneja entradas abiertas (búsquedas, chat) y reacciona a la sesión actual." },
+    { "en": "Hybrid gets most of the freshness at close to batch cost.", "es": "El híbrido logra casi toda la frescura a un costo cercano al de batch." }
+  ],
+  "cons": [
+    { "en": "Batch: stale by a full cycle, and wastes compute on inactive users.", "es": "Batch: desactualizado un ciclo completo, y gasta cómputo en usuarios inactivos." },
+    { "en": "Online: a latency budget, peak-capacity cost and a 24/7 service to operate.", "es": "Online: un presupuesto de latencia, costo de capacidad pico y un servicio 24/7 que operar." },
+    { "en": "Streaming adds Kafka/Flink operations and is a classic source of training-serving skew.", "es": "Streaming suma la operación de Kafka/Flink y es una fuente clásica de training-serving skew." }
+  ],
+  "whenToUse": {
+    "en": "Batch when inputs are enumerable and hours-old answers are fine (churn scores, nightly embeddings). Online when inputs are open-ended or the session changes the answer. Streaming when seconds-fresh features measurably move the metric.",
+    "es": "Batch cuando las entradas se pueden enumerar y sirven respuestas de hace horas (scores de churn, embeddings nocturnos). Online cuando las entradas son abiertas o la sesión cambia la respuesta. Streaming cuando features de segundos mueven la métrica de forma medible."
+  },
+  "whenNotToUse": {
+    "en": "Don't go real-time or streaming by default: if replaying logs shows fresher predictions barely move the metric, the extra system isn't worth operating.",
+    "es": "No vayas a tiempo real o streaming por defecto: si al reproducir logs ves que predicciones más frescas casi no mueven la métrica, no vale la pena operar el sistema extra."
+  },
+  "numbers": [
+    { "en": "OpenAI Batch API and Anthropic Message Batches: 50% cheaper than synchronous calls, results within 24 h.", "es": "OpenAI Batch API y Anthropic Message Batches: 50% más baratas que las llamadas síncronas, con resultados en menos de 24 h." },
+    { "en": "Rule of thumb: an interactive page has ~100–200 ms end to end; the model gets only a slice of it.", "es": "Regla práctica: una página interactiva tiene ~100–200 ms de punta a punta; al modelo le toca solo una parte." },
+    { "en": "Kafka's default retention is 7 days (`log.retention.hours=168`): your window to replay events into a backfill.", "es": "La retención por defecto de Kafka es de 7 días (`log.retention.hours=168`): tu ventana para reproducir eventos en un backfill." }
+  ],
+  "pitfalls": [
+    { "en": "Computing a feature one way in the batch pipeline and another way online: skew.", "es": "Calcular una feature de una forma en el pipeline batch y de otra online: skew." },
+    { "en": "Going real-time 'because it's better' without measuring the uplift of fresher predictions.", "es": "Pasarse a tiempo real 'porque es mejor' sin medir cuánto aportan predicciones más frescas." },
+    { "en": "No fallback when the online model times out: serve the batch result or a popularity list.", "es": "No tener fallback cuando el modelo online excede el timeout: sirve el resultado batch o una lista de populares." },
+    { "en": "Batch-scoring every user nightly when only 5% are active: score the active set or go on demand.", "es": "Calcular cada noche a todos los usuarios cuando solo el 5% está activo: calcula el conjunto activo o hazlo bajo demanda." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you decide between batch and real-time for a new model?", "es": "¿Cómo decides entre batch y tiempo real para un modelo nuevo?" },
+      "a": {
+        "en": "Two questions: can I enumerate the inputs, and how fast does the right answer change? If inputs are known, like every customer or product, and a day-old answer is fine, batch wins on cost and simplicity. If the input is a free-text query or the session changes the answer, it must be online. Then I measure: replay logs to estimate what fresher predictions would gain. Often the answer is hybrid, batch candidates plus online re-ranking, and I keep the batch result as the fallback.",
+        "es": "Dos preguntas: ¿puedo enumerar las entradas? y ¿qué tan rápido cambia la respuesta correcta? Si las entradas se conocen, como cada cliente o producto, y sirve una respuesta de ayer, batch gana en costo y simplicidad. Si la entrada es una búsqueda en texto libre o la sesión cambia la respuesta, tiene que ser online. Después mido: reproduzco logs para estimar cuánto ganarían predicciones más frescas. Muchas veces la respuesta es híbrida, candidatos batch más re-ranking online, y dejo el resultado batch como fallback."
+      }
+    },
+    {
+      "q": { "en": "Where do LLM calls fit: batch or online?", "es": "¿Dónde encajan las llamadas a un LLM: batch u online?" },
+      "a": {
+        "en": "Both, split deliberately. Anything not user-facing in the moment, such as tagging a catalog, summarizing tickets, generating embeddings or running evals, goes through batch APIs at half price with relaxed latency and easy retries. Live chat and agents are online and streamed, where I optimize time to first token. A strong pattern is precomputing LLM outputs like product summaries nightly, so the online path only does retrieval and a short generation.",
+        "es": "En ambos, separados a propósito. Todo lo que no está frente al usuario en ese momento, como etiquetar un catálogo, resumir tickets, generar embeddings o correr evals, va por APIs batch a mitad de precio, sin presión de latencia y con reintentos fáciles. El chat en vivo y los agentes son online y con streaming, donde optimizo el tiempo al primer token. Un patrón muy útil es precalcular cada noche salidas del LLM, como resúmenes de productos, para que el camino online solo haga recuperación y una generación corta."
+      }
+    }
+  ],
+  "related": ["batch-inference", "feature-store", "training-serving-skew", "queues-streams", "recsys", "streaming"],
+  "sources": [
+    { "title": "Chip Huyen — Real-time machine learning: challenges and solutions", "url": "https://huyenchip.com/2022/01/02/real-time-machine-learning-challenges-and-solutions.html" },
+    { "title": "Amazon SageMaker — Batch transform", "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/batch-transform.html" },
+    { "title": "OpenAI — Batch API guide", "url": "https://platform.openai.com/docs/guides/batch" }
+  ]
+}
