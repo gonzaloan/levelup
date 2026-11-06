@@ -1,0 +1,87 @@
+{
+  "id": "semantic-caching",
+  "domain": "inference",
+  "level": "advanced",
+  "title": { "en": "Semantic caching", "es": "Semantic caching (caché semántica)" },
+  "aliases": ["semantic cache", "GPTCache", "embedding cache", "LLM response cache", "similarity cache", "RedisVL SemanticCache"],
+  "tldr": {
+    "en": "Reuse a stored answer when a new query's embedding is close enough to an earlier one: it skips a full generation, but every false hit serves a confident wrong answer.",
+    "es": "Reutiliza una respuesta guardada cuando el embedding de una consulta nueva está lo bastante cerca de uno anterior: te ahorras una generación completa, pero cada falso hit entrega una respuesta equivocada con total seguridad."
+  },
+  "analogy": {
+    "en": "A help-desk agent who answers from a binder of past replies whenever a question sounds familiar: great for \"reset my password\", dangerous for \"cancel my order\" vs \"cancel my subscription\".",
+    "es": "Un agente de soporte que responde desde una carpeta de respuestas viejas cada vez que una pregunta le suena conocida: genial para \"restablecer mi contraseña\", peligroso para \"cancelar mi pedido\" vs \"cancelar mi suscripción\"."
+  },
+  "explain": {
+    "en": "A **semantic cache** sits in front of the LLM and stores (query embedding, response) pairs. A new query is embedded, matched to the nearest stored query, and gets the cached response if cosine similarity clears a threshold, typically **~0.90–0.95**, tuned on your data. A hit costs one embedding and one vector lookup, tens of milliseconds, instead of a multi-second generation.\n\nBuild it in layers:\n\n1. **Exact-match cache first**: hash the normalized prompt plus model and prompt version. Zero false hits, nearly free.\n2. **Semantic layer second**, only where traffic repeats with different wording.\n\nThe risks are why it's an advanced tool:\n\n- **False hits**: \"cancel my order\" vs \"cancel my subscription\", \"with\" vs \"without\", Spain vs Mexico all score as near-duplicates. The user gets a fluent answer to a different question.\n- **Staleness**: prices and policies change. Set TTLs per content type and invalidate when the source changes.\n- **Leakage**: a personalized or permissioned answer served to someone else. **Scope the cache key** by tenant, user or permission set, locale, model and prompt version.\n\nIt works for FAQ-like, non-personalized traffic with heavy repetition; measure the near-duplicate rate in your logs before building it. Unlike [[prompt-caching]], which reuses computation and always generates fresh, this reuses the *answer*.",
+    "es": "Una **caché semántica** se pone delante del LLM y guarda pares (embedding de la consulta, respuesta). Una consulta nueva se convierte en embedding, se compara con la consulta guardada más cercana y recibe la respuesta en caché si la similitud coseno supera un umbral, normalmente **~0.90–0.95**, ajustado con tus datos. Un hit cuesta un embedding y una búsqueda vectorial, decenas de milisegundos, en vez de una generación de varios segundos.\n\nConstrúyela por capas:\n\n1. **Primero, caché de coincidencia exacta**: un hash del prompt normalizado más el modelo y la versión del prompt. Cero falsos hits, casi gratis.\n2. **Después, la capa semántica**, solo donde el tráfico se repite con otras palabras.\n\nLos riesgos son la razón por la que es una herramienta avanzada:\n\n- **Falsos hits**: \"cancelar mi pedido\" vs \"cancelar mi suscripción\", \"con\" vs \"sin\", España vs México puntúan como casi duplicados. El usuario recibe una respuesta fluida a otra pregunta.\n- **Datos viejos**: precios y políticas cambian. Define TTLs por tipo de contenido e invalida cuando cambia la fuente.\n- **Fugas**: una respuesta personalizada o con permisos servida a otra persona. **Acota la llave de caché** por tenant, usuario o conjunto de permisos, idioma, modelo y versión del prompt.\n\nFunciona con tráfico tipo FAQ, no personalizado y muy repetitivo; mide la tasa de casi duplicados en tus logs antes de construirla. A diferencia del [[prompt-caching]], que reutiliza cómputo y siempre genera de nuevo, esto reutiliza la *respuesta*."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[Query] --> S[\"Scope key<br/>tenant, ACL, version\"]\n  S --> E{Exact hash hit?}\n  E -->|yes| R[Cached answer]\n  E -->|no| V[\"Embed + ANN search<br/>within scope\"]\n  V --> T{\"Cosine >= 0.93?\"}\n  T -->|yes| R\n  T -->|no| L[Call LLM]\n  L --> W[(\"Cache store<br/>with TTL\")]\n  L --> A[Fresh answer]",
+    "caption": {
+      "en": "Exact match first, then a similarity search that never leaves the caller's scope; misses generate and refill the cache.",
+      "es": "Primero coincidencia exacta, luego una búsqueda por similitud que nunca sale del alcance de quien pregunta; los misses generan y vuelven a llenar la caché."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Two-layer cache scoped by tenant and permissions", "es": "Caché de dos capas acotada por tenant y permisos" },
+    "source": "import hashlib, time\nimport numpy as np\nfrom openai import OpenAI\n\nclient = OpenAI()\nEMBED = \"text-embedding-3-small\"  # any embedding model\nMODEL = \"gpt-4.1-mini\"            # any chat model\nTHRESHOLD = 0.93   # tune on labeled \"same answer\" / \"different answer\" query pairs\nTTL_S = 24 * 3600  # per content type: prices need far less\n\nexact: dict[str, tuple[str, float]] = {}\nsemantic: dict[str, list[tuple[np.ndarray, str, float]]] = {}  # a vector DB in prod\n\ndef embed(text: str) -> np.ndarray:\n    v = np.array(client.embeddings.create(model=EMBED, input=text).data[0].embedding)\n    return v / np.linalg.norm(v)  # unit vectors: dot product = cosine\n\ndef cached_answer(query: str, tenant: str, acl: str, prompt_ver: str) -> str:\n    scope = f\"{tenant}|{acl}|{MODEL}|{prompt_ver}\"  # never share across permission scopes\n    norm = \" \".join(query.lower().split())\n    key = hashlib.sha256(f\"{scope}|{norm}\".encode()).hexdigest()\n    now = time.time()\n    if key in exact and now - exact[key][1] < TTL_S:  # 1) exact match: zero false hits\n        return exact[key][0]\n    q = embed(norm)\n    live = [(float(q @ v), r) for v, r, ts in semantic.get(scope, []) if now - ts < TTL_S]\n    if live and (best := max(live, key=lambda x: x[0]))[0] >= THRESHOLD:  # 2) in scope only\n        return best[1]\n    resp = generate(MODEL, query)  # 3) miss: call the LLM, then store both layers\n    exact[key] = (resp, now)\n    semantic.setdefault(scope, []).append((q, resp, now))\n    return resp"
+  },
+  "example": {
+    "en": "An airline's help bot gets 50k questions/day; logs show ~30% are rephrasings of ~200 baggage, check-in and pet-policy questions. A semantic cache at 0.93, scoped by locale and fare-rules version, answers those in ~40 ms instead of ~3 s. In week one, a reviewer finds *\"Can I bring my dog in the cabin?\"* answered with the cached reply to *\"Can my dog travel as checked baggage?\"* (similarity 0.94). The fix: a 0.96 threshold for the pets intent, and no caching at all for queries that mention a booking reference, since those are personal.",
+    "es": "El bot de ayuda de una aerolínea recibe 50k preguntas al día; los logs muestran que ~30% son reformulaciones de ~200 preguntas sobre equipaje, check-in y mascotas. Una caché semántica con umbral 0.93, acotada por idioma y versión de las reglas tarifarias, las responde en ~40 ms en vez de ~3 s. En la primera semana, un revisor encuentra que *\"¿Puedo llevar a mi perro en cabina?\"* recibió la respuesta guardada de *\"¿Mi perro puede viajar como equipaje documentado?\"* (similitud 0.94). La solución: umbral de 0.96 para la intención de mascotas y nada de caché para consultas que mencionan un código de reserva, porque son personales."
+  },
+  "pros": [
+    { "en": "A hit skips generation entirely: tens of milliseconds and near-zero token cost.", "es": "Un hit se salta la generación por completo: decenas de milisegundos y un costo de tokens casi nulo." },
+    { "en": "Absorbs bursts of repeated questions during outages, launches or seasonal peaks.", "es": "Absorbe ráfagas de preguntas repetidas durante caídas, lanzamientos o picos de temporada." },
+    { "en": "Model- and provider-agnostic: it lives in the gateway, not in the model.", "es": "No depende del modelo ni del proveedor: vive en el gateway, no en el modelo." }
+  ],
+  "cons": [
+    { "en": "False hits return confident wrong answers, and users can't tell.", "es": "Los falsos hits devuelven respuestas equivocadas con total seguridad, y el usuario no lo nota." },
+    { "en": "Needs scoping, TTLs and invalidation: classic cache bugs plus a fuzzy key.", "es": "Requiere acotar, TTLs e invalidación: los bugs clásicos de caché más una llave difusa." },
+    { "en": "Low hit rates on long, contextual or multi-turn prompts, where few queries truly repeat.", "es": "Tasas de hit bajas con prompts largos, con contexto o de varios turnos, donde pocas consultas se repiten de verdad." }
+  ],
+  "whenToUse": {
+    "en": "High-volume, FAQ-like, non-personalized traffic where many users ask the same thing in different words and the answers change slowly.",
+    "es": "Tráfico alto, tipo FAQ y no personalizado, donde muchos usuarios preguntan lo mismo con otras palabras y las respuestas cambian poco."
+  },
+  "whenNotToUse": {
+    "en": "Personalized, permissioned or multi-turn answers, fast-changing data, agents with tool side effects, or domains where one wrong answer is costly (medical, legal, financial).",
+    "es": "Respuestas personalizadas, con permisos o de varios turnos, datos que cambian rápido, agentes con efectos secundarios en herramientas, o dominios donde una respuesta equivocada sale cara (médico, legal, financiero)."
+  },
+  "numbers": [
+    { "en": "Typical cosine threshold ~0.90–0.95 on normalized embeddings; tune it on labeled query pairs (rule of thumb).", "es": "Umbral coseno típico ~0.90–0.95 con embeddings normalizados; ajústalo con pares de consultas etiquetados (regla práctica)." },
+    { "en": "A hit = one embedding call + one vector lookup: tens of ms vs seconds for a generation.", "es": "Un hit = una llamada de embedding + una búsqueda vectorial: decenas de ms vs segundos de una generación." },
+    { "en": "text-embedding-3-small: $0.02 per 1M tokens (OpenAI list price, 2024–25), so lookups are close to free.", "es": "text-embedding-3-small: $0.02 por 1M de tokens (precio de lista de OpenAI, 2024–25), así que las búsquedas son casi gratis." },
+    { "en": "Savings ≈ hit rate × LLM cost: a 20% hit rate saves ~20%, minus embedding and store costs.", "es": "Ahorro ≈ tasa de hit × costo del LLM: con 20% de hits ahorras ~20%, menos el costo de embeddings y almacenamiento." }
+  ],
+  "pitfalls": [
+    { "en": "One global cache across tenants or roles: the fastest way to leak another user's data.", "es": "Una sola caché global entre tenants o roles: la forma más rápida de filtrar datos de otro usuario." },
+    { "en": "Copying a threshold from a blog: the right value depends on your embedding model and domain.", "es": "Copiar el umbral de un blog: el valor correcto depende de tu modelo de embeddings y tu dominio." },
+    { "en": "Caching time-sensitive or personal questions (\"today\", \"my balance\", \"my order\").", "es": "Cachear preguntas que dependen del momento o de la persona (\"hoy\", \"mi saldo\", \"mi pedido\")." },
+    { "en": "Never measuring false hits: sample cache hits and have a human or an LLM judge check them.", "es": "No medir nunca los falsos hits: toma una muestra de hits y que una persona o un LLM juez los revise." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Would you add a semantic cache to our support assistant?", "es": "¿Agregarías una caché semántica a nuestro asistente de soporte?" },
+      "a": {
+        "en": "Maybe, after measuring. I'd first add an exact-match cache, which has no false hits, then check the logs for the near-duplicate rate: if only a few percent of queries repeat, a semantic cache is complexity for little gain. If the rate is high and answers aren't personalized, I'd add it scoped by tenant, locale, model and prompt version, with TTLs per content type and a threshold tuned on labeled pairs. I'd run it in shadow mode first, logging would-be hits and grading them, so I know the false-hit rate before any user sees one.",
+        "es": "Tal vez, después de medir. Primero agregaría una caché de coincidencia exacta, que no tiene falsos hits, y luego revisaría en los logs la tasa de casi duplicados: si solo se repite un pequeño porcentaje, una caché semántica es complejidad para poca ganancia. Si la tasa es alta y las respuestas no son personalizadas, la agregaría acotada por tenant, idioma, modelo y versión del prompt, con TTLs por tipo de contenido y un umbral ajustado con pares etiquetados. Primero la correría en modo sombra, registrando y calificando los hits que habría dado, para conocer la tasa de falsos hits antes de que un usuario vea uno."
+      }
+    },
+    {
+      "q": { "en": "What are the risks of semantic caching, and how do you contain them?", "es": "¿Cuáles son los riesgos de la caché semántica y cómo los contienes?" },
+      "a": {
+        "en": "Three. False hits: similar wording, different intent, so the user gets a fluent wrong answer. I keep the threshold high, tune it per intent and can add a cheap reranker check on borderline scores. Staleness: TTLs plus invalidation when the source document changes. Leakage: the cache key includes tenant and permission scope, and anything personalized, like a query with an account number or one whose answer used the user's data, is never cached. I monitor the hit rate and audit a sample of hits every week.",
+        "es": "Tres. Falsos hits: redacción parecida, intención distinta, y el usuario recibe una respuesta fluida pero equivocada. Mantengo el umbral alto, lo ajusto por intención y puedo agregar una verificación barata con un reranker en los puntajes límite. Datos viejos: TTLs más invalidación cuando cambia el documento fuente. Fugas: la llave de caché incluye el tenant y el alcance de permisos, y nada personalizado se cachea, como una consulta con número de cuenta o una cuya respuesta usó datos del usuario. Monitoreo la tasa de hits y audito cada semana una muestra de hits."
+      }
+    }
+  ],
+  "related": ["prompt-caching", "caching", "embeddings", "vector-databases", "llm-gateway", "tenant-isolation"],
+  "sources": [
+    { "title": "Zilliz — GPTCache (GitHub)", "url": "https://github.com/zilliztech/GPTCache" },
+    { "title": "Redis — RedisVL (GitHub)", "url": "https://github.com/redis/redis-vl-python" },
+    { "title": "OpenAI — Embeddings guide", "url": "https://platform.openai.com/docs/guides/embeddings" }
+  ]
+}

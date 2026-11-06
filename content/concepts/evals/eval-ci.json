@@ -1,0 +1,87 @@
+{
+  "id": "eval-ci",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Evals in CI/CD & release gates", "es": "Evals en CI/CD y gates de release" },
+  "aliases": ["eval CI", "regression testing", "release gate", "promptfoo", "Braintrust", "LangSmith", "OpenAI Evals", "quality gate"],
+  "tldr": {
+    "en": "Run the eval suite automatically on every prompt, model, retrieval or tool change, and block the merge or release when scores fall below floors or regress versus the baseline beyond noise.",
+    "es": "Corre la suite de evaluación automáticamente con cada cambio de prompt, modelo, recuperación o herramientas, y bloquea el merge o el release si los puntajes caen bajo los pisos o retroceden frente a la línea base más allá del ruido."
+  },
+  "analogy": {
+    "en": "Unit tests for behavior: nobody merges code that breaks the build, so nobody should merge a prompt that breaks the refund answers.",
+    "es": "Tests unitarios para el comportamiento: nadie hace merge de código que rompe el build, así que nadie debería hacer merge de un prompt que rompe las respuestas sobre reembolsos."
+  },
+  "explain": {
+    "en": "**Eval CI** runs your eval suite automatically whenever something that shapes behavior changes: prompt, model or model version, retrieval (chunking, embeddings, index), tool definitions, decoding parameters. It turns evals from a one-off report into a **release gate**, like unit tests for code.\n\n**How it works:**\n\n1. **Pin and version everything** that defines behavior: prompt templates, the model snapshot (`gpt-4o-2024-08-06`, not the moving `gpt-4o` alias), index build, tool schemas. A score only means something against a pinned config.\n2. **Tier the suite by cost.** On every PR, a fast subset (~50–200 cases, deterministic graders first, a cheap judge) in minutes. Nightly and pre-release, the full suite with LLM judges and several trials per case.\n3. **Gate on floors and on the baseline.** Absolute floors (zero critical safety failures, near-100% schema validity) plus *no regression beyond noise* versus `main`, **per slice**, not just on the average. See [[nondeterminism]] for sizing that noise band.\n4. **Report in the PR**: score deltas, newly failing cases, cost and latency per case.\n\n**Tools:** **promptfoo** (YAML config + CLI, runs in any CI), **Braintrust** and **LangSmith** (hosted datasets, experiments, side-by-side diffs), **OpenAI Evals**, or plain `pytest` with your graders. The tool matters less than the discipline: a failing eval blocks the merge, and every production bug becomes a new case.",
+    "es": "**Eval CI** corre tu suite de evaluación de forma automática cada vez que cambia algo que define el comportamiento: prompt, modelo o versión del modelo, recuperación (chunking, embeddings, índice), definiciones de herramientas, parámetros de decodificación. Convierte las evaluaciones de un reporte aislado en un **gate de release**, como los tests unitarios para el código.\n\n**Cómo funciona:**\n\n1. **Fija y versiona todo** lo que define el comportamiento: plantillas de prompt, el snapshot del modelo (`gpt-4o-2024-08-06`, no el alias móvil `gpt-4o`), el build del índice, los esquemas de herramientas. Un puntaje solo significa algo frente a una configuración fija.\n2. **Escalona la suite por costo.** En cada PR, un subconjunto rápido (~50–200 casos, primero graders deterministas, un juez barato) que corre en minutos. Cada noche y antes del release, la suite completa con jueces LLM y varios intentos por caso.\n3. **Usa pisos y línea base como gate.** Pisos absolutos (cero fallas críticas de seguridad, validez de esquema cercana al 100%) más *ninguna regresión fuera del ruido* frente a `main`, **por segmento**, no solo en el promedio. Revisa [[nondeterminism]] para dimensionar esa banda de ruido.\n4. **Reporta en el PR**: diferencias de puntaje, casos que empezaron a fallar, costo y latencia por caso.\n\n**Herramientas:** **promptfoo** (configuración YAML + CLI, corre en cualquier CI), **Braintrust** y **LangSmith** (datasets alojados, experimentos, comparaciones lado a lado), **OpenAI Evals** o simplemente `pytest` con tus graders. La herramienta importa menos que la disciplina: una evaluación que falla bloquea el merge, y cada bug de producción se vuelve un caso nuevo."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  C[\"Change: prompt,<br/>model, index, tools\"] --> F[\"PR job<br/>fast subset\"]\n  F --> G{\"Floors met and<br/>no regression?\"}\n  B[(Baseline from main)] -.-> G\n  G -->|no| X[Block merge]\n  G -->|yes| M[Merge]\n  M --> N[\"Nightly full suite<br/>judges, k trials\"]\n  N --> R{Release gate}\n  R -->|pass| D[Canary deploy]\n  R -->|fail| H[Hold release]\n  P[Production failures] -.->|new cases| F",
+    "caption": {
+      "en": "Cheap checks on every PR, the expensive suite nightly, and production failures feeding new cases back into the suite.",
+      "es": "Chequeos baratos en cada PR, la suite cara cada noche y las fallas de producción alimentando la suite con casos nuevos."
+    }
+  },
+  "code": {
+    "lang": "yaml",
+    "title": { "en": "promptfoo PR gate wired into GitHub Actions", "es": "Gate de PR con promptfoo conectado a GitHub Actions" },
+    "source": "# promptfooconfig.yaml: PR gate (fast subset; nightly runs the full suite)\nprompts:\n  - file://prompts/support_v7.txt        # prompt versioned in git\nproviders:\n  - id: openai:gpt-4.1-mini-2025-04-14   # any model; pin the dated snapshot, never an alias\n    config: { temperature: 0 }\ndefaultTest:\n  assert:\n    - type: latency\n      threshold: 4000                   # ms per case\n    - type: cost\n      threshold: 0.003                  # USD per case\ntests:\n  - vars: { question: \"Can I get a refund after 45 days?\" }\n    assert:\n      - type: llm-rubric                # judge, graded against the policy\n        value: States the 30-day refund limit and offers escalation; invents no exception\n  - vars: { question: \"Export my last invoice as JSON\" }\n    assert:\n      - type: is-json                   # deterministic grader first\n  # ...~150 more cases, tagged by slice (refunds, billing, es-419...)\n\n# .github/workflows/evals.yml (excerpt)\non:\n  pull_request:\n    paths: [\"prompts/**\", \"evals/**\", \"retrieval/**\", \"tools/**\", \"models.yaml\"]\njobs:\n  evals:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci                     # promptfoo version pinned in package-lock.json\n      - run: npx promptfoo eval -c promptfooconfig.yaml -o results.json || true  # gate.py decides\n        env: { OPENAI_API_KEY: \"${{ secrets.OPENAI_API_KEY }}\" }\n      - run: python scripts/gate.py results.json --baseline main --max-drop 0.02 --per-slice"
+  },
+  "example": {
+    "en": "A team edits the system prompt to make answers shorter. The PR job runs 180 cases in ~6 minutes for ~$1.50. The average is flat (0.86 → 0.85, inside noise), but the `refunds` slice drops from 0.92 to 0.71: the shorter prompt lost the escalation clause. The per-slice gate blocks the merge, and the PR comment lists the 9 newly failing cases. Separately, the nightly suite (2,400 cases × 3 trials, ~$90) catches a 4-point drop on Spanish queries with no code change at all: the embedding model was referenced by a moving alias. Pinning it becomes a rule.",
+    "es": "Un equipo edita el system prompt para que las respuestas sean más cortas. El job del PR corre 180 casos en ~6 minutos por ~1,50 dólares. El promedio no se mueve (0,86 → 0,85, dentro del ruido), pero el segmento `refunds` cae de 0,92 a 0,71: el prompt más corto perdió la cláusula de escalamiento. El gate por segmento bloquea el merge y el comentario del PR lista los 9 casos que empezaron a fallar. Aparte, la suite nocturna (2.400 casos × 3 intentos, ~90 dólares) detecta una caída de 4 puntos en consultas en español sin ningún cambio de código: el modelo de embeddings se referenciaba con un alias móvil. Fijarlo se vuelve regla."
+  },
+  "pros": [
+    { "en": "Catches regressions at the PR, where they cost minutes instead of incidents.", "es": "Atrapa regresiones en el PR, donde cuestan minutos y no incidentes." },
+    { "en": "Turns prompt and model changes into reviewable diffs with evidence, not vibes.", "es": "Convierte los cambios de prompt y modelo en diffs revisables con evidencia, no con sensaciones." },
+    { "en": "Pinned configs make every score reproducible and comparable across months.", "es": "Las configuraciones fijas hacen que cada puntaje sea reproducible y comparable a lo largo de los meses." }
+  ],
+  "cons": [
+    { "en": "Real money and time per run; LLM judges usually dominate the bill.", "es": "Cuesta dinero y tiempo real en cada corrida; los jueces LLM suelen llevarse la mayor parte de la factura." },
+    { "en": "Noisy scores cause flaky gates unless thresholds respect run-to-run variance.", "es": "Los puntajes ruidosos generan gates inestables si los umbrales no respetan la varianza entre corridas." },
+    { "en": "A green gate is only as good as the suite: stale cases give false confidence.", "es": "Un gate en verde vale lo que vale la suite: los casos desactualizados dan una falsa confianza." }
+  ],
+  "whenToUse": {
+    "en": "As soon as more than one person edits prompts or more than one config runs in production. Start with 30–50 cases and deterministic graders; add a case for every bug.",
+    "es": "En cuanto más de una persona edite prompts o haya más de una configuración en producción. Empieza con 30–50 casos y graders deterministas; agrega un caso por cada bug."
+  },
+  "whenNotToUse": {
+    "en": "Throwaway prototypes in their first days, before you know what \"good\" looks like: do error analysis by hand first, then encode what you learn.",
+    "es": "En prototipos descartables durante sus primeros días, antes de saber cómo se ve algo \"bueno\": primero haz análisis de errores a mano y después codifica lo que aprendiste."
+  },
+  "numbers": [
+    { "en": "Rule of thumb: PR subset of ~50–200 cases in under ~10 minutes; full suite nightly and before each release.", "es": "Regla práctica: subconjunto de PR de ~50–200 casos en menos de ~10 minutos; suite completa cada noche y antes de cada release." },
+    { "en": "Noise floor: at n=200 and an 85% pass rate, one run's 95% CI is ±~5 pts. Set regression thresholds above it or add trials.", "es": "Piso de ruido: con n=200 y 85% de aciertos, el IC 95% de una corrida es de ±~5 pts. Pon los umbrales de regresión por encima o agrega intentos." },
+    { "en": "Dated snapshots (e.g., gpt-4o-2024-08-06) stay fixed; aliases like gpt-4o get repointed to newer snapshots over time.", "es": "Los snapshots con fecha (p. ej., gpt-4o-2024-08-06) no cambian; los alias como gpt-4o se reasignan a snapshots más nuevos con el tiempo." }
+  ],
+  "pitfalls": [
+    { "en": "Gating only on the average: one slice can collapse while the mean stays flat.", "es": "Usar solo el promedio como gate: un segmento puede derrumbarse mientras la media no se mueve." },
+    { "en": "Unpinned model aliases or index rebuilds: the baseline moves without any code change.", "es": "Alias de modelo sin fijar o reconstrucciones del índice: la línea base se mueve sin ningún cambio de código." },
+    { "en": "Thresholds tighter than run-to-run noise: the gate flakes and people learn to rerun until green.", "es": "Umbrales más estrictos que el ruido entre corridas: el gate se vuelve inestable y la gente aprende a reintentar hasta ver verde." },
+    { "en": "Triggering only on prompt files, so retrieval, tool-schema and model-config changes skip the gate.", "es": "Disparar el job solo con cambios en archivos de prompt, así los cambios de recuperación, de esquemas de herramientas y de configuración del modelo se saltan el gate." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you set up evals in CI for an LLM product?", "es": "¿Cómo montarías evals en CI para un producto con LLM?" },
+      "a": {
+        "en": "I treat every behavior-defining artifact as code: prompts, model snapshot, retrieval config and tool schemas are versioned, and any change triggers evals. On PRs, a fast subset of ~150 cases with deterministic graders and a cheap judge, under ten minutes; nightly and before release, the full suite with several trials. Gates are absolute floors for safety and format plus no regression versus main's baseline beyond noise, per slice. Results post into the PR with newly failing cases, cost and latency. And every production incident becomes a test case.",
+        "es": "Trato cada artefacto que define comportamiento como código: prompts, snapshot del modelo, configuración de recuperación y esquemas de herramientas están versionados, y cualquier cambio dispara las evaluaciones. En los PR, un subconjunto rápido de ~150 casos con graders deterministas y un juez barato, en menos de diez minutos; cada noche y antes del release, la suite completa con varios intentos. Los gates son pisos absolutos de seguridad y formato más ninguna regresión frente a la línea base de main fuera del ruido, por segmento. Los resultados se publican en el PR con los casos que empezaron a fallar, costo y latencia. Y cada incidente de producción se vuelve un caso de prueba."
+      }
+    },
+    {
+      "q": { "en": "Your eval gate is flaky: the same commit passes and fails. What do you do?", "es": "Tu gate de evaluación es inestable: el mismo commit a veces pasa y a veces falla. ¿Qué haces?" },
+      "a": {
+        "en": "First I measure the noise: run the same commit five to ten times and look at the spread per case. Flaky cases usually mean an ambiguous expected answer or a judge rubric that's too loose, so I fix or remove those. Then I make the gate statistical: compare against the baseline with a paired test on the same cases, use multiple trials for the stochastic slices, and set the regression threshold above the measured noise. What I won't do is let people rerun until green; that trains everyone to ignore the gate.",
+        "es": "Primero mido el ruido: corro el mismo commit entre cinco y diez veces y miro la dispersión por caso. Los casos inestables suelen indicar una respuesta esperada ambigua o una rúbrica del juez demasiado laxa, así que los corrijo o los saco. Después vuelvo estadístico el gate: comparo contra la línea base con una prueba pareada sobre los mismos casos, uso varios intentos en los segmentos estocásticos y pongo el umbral de regresión por encima del ruido medido. Lo que no hago es dejar que la gente reintente hasta ver verde; eso le enseña a todos a ignorar el gate."
+      }
+    }
+  ],
+  "related": ["nondeterminism", "golden-datasets", "eval-driven-development", "deterministic-graders", "prompt-management", "llmops"],
+  "sources": [
+    { "title": "promptfoo — CI/CD integration", "url": "https://www.promptfoo.dev/docs/integrations/ci-cd/" },
+    { "title": "OpenAI Evals (GitHub)", "url": "https://github.com/openai/evals" },
+    { "title": "Braintrust — Documentation", "url": "https://www.braintrust.dev/docs" },
+    { "title": "Hamel Husain — Your AI Product Needs Evals", "url": "https://hamel.dev/blog/posts/evals/" }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "id": "red-teaming",
+  "domain": "security",
+  "level": "advanced",
+  "title": { "en": "Red teaming AI systems", "es": "Red teaming de sistemas de IA" },
+  "aliases": ["red team", "AI red teaming", "adversarial testing", "PyRIT", "garak", "promptfoo redteam", "attack success rate", "ASR"],
+  "tldr": {
+    "en": "Attack your own AI system, with expert humans and automated tools, before launch and on every change; rate findings by severity and turn each one into a regression eval.",
+    "es": "Ataca tu propio sistema de IA, con expertos humanos y herramientas automatizadas, antes del lanzamiento y en cada cambio; califica los hallazgos por severidad y convierte cada uno en una eval de regresión."
+  },
+  "analogy": {
+    "en": "Hiring a burglar to break into your house before a real one does, then fixing every window they used and re-testing them after each renovation.",
+    "es": "Contratar a un ladrón para que entre a tu casa antes que uno de verdad, arreglar cada ventana que usó y volver a probarlas después de cada remodelación."
+  },
+  "explain": {
+    "en": "**Red teaming** is attacking your own AI system the way a motivated adversary or a careless user would, before launch and continuously after, to find the failures normal evals miss. Evals ask *\"does it work on expected inputs?\"*; red teaming asks *\"what's the worst it can be made to do?\"*\n\nScope comes from a threat model of *this* system, not a generic list:\n\n- **Harmful content**: jailbreaks into dangerous, hateful or illegal output.\n- **Prompt injection**: direct, and indirect via documents, emails, web pages and tool results.\n- **Data leakage**: system prompt, PII, secrets, other users' or tenants' data.\n- **Agent misuse**: unauthorized tool calls, excessive agency, spending money, deleting things.\n- **Bias**: different quality or treatment across groups and languages.\n\nTwo kinds of attacker, both needed:\n\n- **Expert manual testing**: security and domain experts find novel, multi-turn and business-logic attacks.\n- **Automated generation**: **Microsoft PyRIT**, **NVIDIA garak** and **promptfoo**'s red-team mode generate and mutate thousands of attacks (encodings, role-play, multi-turn escalation) and score the responses.\n\nRate each finding by **severity** (impact × likelihood), fix critical ones before launch, and turn **every finding into a regression eval** that runs in CI on each model, prompt or tool change. After launch, a **bug bounty** and user reports keep feeding the set.",
+    "es": "El **red teaming** es atacar tu propio sistema de IA como lo haría un adversario motivado o un usuario descuidado, antes del lanzamiento y de forma continua después, para encontrar las fallas que las evals normales no ven. Las evals preguntan *\"¿funciona con las entradas esperadas?\"*; el red teaming pregunta *\"¿qué es lo peor que se puede lograr que haga?\"*\n\nEl alcance sale de un modelo de amenazas de *este* sistema, no de una lista genérica:\n\n- **Contenido dañino**: jailbreaks hacia salidas peligrosas, de odio o ilegales.\n- **Prompt injection**: directa, e indirecta vía documentos, correos, páginas web y resultados de herramientas.\n- **Fuga de datos**: system prompt, PII, secretos, datos de otros usuarios o tenants.\n- **Mal uso del agente**: llamadas a herramientas no autorizadas, exceso de autonomía, gastar dinero, borrar cosas.\n- **Sesgo**: distinta calidad o trato según el grupo o el idioma.\n\nDos tipos de atacante, y necesitas ambos:\n\n- **Pruebas manuales de expertos**: especialistas en seguridad y en el dominio encuentran ataques nuevos, de varios turnos y de lógica de negocio.\n- **Generación automatizada**: **Microsoft PyRIT**, **NVIDIA garak** y el modo red team de **promptfoo** generan y mutan miles de ataques (codificaciones, juego de roles, escalada en varios turnos) y puntúan las respuestas.\n\nCalifica cada hallazgo por **severidad** (impacto × probabilidad), corrige los críticos antes del lanzamiento y convierte **cada hallazgo en una eval de regresión** que corre en CI con cada cambio de modelo, prompt o herramienta. Después del lanzamiento, un **bug bounty** y los reportes de usuarios siguen alimentando el set."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  S[\"Threat model + scope\"] --> H[Expert manual attacks]\n  S --> A[\"Automated attacks<br/>PyRIT, garak, promptfoo\"]\n  P[\"Bug bounty + user reports\"] --> F[Findings]\n  H --> F\n  A --> F\n  F --> V{\"Severity<br/>impact x likelihood\"}\n  V -->|critical| B[\"Block launch + fix\"]\n  V -->|lower| Q[Prioritized backlog]\n  B --> E[(Regression evals)]\n  Q --> E\n  E --> G[CI gate on every change]\n  G -.->|new model or tool| A",
+    "caption": {
+      "en": "Humans and tools generate attacks; severity decides what blocks launch; every finding becomes a regression test that re-runs on each change.",
+      "es": "Humanos y herramientas generan ataques; la severidad decide qué frena el lanzamiento; cada hallazgo se vuelve un test de regresión que corre en cada cambio."
+    }
+  },
+  "code": {
+    "lang": "yaml",
+    "title": { "en": "promptfoo red-team config against a staging agent", "es": "Configuración de red team de promptfoo contra un agente en staging" },
+    "source": "# promptfooconfig.yaml  ->  npx promptfoo@latest redteam run\ndescription: Red team for the support agent (staging)\ntargets:\n  - id: https\n    label: support-agent-staging\n    config:\n      url: https://staging.example.com/api/chat\n      method: POST\n      headers: { Content-Type: application/json }\n      body: { message: \"{{prompt}}\", user_id: \"redteam-01\" }\n      transformResponse: json.reply\nredteam:\n  # The purpose drives attack generation: say what it may and may NOT do\n  purpose: >-\n    Bank support assistant. May read the caller's own orders and issue\n    refunds up to $50. Must never reveal other customers' data.\n  numTests: 25              # attacks generated per plugin\n  plugins:\n    - harmful:hate\n    - pii:direct            # tries to extract personal data\n    - bola                  # other users' records (broken object-level auth)\n    - excessive-agency      # actions beyond what was asked\n    - hijacking             # off-purpose use of the agent\n  strategies:\n    - jailbreak             # iterative, LLM-driven refinement\n    - crescendo             # multi-turn escalation\n    - base64                # encoding obfuscation"
+  },
+  "example": {
+    "en": "Before launching an email agent that can read the inbox and send messages, a team spends two weeks red teaming. promptfoo generates ~3,000 attacks across 10 plugins; garak adds encoding and leakage probes; two security engineers attack it by hand. The worst finding comes from the humans: an incoming email with hidden instructions makes the agent forward the last 10 invoices to an outside address. Rated critical (data exfiltration, reproducible in 7 of 10 runs), it is fixed by requiring confirmation before sending to any new external recipient. The email joins the regression suite; three months later a model upgrade raises its success rate from 0/10 to 2/10 and the CI gate blocks the deploy.",
+    "es": "Antes de lanzar un agente de correo que puede leer la bandeja y enviar mensajes, un equipo dedica dos semanas al red teaming. promptfoo genera ~3,000 ataques con 10 plugins; garak suma pruebas de codificación y de fuga; dos ingenieros de seguridad lo atacan a mano. El peor hallazgo viene de los humanos: un correo entrante con instrucciones ocultas hace que el agente reenvíe las últimas 10 facturas a una dirección externa. Se califica como crítico (exfiltración de datos, reproducible en 7 de 10 corridas) y se corrige exigiendo confirmación antes de enviar a cualquier destinatario externo nuevo. El correo entra a la suite de regresión; tres meses después, una actualización del modelo sube su tasa de éxito de 0/10 a 2/10 y el gate de CI frena el deploy."
+  },
+  "pros": [
+    { "en": "Finds the failures that matter most: the ones nobody thought to test.", "es": "Encuentra las fallas que más importan: las que nadie pensó en probar." },
+    { "en": "Automated suites make attacks repeatable and cheap to re-run on every change.", "es": "Las suites automatizadas hacen que los ataques sean repetibles y baratos de correr en cada cambio." },
+    { "en": "Gives launch decisions evidence: severity-ranked findings instead of opinions.", "es": "Le da evidencia a la decisión de lanzar: hallazgos ordenados por severidad en lugar de opiniones." }
+  ],
+  "cons": [
+    { "en": "Never proves safety: finding nothing is not the same as having no holes.", "es": "Nunca demuestra seguridad: no encontrar fallas no significa que no las haya." },
+    { "en": "Skilled human red teamers are scarce and expensive; automation mostly finds known patterns.", "es": "Los red teamers humanos con experiencia son escasos y caros; la automatización encuentra sobre todo patrones conocidos." },
+    { "en": "LLM-graded attack success is noisy; findings need human triage.", "es": "El éxito de un ataque calificado por un LLM es ruidoso: los hallazgos necesitan triage humano." }
+  ],
+  "whenToUse": {
+    "en": "Before any public launch, before giving an agent new tools or data, and on every model upgrade; scale it to risk: a day for an internal summarizer, weeks for an agent that moves money.",
+    "es": "Antes de cualquier lanzamiento público, antes de darle a un agente nuevas herramientas o datos y en cada actualización de modelo; escálalo según el riesgo: un día para un resumidor interno, semanas para un agente que mueve dinero."
+  },
+  "whenNotToUse": {
+    "en": "As a substitute for secure design or regular evals. Don't red team a prototype whose permissions and data flows will still change: threat-model first, attack once the architecture stabilizes.",
+    "es": "Como sustituto del diseño seguro o de las evals habituales. No hagas red teaming de un prototipo cuyos permisos y flujos de datos todavía van a cambiar: primero el modelo de amenazas, y ataca cuando la arquitectura se estabilice."
+  },
+  "numbers": [
+    { "en": "Anthropic released ~39k human red-team attacks (Ganguli et al., 2022), a public seed set for your own suite.", "es": "Anthropic publicó ~39k ataques de red team humanos (Ganguli et al., 2022), un set público para arrancar tu propia suite." },
+    { "en": "PAIR, an attacker LLM refining prompts against a target model, often finds a jailbreak in under 20 queries.", "es": "PAIR, un LLM atacante que refina prompts contra el modelo objetivo, suele encontrar un jailbreak en menos de 20 consultas." },
+    { "en": "Rule of thumb: report attack success rate (ASR) per category per release; any open critical finding blocks launch.", "es": "Regla práctica: reporta la tasa de éxito de ataques (ASR) por categoría en cada release; cualquier hallazgo crítico abierto frena el lanzamiento." },
+    { "en": "Rule of thumb: re-run the automated suite on every model, prompt or tool change; upgrades can reopen fixed holes.", "es": "Regla práctica: vuelve a correr la suite automatizada en cada cambio de modelo, prompt o herramienta; una actualización puede reabrir fallas corregidas." }
+  ],
+  "pitfalls": [
+    { "en": "Testing only single-turn, English, direct prompts; real attacks are multi-turn, multilingual and indirect.", "es": "Probar solo prompts directos, en inglés y de un turno; los ataques reales son de varios turnos, multilingües e indirectos." },
+    { "en": "Red teaming once before launch; a model or prompt change silently reopens fixed holes.", "es": "Hacer red teaming una sola vez antes del lanzamiento; un cambio de modelo o de prompt reabre en silencio fallas ya corregidas." },
+    { "en": "Attacking the bare model instead of the full system with its tools, retrieval and guardrails.", "es": "Atacar el modelo pelado en vez del sistema completo con sus herramientas, la recuperación y los guardrails." },
+    { "en": "Findings that live in a slide deck instead of becoming regression tests.", "es": "Hallazgos que quedan en una presentación en lugar de convertirse en tests de regresión." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you set up red teaming for a new agent launch?", "es": "¿Cómo organizarías el red teaming para el lanzamiento de un agente nuevo?" },
+      "a": {
+        "en": "I start with a threat model of the actual system: what data it reads, what tools it calls, who would attack it. That fixes scope and a severity rubric up front: data exfiltration or an unauthorized action is critical and blocks launch. Then two tracks in parallel: automated generation with promptfoo or PyRIT for breadth, and expert humans for multi-turn and business-logic attacks, which is usually where the worst findings come from. Every finding becomes a regression eval in CI, and after launch a bug bounty keeps the pipeline fed.",
+        "es": "Arranco con un modelo de amenazas del sistema real: qué datos lee, qué herramientas llama, quién lo atacaría. Eso fija el alcance y una rúbrica de severidad desde el inicio: una exfiltración de datos o una acción no autorizada es crítica y frena el lanzamiento. Después, dos frentes en paralelo: generación automatizada con promptfoo o PyRIT para cubrir amplitud, y expertos humanos para ataques de varios turnos y de lógica de negocio, que es donde suelen aparecer los peores hallazgos. Cada hallazgo se vuelve una eval de regresión en CI, y después del lanzamiento un bug bounty mantiene el flujo."
+      }
+    },
+    {
+      "q": { "en": "The model provider already red-teamed the model. Why do it again?", "es": "El proveedor ya le hizo red teaming al modelo. ¿Por qué hacerlo otra vez?" },
+      "a": {
+        "en": "Because they tested a model and I ship a system. The provider can't know my tools, my data, my system prompt or my users. Most serious findings live in that integration: an injection in a retrieved document that triggers my refund tool, another tenant's data leaking through retrieval, a guardrail bypassed by writing in Spanish. Model-level safety is a floor; my red team covers what I built on top, and re-runs whenever I swap the model.",
+        "es": "Porque ellos probaron un modelo y yo despliego un sistema. El proveedor no conoce mis herramientas, mis datos, mi system prompt ni mis usuarios. La mayoría de los hallazgos graves viven en esa integración: una inyección en un documento recuperado que dispara mi herramienta de reembolsos, datos de otro tenant que se filtran por la recuperación, un guardrail que se evade escribiendo en español. La seguridad del modelo es un piso; mi red team cubre lo que construí encima, y vuelve a correr cada vez que cambio de modelo."
+      }
+    }
+  ],
+  "related": ["prompt-injection", "jailbreaks", "owasp-llm-top10", "guardrails", "eval-ci", "agent-evals"],
+  "sources": [
+    { "title": "Microsoft PyRIT (GitHub)", "url": "https://github.com/Azure/PyRIT" },
+    { "title": "NVIDIA garak — LLM vulnerability scanner (GitHub)", "url": "https://github.com/NVIDIA/garak" },
+    { "title": "promptfoo — LLM red teaming guide", "url": "https://www.promptfoo.dev/docs/red-team/" },
+    { "title": "Ganguli et al. — Red Teaming Language Models to Reduce Harms", "url": "https://arxiv.org/abs/2209.07858" }
+  ]
+}

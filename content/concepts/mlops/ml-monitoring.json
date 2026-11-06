@@ -1,0 +1,86 @@
+{
+  "id": "ml-monitoring",
+  "domain": "mlops",
+  "level": "core",
+  "title": { "en": "Monitoring models in production", "es": "Monitoreo de modelos en producción" },
+  "aliases": ["model monitoring", "ML observability", "data quality monitoring", "drift monitoring", "PSI", "Evidently", "Arize", "WhyLabs"],
+  "tldr": {
+    "en": "Watch five layers (service health, input data quality, drift, model quality via proxies until labels arrive, business KPIs) and page only on the few that predict user harm.",
+    "es": "Vigila cinco capas (salud del servicio, calidad de los datos de entrada, drift, calidad del modelo vía proxies hasta que lleguen las etiquetas y KPIs de negocio) y alerta solo con las pocas que anticipan daño al usuario."
+  },
+  "analogy": {
+    "en": "A car dashboard: the engine light (errors) is not enough; you also need the fuel gauge (data), the speedometer (drift) and, eventually, whether you arrived (business result).",
+    "es": "El tablero de un auto: la luz del motor (errores) no alcanza; también necesitas el indicador de combustible (datos), el velocímetro (drift) y, al final, saber si llegaste (resultado de negocio)."
+  },
+  "explain": {
+    "en": "A model can return HTTP 200 with garbage. **ML monitoring** watches the layers ordinary APM can't see:\n\n1. **Operational**: latency p50/p99, errors, throughput, cost.\n2. **Data quality**: schema changes, null rates, out-of-range values; the most common real cause of incidents.\n3. **[[drift]]**: input and prediction distributions vs. a training baseline (PSI, KS test, KL divergence).\n4. **Model performance**: accuracy and calibration per slice. **Labels arrive late** (fraud chargebacks take weeks), so meanwhile you watch proxies: score distribution, user corrections, manual review samples.\n5. **Business KPIs**: conversion, approvals, handle time; what the model exists for.\n\nAlert on a few signals tied to harm; dashboard the rest.\n\n**LLM specifics**: tokens and cost per request, refusal rate, guardrail triggers, empty or truncated outputs, thumbs and edits, and [[llm-as-judge]] scores on a sampled slice of traffic. Trace every call ([[llm-observability]]) so a bad score links to the exact prompt, context and model version.",
+    "es": "Un modelo puede devolver HTTP 200 con basura. El **monitoreo de ML** vigila las capas que el APM común no ve:\n\n1. **Operativa**: latencia p50/p99, errores, throughput, costo.\n2. **Calidad de datos**: cambios de esquema, tasas de nulos, valores fuera de rango; la causa real más común de incidentes.\n3. **[[drift]]**: distribuciones de entradas y predicciones frente a una línea base de entrenamiento (PSI, prueba KS, divergencia KL).\n4. **Desempeño del modelo**: exactitud y calibración por segmento. **Las etiquetas llegan tarde** (los contracargos por fraude tardan semanas), así que mientras tanto vigilas proxies: distribución de puntajes, correcciones de usuarios, muestras de revisión manual.\n5. **KPIs de negocio**: conversión, aprobaciones, tiempo de atención; aquello para lo que existe el modelo.\n\nAlerta con pocas señales ligadas a daño real; lo demás va a dashboards.\n\n**Lo específico de LLMs**: tokens y costo por request, tasa de rechazos, disparos de guardrails, salidas vacías o truncadas, pulgares y ediciones, y puntajes de [[llm-as-judge]] sobre una muestra del tráfico. Traza cada llamada ([[llm-observability]]) para que un mal puntaje te lleve al prompt, contexto y versión de modelo exactos."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[Requests] --> M[Model service]\n  M --> L[(\"Logs: inputs,<br/>outputs, version\")]\n  L --> O[\"Ops: latency, errors\"]\n  L --> Q[\"Data quality + drift\"]\n  L --> J[\"Sampled judge,<br/>proxy metrics\"]\n  LB[Delayed labels] --> P[True performance]\n  L --> P\n  O --> A{Alert rules}\n  Q --> A\n  J --> A\n  P --> A\n  A --> H[\"On-call + runbook\"]",
+    "caption": {
+      "en": "Fast signals (ops, data, drift, sampled judges) cover the weeks before slow ground-truth labels arrive.",
+      "es": "Las señales rápidas (operación, datos, drift, jueces sobre muestras) cubren las semanas antes de que lleguen las etiquetas reales."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Population Stability Index as a label-free alarm", "es": "Population Stability Index como alarma sin etiquetas" },
+    "source": "import numpy as np\n\ndef psi(baseline: np.ndarray, live: np.ndarray, bins: int = 10) -> float:\n    \"\"\"Population Stability Index of one feature or of the model score.\"\"\"\n    # Bin edges from the training baseline (deciles) so both sides are comparable\n    edges = np.quantile(baseline, np.linspace(0, 1, bins + 1))\n    edges[0], edges[-1] = -np.inf, np.inf\n    b = np.histogram(baseline, edges)[0] / len(baseline)\n    l = np.histogram(live, edges)[0] / len(live)\n    b, l = np.clip(b, 1e-6, None), np.clip(l, 1e-6, None)  # avoid log(0)\n    return float(np.sum((l - b) * np.log(l / b)))\n\n# Daily job: score drift is a proxy while labels are weeks away\nvalue = psi(train_scores, last_24h_scores)\nif value > 0.25:\n    page_oncall(\"fraud-model score PSI\", value)    # significant shift\nelif value > 0.10:\n    open_ticket(\"fraud-model score PSI\", value)    # moderate: investigate"
+  },
+  "example": {
+    "en": "A fraud model's service dashboards stay green (p99 40 ms, zero errors) while fraud losses climb. Chargebacks take weeks, so measured accuracy can't show it yet. What fires first is data quality: an upstream change sends `merchant_country` as null for 18% of requests, and the score PSI jumps to 0.3. A null-rate alert on top features catches it in hours. For an LLM assistant, the equivalent early signal was refusal rate jumping from 2% to 9% the day the provider updated the model.",
+    "es": "Los dashboards de servicio de un modelo de fraude siguen en verde (p99 de 40 ms, cero errores) mientras suben las pérdidas por fraude. Los contracargos tardan semanas, así que la exactitud medida todavía no lo muestra. Lo primero que salta es la calidad de datos: un cambio aguas arriba manda `merchant_country` en null en el 18% de los requests, y el PSI del puntaje sube a 0.3. Una alerta de tasa de nulos en las features principales lo detecta en horas. En un asistente con LLM, la señal temprana equivalente fue la tasa de rechazos, que pasó de 2% a 9% el día en que el proveedor actualizó el modelo."
+  },
+  "pros": [
+    { "en": "Catches silent failures that return 200 OK with wrong answers.", "es": "Detecta fallas silenciosas que devuelven 200 OK con respuestas incorrectas." },
+    { "en": "Label-free proxies (data quality, score drift) warn you weeks before accuracy can.", "es": "Los proxies sin etiquetas (calidad de datos, drift del puntaje) te avisan semanas antes que la exactitud." },
+    { "en": "Ties model changes to business impact, which is what leadership asks about.", "es": "Conecta los cambios del modelo con el impacto en el negocio, que es lo que pregunta la dirección." }
+  ],
+  "cons": [
+    { "en": "Drift alerts are noisy: many shifts are harmless (seasonality, a marketing campaign).", "es": "Las alertas de drift son ruidosas: muchos cambios son inofensivos (estacionalidad, una campaña de marketing)." },
+    { "en": "True performance lags by the label delay, and some labels never arrive.", "es": "El desempeño real llega con el retraso de las etiquetas, y algunas nunca llegan." },
+    { "en": "Logging inputs and outputs adds storage cost and privacy risk; PII must be redacted.", "es": "Registrar entradas y salidas suma costo de almacenamiento y riesgo de privacidad; hay que redactar la PII." }
+  ],
+  "whenToUse": {
+    "en": "Every model that makes or influences production decisions: ops, data quality and one business KPI on day one; drift and sampled quality checks right after.",
+    "es": "Todo modelo que tome o influya decisiones en producción: operación, calidad de datos y un KPI de negocio desde el primer día; drift y chequeos de calidad por muestreo justo después."
+  },
+  "whenNotToUse": {
+    "en": "It doesn't replace offline evals before release. And don't page on drift of every feature: page only on signals linked to user or business harm.",
+    "es": "No reemplaza los evals offline antes del release. Y no alertes por el drift de cada feature: alerta solo con señales ligadas a daño al usuario o al negocio."
+  },
+  "numbers": [
+    { "en": "PSI rule of thumb: < 0.1 stable, 0.1–0.25 moderate shift, > 0.25 significant shift.", "es": "Regla práctica de PSI: < 0.1 estable, 0.1–0.25 cambio moderado, > 0.25 cambio significativo." },
+    { "en": "Rule of thumb: run LLM-as-judge on ~1–5% of production traffic, more right after a release.", "es": "Regla práctica: corre LLM-as-judge sobre ~1–5% del tráfico de producción, y más justo después de un release." },
+    { "en": "Google SRE: page when a 30-day SLO burns 2% of its error budget in 1 hour (14.4× burn rate).", "es": "Google SRE: alerta cuando un SLO de 30 días consume el 2% de su presupuesto de error en 1 hora (burn rate de 14.4×)." }
+  ],
+  "pitfalls": [
+    { "en": "Monitoring only infrastructure: the model can be confidently wrong at 40 ms p99.", "es": "Monitorear solo la infraestructura: el modelo puede equivocarse con total seguridad a 40 ms de p99." },
+    { "en": "Alerting on drift of every feature: alert fatigue. Prioritize the top features by importance.", "es": "Alertar por el drift de cada feature: fatiga de alertas. Prioriza las features más importantes." },
+    { "en": "Watching only aggregate accuracy while one segment (new users, a region) degrades.", "es": "Mirar solo la exactitud agregada mientras un segmento (usuarios nuevos, una región) se degrada." },
+    { "en": "Not logging the model and prompt version with each prediction, so regressions can't be attributed.", "es": "No registrar la versión del modelo y del prompt con cada predicción, así que no puedes atribuir las regresiones." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Labels for your model arrive 60 days late. How do you know it works today?", "es": "Las etiquetas de tu modelo llegan con 60 días de retraso. ¿Cómo sabes que funciona hoy?" },
+      "a": {
+        "en": "I layer leading indicators. First, data quality on inputs (schema, nulls, ranges), because broken pipelines cause most incidents. Second, drift on the prediction distribution and top features against the training baseline. Third, fast partial labels: user overrides, a manual review sample, early chargebacks. Fourth, the business KPI. When the real labels land, I backfill performance per slice and check whether my proxies would have warned me, then tune thresholds from that.",
+        "es": "Combino indicadores adelantados. Primero, calidad de datos en las entradas (esquema, nulos, rangos), porque los pipelines rotos causan la mayoría de los incidentes. Segundo, drift en la distribución de predicciones y en las features principales frente a la línea base de entrenamiento. Tercero, etiquetas parciales rápidas: correcciones de usuarios, una muestra de revisión manual, contracargos tempranos. Cuarto, el KPI de negocio. Cuando llegan las etiquetas reales, calculo el desempeño por segmento y reviso si mis proxies me habrían avisado; con eso ajusto los umbrales."
+      }
+    },
+    {
+      "q": { "en": "What would you monitor specifically for an LLM feature?", "es": "¿Qué monitorearías específicamente en una funcionalidad con LLM?" },
+      "a": {
+        "en": "On top of latency and errors: tokens and cost per request, since a prompt change can double the bill; refusal and empty-answer rates; guardrail trigger rates; and feedback like thumbs, regenerations and edits. For quality, I sample a few percent of traffic and score it with an LLM judge calibrated against human labels, broken down by intent. Every call is traced with prompt and model version, so when a provider updates a model I see the shift the same day.",
+        "es": "Además de latencia y errores: tokens y costo por request, porque un cambio de prompt puede duplicar la factura; tasas de rechazo y de respuestas vacías; tasas de disparo de guardrails; y feedback como pulgares, regeneraciones y ediciones. Para la calidad, muestreo un pequeño porcentaje del tráfico y lo califico con un juez LLM calibrado contra etiquetas humanas, desglosado por intención. Cada llamada queda trazada con la versión del prompt y del modelo, así que si el proveedor actualiza un modelo veo el cambio ese mismo día."
+      }
+    }
+  ],
+  "related": ["drift", "llm-observability", "llm-as-judge", "offline-online-evals", "slos", "observability"],
+  "sources": [
+    { "title": "Chip Huyen — Data Distribution Shifts and Monitoring", "url": "https://huyenchip.com/2022/02/07/data-distribution-shifts-and-monitoring.html" },
+    { "title": "Google SRE Workbook — Alerting on SLOs", "url": "https://sre.google/workbook/alerting-on-slos/" },
+    { "title": "Evidently AI — Documentation", "url": "https://docs.evidentlyai.com/" }
+  ]
+}
