@@ -1,0 +1,85 @@
+{
+  "id": "adrs",
+  "domain": "leadership",
+  "level": "core",
+  "title": { "en": "Architecture Decision Records (ADRs)", "es": "ADRs: registros de decisiones de arquitectura" },
+  "aliases": ["ADR", "architecture decision record", "decision log", "Nygard ADR", "MADR", "adr-tools"],
+  "tldr": {
+    "en": "An ADR is a one-page record of one significant decision (context, decision, consequences) kept in the repo and never edited after acceptance, only superseded, so future engineers know why.",
+    "es": "Un ADR es un registro de una página sobre una decisión importante (contexto, decisión, consecuencias) que vive en el repo y no se edita tras aceptarse, solo se reemplaza, para que los futuros ingenieros sepan el porqué."
+  },
+  "analogy": {
+    "en": "A ship's logbook: when the wind changes you don't rewrite yesterday's entry; you add a new one saying what changed and why.",
+    "es": "La bitácora de un barco: cuando cambia el viento no reescribes la entrada de ayer; agregas una nueva que dice qué cambió y por qué."
+  },
+  "explain": {
+    "en": "An **Architecture Decision Record** is a short text file that captures one architecturally significant decision: one that affects structure, quality attributes, dependencies or interfaces. Michael Nygard proposed the format in 2011 with five parts:\n\n- **Title** — numbered, short: *ADR-007: Use pgvector for retrieval*.\n- **Status** — proposed, accepted, deprecated, or *superseded by ADR-019*.\n- **Context** — the forces at play: constraints, requirements, what was true *then*.\n- **Decision** — in active voice: *\"We will…\"*.\n- **Consequences** — everything that follows, good *and* bad.\n\nThree rules make ADRs work:\n\n1. **Immutable.** Once accepted, the reasoning isn't edited. When the decision changes, write a new ADR and mark the old one *superseded*. The history of thinking is the point.\n2. **In the repo**, next to the code (`docs/adr/`), reviewed in a PR like code, so it's versioned and found by whoever touches that code.\n3. **Short.** One or two pages. A design doc ([[design-docs]]) explores options; an ADR records the outcome.\n\nWhy bother: code shows *what* was built, never *why* the alternatives lost. Without ADRs, a new architect either keeps a bad decision out of fear or reverses a good one and relearns the old lesson in production.",
+    "es": "Un **Architecture Decision Record** es un archivo de texto corto que captura una decisión arquitectónicamente importante: una que afecta la estructura, los atributos de calidad, las dependencias o las interfaces. Michael Nygard propuso el formato en 2011 con cinco partes:\n\n- **Título**: numerado y corto: *ADR-007: Usar pgvector para la recuperación*.\n- **Estado**: propuesto, aceptado, obsoleto o *reemplazado por ADR-019*.\n- **Contexto**: las fuerzas en juego: restricciones, requisitos, lo que era cierto *en ese momento*.\n- **Decisión**: en voz activa: *\"Vamos a…\"*.\n- **Consecuencias**: todo lo que se desprende, lo bueno *y* lo malo.\n\nTres reglas hacen que los ADRs funcionen:\n\n1. **Inmutables.** Una vez aceptado, el razonamiento no se edita. Cuando la decisión cambia, escribes un ADR nuevo y marcas el anterior como *reemplazado*. La historia del razonamiento es justamente el valor.\n2. **En el repo**, junto al código (`docs/adr/`), revisado en un PR como el código, para que tenga versiones y lo encuentre quien toque ese código.\n3. **Cortos.** Una o dos páginas. Un design doc ([[design-docs]]) explora opciones; un ADR registra el resultado.\n\nPara qué sirve: el código muestra *qué* se construyó, nunca *por qué* perdieron las alternativas. Sin ADRs, una nueva arquitecta mantiene una mala decisión por miedo o revierte una buena y vuelve a aprender la lección en producción."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  D[Significant decision] --> P[\"ADR proposed<br/>(opened as PR)\"]\n  P --> R{Review}\n  R -->|not approved| J[\"Rejected<br/>(file kept)\"]\n  R -->|approved| A[\"Accepted<br/>(now immutable)\"]\n  A --> C{\"Context changed?\"}\n  C -->|no| K[Keep following it]\n  C -->|yes| N[New ADR proposed]\n  N --> R\n  N -.->|once accepted| S[\"Old ADR marked<br/>superseded\"]",
+    "caption": {
+      "en": "ADRs are never rewritten: a changed decision is a new ADR, and the old one is marked superseded with its context intact.",
+      "es": "Los ADRs nunca se reescriben: una decisión que cambia es un ADR nuevo, y el anterior se marca como reemplazado con su contexto intacto."
+    }
+  },
+  "code": {
+    "lang": "text",
+    "title": { "en": "Nygard-style ADR, filled in: choosing a vector database", "es": "ADR estilo Nygard, completo: elegir una base de datos vectorial" },
+    "source": "# ADR-007: Use pgvector in our existing Postgres for RAG retrieval\n\nStatus: Accepted (2026-03-14)\nDeciders: platform, search, security · Supersedes: none\n\n## Context\n- Support RAG holds ~2M chunks; the plan says < 10M within 18 months.\n- We already run managed Postgres: backups, PITR, IAM, on-call.\n- Retrieval must filter by tenant_id and document ACLs in one query.\n- No capacity this year to operate a new stateful system.\n- Options: pgvector (HNSW), a managed vector DB, OpenSearch k-NN.\n\n## Decision\nWe will store embeddings in Postgres with pgvector and HNSW indexes,\nbehind our `Retriever` interface. No service queries vectors directly.\n\n## Consequences\n+ No new vendor, contract or security review.\n+ ACL and tenant filters are plain SQL in the same transaction.\n+ Chunks, metadata and embeddings stay consistent.\n- Index builds compete with OLTP load: we build on a replica.\n- Hybrid search (BM25 + vectors) needs extra work in Postgres.\n- Revisit trigger: > 10M chunks or retrieval p95 > 150 ms → new ADR."
+  },
+  "example": {
+    "en": "Eighteen months after launch, a new architect sees RAG running on Postgres and proposes a dedicated vector DB \"because that's the standard\". ADR-007 shows the choice was driven by tenant ACL filtering in SQL and no ops capacity, and it names the revisit trigger: more than 10M chunks or retrieval p95 above 150 ms. Neither has fired, so the discussion takes ten minutes instead of a quarter. A year later the trigger does fire; ADR-019 picks a managed vector DB, and ADR-007's status becomes *Superseded by ADR-019*, its context left intact.",
+    "es": "Dieciocho meses después del lanzamiento, una nueva arquitecta ve el RAG corriendo sobre Postgres y propone una base vectorial dedicada \"porque es lo estándar\". El ADR-007 muestra que la decisión se basó en filtrar ACLs por tenant con SQL y en la falta de capacidad operativa, y nombra el disparador para revisarla: más de 10M de chunks o un p95 de recuperación mayor a 150 ms. Ninguno se cumplió, así que la discusión dura diez minutos en lugar de un trimestre. Un año después el disparador sí se activa; el ADR-019 elige una base vectorial administrada y el estado del ADR-007 pasa a *Reemplazado por ADR-019*, con su contexto intacto."
+  },
+  "pros": [
+    { "en": "Preserves the why, which code and commit messages never capture.", "es": "Conserva el porqué, que el código y los mensajes de commit nunca capturan." },
+    { "en": "Cheap: a page per decision, reviewed in the same PR flow as code.", "es": "Barato: una página por decisión, revisada en el mismo flujo de PRs que el código." },
+    { "en": "Speeds onboarding and stops teams relitigating settled decisions.", "es": "Acelera el onboarding y evita que los equipos vuelvan a discutir decisiones ya tomadas." }
+  ],
+  "cons": [
+    { "en": "Only as good as the discipline: teams start strong and quietly stop writing them.", "es": "Vale lo que vale la disciplina: los equipos empiezan con fuerza y dejan de escribirlos sin darse cuenta." },
+    { "en": "Becomes bureaucracy if used for trivial, reversible choices.", "es": "Se vuelve burocracia si lo usas para decisiones triviales y reversibles." },
+    { "en": "Found only if people know to look; link them from code and READMEs.", "es": "Solo se encuentran si la gente sabe dónde buscar; enlázalos desde el código y los READMEs." }
+  ],
+  "whenToUse": {
+    "en": "Any decision that's costly to reverse or that a future engineer would question: datastores, model providers, API contracts, tenancy model, data retention, security boundaries.",
+    "es": "Cualquier decisión cara de revertir o que un futuro ingeniero cuestionaría: almacenes de datos, proveedores de modelos, contratos de API, modelo de tenancy, retención de datos, fronteras de seguridad."
+  },
+  "whenNotToUse": {
+    "en": "Reversible, local choices: a helper library, a prompt wording, an internal refactor. If nobody will ask \"why did we do this?\" in a year, skip it.",
+    "es": "Decisiones locales y reversibles: una librería auxiliar, la redacción de un prompt, un refactor interno. Si dentro de un año nadie va a preguntar \"¿por qué hicimos esto?\", sáltatelo."
+  },
+  "numbers": [
+    { "en": "Nygard (2011): 5 sections — title, status, context, decision, consequences.", "es": "Nygard (2011): 5 secciones — título, estado, contexto, decisión, consecuencias." },
+    { "en": "Rule of thumb: 1–2 pages; anything longer is exploration that belongs in a design doc.", "es": "Regla práctica: 1–2 páginas; lo que sea más largo es exploración y va en un design doc." }
+  ],
+  "pitfalls": [
+    { "en": "Editing an accepted ADR to match a new decision: the history is gone. Write a new one and supersede.", "es": "Editar un ADR aceptado para que coincida con una decisión nueva: la historia se pierde. Escribe uno nuevo y reemplaza el anterior." },
+    { "en": "Listing only positive consequences; the negatives are what the next reader needs most.", "es": "Listar solo consecuencias positivas; las negativas son lo que más necesita el próximo lector." },
+    { "en": "Keeping ADRs in a wiki nobody opens instead of the repo they govern.", "es": "Guardar los ADRs en una wiki que nadie abre en lugar del repo que gobiernan." },
+    { "en": "Writing them after the fact to justify a decision, with the context reconstructed from memory.", "es": "Escribirlos después para justificar una decisión, con el contexto reconstruido de memoria." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why ADRs, rather than just good design docs?", "es": "¿Por qué ADRs y no solo buenos design docs?" },
+      "a": {
+        "en": "They solve different problems. A design doc is the exploration: long, debated, and often stale once the system is built. An ADR is the durable outcome: one page, in the repo, immutable once accepted. A year later nobody rereads a twelve-page doc, but they will read \"ADR-007: use pgvector\" right when they're about to change that code. I keep both: the doc links to the ADR it produced, and the ADR links back for the full reasoning.",
+        "es": "Resuelven problemas distintos. Un design doc es la exploración: largo, debatido y muchas veces desactualizado cuando el sistema ya está construido. Un ADR es el resultado duradero: una página, en el repo, inmutable una vez aceptado. Un año después nadie relee un documento de doce páginas, pero sí van a leer \"ADR-007: usar pgvector\" justo antes de cambiar ese código. Mantengo los dos: el documento enlaza al ADR que produjo y el ADR enlaza de vuelta para el razonamiento completo."
+      }
+    },
+    {
+      "q": { "en": "A team wants to reverse an old architecture decision. How do you handle it?", "es": "Un equipo quiere revertir una decisión de arquitectura antigua. ¿Cómo lo manejas?" },
+      "a": {
+        "en": "First I read the ADR's context and check whether those forces still hold; that's the reason the record exists. If the context changed, reversing is legitimate: they write a new ADR with the new context, and the old one is marked superseded, not edited. If nothing changed, the burden is on them to show what the original authors missed. Either way the conversation is about evidence, not taste, and the history stays intact for the next person.",
+        "es": "Primero leo el contexto del ADR y reviso si esas fuerzas siguen vigentes; para eso existe el registro. Si el contexto cambió, revertir es legítimo: escriben un ADR nuevo con el nuevo contexto y el anterior se marca como reemplazado, no se edita. Si nada cambió, les toca demostrar qué se les pasó a los autores originales. En cualquier caso la conversación se basa en evidencia, no en gustos, y la historia queda intacta para la siguiente persona."
+      }
+    }
+  ],
+  "related": ["design-docs", "one-way-doors", "vector-databases", "technical-strategy", "tech-debt"],
+  "sources": [
+    { "title": "Michael Nygard — Documenting Architecture Decisions (2011)", "url": "https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions" },
+    { "title": "ADR GitHub organization — templates and tooling", "url": "https://adr.github.io/" },
+    { "title": "Martin Fowler — Scaling the Practice of Architecture, Conversationally", "url": "https://martinfowler.com/articles/scaling-architecture-conversationally.html" }
+  ]
+}

@@ -5,8 +5,8 @@
   "title": { "en": "Contextual retrieval", "es": "Contextual retrieval (recuperación contextual)" },
   "aliases": ["contextual embeddings", "contextual BM25", "chunk contextualization", "context-enriched chunks", "situated chunks", "Anthropic contextual retrieval"],
   "tldr": {
-    "en": "At indexing time, an LLM writes 50–100 tokens situating each chunk in its document; you prepend them before embedding and BM25. Anthropic cut top-20 retrieval failures 35–67%, at no query-time cost.",
-    "es": "Al indexar, un LLM escribe 50–100 tokens que sitúan cada chunk dentro de su documento y los antepones antes del embedding y de BM25. Anthropic redujo 35–67% las fallas de recuperación en el top 20, sin costo al consultar."
+    "en": "At indexing time, an LLM writes 50–100 tokens situating each chunk in its document; you prepend them before embedding and BM25. Anthropic cut top-20 retrieval failures 49% (67% with reranking), at no query-time cost.",
+    "es": "Al indexar, un LLM escribe 50–100 tokens que sitúan cada chunk dentro de su documento y los antepones antes del embedding y de BM25. Anthropic redujo 49% las fallas de recuperación en el top 20 (67% con reranking), sin costo al consultar."
   },
   "analogy": {
     "en": "A page torn out of a report that says \"revenue grew 3%\" is useless. Staple a sticky note reading \"ACME, Q2 2023 filing\" to it, and anyone can file it and find it again.",
@@ -59,8 +59,8 @@
     { "en": "Under ~200K tokens (~500 pages) of knowledge, skip retrieval and send it all with caching.", "es": "Con menos de ~200K tokens (~500 páginas) de conocimiento, sáltate la recuperación y envía todo con caché." }
   ],
   "pitfalls": [
-    { "en": "Firing every chunk of a document in parallel before the first call has written the cache: all of them pay full price. Warm up with one call, then fan out.", "es": "Lanzar todos los chunks de un documento en paralelo antes de que la primera llamada escriba la caché: todos pagan precio completo. Calienta la caché con una llamada y luego paraleliza." },
-    { "en": "Letting the default 5-minute cache TTL expire between chunks of the same document.", "es": "Dejar que expire el TTL de caché por defecto de 5 minutos entre chunks del mismo documento." },
+    { "en": "Firing every chunk of a document in parallel before the first response starts: the cache entry doesn't exist yet, so each call writes it at 1.25× the input price instead of reading it at 0.1×. Send one call, then fan out.", "es": "Lanzar todos los chunks de un documento en paralelo antes de que empiece la primera respuesta: la entrada de caché aún no existe, así que cada llamada la escribe a 1.25× el precio de entrada en vez de leerla a 0.1×. Envía una llamada y luego paraleliza." },
+    { "en": "Silent cache misses: documents under the model's minimum cacheable length (4,096 tokens on Claude Haiku 4.5) or a lapsed 5-minute TTL get no caching and no error.", "es": "Fallos de caché silenciosos: los documentos por debajo del largo mínimo cacheable del modelo (4,096 tokens en Claude Haiku 4.5) o un TTL de 5 minutos vencido no se cachean, y no hay ningún error." },
     { "en": "Citing or displaying the generated context as if it were source text; a model wrote it and it can be wrong.", "es": "Citar o mostrar el contexto generado como si fuera texto fuente; lo escribió un modelo y puede estar mal." },
     { "en": "Skipping the free baseline: prepend title and section path first, and measure recall@20 before paying for LLM calls.", "es": "Saltarse la línea base gratuita: antepón primero el título y la ruta de secciones, y mide el recall@20 antes de pagar llamadas al LLM." }
   ],
@@ -75,14 +75,14 @@
     {
       "q": { "en": "Your corpus is 50M tokens. What does contextual retrieval cost, and what's the trap?", "es": "Tu corpus tiene 50M de tokens. ¿Cuánto cuesta contextual retrieval y cuál es la trampa?" },
       "a": {
-        "en": "At Anthropic's estimate of ~$1 per million document tokens with caching, about $50 one-time; a few times more with pricier newer models, still small next to engineering time. The trap is that the estimate assumes cache hits. If I fire all chunks of a document before the first call writes the cache, or let the 5-minute TTL lapse, every call pays full input price on the whole document, several times the budget. So I warm the cache with one call per document, then fan out its chunks, and parallelize across documents.",
-        "es": "Con la estimación de Anthropic de ~$1 por millón de tokens de documento con caché, unos $50 una sola vez; varias veces más con modelos nuevos más caros, pero sigue siendo poco frente al tiempo de ingeniería. La trampa es que la estimación supone aciertos de caché. Si lanzo todos los chunks de un documento antes de que la primera llamada escriba la caché, o dejo vencer el TTL de 5 minutos, cada llamada paga precio completo de entrada por el documento entero, varias veces el presupuesto. Así que caliento la caché con una llamada por documento, luego paralelizo sus chunks y también paralelizo entre documentos."
+        "en": "At Anthropic's estimate of ~$1 per million document tokens with caching, about $50 one-time; a few times more with pricier newer models, still small next to engineering time. The trap is that the estimate assumes cache hits. If I fire all chunks of a document before the first call writes the cache, or let the 5-minute TTL lapse, every call writes the whole document to cache at 1.25× the input price instead of reading it at 0.1×, several times the budget. So I warm the cache with one call per document, then fan out its chunks, and parallelize across documents.",
+        "es": "Con la estimación de Anthropic de ~$1 por millón de tokens de documento con caché, unos $50 una sola vez; varias veces más con modelos nuevos más caros, pero sigue siendo poco frente al tiempo de ingeniería. La trampa es que la estimación supone aciertos de caché. Si lanzo todos los chunks de un documento antes de que la primera llamada escriba la caché, o dejo vencer el TTL de 5 minutos, cada llamada escribe el documento entero en caché a 1.25× el precio de entrada en vez de leerlo a 0.1×: varias veces el presupuesto. Así que caliento la caché con una llamada por documento, luego paralelizo sus chunks y también paralelizo entre documentos."
       }
     }
   ],
   "related": ["chunking", "bm25", "hybrid-search", "reranking", "prompt-caching", "embedding-models"],
   "sources": [
-    { "title": "Anthropic — Introducing Contextual Retrieval", "url": "https://www.anthropic.com/news/contextual-retrieval" },
-    { "title": "Anthropic — Prompt caching (docs)", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching" }
+    { "title": "Anthropic — Introducing Contextual Retrieval", "url": "https://www.anthropic.com/research/contextual-retrieval" },
+    { "title": "Anthropic — Prompt caching (docs)", "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching" }
   ]
 }

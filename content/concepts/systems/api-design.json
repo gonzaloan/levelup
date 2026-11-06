@@ -1,0 +1,96 @@
+{
+  "id": "api-design",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "API design: REST, gRPC, async", "es": "Diseño de APIs: REST, gRPC y async" },
+  "aliases": ["REST", "gRPC", "GraphQL", "202 Accepted", "webhooks", "cursor pagination", "API versioning", "Idempotency-Key"],
+  "tldr": {
+    "en": "REST for public resource APIs, gRPC for typed internal calls and streaming, an async contract (202 + status, webhooks, SSE) for anything slow; build in pagination, versioning and idempotency from day one.",
+    "es": "REST para APIs públicas de recursos, gRPC para llamadas internas tipadas y streaming, un contrato asíncrono (202 + estado, webhooks, SSE) para todo lo lento; incluye paginación, versionado e idempotencia desde el primer día."
+  },
+  "analogy": {
+    "en": "Ordering a custom cake: the bakery doesn't keep you at the counter for three days. It hands you a ticket number (202 + status URL) and calls you when it's ready (webhook).",
+    "es": "Encargar un pastel personalizado: la pastelería no te deja esperando en el mostrador tres días. Te da un número de pedido (202 + URL de estado) y te llama cuando está listo (webhook)."
+  },
+  "explain": {
+    "en": "An API is a contract; pick its style by who calls it and how long the work takes.\n\n- **REST** (HTTP + JSON): resources as nouns (`/orders/42`), HTTP verbs as actions (`GET` safe; `PUT`, `DELETE` idempotent; `POST` not), and status codes that mean something (`201`, `409`, `429`). Universal and cacheable: the default for public APIs.\n- **gRPC**: protobuf over HTTP/2, generated clients, bidirectional **streaming**. Compact and strictly typed; best between internal services (browsers need gRPC-Web).\n- **GraphQL**: clients ask for exactly the fields they need. Good for many UIs over many backends; harder to cache and rate-limit.\n\n**Long-running work** must not hold a request open for minutes:\n\n- `202 Accepted` and a `Location: /jobs/123` to poll.\n- **Webhooks**: call the client back when done (signed, retried with backoff).\n- **SSE / WebSockets**: push progress or tokens over an open connection ([[streaming]]).\n\nDay-one essentials:\n\n- **Cursor pagination** (`?after=opaque_cursor`), not `OFFSET`, which slows on deep pages and skips or repeats rows as data changes.\n- **Versioning**: additive changes only; breaking ones get `/v2` or a dated header.\n- **Idempotency keys** on `POST`, so a retry never charges twice ([[idempotency]]).\n\nLLM APIs hit all of this: answers stream over SSE, agent runs take minutes, batch jobs hours, and every retry costs tokens.",
+    "es": "Una API es un contrato; elige su estilo según quién la llama y cuánto tarda el trabajo.\n\n- **REST** (HTTP + JSON): recursos como sustantivos (`/orders/42`), verbos HTTP como acciones (`GET` seguro; `PUT` y `DELETE` idempotentes; `POST` no) y códigos de estado con significado (`201`, `409`, `429`). Universal y cacheable: la opción por defecto para APIs públicas.\n- **gRPC**: protobuf sobre HTTP/2, clientes generados y **streaming** bidireccional. Compacto y con tipado estricto; ideal entre servicios internos (los navegadores necesitan gRPC-Web).\n- **GraphQL**: el cliente pide exactamente los campos que necesita. Sirve para muchas UIs sobre muchos backends; es más difícil de cachear y de limitar.\n\nEl **trabajo de larga duración** no debe mantener una petición abierta por minutos:\n\n- `202 Accepted` y un `Location: /jobs/123` para consultar.\n- **Webhooks**: llamas al cliente cuando termina (firmado y reintentado con backoff).\n- **SSE / WebSockets**: empujas el progreso o los tokens por una conexión abierta ([[streaming]]).\n\nLo esencial desde el día uno:\n\n- **Paginación por cursor** (`?after=opaque_cursor`), no `OFFSET`, que se vuelve lento en páginas profundas y salta o repite filas cuando los datos cambian.\n- **Versionado**: solo cambios aditivos; los que rompen van a `/v2` o a un header con fecha.\n- **Claves de idempotencia** en `POST`, para que un reintento nunca cobre dos veces ([[idempotency]]).\n\nLas APIs de LLMs juntan todo esto: las respuestas llegan por SSE, las ejecuciones de agentes tardan minutos, los jobs batch, horas, y cada reintento cuesta tokens."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant C as Client\n  participant A as API\n  participant Q as Job queue\n  participant W as LLM worker\n  C->>A: POST /v1/summaries + Idempotency-Key\n  A->>Q: enqueue job 123\n  A-->>C: 202 Accepted, Location /v1/jobs/123\n  Q->>W: deliver job 123\n  C->>A: GET /v1/jobs/123\n  A-->>C: 200 running, Retry-After 5\n  W->>A: mark job 123 succeeded\n  alt webhook registered\n    A->>C: POST signed callback\n  else polling\n    C->>A: GET /v1/jobs/123\n    A-->>C: 200 succeeded + result\n  end",
+    "caption": {
+      "en": "Accept fast, work in the background: 202 plus a status URL, then polling or a signed webhook. A retried POST with the same Idempotency-Key gets the same job.",
+      "es": "Acepta rápido y trabaja en segundo plano: 202 más una URL de estado, y luego consultas periódicas o un webhook firmado. Un POST reintentado con la misma Idempotency-Key recibe el mismo job."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "202 Accepted with an idempotency key (FastAPI)", "es": "202 Accepted con clave de idempotencia (FastAPI)" },
+    "source": "import uuid\nfrom fastapi import FastAPI, Header, HTTPException, Response\n\napp = FastAPI()\nJOBS: dict[str, dict] = {}   # Postgres/Redis in production\nKEYS: dict[str, str] = {}    # idempotency key -> job id, kept ~24 h\n\n@app.post(\"/v1/summaries\", status_code=202)\nasync def create_summary(body: dict, response: Response,\n                         idempotency_key: str = Header()):\n    # A retried POST with the same key returns the same job, not a second LLM run.\n    # In production make check-and-set atomic (e.g. Redis SET NX) and scope keys per client.\n    job_id = KEYS.get(idempotency_key)\n    if job_id is None:\n        job_id = KEYS[idempotency_key] = str(uuid.uuid4())\n        JOBS[job_id] = {\"id\": job_id, \"status\": \"queued\"}\n        await enqueue(\"summarize\", job_id, body[\"document_url\"])  # worker calls the LLM\n    response.headers[\"Location\"] = f\"/v1/jobs/{job_id}\"\n    response.headers[\"Retry-After\"] = \"5\"   # polling hint, in seconds\n    return JOBS[job_id]\n\n@app.get(\"/v1/jobs/{job_id}\")\nasync def get_job(job_id: str):\n    if job_id not in JOBS:\n        raise HTTPException(status_code=404)\n    return JOBS[job_id]  # queued | running | succeeded (+ result_url) | failed (+ error)"
+  },
+  "example": {
+    "en": "A contract-review API runs an LLM over 200-page PDFs, ~90 s each. Version one was a synchronous `POST`: the load balancer's 60 s idle timeout cut off long calls, clients retried, and every retry started another paid LLM run. The redesign returns `202` with `/v1/jobs/{id}` in ~50 ms, requires an `Idempotency-Key` so a resubmission returns the same job, streams progress to the UI over SSE, and sends a signed webhook to server integrations. Duplicate LLM spend from retries dropped to zero.",
+    "es": "Una API de revisión de contratos corre un LLM sobre PDFs de 200 páginas, ~90 s cada uno. La primera versión era un `POST` síncrono: el idle timeout de 60 s del balanceador cortaba las llamadas largas, los clientes reintentaban y cada reintento disparaba otra ejecución pagada del LLM. El rediseño devuelve `202` con `/v1/jobs/{id}` en ~50 ms, exige una `Idempotency-Key` para que un reenvío devuelva el mismo job, transmite el progreso a la UI por SSE y manda un webhook firmado a las integraciones de servidor. El gasto duplicado de LLM por reintentos bajó a cero."
+  },
+  "pros": [
+    { "en": "REST: universal tooling, HTTP caching, debuggable with curl.", "es": "REST: herramientas universales, cache HTTP y se depura con curl." },
+    { "en": "gRPC: typed contracts, generated clients, compact binary payloads and native streaming.", "es": "gRPC: contratos tipados, clientes generados, payloads binarios compactos y streaming nativo." },
+    { "en": "Async contracts decouple client timeouts from how long the work really takes.", "es": "Los contratos asíncronos desacoplan los timeouts del cliente de lo que realmente tarda el trabajo." }
+  ],
+  "cons": [
+    { "en": "REST: no enforced schema unless you add OpenAPI, and over- or under-fetching across many screens.", "es": "REST: no hay schema obligatorio salvo que agregues OpenAPI, y se piden datos de más o de menos entre muchas pantallas." },
+    { "en": "gRPC: not browser-native, harder to inspect, needs HTTP/2 through every proxy.", "es": "gRPC: no es nativo del navegador, cuesta más inspeccionarlo y necesita HTTP/2 a través de cada proxy." },
+    { "en": "Async adds state: a job store, polling load, webhook delivery, retries and signatures.", "es": "Lo asíncrono agrega estado: un almacén de jobs, carga de polling, entrega de webhooks, reintentos y firmas." }
+  ],
+  "whenToUse": {
+    "en": "REST for public and partner APIs; gRPC for high-volume service-to-service calls; async (202 + polling or webhooks) for anything that can exceed a few seconds; SSE for token streams to UIs.",
+    "es": "REST para APIs públicas y de partners; gRPC para llamadas de alto volumen entre servicios; async (202 + polling o webhooks) para todo lo que pueda pasar de unos segundos; SSE para streams de tokens hacia la UI."
+  },
+  "whenNotToUse": {
+    "en": "Don't expose gRPC directly to browsers or third parties, don't adopt GraphQL for one client with a few screens, and don't make 2-second operations async: polling only adds latency.",
+    "es": "No expongas gRPC directo a navegadores o a terceros, no adoptes GraphQL para un solo cliente con pocas pantallas y no hagas asíncronas operaciones de 2 segundos: el polling solo agrega latencia."
+  },
+  "numbers": [
+    { "en": "RFC 9110: `GET`, `HEAD`, `OPTIONS` are safe; those plus `PUT` and `DELETE` are idempotent; `POST` is not.", "es": "RFC 9110: `GET`, `HEAD` y `OPTIONS` son seguros; esos más `PUT` y `DELETE` son idempotentes; `POST` no lo es." },
+    { "en": "Go async past ~30 s: AWS API Gateway's integration timeout defaults to 29 s and ALB's idle timeout to 60 s.", "es": "Pasa a async después de ~30 s: el timeout de integración de AWS API Gateway es de 29 s por defecto y el idle timeout del ALB, de 60 s." },
+    { "en": "Stripe prunes idempotency keys after ≥24 h; a replay within that window returns the original result, even a 500.", "es": "Stripe elimina las claves de idempotencia después de ≥24 h; un reenvío dentro de esa ventana devuelve el resultado original, incluso un 500." },
+    { "en": "gRPC's default max receive message size is 4 MB: stream large payloads instead of raising it blindly.", "es": "El tamaño máximo de mensaje recibido por defecto en gRPC es de 4 MB: transmite los payloads grandes por streaming en vez de subirlo a ciegas." },
+    { "en": "`OFFSET 500000 LIMIT 50` reads and discards 500,000 rows; a keyset cursor (`WHERE id > $1 ORDER BY id`) seeks straight there via the index.", "es": "`OFFSET 500000 LIMIT 50` lee y descarta 500,000 filas; un cursor por clave (`WHERE id > $1 ORDER BY id`) llega directo con el índice." }
+  ],
+  "pitfalls": [
+    { "en": "Returning 200 with `{\"error\": ...}` in the body: clients, retries and monitoring all depend on real status codes.", "es": "Devolver 200 con `{\"error\": ...}` en el cuerpo: los clientes, los reintentos y el monitoreo dependen de códigos de estado reales." },
+    { "en": "Offset pagination on a live table: slow deep pages, plus skipped and duplicated rows.", "es": "Paginación por offset sobre una tabla viva: páginas profundas lentas, además de filas saltadas y duplicadas." },
+    { "en": "Breaking changes inside a version (renamed field, stricter validation) with no deprecation window.", "es": "Cambios que rompen dentro de una versión (un campo renombrado, una validación más estricta) sin ventana de deprecación." },
+    { "en": "Unsigned webhooks without retries, and consumers that aren't idempotent to duplicate deliveries.", "es": "Webhooks sin firma ni reintentos, y consumidores que no son idempotentes ante entregas duplicadas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Design the API for an LLM document-summarization feature.", "es": "Diseña la API para una función de resumen de documentos con un LLM." },
+      "a": {
+        "en": "I'd split it by latency. Short inputs get a synchronous POST that streams tokens over SSE, because users judge speed by time to first token. Long documents go async: POST returns 202 with a job URL in milliseconds, and the client polls with Retry-After or registers a signed webhook. Every POST takes an Idempotency-Key, since retried LLM calls cost real money. Errors use real status codes, like 429 with Retry-After for quota. And I version from day one, because output formats will change as models change.",
+        "es": "Lo separaría por latencia. Las entradas cortas usan un POST síncrono que transmite tokens por SSE, porque los usuarios juzgan la velocidad por el tiempo al primer token. Los documentos largos van por async: el POST devuelve 202 con la URL del job en milisegundos, y el cliente consulta respetando Retry-After o registra un webhook firmado. Cada POST lleva una Idempotency-Key, porque reintentar llamadas al LLM cuesta dinero real. Los errores usan códigos de estado reales, como 429 con Retry-After por cuota. Y versiono desde el día uno, porque los formatos de salida van a cambiar cuando cambien los modelos."
+      }
+    },
+    {
+      "q": { "en": "REST or gRPC between your services?", "es": "¿REST o gRPC entre tus servicios?" },
+      "a": {
+        "en": "gRPC for high-volume internal calls where I own both sides: protobuf gives a typed contract, generated clients, smaller payloads and streaming, which matters when an inference service streams tokens. REST at the edge and for partners, because anyone can call it, it caches, and it's debuggable with curl. gRPC's cost is tooling: HTTP/2 through every proxy and load balancer, binary payloads that are harder to inspect, gRPC-Web for browsers. A common answer is gRPC inside, REST or GraphQL at the gateway.",
+        "es": "gRPC para llamadas internas de alto volumen donde controlo ambos lados: protobuf da un contrato tipado, clientes generados, payloads más chicos y streaming, lo que importa cuando un servicio de inferencia transmite tokens. REST en el borde y para partners, porque cualquiera puede llamarla, se cachea y se depura con curl. El costo de gRPC son las herramientas: HTTP/2 a través de cada proxy y balanceador, payloads binarios más difíciles de inspeccionar y gRPC-Web para navegadores. Una respuesta común es gRPC adentro y REST o GraphQL en el gateway."
+      }
+    },
+    {
+      "q": { "en": "How do you evolve an API without breaking clients?", "es": "¿Cómo evolucionas una API sin romper a los clientes?" },
+      "a": {
+        "en": "Within a version, only additive changes: new optional fields and endpoints, never renamed or removed fields, and clients must ignore unknown fields. Breaking changes ship as a new version, /v2 or a dated header like Stripe's, and both run side by side. I announce a deprecation window with a Sunset header and track calls per client, so I know exactly who still uses v1. Internally, protobuf helps: never reuse a field number, and reserve deleted ones.",
+        "es": "Dentro de una versión, solo cambios aditivos: campos opcionales y endpoints nuevos, nunca campos renombrados o eliminados, y los clientes deben ignorar los campos que no conocen. Los cambios que rompen salen como una versión nueva, /v2 o un header con fecha como el de Stripe, y ambas conviven. Anuncio una ventana de deprecación con el header Sunset y mido las llamadas por cliente, para saber exactamente quién sigue usando v1. Internamente protobuf ayuda: nunca reutilizar un número de campo y reservar los que se eliminan."
+      }
+    }
+  ],
+  "related": ["idempotency", "streaming", "rate-limiting", "microservices", "batch-inference", "event-driven"],
+  "sources": [
+    { "title": "RFC 9110 — HTTP Semantics", "url": "https://www.rfc-editor.org/rfc/rfc9110.html" },
+    { "title": "gRPC — Core concepts, architecture and lifecycle", "url": "https://grpc.io/docs/what-is-grpc/core-concepts/" },
+    { "title": "Stripe API — Idempotent requests", "url": "https://docs.stripe.com/api/idempotent_requests" },
+    { "title": "Google Cloud — API design guide", "url": "https://cloud.google.com/apis/design" }
+  ]
+}

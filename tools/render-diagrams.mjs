@@ -71,6 +71,8 @@ for (const j of jobs) {
     } catch (e) { return { error: String(e.message || e) }; }
   }, { id: j.id, mode: j.mode, code: j.code, theme: THEMES[j.mode] });
   if (res.error) { failed++; console.log(`✗ ${j.id} (${j.mode}): ${res.error.split("\n").slice(0, 3).join(" | ")}`); continue; }
+  // Mermaid renders a label like "1. ok" as the literal text "Unsupported markdown: list".
+  if (/Unsupported markdown/.test(res.svg)) { failed++; console.log(`✗ ${j.id} (${j.mode}): a label was parsed as markdown (e.g. "1. x") — reword it`); continue; }
   const svg = res.svg.replace(/<svg /, `<svg aria-hidden="true" focusable="false" `);
   fs.writeFileSync(j.out, `<!-- h:${j.h} -->\n${svg}\n`);
 }
