@@ -1,0 +1,88 @@
+{
+  "id": "idempotency",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Idempotency", "es": "Idempotencia" },
+  "aliases": ["idempotency key", "Idempotency-Key", "idempotent API", "deduplication", "exactly-once effects", "upsert", "idempotencia"],
+  "tldr": {
+    "en": "Doing an operation N times has the same effect as doing it once. It's what makes retries and at-least-once delivery safe; get it with upserts, conditional writes or client-supplied idempotency keys.",
+    "es": "Hacer una operación N veces tiene el mismo efecto que hacerla una vez. Es lo que vuelve seguros los reintentos y la entrega at-least-once; se logra con upserts, escrituras condicionales o claves de idempotencia que envía el cliente."
+  },
+  "analogy": {
+    "en": "Pressing an elevator call button five times summons one elevator. Pressing a thermostat's '+1°' button five times raises it five degrees: that's the retry you can't afford.",
+    "es": "Presionar cinco veces el botón del ascensor trae un solo ascensor. Presionar cinco veces el botón '+1°' de un termostato lo sube cinco grados: ese es el reintento que no te puedes permitir."
+  },
+  "explain": {
+    "en": "An operation is **idempotent** if doing it N times has the same effect as doing it once. It matters because networks fail *after* the work is done: the charge succeeded, the response was lost, the client retries. Without idempotency, every retry policy ([[retries-backoff]]) and every at-least-once queue ([[queues-streams]]) is a duplicate generator.\n\nWays to get it, cheapest first:\n\n- **Natural idempotency**: `PUT /orders/7 {status: shipped}` and `DELETE` set state, so repeats are harmless. `POST /charges` and `count += 1` are not.\n- **Unique constraints and upserts**: `INSERT … ON CONFLICT (event_id) DO NOTHING`; the database rejects the second copy.\n- **Conditional writes**: compare-and-set on a version (`UPDATE … WHERE version = 7`, DynamoDB condition expressions, HTTP `If-Match`).\n- **Idempotency keys** (the Stripe pattern): the client generates one unique key per *logical* operation and resends it on every retry. The server stores `key → (request hash, status, response)`. The first call executes and records; a repeat gets the stored response; a repeat while the first is in flight gets `409`; the same key with a different body is rejected.\n\nThe key must be recorded **atomically with the effect** (same transaction), or a crash between them reopens the gap. When the effect is an external call, pass the key downstream.\n\nFor agents: every side-effecting tool call needs a key, so a retried or replayed step never refunds twice.",
+    "es": "Una operación es **idempotente** si hacerla N veces tiene el mismo efecto que hacerla una vez. Importa porque las redes fallan *después* de que el trabajo ya se hizo: el cobro se aplicó, la respuesta se perdió y el cliente reintenta. Sin idempotencia, cada política de reintentos ([[retries-backoff]]) y cada cola at-least-once ([[queues-streams]]) genera duplicados.\n\nFormas de lograrla, de la más barata a la más cara:\n\n- **Idempotencia natural**: `PUT /orders/7 {status: shipped}` y `DELETE` fijan un estado, así que repetirlos no hace daño. `POST /charges` y `count += 1` no lo son.\n- **Restricciones únicas y upserts**: `INSERT … ON CONFLICT (event_id) DO NOTHING`; la base de datos rechaza la segunda copia.\n- **Escrituras condicionales**: compare-and-set sobre una versión (`UPDATE … WHERE version = 7`, condition expressions de DynamoDB, `If-Match` en HTTP).\n- **Claves de idempotencia** (el patrón de Stripe): el cliente genera una clave única por operación *lógica* y la reenvía en cada reintento. El servidor guarda `key → (hash del request, estado, respuesta)`. La primera llamada se ejecuta y se registra; una repetición recibe la respuesta guardada; una repetición mientras la primera sigue en curso recibe `409`; la misma clave con otro body se rechaza.\n\nLa clave debe registrarse **de forma atómica con el efecto** (en la misma transacción), o una caída entre ambos vuelve a abrir el hueco. Si el efecto es una llamada externa, pasa la clave hacia abajo.\n\nEn agentes: cada llamada a una tool con efectos secundarios necesita una clave, para que un paso reintentado o reproducido nunca reembolse dos veces."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant C as Client\n  participant A as API\n  participant D as Key store\n  participant P as Payments\n  C->>A: POST /refunds, Key k1\n  A->>D: Insert k1 as started\n  A->>P: Refund 40 USD, key k1\n  P-->>A: OK\n  A->>D: Save k1 with 201 response\n  A--xC: Response lost (timeout)\n  C->>A: Retry POST /refunds, Key k1\n  A->>D: Look up k1\n  D-->>A: Done, 201 stored\n  A-->>C: 201 replayed, no new refund",
+    "caption": {
+      "en": "The first attempt executes and stores its response under the key; the retry finds the key and replays that response instead of refunding again.",
+      "es": "El primer intento se ejecuta y guarda su respuesta bajo la clave; el reintento encuentra la clave y repite esa respuesta en vez de reembolsar otra vez."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Idempotency-key handler (FastAPI + Postgres)", "es": "Handler con clave de idempotencia (FastAPI + Postgres)" },
+    "source": "import hashlib, json\nfrom fastapi import FastAPI, Header, HTTPException\nfrom fastapi.responses import JSONResponse\n\napp = FastAPI()\n\n@app.post(\"/refunds\")\ndef create_refund(body: dict, idempotency_key: str = Header()):\n    req_hash = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()\n    # Claim the key: the primary key makes concurrent duplicates lose the race\n    claimed = db.execute(\n        \"INSERT INTO idem_keys (key, req_hash, status) VALUES (%s, %s, 'started') \"\n        \"ON CONFLICT (key) DO NOTHING RETURNING key\", (idempotency_key, req_hash)).fetchone()\n    if not claimed:\n        row = db.execute(\"SELECT req_hash, status, code, response FROM idem_keys \"\n                         \"WHERE key = %s\", (idempotency_key,)).fetchone()\n        if row.req_hash != req_hash:\n            raise HTTPException(422, \"Idempotency key reused with a different body\")\n        if row.status == \"started\":\n            raise HTTPException(409, \"Original request still in progress\")\n        return JSONResponse(row.response, status_code=row.code)  # replay, no new refund\n\n    # Same key downstream: the provider dedupes if we crash and retry\n    refund = payments.refund(body[\"charge_id\"], body[\"amount\"], idempotency_key=idempotency_key)\n    db.execute(\"UPDATE idem_keys SET status = 'done', code = 201, response = %s \"\n               \"WHERE key = %s\", (json.dumps(refund), idempotency_key))\n    return JSONResponse(refund, status_code=201)"
+  },
+  "example": {
+    "en": "A support agent calls `issue_refund(order_id=812, amount=40)`. The payment API succeeds but answers in 31 s; the tool client times out at 30 s and the framework retries. Then the LLM, seeing a timeout error, calls the tool again on its next turn. Without idempotency the customer gets $120 back. Two keys close both holes: the framework retry reuses the key `run_id:step_id`, and the refund service also enforces a business key, one refund per `order_id`, because the model's second call is a *new* step with a new step id. Both duplicates return the original result, and the tool tells the model *refund already issued*.",
+    "es": "Un agente de soporte llama a `issue_refund(order_id=812, amount=40)`. La API de pagos tiene éxito pero responde en 31 s; el cliente de la tool corta a los 30 s y el framework reintenta. Después, el LLM ve un error de timeout y vuelve a llamar a la tool en su siguiente turno. Sin idempotencia, el cliente recibe $120. Dos claves cierran ambos huecos: el reintento del framework reutiliza la clave `run_id:step_id`, y el servicio de reembolsos también exige una clave de negocio, un reembolso por `order_id`, porque la segunda llamada del modelo es un paso *nuevo* con otro step id. Ambos duplicados devuelven el resultado original, y la tool le dice al modelo *reembolso ya emitido*."
+  },
+  "pros": [
+    { "en": "Makes retries, timeouts and at-least-once delivery safe: the base of every reliability pattern.", "es": "Vuelve seguros los reintentos, los timeouts y la entrega at-least-once: la base de todo patrón de confiabilidad." },
+    { "en": "Clients can retry blindly on timeouts and 5xx without asking 'did it happen?'.", "es": "Los clientes pueden reintentar a ciegas ante timeouts y 5xx sin preguntarse '¿se ejecutó?'." },
+    { "en": "Cheap: one table or unique constraint and one lookup per write.", "es": "Barato: una tabla o una restricción única y una consulta por escritura." }
+  ],
+  "cons": [
+    { "en": "Keys need storage and expiry (Stripe keeps them at least 24 h); a retry after expiry is a new request.", "es": "Las claves necesitan almacenamiento y expiración (Stripe las guarda al menos 24 h); un reintento después de expirar es un request nuevo." },
+    { "en": "Hard across systems: the key must commit atomically with the effect or travel downstream.", "es": "Es difícil entre sistemas: la clave debe confirmarse de forma atómica con el efecto o viajar hacia abajo." },
+    { "en": "Doesn't serialize different concurrent requests; you still need locks or versions for that.", "es": "No serializa requests distintos y concurrentes; para eso igual necesitas locks o versiones." }
+  ],
+  "whenToUse": {
+    "en": "Every non-read operation a retry can reach: payments, orders, emails, provisioning, queue consumers, webhook handlers, and every agent tool that changes the world.",
+    "es": "Toda operación que no sea de lectura y que un reintento pueda alcanzar: pagos, órdenes, emails, aprovisionamiento, consumidores de colas, handlers de webhooks y toda tool de un agente que cambie el mundo."
+  },
+  "whenNotToUse": {
+    "en": "Pure reads, or writes that are already naturally idempotent (full-state PUT, set membership, upsert by natural key): don't bolt a key table onto those.",
+    "es": "Lecturas puras o escrituras que ya son idempotentes por naturaleza (PUT del estado completo, pertenencia a un conjunto, upsert por clave natural): no les agregues una tabla de claves."
+  },
+  "numbers": [
+    { "en": "Stripe keeps idempotency keys for at least 24 hours; reusing a key with different parameters returns an error.", "es": "Stripe guarda las claves de idempotencia al menos 24 horas; reutilizar una clave con parámetros distintos devuelve un error." },
+    { "en": "HTTP (RFC 9110): GET, HEAD, OPTIONS, TRACE, PUT and DELETE are idempotent; POST is not, and PATCH isn't guaranteed to be.", "es": "HTTP (RFC 9110): GET, HEAD, OPTIONS, TRACE, PUT y DELETE son idempotentes; POST no lo es, y PATCH no tiene garantía de serlo." },
+    { "en": "SQS FIFO deduplicates by `MessageDeduplicationId` within a 5-minute window: dedup windows are always bounded.", "es": "SQS FIFO deduplica por `MessageDeduplicationId` dentro de una ventana de 5 minutos: las ventanas de deduplicación siempre son acotadas." },
+    { "en": "A UUIDv4 key has 122 random bits: collisions are not a practical concern.", "es": "Una clave UUIDv4 tiene 122 bits aleatorios: las colisiones no son un problema práctico." }
+  ],
+  "pitfalls": [
+    { "en": "Generating a new key per attempt (or on the server): each retry looks new and nothing is deduplicated.", "es": "Generar una clave nueva por intento (o en el servidor): cada reintento parece nuevo y no se deduplica nada." },
+    { "en": "Check-then-act without a unique constraint: two concurrent retries both see 'not found' and both execute.", "es": "Consultar y luego actuar sin una restricción única: dos reintentos concurrentes ven 'no existe' y ambos se ejecutan." },
+    { "en": "Recording the key in a separate transaction after the effect: a crash in between re-runs the effect on retry.", "es": "Registrar la clave en una transacción aparte después del efecto: una caída entre ambos vuelve a ejecutar el efecto en el reintento." },
+    { "en": "No recovery for keys stuck in `started` after a crash: give them a lock timeout, then resume or fail them.", "es": "No recuperar las claves que quedaron en `started` tras una caída: dales un timeout de lock y luego reanúdalas o márcalas como fallidas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "A client times out calling your payments API. Should it retry?", "es": "Un cliente recibe un timeout al llamar a tu API de pagos. ¿Debería reintentar?" },
+      "a": {
+        "en": "Only if the endpoint is idempotent; otherwise a timeout is ambiguous, since the charge may have gone through. So I make it safe: the client sends an Idempotency-Key per logical payment, generated once and reused on every retry. The server claims the key with a unique insert, executes, stores the response in the same transaction as the effect, and replays it on duplicates. It returns 409 while the original is in flight and rejects a reused key with a different body. With that in place, clients retry with backoff and jitter.",
+        "es": "Solo si el endpoint es idempotente; si no, un timeout es ambiguo, porque el cobro pudo haberse aplicado. Así que lo vuelvo seguro: el cliente envía un Idempotency-Key por pago lógico, generado una vez y reutilizado en cada reintento. El servidor reclama la clave con un insert único, ejecuta, guarda la respuesta en la misma transacción que el efecto y la repite ante duplicados. Devuelve 409 mientras el original sigue en curso y rechaza una clave reutilizada con otro body. Con eso, los clientes reintentan con backoff y jitter."
+      }
+    },
+    {
+      "q": { "en": "How do you stop an LLM agent from executing a side-effecting tool twice?", "es": "¿Cómo evitas que un agente con LLM ejecute dos veces una tool con efectos secundarios?" },
+      "a": {
+        "en": "I separate two sources of duplicates. Infrastructure retries and durable-execution replays reuse the same step, so a key derived from run id plus step id dedupes them. The model re-deciding is different: its second call is a new step, so the tool itself must enforce a business-level key, like one refund per order, or check state first. The tool then returns 'already done' with the original result, so the model doesn't loop. For irreversible actions above a threshold, I add human approval.",
+        "es": "Separo dos fuentes de duplicados. Los reintentos de infraestructura y las reproducciones de durable execution reutilizan el mismo paso, así que una clave derivada del run id más el step id los deduplica. Que el modelo vuelva a decidir es distinto: su segunda llamada es un paso nuevo, así que la tool misma debe exigir una clave de negocio, como un reembolso por orden, o consultar el estado primero. Luego la tool responde 'ya hecho' con el resultado original, para que el modelo no entre en bucle. Para acciones irreversibles por encima de un umbral, agrego aprobación humana."
+      }
+    }
+  ],
+  "related": ["retries-backoff", "queues-streams", "sagas-outbox", "durable-agents", "tool-design", "api-design"],
+  "sources": [
+    { "title": "Stripe — Designing robust and predictable APIs with idempotency", "url": "https://stripe.com/blog/idempotency" },
+    { "title": "Brandur Leach — Implementing Stripe-like Idempotency Keys in Postgres", "url": "https://brandur.org/idempotency-keys" },
+    { "title": "AWS Builders' Library — Making retries safe with idempotent APIs", "url": "https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/" },
+    { "title": "IETF draft — The Idempotency-Key HTTP Header Field", "url": "https://datatracker.ietf.org/doc/draft-ietf-httpapi-idempotency-key-header/" }
+  ]
+}
