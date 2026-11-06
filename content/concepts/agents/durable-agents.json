@@ -1,0 +1,88 @@
+{
+  "id": "durable-agents",
+  "domain": "agents",
+  "level": "staff",
+  "title": { "en": "Durable execution for agents", "es": "Ejecución durable para agentes" },
+  "aliases": ["durable execution", "Temporal", "checkpointing", "LangGraph checkpointer", "AWS Step Functions", "long-running agents", "resumable agents", "workflow engine"],
+  "tldr": {
+    "en": "Persist the agent's state after every step so it survives crashes, deploys and multi-day human waits: resume from the last checkpoint, retry steps with idempotency keys, never re-run what already succeeded.",
+    "es": "Guarda el estado del agente después de cada paso para que sobreviva caídas, deploys y esperas humanas de días: retoma desde el último checkpoint, reintenta pasos con claves de idempotencia y nunca repitas lo que ya funcionó."
+  },
+  "analogy": {
+    "en": "A video-game save point: die in level 7 and you restart at the last checkpoint, not the title screen — and the coins you already collected aren't collected twice.",
+    "es": "Un punto de guardado en un videojuego: si pierdes en el nivel 7 vuelves al último checkpoint, no a la pantalla de inicio, y las monedas que ya juntaste no se cuentan dos veces."
+  },
+  "explain": {
+    "en": "**Durable execution** makes a long-running agent survive failures. A 40-step agent that runs for 20 minutes — or waits 3 days for an approval — will meet a crash, deploy, OOM or rate limit. Without durability it restarts from zero, re-paying every LLM call and possibly **re-running side effects**.\n\nThe mechanism:\n- **Checkpoint every step** — messages, tool results and plan go to a durable store (Postgres, Temporal's event history). On restart the engine **replays** completed steps from the log instead of re-executing them: the trajectory is **event-sourced**.\n- **Steps are activities** — LLM and tool calls run as retriable units with **timeouts** and backoff; the orchestration code stays deterministic.\n- **Idempotency keys** — the classic trap is **success-then-timeout**: the refund API succeeded, the response was lost, the retry refunds again. Derive a key from workflow id + step id so a retry is a no-op ([[idempotency]]).\n- **Durable waits** — pause for a human signal for days at zero compute, then resume ([[human-in-the-loop]]).\n\nTools: **Temporal** (workflows + activities, replay), **LangGraph checkpointers** (state saved per super-step, keyed by `thread_id`), **AWS Step Functions** (Standard workflows run up to 1 year; `.waitForTaskToken` for callbacks), plus Restate, Inngest and DBOS.\n\nThe constraint: workflow code must be **deterministic** — no clock, randomness or I/O outside activities, or replay diverges from history.",
+    "es": "La **ejecución durable** hace que un agente de larga duración sobreviva a las fallas. Un agente de 40 pasos que corre 20 minutos, o que espera 3 días una aprobación, se va a topar con una caída, un deploy, un OOM o un rate limit. Sin durabilidad, arranca de cero, vuelve a pagar cada llamada al LLM y puede **repetir efectos secundarios**.\n\nEl mecanismo:\n- **Checkpoint en cada paso**: mensajes, resultados de herramientas y plan van a un almacén durable (Postgres, el historial de eventos de Temporal). Al reiniciar, el motor **reproduce** los pasos completados desde el log en vez de ejecutarlos otra vez: la trayectoria queda **event-sourced**.\n- **Los pasos son actividades**: las llamadas al LLM y a herramientas corren como unidades reintentables con **timeouts** y backoff; el código de orquestación se mantiene determinista.\n- **Claves de idempotencia**: la trampa clásica es **éxito y luego timeout**: la API de reembolsos respondió bien, la respuesta se perdió y el reintento reembolsa otra vez. Deriva una clave del id del workflow + id del paso para que el reintento no haga nada ([[idempotency]]).\n- **Esperas durables**: pausa días esperando una señal humana sin gastar cómputo y luego continúa ([[human-in-the-loop]]).\n\nHerramientas: **Temporal** (workflows + actividades, replay), los **checkpointers de LangGraph** (estado guardado por super-step, con `thread_id` como clave), **AWS Step Functions** (los workflows Standard corren hasta 1 año; `.waitForTaskToken` para callbacks), además de Restate, Inngest y DBOS.\n\nLa restricción: el código del workflow debe ser **determinista**: nada de reloj, aleatoriedad ni I/O fuera de las actividades, o el replay se desvía del historial."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant W as Agent workflow\n  participant H as Event history\n  participant L as LLM activity\n  participant R as Refund API\n  W->>L: next action for step 8\n  L-->>W: refund order 42\n  W->>H: record step 8 decision\n  W->>R: refund, key wf1-step8\n  R-->>W: timeout, but refund succeeded\n  Note over W: worker crashes and restarts\n  W->>H: replay steps 1 to 8 from log\n  W->>R: retry, same key wf1-step8\n  R-->>W: already done, original result\n  W->>H: record step 8 result",
+    "caption": {
+      "en": "Success-then-timeout: replay restores the recorded LLM decision, and the retry reuses the step's idempotency key, so the refund happens exactly once.",
+      "es": "Éxito y luego timeout: el replay restaura la decisión del LLM ya registrada y el reintento reutiliza la clave de idempotencia del paso, así el reembolso ocurre una sola vez."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Agent loop as a Temporal workflow", "es": "Loop de agente como workflow de Temporal" },
+    "source": "from datetime import timedelta\nfrom temporalio import activity, workflow\nfrom temporalio.common import RetryPolicy\n\n@activity.defn\nasync def call_llm(history: list[dict]) -> dict:\n    return await llm_next_step(history)  # non-deterministic, so it is an activity\n\n@activity.defn\nasync def run_tool(step: dict) -> str:\n    key = f\"{activity.info().workflow_id}:{step['id']}\"  # identical on every retry\n    return await execute_tool(step, idempotency_key=key)\n\n@workflow.defn\nclass AgentWorkflow:\n    approved: bool | None = None\n\n    @workflow.signal\n    def approve(self, ok: bool) -> None:  # sent by the review UI, maybe days later\n        self.approved = ok\n\n    @workflow.run\n    async def run(self, goal: str) -> str:\n        history = [{\"role\": \"user\", \"content\": goal}]\n        opts = dict(start_to_close_timeout=timedelta(minutes=2),\n                    retry_policy=RetryPolicy(maximum_attempts=3))\n        for _ in range(30):  # step budget; completed steps replay from history\n            step = await workflow.execute_activity(call_llm, history, **opts)\n            if step[\"type\"] == \"final\":\n                return step[\"text\"]\n            if step[\"risky\"]:  # durable wait: no worker or thread is held\n                await workflow.wait_condition(lambda: self.approved is not None)\n                if not self.approved:\n                    return \"Rejected by reviewer\"\n                self.approved = None\n            result = await workflow.execute_activity(run_tool, step, **opts)\n            history += [step[\"message\"], {\"role\": \"user\", \"content\": result}]\n        return \"Step budget exhausted\""
+  },
+  "example": {
+    "en": "A procurement agent gathers 3 quotes, drafts a purchase order, waits for a manager's approval, then submits it to the ERP. On Temporal, each LLM and tool call is an activity with a 2-minute timeout and 3 retries. The manager approves after 2 days; meanwhile 4 deploys restarted the workers, and the workflow resumed from its event history without re-calling the LLM. The ERP call timed out after actually creating PO-881; the retry carried the same idempotency key, so the ERP returned PO-881 instead of creating a duplicate.",
+    "es": "Un agente de compras junta 3 cotizaciones, redacta una orden de compra, espera la aprobación de un gerente y la envía al ERP. En Temporal, cada llamada al LLM y a herramientas es una actividad con timeout de 2 minutos y 3 reintentos. El gerente aprueba a los 2 días; mientras tanto, 4 deploys reiniciaron los workers y el workflow continuó desde su historial de eventos sin volver a llamar al LLM. La llamada al ERP dio timeout después de crear de verdad la PO-881; el reintento llevaba la misma clave de idempotencia, así que el ERP devolvió la PO-881 en vez de crear un duplicado."
+  },
+  "pros": [
+    { "en": "A crash or deploy costs one step, not the whole run and its LLM spend.", "es": "Una caída o un deploy cuesta un paso, no la corrida completa ni su gasto en LLM." },
+    { "en": "Human approvals can take days with zero compute held.", "es": "Las aprobaciones humanas pueden tardar días sin ocupar cómputo." },
+    { "en": "Full event history: replay, debug and audit any run step by step.", "es": "Historial completo de eventos: reproduce, depura y audita cualquier corrida paso a paso." }
+  ],
+  "cons": [
+    { "en": "Determinism discipline: no clock, randomness or I/O in workflow code, or replay breaks.", "es": "Disciplina de determinismo: nada de reloj, aleatoriedad ni I/O en el código del workflow, o el replay se rompe." },
+    { "en": "Another platform to run or pay for: a Temporal cluster, Step Functions state transitions.", "es": "Otra plataforma que operar o pagar: un clúster de Temporal, transiciones de estado en Step Functions." },
+    { "en": "Long transcripts bloat history and hit payload limits; store blobs outside and pass references.", "es": "Las conversaciones largas inflan el historial y chocan con límites de payload; guarda los blobs afuera y pasa referencias." }
+  ],
+  "whenToUse": {
+    "en": "Agents that run minutes to days, have side effects (payments, tickets, emails), wait on humans or external callbacks, or are expensive enough that restarting from zero hurts.",
+    "es": "Agentes que corren de minutos a días, tienen efectos secundarios (pagos, tickets, correos), esperan a personas o callbacks externos, o son tan caros que reiniciar de cero duele."
+  },
+  "whenNotToUse": {
+    "en": "Short, read-only, chat-style agents that finish in seconds: retrying the whole request is cheaper than running a workflow engine.",
+    "es": "Agentes cortos, de solo lectura y estilo chat que terminan en segundos: reintentar toda la solicitud es más barato que operar un motor de workflows."
+  },
+  "numbers": [
+    { "en": "AWS Step Functions: Standard workflows run up to 1 year; Express workflows up to 5 minutes.", "es": "AWS Step Functions: los workflows Standard corren hasta 1 año; los Express, hasta 5 minutos." },
+    { "en": "Step Functions caps each state's input/output at 256 KB: keep transcripts in S3 and pass pointers.", "es": "Step Functions limita a 256 KB la entrada/salida de cada estado: guarda las conversaciones en S3 y pasa punteros." },
+    { "en": "Temporal: event history caps at 51,200 events or 50 MB per execution; use Continue-As-New for long agents.", "es": "Temporal: el historial de eventos tiene un tope de 51,200 eventos o 50 MB por ejecución; usa Continue-As-New en agentes largos." },
+    { "en": "Stripe may drop idempotency keys after 24 hours: a retry window, not a forever guarantee.", "es": "Stripe puede borrar las claves de idempotencia después de 24 horas: es una ventana de reintento, no una garantía eterna." }
+  ],
+  "pitfalls": [
+    { "en": "Calling the LLM or `datetime.now()` directly in workflow code: replay takes a different path and fails.", "es": "Llamar al LLM o a `datetime.now()` directo en el código del workflow: el replay toma otro camino y falla." },
+    { "en": "Retrying side-effecting tools without idempotency keys: duplicate refunds, emails and tickets.", "es": "Reintentar herramientas con efectos secundarios sin claves de idempotencia: reembolsos, correos y tickets duplicados." },
+    { "en": "Checkpointing only at the end: a crash at step 39 of 40 loses everything.", "es": "Hacer checkpoint solo al final: una caída en el paso 39 de 40 pierde todo." },
+    { "en": "Deploying changed workflow code under in-flight runs without versioning: old histories stop replaying.", "es": "Desplegar código de workflow modificado con corridas en curso y sin versionado: los historiales viejos dejan de reproducirse." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your agent crashes at step 30 of 40, right after charging a customer. What should happen on restart?", "es": "Tu agente se cae en el paso 30 de 40, justo después de cobrarle a un cliente. ¿Qué debe pasar al reiniciar?" },
+      "a": {
+        "en": "It should resume at step 30, not step 1, and must not charge again. I run the agent as a durable workflow: every LLM and tool call is an activity whose result is recorded in an event log, so on restart completed steps replay from history instead of re-executing. The charge carries an idempotency key derived from workflow id plus step id, so if it succeeded but the response was lost, the retry returns the original charge. Without both pieces you either redo expensive work or double-charge.",
+        "es": "Debe retomar en el paso 30, no en el 1, y no debe cobrar de nuevo. Corro el agente como un workflow durable: cada llamada al LLM y a herramientas es una actividad cuyo resultado queda en un log de eventos, así que al reiniciar los pasos completados se reproducen desde el historial en vez de ejecutarse otra vez. El cobro lleva una clave de idempotencia derivada del id del workflow más el id del paso, así que si funcionó pero la respuesta se perdió, el reintento devuelve el cobro original. Sin ambas piezas, o repites trabajo caro o cobras doble."
+      }
+    },
+    {
+      "q": { "en": "Temporal, LangGraph checkpointers or Step Functions: how do you choose?", "es": "Temporal, checkpointers de LangGraph o Step Functions: ¿cómo eliges?" },
+      "a": {
+        "en": "By where the agent lives, how long it runs and what it touches. For a LangGraph app with human pauses of hours, its Postgres checkpointer is the simplest thing that works. If the agent runs for days, moves money or calls many services, I want a durable-execution engine like Temporal, whose replay model handles retries, timers and signals properly. If we're all-in on AWS and the flow is mostly fixed steps, Step Functions with task-token callbacks is fine. The trade-off is operational cost versus guarantees.",
+        "es": "Según dónde vive el agente, cuánto corre y qué toca. Para una app de LangGraph con pausas humanas de horas, su checkpointer en Postgres es lo más simple que funciona. Si el agente corre durante días, mueve dinero o llama a muchos servicios, quiero un motor de ejecución durable como Temporal, cuyo modelo de replay maneja bien reintentos, timers y señales. Si estamos completamente en AWS y el flujo son pasos casi fijos, Step Functions con callbacks por task token alcanza. El trade-off es costo operativo contra garantías."
+      }
+    }
+  ],
+  "related": ["idempotency", "retries-backoff", "human-in-the-loop", "agent-reliability", "sagas-outbox", "agent-memory"],
+  "sources": [
+    { "title": "Temporal docs — Temporal Workflow", "url": "https://docs.temporal.io/workflows" },
+    { "title": "LangGraph — Persistence", "url": "https://langchain-ai.github.io/langgraph/concepts/persistence/" },
+    { "title": "AWS — What is Step Functions?", "url": "https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html" },
+    { "title": "Stripe API — Idempotent requests", "url": "https://docs.stripe.com/api/idempotent_requests" }
+  ]
+}

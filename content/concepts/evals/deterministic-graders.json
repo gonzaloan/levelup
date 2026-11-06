@@ -1,0 +1,88 @@
+{
+  "id": "deterministic-graders",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Code-based graders & assertions", "es": "Graders basados en código y aserciones" },
+  "aliases": ["code-based evals", "assertions", "LLM unit tests", "exact match", "execution-based evaluation", "programmatic graders", "heuristic evals"],
+  "tldr": {
+    "en": "Grade LLM outputs with plain code wherever the answer is checkable: exact match, regex, schema validity, right tool and arguments, SQL results, unit tests. Cheap, instant and reproducible, so try them before any LLM judge.",
+    "es": "Califica las salidas del LLM con código simple siempre que la respuesta se pueda verificar: coincidencia exacta, regex, validez de esquema, herramienta y argumentos correctos, resultados SQL, tests unitarios. Son baratos, instantáneos y reproducibles: pruébalos antes que cualquier LLM juez."
+  },
+  "analogy": {
+    "en": "A spell-checker versus an editor: the checker can't judge the story, but it is instant, free and never disagrees with itself. Run it first, and pay the editor only for what it can't judge.",
+    "es": "Un corrector ortográfico frente a un editor: el corrector no puede juzgar la historia, pero es instantáneo, gratis y nunca se contradice. Córrelo primero y págale al editor solo por lo que el corrector no puede juzgar."
+  },
+  "explain": {
+    "en": "A **code-based grader** is a deterministic function that takes the model's output (and maybe an expected value) and returns pass/fail. Same input, same verdict, in milliseconds, for free. Many failure modes that matter are checkable this way:\n\n- **Exact or normalized match**: labels, IDs, numbers; strip case, whitespace and punctuation first.\n- **Regex / contains / not-contains**: a required disclaimer, no leaked system prompt, no competitor names, a valid date format.\n- **Schema validity**: output parses as JSON and validates against a Pydantic or JSON Schema model, enums in range.\n- **Tool use**: the right tool was called with arguments that validate and match expected values; no forbidden tool.\n- **Execution**: generated SQL runs and its **result set** matches the reference query's; generated code passes unit tests (how HumanEval and SWE-bench grade).\n- **Operational budgets**: latency, tokens, cost per request, output length.\n\nThey run in **pytest** like any test, so they gate every commit ([[eval-ci]]). Their limit is nuance: tone, helpfulness and faithfulness need [[llm-as-judge]] or humans. The Staff move is to **decompose**: turn a fuzzy criterion into checkable parts (\"cites a doc id that was actually retrieved\") and leave only the residue to a judge.",
+    "es": "Un **grader basado en código** es una función determinista que recibe la salida del modelo (y quizá un valor esperado) y devuelve pasa/falla. Misma entrada, mismo veredicto, en milisegundos y gratis. Muchos modos de falla importantes se pueden verificar así:\n\n- **Coincidencia exacta o normalizada**: etiquetas, IDs, números; normaliza antes mayúsculas, espacios y puntuación.\n- **Regex / contiene / no contiene**: un aviso obligatorio, que no se filtre el system prompt, que no aparezcan competidores, un formato de fecha válido.\n- **Validez de esquema**: la salida se parsea como JSON y valida contra un modelo de Pydantic o un JSON Schema, con enums dentro del rango.\n- **Uso de herramientas**: se llamó la herramienta correcta, con argumentos que validan y coinciden con los esperados; ninguna herramienta prohibida.\n- **Ejecución**: el SQL generado corre y su **conjunto de resultados** coincide con el de la consulta de referencia; el código generado pasa tests unitarios (así califican HumanEval y SWE-bench).\n- **Presupuestos operativos**: latencia, tokens, costo por solicitud, longitud de la salida.\n\nCorren en **pytest** como cualquier test, así que bloquean cada commit ([[eval-ci]]). Su límite son los matices: el tono, la utilidad y la fidelidad al contexto necesitan un [[llm-as-judge]] o personas. La jugada de nivel Staff es **descomponer**: convertir un criterio difuso en partes verificables (\"cita un id de documento que realmente se recuperó\") y dejarle al juez solo lo que sobra."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  O[Model output] --> P{Parses?}\n  P -->|no| F[Fail]\n  P -->|yes| S{Schema valid?}\n  S -->|no| F\n  S -->|yes| T{\"Right tool + args?\"}\n  T -->|no| F\n  T -->|yes| X{\"Executes, result matches?\"}\n  X -->|no| F\n  X -->|yes| J[\"LLM judge<br/>nuance only\"]\n  J --> R[Score]",
+    "caption": {
+      "en": "Cheap checks run first and short-circuit; only outputs that pass every deterministic gate are worth paying a judge for.",
+      "es": "Los chequeos baratos corren primero y cortan en seco; solo las salidas que pasan cada filtro determinista justifican pagar un juez."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "pytest graders: tool call, schema, latency and SQL execution", "es": "Graders en pytest: tool call, esquema, latencia y ejecución SQL" },
+    "source": "import json, sqlite3, time\nimport pytest\nfrom pydantic import BaseModel\n\nclass Refund(BaseModel):  # the contract the app actually parses\n    order_id: str\n    amount: float\n    reason: str\n\nCASES = [json.loads(l) for l in open(\"golden/refunds.jsonl\")]\nSQL_CASES = [json.loads(l) for l in open(\"golden/sql.jsonl\")]\n\n@pytest.mark.parametrize(\"case\", CASES, ids=lambda c: c[\"id\"])\ndef test_refund_turn(case):\n    t0 = time.perf_counter()\n    resp = run_agent(case[\"input\"])                      # system under test\n    assert time.perf_counter() - t0 < 5.0                # latency budget\n    call = resp.tool_calls[0]\n    assert call.name == \"issue_refund\"                   # right tool\n    args = Refund.model_validate_json(call.arguments)    # raises if schema-invalid\n    assert args.order_id == case[\"expected\"][\"order_id\"]\n    assert args.amount == pytest.approx(case[\"expected\"][\"amount\"], abs=0.01)\n    assert \"system prompt\" not in resp.text.lower()      # no leakage\n\n@pytest.mark.parametrize(\"case\", SQL_CASES, ids=lambda c: c[\"id\"])\ndef test_sql_result_matches(case):\n    db = sqlite3.connect(\"file:fixtures/shop.db?mode=ro\", uri=True)  # fixed snapshot, read-only\n    got = db.execute(generate_sql(case[\"question\"])).fetchall()\n    want = db.execute(case[\"reference_sql\"]).fetchall()\n    # Compare results, not SQL text: many correct queries look different.\n    # Order-insensitive unless the question asks for ordering.\n    assert got == want if case.get(\"ordered\") else sorted(got) == sorted(want)"
+  },
+  "example": {
+    "en": "A text-to-SQL assistant for finance analysts had an LLM judge rating \"is this SQL correct?\" at 91%. The team switched to execution: run generated and reference SQL on a fixed database snapshot and compare result sets. Real accuracy was 74%. The judge had approved queries that looked right but used an `INNER JOIN` that dropped rows, or summed gross instead of net. The 300-case suite now runs in under a minute per commit at zero token cost, and the judge only grades the explanation text shown to users.",
+    "es": "Un asistente de text-to-SQL para analistas financieros tenía un LLM juez que calificaba \"¿este SQL es correcto?\" con 91%. El equipo pasó a ejecución: correr el SQL generado y el de referencia sobre un snapshot fijo de la base y comparar los conjuntos de resultados. La precisión real era 74%. El juez había aprobado consultas que parecían correctas pero usaban un `INNER JOIN` que perdía filas, o sumaban montos brutos en vez de netos. La suite de 300 casos ahora corre en menos de un minuto por commit sin costo de tokens, y el juez solo califica el texto explicativo que ven los usuarios."
+  },
+  "pros": [
+    { "en": "Free and instant: run thousands of cases on every commit.", "es": "Gratis e instantáneo: corre miles de casos en cada commit." },
+    { "en": "Reproducible: no grader variance, so any score change comes from the system.", "es": "Reproducible: el grader no tiene varianza, así que cualquier cambio de puntaje viene del sistema." },
+    { "en": "Failures are unambiguous, easy to debug and easy to show in a PR.", "es": "Las fallas son inequívocas, fáciles de depurar y fáciles de mostrar en un PR." }
+  ],
+  "cons": [
+    { "en": "Blind to nuance: tone, helpfulness and faithfulness need a judge or a human.", "es": "Ciego a los matices: el tono, la utilidad y la fidelidad necesitan un juez o una persona." },
+    { "en": "Brittle when written naively: exact match fails on \"Paris.\" versus \"Paris\".", "es": "Frágil si se escribe de forma ingenua: la coincidencia exacta falla con \"París.\" frente a \"París\"." },
+    { "en": "Execution graders need sandboxes and fixture data that someone must maintain.", "es": "Los graders por ejecución necesitan sandboxes y datos de prueba que alguien debe mantener." }
+  ],
+  "whenToUse": {
+    "en": "First, for every criterion with a checkable answer: labels, extracted fields, structured output, tool calls, SQL, code, forbidden strings, latency and cost budgets. Use them as the CI gate and, where cheap, as runtime guardrails.",
+    "es": "Primero, para todo criterio con una respuesta verificable: etiquetas, campos extraídos, salidas estructuradas, tool calls, SQL, código, textos prohibidos, presupuestos de latencia y costo. Úsalos como gate en CI y, cuando sea barato, como guardrails en tiempo de ejecución."
+  },
+  "whenNotToUse": {
+    "en": "Open-ended quality, like summaries, tone or whether an answer is grounded in its context, where any regex is a misleading proxy. Decompose what you can; judge the rest with an LLM judge or humans.",
+    "es": "Calidad abierta, como resúmenes, tono o si una respuesta está fundamentada en su contexto, donde cualquier regex es un proxy engañoso. Descompón lo que puedas; el resto califícalo con un LLM juez o con personas."
+  },
+  "numbers": [
+    { "en": "HumanEval: 164 hand-written Python problems, graded by unit tests and reported as pass@k (Chen et al., 2021).", "es": "HumanEval: 164 problemas de Python escritos a mano, calificados con tests unitarios y reportados como pass@k (Chen et al., 2021)." },
+    { "en": "Unbiased pass@k from n samples with c correct: 1 − C(n−c, k) / C(n, k), averaged over problems.", "es": "pass@k insesgado con n muestras y c correctas: 1 − C(n−c, k) / C(n, k), promediado sobre los problemas." },
+    { "en": "SWE-bench: 2,294 real GitHub issues from 12 Python repos, graded by running each repo's own tests.", "es": "SWE-bench: 2.294 issues reales de GitHub de 12 repos de Python, calificados corriendo los tests de cada repo." },
+    { "en": "Cost gap: a code check is ~milliseconds and $0; a judge call is ~seconds plus tokens, on every case, every run.", "es": "Brecha de costo: un chequeo en código toma ~milisegundos y $0; una llamada a un juez, ~segundos más tokens, en cada caso y cada corrida." }
+  ],
+  "pitfalls": [
+    { "en": "Exact-matching free text: normalize case, whitespace and punctuation, or extract the field first.", "es": "Usar coincidencia exacta sobre texto libre: normaliza mayúsculas, espacios y puntuación, o extrae primero el campo." },
+    { "en": "Comparing SQL strings instead of executing them: many correct queries look different.", "es": "Comparar el texto del SQL en vez de ejecutarlo: muchas consultas correctas se ven distintas." },
+    { "en": "Asserting order on unordered results, or on tool calls the model may legitimately run in parallel.", "es": "Exigir un orden en resultados sin orden, o en tool calls que el modelo puede ejecutar en paralelo con todo derecho." },
+    { "en": "Stopping at \"valid JSON\": schema-valid output can still carry wrong values.", "es": "Quedarse en \"JSON válido\": una salida que cumple el esquema puede igual traer valores incorrectos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you use a code-based grader instead of an LLM judge?", "es": "¿Cuándo usarías un grader basado en código en lugar de un LLM juez?" },
+      "a": {
+        "en": "Whenever the criterion has a checkable answer, which is more often than people think. Classification, extracted fields, JSON validity, which tool was called with which arguments, SQL results, generated code passing tests, latency and cost: all code. They're free, instant and have zero grader variance, so a score change means the system changed. I reach for a judge only for nuance like tone or faithfulness, and even then I decompose first: \"cites a retrieved doc id\" is code; \"the cited doc supports the claim\" is the judge's residue.",
+        "es": "Siempre que el criterio tenga una respuesta verificable, que es más seguido de lo que la gente cree. Clasificación, campos extraídos, validez del JSON, qué herramienta se llamó y con qué argumentos, resultados SQL, código generado que pasa tests, latencia y costo: todo eso es código. Son gratis, instantáneos y el grader no tiene varianza, así que si cambia el puntaje es porque cambió el sistema. Recurro a un juez solo para matices como el tono o la fidelidad, y aun así primero descompongo: \"cita un id de documento recuperado\" es código; \"el documento citado respalda la afirmación\" es lo que le queda al juez."
+      }
+    },
+    {
+      "q": { "en": "How do you evaluate a text-to-SQL feature?", "es": "¿Cómo evalúas una feature de text-to-SQL?" },
+      "a": {
+        "en": "By execution, not by string match or a judge. I keep a fixed database snapshot and a golden set of questions with reference SQL. For each case I run both queries and compare result sets, order-insensitive unless the question asks for ordering, with a tolerance for floats. I also check the query is read-only, finishes under a timeout and touches only allowed tables. String match underrates correct alternatives; a judge overrates plausible-looking wrong joins. Execution gets both right and is cheap enough to run on every commit.",
+        "es": "Por ejecución, no por comparación de texto ni con un juez. Mantengo un snapshot fijo de la base de datos y un golden set de preguntas con su SQL de referencia. En cada caso corro ambas consultas y comparo los conjuntos de resultados, sin importar el orden salvo que la pregunta lo pida, con tolerancia para los decimales. También verifico que la consulta sea de solo lectura, termine antes de un timeout y toque solo tablas permitidas. La comparación de texto subestima alternativas correctas; un juez sobrestima joins equivocados que parecen plausibles. La ejecución acierta en ambos casos y es lo bastante barata para correr en cada commit."
+      }
+    }
+  ],
+  "related": ["llm-as-judge", "golden-datasets", "structured-outputs", "tool-calling", "eval-ci", "case-text-to-sql"],
+  "sources": [
+    { "title": "Anthropic — Create strong empirical evaluations", "url": "https://docs.anthropic.com/en/docs/test-and-evaluate/develop-tests" },
+    { "title": "promptfoo — Assertions & metrics", "url": "https://www.promptfoo.dev/docs/configuration/expected-outputs/" },
+    { "title": "Chen et al. — Evaluating Large Language Models Trained on Code (HumanEval)", "url": "https://arxiv.org/abs/2107.03374" },
+    { "title": "Jimenez et al. — SWE-bench: Can Language Models Resolve Real-World GitHub Issues?", "url": "https://arxiv.org/abs/2310.06770" }
+  ]
+}

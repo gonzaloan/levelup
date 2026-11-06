@@ -1,0 +1,98 @@
+{
+  "id": "lora",
+  "domain": "training",
+  "level": "core",
+  "title": { "en": "LoRA & QLoRA", "es": "LoRA y QLoRA" },
+  "aliases": ["LoRA", "QLoRA", "low-rank adaptation", "PEFT", "adapters", "NF4", "multi-LoRA", "parameter-efficient fine-tuning"],
+  "tldr": {
+    "en": "Freeze the model and train a tiny low-rank update beside each weight matrix: usually under 1% of the parameters, saved as an adapter of megabytes. QLoRA keeps the frozen base in 4-bit, so big models fine-tune on one GPU.",
+    "es": "Congela el modelo y entrena una actualización pequeña de bajo rango junto a cada matriz de pesos: suele ser menos del 1% de los parámetros y se guarda como un adapter de megabytes. QLoRA deja la base congelada en 4 bits, así que modelos grandes se ajustan en una sola GPU."
+  },
+  "analogy": {
+    "en": "Instead of reprinting a 1,000-page manual for each client, you print a thin page of corrections that clips onto the same book. Swap the clip, change the client.",
+    "es": "En vez de reimprimir un manual de 1,000 páginas para cada cliente, imprimes una hoja delgada de correcciones que se engancha al mismo libro. Cambias la hoja y cambias de cliente."
+  },
+  "explain": {
+    "en": "**LoRA** (Low-Rank Adaptation) fine-tunes a model without touching its original weights. For a frozen matrix `W` (say 4096×4096) it learns an update `ΔW = B·A`, where `A` is r×4096, `B` is 4096×r and the rank is **r ≈ 8–64**. The layer computes `Wx + (α/r)·BAx`. At r=16 that's ~131k trainable numbers instead of ~16.8M; across a model, typically **under 1%** of parameters.\n\nIt works because the change fine-tuning needs is low-rank: a few directions, not a rewrite. What you get:\n- **Memory.** No gradients or optimizer state for frozen weights; on GPT-3 175B the paper cut GPU memory ~3×.\n- **Small, swappable adapters.** GPT-3's checkpoint went from 350 GB to ~35 MB. Keep one base and many adapters.\n- **No inference cost if merged.** Fold `BA` into `W` for a single task, or keep it separate to swap per request.\n\n**QLoRA** stores the frozen base in 4-bit **NF4** (plus double quantization and paged optimizers) and trains bf16 LoRA adapters on top. It fine-tuned a **65B model on a single 48 GB GPU** while matching 16-bit fine-tuning on the paper's benchmarks.\n\n**Multi-LoRA serving:** vLLM, S-LoRA and LoRAX keep one base in GPU memory and batch requests for different adapters together, so hundreds of tenants or tasks share the same GPUs.",
+    "es": "**LoRA** (Low-Rank Adaptation) hace fine-tuning sin tocar los pesos originales del modelo. Para una matriz congelada `W` (por ejemplo, 4096×4096) aprende una actualización `ΔW = B·A`, donde `A` es r×4096, `B` es 4096×r y el rango es **r ≈ 8–64**. La capa calcula `Wx + (α/r)·BAx`. Con r=16 son ~131k números entrenables en vez de ~16.8M; en todo el modelo, normalmente **menos del 1%** de los parámetros.\n\nFunciona porque el cambio que necesita el fine-tuning es de bajo rango: unas pocas direcciones, no reescribir todo. Lo que obtienes:\n- **Memoria.** Sin gradientes ni estado del optimizador para los pesos congelados; en GPT-3 175B el paper redujo la memoria de GPU ~3×.\n- **Adapters pequeños e intercambiables.** El checkpoint de GPT-3 pasó de 350 GB a ~35 MB. Tienes una base y muchos adapters.\n- **Sin costo en inferencia si lo fusionas.** Sumas `BA` a `W` para una sola tarea, o lo dejas aparte para cambiarlo en cada request.\n\n**QLoRA** guarda la base congelada en 4 bits **NF4** (más doble cuantización y optimizadores paginados) y entrena encima adapters LoRA en bf16. Logró hacer fine-tuning de un **modelo de 65B en una sola GPU de 48 GB** igualando al fine-tuning en 16 bits en los benchmarks del paper.\n\n**Serving multi-LoRA:** vLLM, S-LoRA y LoRAX mantienen una sola base en la memoria de la GPU y agrupan en el mismo batch requests de distintos adapters, así cientos de clientes o tareas comparten las mismas GPUs."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  X[Input x] --> W[\"Frozen W<br/>d x d\"]\n  X --> A[\"A: r x d<br/>trainable\"]\n  A --> B[\"B: d x r<br/>trainable\"]\n  W --> S[\"Sum<br/>Wx + BAx\"]\n  B -->|scale alpha/r| S\n  S --> H[Output h]\n  Q[\"Base in 4-bit NF4<br/>QLoRA\"] -.-> W",
+    "caption": {
+      "en": "Only A and B get gradients. B starts at zero, so training begins exactly at the base model.",
+      "es": "Solo A y B reciben gradientes. B arranca en cero, así que el entrenamiento empieza exactamente en el modelo base."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "QLoRA setup with transformers + peft", "es": "Configurar QLoRA con transformers + peft" },
+    "source": "import torch\nfrom transformers import AutoModelForCausalLM, BitsAndBytesConfig\nfrom peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training\n\nMODEL = \"meta-llama/Llama-3.1-8B-Instruct\"  # any HF causal LM\n\n# QLoRA: frozen base in 4-bit NF4, math in bf16\nbnb = BitsAndBytesConfig(\n    load_in_4bit=True,\n    bnb_4bit_quant_type=\"nf4\",\n    bnb_4bit_use_double_quant=True,       # quantize the scales too\n    bnb_4bit_compute_dtype=torch.bfloat16,\n)\nmodel = AutoModelForCausalLM.from_pretrained(MODEL, quantization_config=bnb, device_map=\"auto\")\nmodel = prepare_model_for_kbit_training(model)\n\nlora = LoraConfig(\n    r=16,                          # rank: 8-64 typical\n    lora_alpha=32,                 # update scaled by alpha/r\n    lora_dropout=0.05,\n    target_modules=\"all-linear\",   # attention + MLP; q/v only is cheaper but weaker\n    task_type=\"CAUSAL_LM\",\n)\nmodel = get_peft_model(model, lora)\nmodel.print_trainable_parameters()  # ~42M of 8B, about 0.5%\n\n# ... train with TRL SFTTrainer or transformers Trainer ...\nmodel.save_pretrained(\"adapter-tenant-acme-v1\")  # ~0.1 GB, not the 16 GB base"
+  },
+  "example": {
+    "en": "A SaaS vendor has 40 enterprise customers, each wanting the assistant to use its own terminology and report format. Forty full fine-tunes of an 8B model would mean 40 checkpoints of 16 GB and 40 deployments. With LoRA (r=16) each customer gets a ~80 MB adapter trained in an hour or two on one GPU, and vLLM serves all 40 from a single base model, routing each request to its tenant's adapter. Customer #41 is a training job, not a new deployment.",
+    "es": "Un proveedor SaaS tiene 40 clientes empresariales y cada uno quiere que el asistente use su propia terminología y formato de reporte. Cuarenta fine-tunings completos de un modelo de 8B serían 40 checkpoints de 16 GB y 40 despliegues. Con LoRA (r=16) cada cliente recibe un adapter de ~80 MB entrenado en una o dos horas en una GPU, y vLLM sirve los 40 desde un único modelo base, dirigiendo cada request al adapter de su cliente. El cliente 41 es un job de entrenamiento, no un despliegue nuevo."
+  },
+  "pros": [
+    { "en": "Fits big fine-tunes on small hardware: QLoRA did 65B on a single 48 GB GPU.", "es": "Hace caber fine-tunings grandes en hardware chico: QLoRA ajustó un 65B en una sola GPU de 48 GB." },
+    { "en": "Adapters are megabytes: easy to version, store and swap; one base serves many tasks or tenants.", "es": "Los adapters pesan megabytes: fáciles de versionar, guardar e intercambiar; una base sirve a muchas tareas o clientes." },
+    { "en": "Quality close to full fine-tuning on typical SFT and preference tasks.", "es": "Calidad cercana al fine-tuning completo en tareas típicas de SFT y de preferencias." },
+    { "en": "Merge into the weights for zero added inference latency.", "es": "Se fusiona con los pesos para no sumar latencia en inferencia." }
+  ],
+  "cons": [
+    { "en": "Learns less than full fine-tuning on big domain shifts like code or math (and, in exchange, forgets less).", "es": "Aprende menos que el fine-tuning completo ante cambios grandes de dominio como código o matemáticas (y, a cambio, olvida menos)." },
+    { "en": "QLoRA steps run slower than 16-bit LoRA because weights are dequantized on the fly.", "es": "Los pasos de QLoRA son más lentos que LoRA en 16 bits porque los pesos se descuantizan al vuelo." },
+    { "en": "Unmerged adapters add some per-token overhead and need a server that supports them.", "es": "Los adapters sin fusionar agregan algo de overhead por token y requieren un servidor que los soporte." },
+    { "en": "An adapter is tied to its exact base model; a new base means retraining every adapter.", "es": "Un adapter está atado a su modelo base exacto; una base nueva implica reentrenar todos los adapters." }
+  ],
+  "whenToUse": {
+    "en": "The default for fine-tuning open models: limited GPUs, many tasks or tenants on one base, or fast iteration on SFT and DPO.",
+    "es": "La opción por defecto para hacer fine-tuning de modelos abiertos: pocas GPUs, muchas tareas o clientes sobre una base, o iteración rápida de SFT y DPO."
+  },
+  "whenNotToUse": {
+    "en": "Large knowledge shifts (a new language, a big domain corpus) where full fine-tuning or continued pretraining learns more, or closed models where managed fine-tuning is the only option.",
+    "es": "Cambios grandes de conocimiento (un idioma nuevo, un corpus de dominio enorme) donde el fine-tuning completo o el continued pretraining aprenden más, o modelos cerrados donde el fine-tuning gestionado es la única opción."
+  },
+  "numbers": [
+    { "en": "LoRA on GPT-3 175B: ~10,000× fewer trainable parameters, ~3× less GPU memory, checkpoint 350 GB → ~35 MB.", "es": "LoRA en GPT-3 175B: ~10,000× menos parámetros entrenables, ~3× menos memoria de GPU, checkpoint de 350 GB → ~35 MB." },
+    { "en": "QLoRA: 65B model fine-tuned on one 48 GB GPU, matching 16-bit fine-tuning (Dettmers et al., 2023).", "es": "QLoRA: modelo de 65B ajustado en una GPU de 48 GB, igualando al fine-tuning en 16 bits (Dettmers et al., 2023)." },
+    { "en": "8B model, r=16 on all linear layers: ~42M trainable parameters, about 0.5%.", "es": "Modelo de 8B, r=16 en todas las capas lineales: ~42M parámetros entrenables, cerca del 0.5%." },
+    { "en": "Rule of thumb: r = 8–64, alpha ≈ r to 2r, LR ~1e-4–2e-4.", "es": "Regla práctica: r = 8–64, alpha ≈ r a 2r, LR ~1e-4–2e-4." },
+    { "en": "S-LoRA: thousands of concurrent adapters served over one shared base model.", "es": "S-LoRA: miles de adapters concurrentes servidos sobre un único modelo base compartido." }
+  ],
+  "pitfalls": [
+    { "en": "Adapting only the attention q/v projections: QLoRA found LoRA on all linear layers was needed to match full fine-tuning.", "es": "Adaptar solo las proyecciones q/v de atención: QLoRA encontró que hace falta LoRA en todas las capas lineales para igualar al fine-tuning completo." },
+    { "en": "Merging the adapter into the 4-bit training base: merge into 16-bit weights, then quantize separately for serving.", "es": "Fusionar el adapter con la base de 4 bits del entrenamiento: fusiónalo con pesos en 16 bits y cuantiza aparte para servir." },
+    { "en": "Raising the rank to fix bad data: r=256 won't rescue noisy examples.", "es": "Subir el rango para compensar datos malos: r=256 no rescata ejemplos ruidosos." },
+    { "en": "Serving an adapter on a different base revision than the one it was trained on.", "es": "Servir un adapter sobre una revisión del modelo base distinta a la que usó en el entrenamiento." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Explain LoRA in one minute.", "es": "Explica LoRA en un minuto." },
+      "a": {
+        "en": "Fine-tuning changes a weight matrix W by some ΔW. LoRA bets that ΔW is low-rank, so it learns it as the product of two thin matrices B·A with rank around 8 to 64, while W stays frozen. For a 4096×4096 layer at rank 16 that's ~131k trainable numbers instead of ~16.8M. There's no optimizer state for the frozen weights, so memory drops, and the result is a small adapter I can merge into W for zero latency or keep separate to swap per task.",
+        "es": "El fine-tuning cambia una matriz de pesos W en algún ΔW. LoRA apuesta a que ΔW es de bajo rango, así que lo aprende como el producto de dos matrices delgadas B·A con rango de 8 a 64, mientras W queda congelada. Para una capa de 4096×4096 con rango 16 son ~131k números entrenables en vez de ~16.8M. No hay estado del optimizador para los pesos congelados, así que baja la memoria, y el resultado es un adapter pequeño que puedo fusionar con W para no sumar latencia o dejar aparte para cambiarlo por tarea."
+      }
+    },
+    {
+      "q": { "en": "You need a custom model for each of 200 tenants. How do you serve them?", "es": "Necesitas un modelo personalizado para cada uno de 200 clientes. ¿Cómo los sirves?" },
+      "a": {
+        "en": "One base model, one LoRA adapter per tenant, multi-LoRA serving. vLLM or S-LoRA keep the base weights once in GPU memory, load adapters on demand with a cache, and batch requests for different adapters in the same forward pass, so 200 tenants share a GPU pool instead of 200 deployments. The trade-offs: some per-token overhead versus a merged model, a cap on adapters resident at once, and a retrain of every adapter when I upgrade the base. So the per-tenant training pipeline must be automated from day one.",
+        "es": "Un modelo base, un adapter LoRA por cliente y serving multi-LoRA. vLLM o S-LoRA mantienen los pesos base una sola vez en la memoria de la GPU, cargan adapters bajo demanda con una caché y agrupan requests de distintos adapters en la misma pasada, así 200 clientes comparten un pool de GPUs en vez de 200 despliegues. Los trade-offs: algo de overhead por token frente a un modelo fusionado, un límite de adapters cargados a la vez y reentrenar todos los adapters cuando actualizo la base. Por eso el pipeline de entrenamiento por cliente tiene que estar automatizado desde el primer día."
+      }
+    },
+    {
+      "q": { "en": "What does QLoRA trade, and when would you use it?", "es": "¿Qué sacrifica QLoRA y cuándo lo usarías?" },
+      "a": {
+        "en": "QLoRA stores the frozen base in 4-bit NF4, a data type built for normally distributed weights, adds double quantization and paged optimizers to absorb memory spikes, and keeps the adapters and the math in bf16. That's how the paper fit a 65B fine-tune on one 48 GB GPU with no measured quality loss. The price is slower steps from on-the-fly dequantization. I use it when GPU memory is the constraint; with enough memory, plain 16-bit LoRA trains faster.",
+        "es": "QLoRA guarda la base congelada en 4 bits NF4, un tipo de dato pensado para pesos con distribución normal, agrega doble cuantización y optimizadores paginados para absorber picos de memoria, y mantiene los adapters y los cálculos en bf16. Así el paper hizo caber el fine-tuning de un 65B en una GPU de 48 GB sin pérdida de calidad medible. El precio son pasos más lentos por descuantizar al vuelo. Lo uso cuando la memoria de GPU es la restricción; si sobra memoria, LoRA en 16 bits entrena más rápido."
+      }
+    }
+  ],
+  "related": ["sft", "quantization", "adaptation-ladder", "catastrophic-forgetting", "serving-stack", "gpu-memory-math"],
+  "sources": [
+    { "title": "Hu et al. — LoRA: Low-Rank Adaptation of Large Language Models", "url": "https://arxiv.org/abs/2106.09685" },
+    { "title": "Dettmers et al. — QLoRA: Efficient Finetuning of Quantized LLMs", "url": "https://arxiv.org/abs/2305.14314" },
+    { "title": "Sheng et al. — S-LoRA: Serving Thousands of Concurrent LoRA Adapters", "url": "https://arxiv.org/abs/2311.03285" },
+    { "title": "Biderman et al. — LoRA Learns Less and Forgets Less", "url": "https://arxiv.org/abs/2405.09673" }
+  ]
+}

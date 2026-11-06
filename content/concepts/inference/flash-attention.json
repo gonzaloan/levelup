@@ -1,0 +1,89 @@
+{
+  "id": "flash-attention",
+  "domain": "inference",
+  "level": "advanced",
+  "title": { "en": "FlashAttention", "es": "FlashAttention" },
+  "aliases": ["FlashAttention-2", "FlashAttention-3", "FA2", "flash_attention_2", "IO-aware attention", "fused attention", "SDPA", "Flash-Decoding"],
+  "tldr": {
+    "en": "A GPU kernel that computes exact attention block by block in fast on-chip memory, never writing the n×n score matrix out, so memory grows linearly with length and attention runs ~2–4× faster.",
+    "es": "Un kernel de GPU que calcula la atención exacta bloque a bloque en la memoria rápida del chip, sin escribir nunca la matriz de scores n×n, así la memoria crece linealmente con la longitud y la atención corre ~2–4× más rápido."
+  },
+  "analogy": {
+    "en": "Totalling a huge ledger page by page in your head, keeping only a running sum, instead of photocopying every page onto your desk first and then adding them up.",
+    "es": "Sumar un libro de cuentas enorme página por página de memoria, llevando solo un total acumulado, en vez de fotocopiar primero todas las páginas sobre tu escritorio y después sumarlas."
+  },
+  "explain": {
+    "en": "**FlashAttention** is a GPU kernel that computes *exact* standard [[attention]] (same result up to floating-point rounding) much faster and with memory linear in sequence length. It is not an approximation like sparse or linear attention.\n\nThe insight is **IO-awareness**: on modern GPUs attention is bottlenecked by memory traffic, not math. The naive version writes the full n×n score matrix to **HBM** (the GPU's large, slow memory), reads it back for the softmax, writes the result, and reads it again to multiply by V. At 8k tokens that is ~67M scores per head, per layer.\n\nFlashAttention **tiles** Q, K and V into blocks that fit in on-chip **SRAM** (~20 MB on an A100, roughly 10× HBM's bandwidth). For each tile it computes scores, softmax and the weighted sum, using an **online softmax**: a running max and sum rescale the partial results as new K/V tiles stream in. Only the final output is written back; the n×n matrix never exists in HBM. In training, the backward pass recomputes tiles instead of storing them.\n\nCompute is still O(n²); what drops is memory footprint and traffic, which is what made 32k–128k contexts practical. **FA-2** (2023) roughly doubled FA-1's speed with better parallelism; **FA-3** (2024) targets Hopper with asynchronous copies and FP8. You rarely call it directly: PyTorch SDPA, vLLM and most serving stacks use it by default.",
+    "es": "**FlashAttention** es un kernel de GPU que calcula la [[attention]] estándar *exacta* (el mismo resultado salvo redondeo de punto flotante) mucho más rápido y con memoria lineal en la longitud de la secuencia. No es una aproximación como la atención dispersa o lineal.\n\nLa clave es ser **consciente del IO**: en las GPUs modernas la atención está limitada por el tráfico de memoria, no por las cuentas. La versión ingenua escribe la matriz completa de scores n×n en **HBM** (la memoria grande y lenta de la GPU), la vuelve a leer para el softmax, escribe el resultado y lo lee otra vez para multiplicar por V. Con 8k tokens son ~67M scores por cabeza, por capa.\n\nFlashAttention divide Q, K y V en **tiles** que caben en la **SRAM** del chip (~20 MB en una A100, con unas 10× el ancho de banda de la HBM). Para cada tile calcula scores, softmax y la suma ponderada con un **softmax online**: un máximo y una suma acumulados reescalan los resultados parciales a medida que llegan nuevos tiles de K/V. Solo se escribe la salida final; la matriz n×n nunca existe en HBM. En entrenamiento, el backward recalcula los tiles en vez de guardarlos.\n\nEl cómputo sigue siendo O(n²); lo que baja es la memoria ocupada y el tráfico, y eso hizo prácticos los contextos de 32k–128k. **FA-2** (2023) duplicó aproximadamente la velocidad de FA-1 con mejor paralelismo; **FA-3** (2024) apunta a Hopper con copias asíncronas y FP8. Casi nunca lo llamas directo: PyTorch SDPA, vLLM y la mayoría de los stacks de serving lo usan por defecto."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  H[(\"HBM: Q, K, V\")] -->|load one tile| S[\"SRAM tile<br/>Q block, K/V block\"]\n  S --> C[\"Tile scores<br/>Q times K\"]\n  C --> O[\"Online softmax<br/>rescale running sums\"]\n  O --> A[\"Accumulate<br/>output block\"]\n  A -->|next K/V tile| S\n  A -->|write once| R[(\"HBM: output O\")]",
+    "caption": {
+      "en": "K/V tiles stream through on-chip SRAM, the softmax is rescaled on the fly, and only the final output goes back to HBM.",
+      "es": "Los tiles de K/V pasan por la SRAM del chip, el softmax se reescala sobre la marcha y solo la salida final vuelve a HBM."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Using FlashAttention in PyTorch and Transformers", "es": "Usar FlashAttention en PyTorch y Transformers" },
+    "source": "import torch\nimport torch.nn.functional as F\nfrom torch.nn.attention import SDPBackend, sdpa_kernel\nfrom transformers import AutoModelForCausalLM\n\n# 1) Raw kernel: PyTorch SDPA dispatches to a FlashAttention-2 kernel on supported GPUs\nq = k = v = torch.randn(1, 32, 16_384, 128, device=\"cuda\", dtype=torch.bfloat16)  # (batch, heads, seq, dim)\nwith sdpa_kernel(SDPBackend.FLASH_ATTENTION):  # force it: errors instead of silently falling back\n    out = F.scaled_dot_product_attention(q, k, v, is_causal=True)\n# Naive attention would materialize 32 x 16k x 16k scores: ~17 GB in bf16. This never does.\n\n# 2) In a model: request the kernel explicitly\nMODEL = \"meta-llama/Llama-3.1-8B-Instruct\"  # any decoder model\nmodel = AutoModelForCausalLM.from_pretrained(\n    MODEL,\n    dtype=torch.bfloat16,                     # flash kernels need fp16/bf16, not fp32\n    attn_implementation=\"flash_attention_2\",  # needs `pip install flash-attn`; \"sdpa\" is the default\n    device_map=\"auto\",\n)\n\n# 3) Serving: vLLM, SGLang and TensorRT-LLM already pick a flash kernel. Nothing to do."
+  },
+  "example": {
+    "en": "A team fine-tunes a 7B model (32 layers, 32 heads) on 16k-token contracts. With naive attention, one layer's score matrix is 32 × 16k × 16k × 2 bytes ≈ **17 GB** in bf16, and the backward pass needs it kept for every layer: impossible on an 80 GB H100. With FlashAttention the extra state per layer is one softmax statistic per row (~2 MB), so the run fits at batch 1 with gradient checkpointing. Their first attempt still OOMed: the training script loaded the model in fp32, so SDPA quietly fell back to the math path.",
+    "es": "Un equipo hace fine-tuning de un modelo de 7B (32 capas, 32 cabezas) con contratos de 16k tokens. Con atención ingenua, la matriz de scores de una capa ocupa 32 × 16k × 16k × 2 bytes ≈ **17 GB** en bf16, y el backward necesita guardarla para cada capa: imposible en una H100 de 80 GB. Con FlashAttention el estado extra por capa es una estadística de softmax por fila (~2 MB), así que el entrenamiento cabe con batch 1 y gradient checkpointing. Su primer intento igual se quedó sin memoria: el script cargaba el modelo en fp32 y SDPA cayó en silencio al camino matemático lento."
+  },
+  "pros": [
+    { "en": "Exact: no accuracy trade-off, a drop-in replacement for standard attention.", "es": "Exacta: sin trade-off de precisión, reemplaza directo a la atención estándar." },
+    { "en": "Attention memory linear in length: ~10× less at 2k tokens and ~20× at 4k (FA-1).", "es": "Memoria de atención lineal en la longitud: ~10× menos con 2k tokens y ~20× con 4k (FA-1)." },
+    { "en": "~2–4× faster attention, and faster end-to-end training and prefill.", "es": "Atención ~2–4× más rápida, y entrenamiento y prefill más rápidos de punta a punta." },
+    { "en": "On by default in PyTorch SDPA, vLLM, SGLang and TensorRT-LLM.", "es": "Activado por defecto en PyTorch SDPA, vLLM, SGLang y TensorRT-LLM." }
+  ],
+  "cons": [
+    { "en": "Compute is still O(n²): doubling the context still means ~4× the attention FLOPs.", "es": "El cómputo sigue siendo O(n²): duplicar el contexto sigue multiplicando ~4× los FLOPs de atención." },
+    { "en": "Hardware and dtype limits: FA-2 needs Ampere or newer and fp16/bf16; FA-3 targets Hopper.", "es": "Límites de hardware y tipos: FA-2 requiere Ampere o más nuevo y fp16/bf16; FA-3 apunta a Hopper." },
+    { "en": "Doesn't shrink the KV cache, so long-context decode stays memory-bound.", "es": "No reduce el KV cache, así que el decode con contexto largo sigue limitado por memoria." }
+  ],
+  "whenToUse": {
+    "en": "Always, for training and inference on Ampere-or-newer GPUs in fp16/bf16. Verify it is actually active when you fine-tune long-context models or write custom attention.",
+    "es": "Siempre, para entrenamiento e inferencia en GPUs Ampere o más nuevas con fp16/bf16. Verifica que de verdad esté activo cuando haces fine-tuning con contexto largo o escribes atención propia."
+  },
+  "whenNotToUse": {
+    "en": "Older GPUs (V100, T4) without FA-2 support, fp32 training, or attention variants with masks or biases the kernel doesn't support. And don't expect it to fix quadratic compute or KV-cache size.",
+    "es": "GPUs viejas (V100, T4) sin soporte de FA-2, entrenamiento en fp32 o variantes de atención con máscaras o sesgos que el kernel no soporta. Y no esperes que arregle el cómputo cuadrático ni el tamaño del KV cache."
+  },
+  "numbers": [
+    { "en": "A100: ~20 MB of on-chip SRAM at ~19 TB/s vs 40–80 GB of HBM at ~1.5–2 TB/s.", "es": "A100: ~20 MB de SRAM en el chip a ~19 TB/s contra 40–80 GB de HBM a ~1.5–2 TB/s." },
+    { "en": "FA-1: 3× faster GPT-2 training at 1k tokens; 10–20× attention memory saving at 2k–4k.", "es": "FA-1: entrenamiento de GPT-2 3× más rápido con 1k tokens; 10–20× de ahorro de memoria de atención con 2k–4k." },
+    { "en": "FA-2: ~2× FA-1, reaching 50–73% of A100 peak FLOPs/s.", "es": "FA-2: ~2× FA-1, llega al 50–73% de los FLOPs/s pico de una A100." },
+    { "en": "FA-3 on H100: 1.5–2× FA-2, up to ~740 TFLOPs/s in FP16 (~75% utilization), ~1.2 PFLOPs/s in FP8.", "es": "FA-3 en H100: 1.5–2× FA-2, hasta ~740 TFLOPs/s en FP16 (~75% de utilización), ~1.2 PFLOPs/s en FP8." }
+  ],
+  "pitfalls": [
+    { "en": "Calling it an approximation in an interview: it is exact attention computed in a different order.", "es": "Llamarla aproximación en una entrevista: es atención exacta calculada en otro orden." },
+    { "en": "Silent fallback: fp32 tensors, a custom additive mask or an old GPU send SDPA to the slow math path. Force the backend in a test.", "es": "Fallback silencioso: tensores fp32, una máscara aditiva propia o una GPU vieja mandan a SDPA al camino matemático lento. Fuerza el backend en un test." },
+    { "en": "Assuming it makes long context cheap: 128k-token prefill is still quadratic and still costly.", "es": "Suponer que abarata el contexto largo: el prefill de 128k tokens sigue siendo cuadrático y sigue siendo caro." },
+    { "en": "Expecting big decode gains: decode is bound by reading the KV cache, which Flash-Decoding and paged kernels address.", "es": "Esperar grandes mejoras en decode: el decode está limitado por leer el KV cache, y eso lo atacan Flash-Decoding y los kernels paginados." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Is FlashAttention an approximation? What exactly does it speed up?", "es": "¿FlashAttention es una aproximación? ¿Qué acelera exactamente?" },
+      "a": {
+        "en": "No, it computes exact softmax attention; outputs match up to floating-point rounding. It speeds up memory traffic, not math. Naive attention writes the n×n score matrix to HBM and reads it back several times, and on GPUs that IO dominates. Tiling into on-chip SRAM with an online softmax means the matrix is never materialized, so memory becomes linear and attention runs 2–4× faster. FLOPs are still quadratic, which is why I still budget prefill cost carefully at 128k.",
+        "es": "No, calcula atención softmax exacta; las salidas coinciden salvo redondeo de punto flotante. Acelera el tráfico de memoria, no las cuentas. La atención ingenua escribe la matriz n×n de scores en HBM y la lee varias veces, y en GPUs ese IO domina. Dividir en tiles dentro de la SRAM con un softmax online hace que la matriz nunca se materialice, así que la memoria pasa a ser lineal y la atención corre 2–4× más rápido. Los FLOPs siguen siendo cuadráticos, por eso igual presupuesto con cuidado el costo del prefill a 128k."
+      }
+    },
+    {
+      "q": { "en": "If every stack already uses FlashAttention, why should an architect care?", "es": "Si todos los stacks ya usan FlashAttention, ¿por qué debería importarle a un arquitecto?" },
+      "a": {
+        "en": "Three reasons. First, it is what makes long context feasible at all, so context-length decisions rest on it. Second, it falls back silently: fp32, a custom mask or a T4 sends you to the slow path, and a fine-tune OOMs at 8k for no obvious reason, so I assert the backend. Third, it helps training and prefill far more than decode, so for chat latency I look at KV-cache size, batching and speculative decoding instead.",
+        "es": "Por tres razones. Primero, es lo que hace viable el contexto largo, así que las decisiones de longitud de contexto dependen de ella. Segundo, cae en silencio a otro camino: fp32, una máscara propia o una T4 te mandan a la ruta lenta y un fine-tuning se queda sin memoria a 8k sin razón aparente, así que verifico el backend explícitamente. Tercero, ayuda mucho más al entrenamiento y al prefill que al decode, así que para la latencia de un chat miro el tamaño del KV cache, el batching y el speculative decoding."
+      }
+    }
+  ],
+  "related": ["attention", "prefill-decode", "kv-cache", "paged-attention", "context-window", "gpu-memory-math"],
+  "sources": [
+    { "title": "Dao et al. — FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness", "url": "https://arxiv.org/abs/2205.14135" },
+    { "title": "Dao — FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning", "url": "https://arxiv.org/abs/2307.08691" },
+    { "title": "Shah et al. — FlashAttention-3: Fast and Accurate Attention with Asynchrony and Low-precision", "url": "https://arxiv.org/abs/2407.08608" },
+    { "title": "Dao-AILab/flash-attention (GitHub)", "url": "https://github.com/Dao-AILab/flash-attention" }
+  ]
+}

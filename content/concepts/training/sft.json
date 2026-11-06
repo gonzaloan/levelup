@@ -1,0 +1,98 @@
+{
+  "id": "sft",
+  "domain": "training",
+  "level": "core",
+  "title": { "en": "Supervised fine-tuning (SFT)", "es": "Fine-tuning supervisado (SFT)" },
+  "aliases": ["SFT", "supervised fine-tuning", "instruction tuning", "chat fine-tuning", "SFTTrainer", "full fine-tuning"],
+  "tldr": {
+    "en": "Keep training a pretrained model on (prompt, ideal response) pairs so it imitates them. It teaches format, style and task behavior; a few thousand curated examples usually beat a million noisy ones.",
+    "es": "Sigue entrenando un modelo preentrenado con pares (prompt, respuesta ideal) para que los imite. Enseña formato, estilo y comportamiento en la tarea; unos miles de ejemplos curados suelen ganarle a un millón de ejemplos ruidosos."
+  },
+  "analogy": {
+    "en": "An apprentice studying a binder of the master's finished work: they learn to produce the same kind of output, including the master's mistakes if the binder contains them.",
+    "es": "Un aprendiz que estudia una carpeta con los trabajos terminados del maestro: aprende a producir lo mismo, incluidos los errores del maestro si la carpeta los tiene."
+  },
+  "explain": {
+    "en": "**Supervised fine-tuning** keeps training a model with the same next-token loss as pretraining, but on curated **(prompt, ideal response)** pairs. The model learns to imitate those responses: their format, tone and the task's decision rules. It is how a base model becomes an assistant, and how you specialize one for your task.\n\nHow it works:\n- **Chat template.** Each example is rendered in the model's exact template (role markers, special tokens such as `<|im_start|>`, the end-of-turn token). Train and serve with the *same* template, or quality drops silently.\n- **Loss masking.** The loss is usually computed only on **response tokens**; prompt tokens are masked, so every gradient goes to answering, not to predicting the question.\n- **Data.** Quality beats quantity: LIMA aligned a 65B model with ~1,000 hand-curated examples. Task SFT typically uses ~1k–100k.\n- **Hyperparameters.** 1–3 epochs; learning rate ~1e-5–2e-5 for full fine-tuning, ~1e-4–2e-4 with [[lora]]. More epochs on small data means memorization.\n\n**Where to run it:** managed APIs (OpenAI, Vertex AI, Bedrock) take a JSONL of chat examples and handle the GPUs; for open weights, Hugging Face TRL's `SFTTrainer`, Axolotl or Unsloth. Either way, run the same eval **before and after**, on the target task and on general ability ([[catastrophic-forgetting]]).",
+    "es": "El **fine-tuning supervisado** sigue entrenando un modelo con la misma pérdida de predicción del siguiente token que el preentrenamiento, pero sobre pares curados **(prompt, respuesta ideal)**. El modelo aprende a imitar esas respuestas: su formato, su tono y las reglas de decisión de la tarea. Así un modelo base se convierte en asistente, y así especializas uno para tu tarea.\n\nCómo funciona:\n- **Chat template.** Cada ejemplo se arma con la plantilla exacta del modelo (marcadores de rol, tokens especiales como `<|im_start|>`, el token de fin de turno). Entrena y sirve con la *misma* plantilla, o la calidad cae sin avisar.\n- **Enmascarar la pérdida.** La pérdida suele calcularse solo sobre los **tokens de la respuesta**; los del prompt se enmascaran, así cada gradiente se invierte en responder y no en predecir la pregunta.\n- **Datos.** La calidad le gana a la cantidad: LIMA alineó un modelo de 65B con ~1,000 ejemplos curados a mano. Un SFT de tarea suele usar ~1k–100k.\n- **Hiperparámetros.** 1–3 épocas; learning rate de ~1e-5–2e-5 en fine-tuning completo y ~1e-4–2e-4 con [[lora]]. Más épocas con pocos datos es memorizar.\n\n**Dónde correrlo:** las APIs gestionadas (OpenAI, Vertex AI, Bedrock) reciben un JSONL de ejemplos de chat y se encargan de las GPUs; para modelos abiertos, el `SFTTrainer` de Hugging Face TRL, Axolotl o Unsloth. En ambos casos corre la misma evaluación **antes y después**, sobre la tarea objetivo y sobre la capacidad general ([[catastrophic-forgetting]])."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  D[(\"Prompt + ideal<br/>response pairs\")] --> T[\"Apply chat template\"]\n  T --> M[\"Mask prompt tokens\"]\n  M --> F[\"Forward pass<br/>pretrained model\"]\n  F --> L[\"Cross-entropy on<br/>response tokens\"]\n  L --> U[\"Update weights<br/>full or LoRA\"]\n  U --> E{\"Eval before vs after\"}\n  E -->|regression| D\n  E -->|better| S[\"Deploy fine-tuned model\"]",
+    "caption": {
+      "en": "Same loss as pretraining, applied only to the answer. When eval regresses, fix the data before touching hyperparameters.",
+      "es": "La misma pérdida que en el preentrenamiento, aplicada solo a la respuesta. Si la evaluación empeora, arregla los datos antes de tocar hiperparámetros."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "SFT with Hugging Face TRL (LoRA on one GPU)", "es": "SFT con Hugging Face TRL (LoRA en una GPU)" },
+    "source": "from datasets import load_dataset\nfrom peft import LoraConfig\nfrom trl import SFTConfig, SFTTrainer\n\nMODEL = \"Qwen/Qwen2.5-7B-Instruct\"  # any HF chat model\n\n# Rows: {\"prompt\": [{\"role\": \"user\", ...}], \"completion\": [{\"role\": \"assistant\", ...}]}\ndata = load_dataset(\"json\", data_files={\"train\": \"train.jsonl\", \"eval\": \"eval.jsonl\"})\n\nconfig = SFTConfig(\n    output_dir=\"sft-claims-v1\",\n    num_train_epochs=2,             # 1-3; more on small data = memorizing\n    learning_rate=2e-4,             # LoRA range; ~2e-5 for full fine-tuning\n    per_device_train_batch_size=4,\n    gradient_accumulation_steps=8,  # effective batch of 32\n    completion_only_loss=True,      # loss on response tokens only\n    eval_strategy=\"steps\",\n    eval_steps=50,                  # watch eval loss for overfitting\n    bf16=True,\n)\ntrainer = SFTTrainer(\n    model=MODEL,                    # chat template comes from the tokenizer\n    args=config,\n    train_dataset=data[\"train\"],\n    eval_dataset=data[\"eval\"],\n    # LoRA fits one GPU; full fine-tuning needs ~16 bytes/param (weights+grads+Adam)\n    peft_config=LoraConfig(r=16, lora_alpha=32, target_modules=\"all-linear\"),\n)\ntrainer.train()\ntrainer.save_model()"
+  },
+  "example": {
+    "en": "A bank needs dispute summaries in a fixed 5-field format with compliance-approved wording. A prompted frontier model fills the fields correctly 85% of the time on a 200-case eval set, but the wording drifts. Analysts write 2,000 gold summaries; SFT of an 8B open model with LoRA (2 epochs, a few GPU-hours) reaches 96% field accuracy with the approved phrasing, at a fraction of the per-call cost. A third epoch kept lowering training loss but *raised* eval loss, so they shipped the epoch-2 checkpoint.",
+    "es": "Un banco necesita resúmenes de disputas en un formato fijo de 5 campos y con la redacción aprobada por compliance. Un modelo frontera con prompt llena bien los campos el 85% de las veces en un set de evaluación de 200 casos, pero la redacción se desvía. Los analistas escriben 2,000 resúmenes de referencia; un SFT de un modelo abierto de 8B con LoRA (2 épocas, unas pocas horas de GPU) llega a 96% de precisión por campo con la redacción aprobada, por una fracción del costo por llamada. Una tercera época siguió bajando la pérdida de entrenamiento pero *subió* la de evaluación, así que publicaron el checkpoint de la época 2."
+  },
+  "pros": [
+    { "en": "The most reliable way to lock in a format, tone or task behavior that prompting only approximates.", "es": "La forma más confiable de fijar un formato, tono o comportamiento que el prompt solo logra a medias." },
+    { "en": "Shorter prompts at inference: the instructions live in the weights.", "es": "Prompts más cortos en inferencia: las instrucciones viven en los pesos." },
+    { "en": "Lets a small model match a big one on a narrow task, the basis of cost-cutting distillation.", "es": "Permite que un modelo pequeño iguale a uno grande en una tarea acotada; es la base de la destilación para bajar costos." },
+    { "en": "Simple, stable training: a plain supervised loss and mature tooling (TRL, Axolotl, managed APIs).", "es": "Entrenamiento simple y estable: una pérdida supervisada común y herramientas maduras (TRL, Axolotl, APIs gestionadas)." }
+  ],
+  "cons": [
+    { "en": "Only as good as the examples: it faithfully imitates their errors and biases.", "es": "Vale lo que valen los ejemplos: imita fielmente sus errores y sesgos." },
+    { "en": "Can erode general skills and the base model's safety behavior.", "es": "Puede erosionar habilidades generales y el comportamiento de seguridad del modelo base." },
+    { "en": "Teaches imitation, not preference: it can't learn \"A is better than B\" and can't exceed its demonstrations.", "es": "Enseña imitación, no preferencia: no aprende \"A es mejor que B\" ni puede superar a sus demostraciones." },
+    { "en": "You now own a model version tied to a base model that will be deprecated.", "es": "Ahora eres dueño de una versión de modelo atada a una base que van a deprecar." }
+  ],
+  "whenToUse": {
+    "en": "A stable, narrow task with a clear ideal output where prompting plateaus on format, style or consistency, or when a small model should replace a large one.",
+    "es": "Una tarea estable y acotada con una salida ideal clara, donde el prompt se estanca en formato, estilo o consistencia, o cuando un modelo pequeño debe reemplazar a uno grande."
+  },
+  "whenNotToUse": {
+    "en": "To teach facts that change (use RAG), with fewer than ~50–100 good examples, or before an eval set shows prompting is really the bottleneck.",
+    "es": "Para enseñar hechos que cambian (usa RAG), con menos de ~50–100 buenos ejemplos, o antes de que un set de evaluación muestre que el prompt es de verdad el cuello de botella."
+  },
+  "numbers": [
+    { "en": "LIMA: ~1,000 curated examples aligned LLaMA-65B competitively (Zhou et al., 2023).", "es": "LIMA: ~1,000 ejemplos curados alinearon a LLaMA-65B de forma competitiva (Zhou et al., 2023)." },
+    { "en": "InstructGPT's SFT set was only ~13k prompts with labeler-written answers.", "es": "El set de SFT de InstructGPT tenía apenas ~13k prompts con respuestas escritas por evaluadores." },
+    { "en": "OpenAI fine-tuning: minimum 10 examples; clear gains typically from 50–100.", "es": "Fine-tuning de OpenAI: mínimo 10 ejemplos; las mejoras claras suelen aparecer desde 50–100." },
+    { "en": "Rule of thumb: 1–3 epochs; LR ~1e-5–2e-5 full, ~1e-4–2e-4 LoRA.", "es": "Regla práctica: 1–3 épocas; LR ~1e-5–2e-5 completo, ~1e-4–2e-4 con LoRA." },
+    { "en": "Qi et al. (2023): 10 adversarial examples (<$0.20) undid GPT-3.5 Turbo's safety tuning.", "es": "Qi et al. (2023): 10 ejemplos adversarios (<$0.20) deshicieron el ajuste de seguridad de GPT-3.5 Turbo." }
+  ],
+  "pitfalls": [
+    { "en": "Template mismatch: training with one chat template and serving with another, or dropping the EOS token, so the model rambles or never stops.", "es": "Plantillas distintas: entrenar con un chat template y servir con otro, o perder el token EOS, y el modelo divaga o nunca se detiene." },
+    { "en": "Overfitting small data: train loss falls while eval worsens after epoch 2–3. Hold out a set and keep the best checkpoint.", "es": "Sobreajustar pocos datos: la pérdida de entrenamiento baja mientras la evaluación empeora tras la época 2–3. Separa un set y quédate con el mejor checkpoint." },
+    { "en": "Training on raw production logs without curation: SFT copies the bad answers too.", "es": "Entrenar con logs de producción sin curar: el SFT también copia las malas respuestas." },
+    { "en": "Measuring only the target task: also check general ability and safety refusals didn't regress.", "es": "Medir solo la tarea objetivo: verifica también que la capacidad general y los rechazos de seguridad no retrocedieron." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "You have 500 examples and a 7B model. How do you approach SFT?", "es": "Tienes 500 ejemplos y un modelo de 7B. ¿Cómo encaras el SFT?" },
+      "a": {
+        "en": "First I check the data is worth imitating: I read 100 examples and dedupe, because SFT copies whatever is there. I hold out ~15% as eval, plus a small general-ability set. Then LoRA, 2–3 epochs, LR around 1e-4 to 2e-4, loss only on responses, the model's own chat template. With 500 examples overfitting is the main risk, so I check the task metric per epoch and keep the best checkpoint. If results fall short, I invest in more and better examples before tuning hyperparameters.",
+        "es": "Primero reviso que valga la pena imitar los datos: leo 100 ejemplos y elimino duplicados, porque el SFT copia lo que haya. Separo ~15% como evaluación, más un set chico de capacidad general. Después LoRA, 2–3 épocas, LR entre 1e-4 y 2e-4, pérdida solo sobre las respuestas y el chat template propio del modelo. Con 500 ejemplos el riesgo principal es el sobreajuste, así que mido la métrica de la tarea en cada época y me quedo con el mejor checkpoint. Si no alcanza, invierto en más y mejores ejemplos antes de tocar hiperparámetros."
+      }
+    },
+    {
+      "q": { "en": "Why mask the prompt tokens in the loss?", "es": "¿Por qué enmascarar los tokens del prompt en la pérdida?" },
+      "a": {
+        "en": "Because I want the model to learn to produce answers, not to model the distribution of prompts. With the prompt in the loss, gradient is spent predicting questions, often long, repeated system prompts, which dilutes the signal from the responses and can teach the model to write like a user. With masking, every gradient comes from the behavior I'm paying for. It's the standard default, not a law; in continued pretraining every token counts.",
+        "es": "Porque quiero que el modelo aprenda a producir respuestas, no a modelar la distribución de los prompts. Si el prompt entra en la pérdida, el gradiente se gasta en predecir preguntas, a menudo system prompts largos y repetidos, lo que diluye la señal de las respuestas y puede enseñarle al modelo a escribir como un usuario. Con el enmascarado, cada gradiente viene del comportamiento que estoy pagando. Es el estándar, no una ley; en continued pretraining cuenta cada token."
+      }
+    },
+    {
+      "q": { "en": "SFT or preference tuning: how do you choose?", "es": "¿SFT o ajuste por preferencias? ¿Cómo eliges?" },
+      "a": {
+        "en": "It depends on what I can write down. If I can produce the ideal answer (an extraction, a format, a house style), SFT is simpler and more direct. If I can only judge which of two answers is better (helpfulness, tone, when to push back), I need preference pairs and DPO or RLHF. In practice they stack: SFT first for format and a sensible starting policy, then DPO to sharpen it. SFT alone has a ceiling: it imitates its demonstrations, so it can't beat them.",
+        "es": "Depende de qué puedo escribir. Si puedo producir la respuesta ideal (una extracción, un formato, el estilo de la casa), el SFT es más simple y directo. Si solo puedo juzgar cuál de dos respuestas es mejor (utilidad, tono, cuándo contradecir al usuario), necesito pares de preferencia y DPO o RLHF. En la práctica se combinan: primero SFT para el formato y un buen punto de partida, después DPO para afinar. El SFT solo tiene un techo: imita sus demostraciones, así que no puede superarlas."
+      }
+    }
+  ],
+  "related": ["adaptation-ladder", "lora", "data-curation", "synthetic-data", "dpo", "catastrophic-forgetting"],
+  "sources": [
+    { "title": "Zhou et al. — LIMA: Less Is More for Alignment", "url": "https://arxiv.org/abs/2305.11206" },
+    { "title": "Hugging Face TRL — SFT Trainer", "url": "https://huggingface.co/docs/trl/sft_trainer" },
+    { "title": "Qi et al. — Fine-tuning Aligned Language Models Compromises Safety, Even When Users Do Not Intend To!", "url": "https://arxiv.org/abs/2310.03693" },
+    { "title": "OpenAI — Fine-tuning guide", "url": "https://platform.openai.com/docs/guides/fine-tuning" }
+  ]
+}

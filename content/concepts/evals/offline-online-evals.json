@@ -1,0 +1,87 @@
+{
+  "id": "offline-online-evals",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Offline vs online evaluation", "es": "Evaluación offline vs. online" },
+  "aliases": ["online evals", "production evals", "shadow mode", "canary release", "implicit feedback", "thumbs up/down", "dark launch"],
+  "tldr": {
+    "en": "Offline evals score a version on fixed datasets before deploy; online evals measure live traffic through user behavior, feedback and sampled judging. You need both, and if they disagree, trust neither until you know why.",
+    "es": "Las evaluaciones offline califican una versión con datasets fijos antes del deploy; las online miden el tráfico real a través del comportamiento de los usuarios, su feedback y un juez sobre una muestra. Necesitas ambas, y si no coinciden, no confíes en ninguna hasta saber por qué."
+  },
+  "analogy": {
+    "en": "Offline is the flight simulator: cheap, repeatable, safe. Online is real flights with passengers: the only true test, so you start with a few routes and watch the instruments closely.",
+    "es": "Offline es el simulador de vuelo: barato, repetible y seguro. Online son vuelos reales con pasajeros: la única prueba verdadera, así que empiezas con pocas rutas y vigilas los instrumentos de cerca."
+  },
+  "explain": {
+    "en": "**Offline evaluation** scores a version *before* deploy on fixed data: golden sets, regression suites, LLM judges. It is cheap, repeatable and safe, but only as good as the dataset's match to real traffic. **Online evaluation** measures the *live* system on real users. It is the ground truth for outcomes, but noisy, delayed and riskier.\n\n**Online signals to instrument:**\n\n- **Outcomes**: task completed, ticket resolved without escalation, retention.\n- **Implicit behavior**: copy or accept rate, how much users edit a draft, regenerate and retry clicks, abandonment, handoffs to a human. High volume and honest.\n- **Explicit feedback**: thumbs up/down. Sparse and skewed toward unhappy users: use it to *find* examples, not to score.\n- **Guardrail triggers**: refusals, PII or toxicity blocks, schema failures.\n- **LLM judge on sampled traffic**: reference-free checks (groundedness, policy, tone) on a hashed 1–5% of traces.\n\n**Bridges between the two:** **shadow mode** sends a copy of real requests to the new version and logs outputs nobody sees; a **canary** serves it to ~1–5% of users with automatic rollback on guardrails.\n\nYou need **both, and they must agree**. Use the *same rubric* offline and online so the numbers compare. If offline says +8 points and online is flat, the eval set no longer represents production: mine failing live traces back into it.",
+    "es": "La **evaluación offline** califica una versión *antes* del deploy con datos fijos: golden sets, suites de regresión, jueces LLM. Es barata, repetible y segura, pero vale lo que valga el parecido del dataset con el tráfico real. La **evaluación online** mide el sistema *en vivo* con usuarios reales. Es la verdad sobre los resultados, pero es ruidosa, llega tarde y tiene más riesgo.\n\n**Señales online que conviene instrumentar:**\n\n- **Resultados**: tarea completada, ticket resuelto sin escalar, retención.\n- **Comportamiento implícito**: tasa de copia o aceptación, cuánto edita el usuario un borrador, clics en regenerar o reintentar, abandono, traspasos a una persona. Mucho volumen y muy honesto.\n- **Feedback explícito**: pulgar arriba/abajo. Escaso y sesgado hacia usuarios molestos: úsalo para *encontrar* ejemplos, no para puntuar.\n- **Disparos de guardrails**: rechazos, bloqueos por PII o toxicidad, fallas de esquema.\n- **Juez LLM sobre tráfico muestreado**: chequeos sin referencia (groundedness, políticas, tono) sobre un 1–5% de trazas elegido por hash.\n\n**Puentes entre ambas:** el **shadow mode** envía una copia de las solicitudes reales a la nueva versión y registra salidas que nadie ve; un **canary** la sirve a ~1–5% de los usuarios con rollback automático según los guardrails.\n\nNecesitas **ambas, y deben coincidir**. Usa la *misma rúbrica* offline y online para que los números sean comparables. Si offline dice +8 puntos y online no se mueve, el set de evaluación ya no representa producción: lleva las trazas que fallan en producción de vuelta al set."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  G[(Golden set)] --> O[\"Offline eval<br/>graders + judge\"]\n  O -->|passes gate| S[\"Shadow mode<br/>copy of traffic\"]\n  S --> C[\"Canary<br/>~5% of users\"]\n  C -->|guardrails hold| F[Full rollout]\n  C -.->|guardrail breach| RB[Rollback]\n  F --> L[\"Live signals<br/>outcomes, accepts, escalations\"]\n  F --> J[\"Judge on<br/>sampled traces\"]\n  L --> T[Failing traces]\n  J --> T\n  T -->|new cases| G",
+    "caption": {
+      "en": "Offline gates the release, online confirms it on real users, and failing live traces flow back into the golden set so the two keep agreeing.",
+      "es": "Offline decide si se libera, online lo confirma con usuarios reales y las trazas fallidas vuelven al golden set para que ambas sigan coincidiendo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Online metrics plus hashed judge sampling", "es": "Métricas online y muestreo por hash para el juez" },
+    "source": "import hashlib\nfrom dataclasses import dataclass\n\nJUDGE_SAMPLE_RATE = 0.02  # ~2% of live traffic; judge cost scales linearly\n\n@dataclass\nclass Trace:\n    id: str\n    question: str\n    context: str\n    answer: str\n    thumbs: int | None   # +1 / -1 / None: most users never click\n    regenerated: bool\n    escalated: bool\n    version: str         # prompt + model + index version that served it\n\ndef in_sample(trace_id: str, rate: float = JUDGE_SAMPLE_RATE) -> bool:\n    # Hash, not random(): a trace is always in or out, so runs are replayable\n    h = int(hashlib.sha256(trace_id.encode()).hexdigest()[:8], 16)\n    return h / 0xFFFFFFFF < rate\n\ndef online_metrics(traces: list[Trace]) -> dict:\n    n, rated = len(traces), [t for t in traces if t.thumbs is not None]\n    # Same groundedness rubric as the offline suite, so the numbers compare\n    judged = [judge_groundedness(t) for t in traces if in_sample(t.id)]  # 0 or 1\n    return {\n        \"feedback_coverage\": len(rated) / n,\n        \"thumbs_up_rate\": sum(t.thumbs > 0 for t in rated) / max(len(rated), 1),\n        \"regenerate_rate\": sum(t.regenerated for t in traces) / n,\n        \"escalation_rate\": sum(t.escalated for t in traces) / n,\n        \"judge_grounded\": sum(judged) / max(len(judged), 1),\n        \"judged_n\": len(judged),  # ~400 judged traces -> about ±5 pts at 95%\n    }\n\nreport = {v: online_metrics(ts) for v, ts in group_by(traces_24h, \"version\").items()}  # canary vs control"
+  },
+  "example": {
+    "en": "A support copilot passes the offline gate: 91% correctness on 400 golden questions vs 88% before. In a 5% canary for a week, thumbs-up is flat, but escalations climb from 11% to 14% and regenerate clicks rise ~30%. Reading 200 escalated traces shows 40% concern a pricing change launched after the golden set was built: the eval measured last quarter's questions. The team rolls back, adds 60 of those traces to the golden set, and the next version wins both offline and online.",
+    "es": "Un copiloto de soporte pasa el gate offline: 91% de corrección en 400 preguntas del golden set contra 88% antes. En un canary del 5% durante una semana, los pulgares arriba no cambian, pero las escalaciones suben de 11% a 14% y los clics en regenerar crecen ~30%. Al leer 200 trazas escaladas, el 40% trata de un cambio de precios lanzado después de armar el golden set: la evaluación medía las preguntas del trimestre anterior. El equipo hace rollback, agrega 60 de esas trazas al golden set y la siguiente versión gana tanto offline como online."
+  },
+  "pros": [
+    { "en": "Offline is cheap, repeatable and safe: it blocks regressions before any user sees them.", "es": "Offline es barato, repetible y seguro: frena regresiones antes de que un usuario las vea." },
+    { "en": "Online measures real outcomes on the real query mix, including cases no dataset anticipated.", "es": "Online mide resultados reales sobre la mezcla real de consultas, incluidos casos que ningún dataset anticipó." },
+    { "en": "Shadow mode and canaries turn a big-bang release into a measured, reversible one.", "es": "El shadow mode y los canaries convierten un lanzamiento de golpe en uno medido y reversible." }
+  ],
+  "cons": [
+    { "en": "Offline sets drift away from production as users, documents and products change.", "es": "Los sets offline se alejan de producción a medida que cambian los usuarios, los documentos y el producto." },
+    { "en": "Online signals are noisy, delayed and biased: thumbs come mostly from unhappy users.", "es": "Las señales online son ruidosas, tardías y sesgadas: los pulgares vienen sobre todo de usuarios molestos." },
+    { "en": "Live judging and trace logging cost money and raise privacy and retention questions.", "es": "Juzgar en vivo y registrar trazas cuesta dinero y abre preguntas de privacidad y retención de datos." }
+  ],
+  "whenToUse": {
+    "en": "Always both. Offline gates every change before users see it; online confirms the effect on real traffic and feeds new failure cases back into the offline set.",
+    "es": "Siempre ambas. Offline filtra cada cambio antes de que lo vean los usuarios; online confirma el efecto en tráfico real y devuelve nuevos casos de falla al set offline."
+  },
+  "whenNotToUse": {
+    "en": "Don't expose users to a change that fails offline gates or carries safety risk: shadow it first. Don't trust offline alone for anything user-facing at scale.",
+    "es": "No expongas a los usuarios a un cambio que falla los gates offline o que tiene riesgo de seguridad: pruébalo primero en shadow. No confíes solo en offline para nada de cara al usuario a escala."
+  },
+  "numbers": [
+    { "en": "Rule of thumb: canary at ~1–5% of users, then staged ramps (e.g., 25% → 50% → 100%) gated on guardrails.", "es": "Regla práctica: canary con ~1–5% de los usuarios y luego rampas escalonadas (p. ej., 25% → 50% → 100%) condicionadas a los guardrails." },
+    { "en": "Judge precision depends on volume, not percentage: ~400 judged traces give ±~5 pts at 95%, ~100 give ±~10.", "es": "La precisión del juez depende del volumen, no del porcentaje: ~400 trazas juzgadas dan ±~5 pts al 95% y ~100 dan ±~10." },
+    { "en": "GitHub Copilot study (Ziegler et al., 2022): the acceptance rate of shown suggestions predicted perceived productivity better than other usage metrics.", "es": "Estudio de GitHub Copilot (Ziegler et al., 2022): la tasa de aceptación de sugerencias mostradas predijo la productividad percibida mejor que otras métricas de uso." }
+  ],
+  "pitfalls": [
+    { "en": "Treating thumbs-up rate as the quality metric: it is a tiny, self-selected sample.", "es": "Tomar la tasa de pulgares arriba como métrica de calidad: es una muestra mínima y autoseleccionada." },
+    { "en": "Never refreshing the golden set from production, so offline scores climb while users see no change.", "es": "No renovar nunca el golden set con casos de producción, así los puntajes offline suben mientras los usuarios no notan nada." },
+    { "en": "Shadow-testing an agent whose tools have side effects: the shadow sends real emails. Stub every write.", "es": "Probar en shadow un agente cuyas herramientas tienen efectos: la sombra manda correos reales. Simula toda escritura." },
+    { "en": "Using different judge prompts offline and online, so the two numbers can't be compared.", "es": "Usar prompts de juez distintos offline y online, así los dos números no se pueden comparar." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Offline evals improved 6 points but online metrics are flat. What's going on?", "es": "Las evaluaciones offline mejoraron 6 puntos pero las métricas online no se mueven. ¿Qué pasa?" },
+      "a": {
+        "en": "Most likely a distribution or metric mismatch. I'd run the same offline judge on a sample of live traces. If live quality did improve but users behave the same, the offline metric isn't what users value, so I revisit the rubric with real outcomes. If live quality didn't improve, the golden set is stale or too easy for today's traffic, and I mine recent failures and escalations into it. I'd also check that the online test had the power to detect the change at all.",
+        "es": "Lo más probable es un desajuste de distribución o de métrica. Correría el mismo juez offline sobre una muestra de trazas en vivo. Si la calidad en vivo sí mejoró pero los usuarios se comportan igual, la métrica offline no es lo que ellos valoran, así que reviso la rúbrica contra resultados reales. Si la calidad en vivo no mejoró, el golden set está desactualizado o es demasiado fácil para el tráfico de hoy, y le agrego fallas y escalaciones recientes. También verificaría que la prueba online tuviera potencia para detectar el cambio."
+      }
+    },
+    {
+      "q": { "en": "What online signals would you instrument for an LLM feature?", "es": "¿Qué señales online instrumentarías para una funcionalidad con LLM?" },
+      "a": {
+        "en": "Three layers. Outcomes: task completed, ticket resolved without escalation, retention. Implicit behavior: accept or copy rate, edit distance on drafts, regenerate clicks, abandonment, handoffs to a human; high volume and honest. Explicit thumbs, which are sparse and skewed, so I use them to find examples, not to score. On top, guardrail triggers and an LLM judge on a hashed sample of traces with the same rubric as offline. Everything is keyed by trace id and by the prompt, model and index version that served it.",
+        "es": "Tres capas. Resultados: tarea completada, ticket resuelto sin escalar, retención. Comportamiento implícito: tasa de aceptación o copia, distancia de edición sobre borradores, clics en regenerar, abandono, traspasos a una persona; mucho volumen y muy honesto. Pulgares explícitos, que son escasos y sesgados, así que los uso para encontrar ejemplos, no para puntuar. Encima, disparos de guardrails y un juez LLM sobre una muestra de trazas elegida por hash, con la misma rúbrica que offline. Todo indexado por id de traza y por la versión de prompt, modelo e índice que la sirvió."
+      }
+    }
+  ],
+  "related": ["golden-datasets", "llm-as-judge", "ab-testing", "eval-ci", "llm-observability", "drift"],
+  "sources": [
+    { "title": "Ziegler et al. — Productivity Assessment of Neural Code Completion", "url": "https://arxiv.org/abs/2205.06537" },
+    { "title": "Hamel Husain — Your AI Product Needs Evals", "url": "https://hamel.dev/blog/posts/evals/" },
+    { "title": "Google SRE Workbook — Canarying Releases", "url": "https://sre.google/workbook/canarying-releases/" },
+    { "title": "Eugene Yan — Patterns for Building LLM-based Systems & Products", "url": "https://eugeneyan.com/writing/llm-patterns/" }
+  ]
+}

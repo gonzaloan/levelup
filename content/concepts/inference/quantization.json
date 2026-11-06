@@ -1,0 +1,89 @@
+{
+  "id": "quantization",
+  "domain": "inference",
+  "level": "core",
+  "title": { "en": "Quantization (INT8, INT4, FP8)", "es": "Cuantización (INT8, INT4, FP8)" },
+  "aliases": ["INT4", "FP8", "GPTQ", "AWQ", "GGUF", "NF4", "W8A8", "W4A16"],
+  "tldr": {
+    "en": "Store weights (and optionally activations and the KV cache) in 8 or 4 bits instead of 16: 2–4× less memory and faster memory-bound decode, for a quality cost that is tiny at 8-bit and must be measured at 4-bit.",
+    "es": "Guarda los pesos (y opcionalmente las activaciones y el KV cache) en 8 o 4 bits en lugar de 16: 2–4× menos memoria y un decode más rápido, a cambio de una pérdida de calidad mínima en 8 bits que hay que medir en 4 bits."
+  },
+  "analogy": {
+    "en": "Saving a photo as a high-quality JPEG: a quarter of the size and nobody notices, until you compress so hard that fine text in the image becomes unreadable.",
+    "es": "Guardar una foto como JPEG de buena calidad: ocupa una cuarta parte y nadie lo nota, hasta que comprimes tanto que el texto fino de la imagen se vuelve ilegible."
+  },
+  "explain": {
+    "en": "**Quantization** stores a model's numbers in fewer bits: weights (and sometimes activations and the [[kv-cache]]) go from 16-bit floats to 8 or 4 bits, plus a scale factor per group of values to map them back.\n\nWhy it speeds things up: low-batch **decode** is memory-bandwidth bound, because each new token reads every weight from HBM (see [[prefill-decode]]). Fewer bytes per weight means less time per token, and the freed memory goes to KV cache and bigger batches.\n\nThe menu, from safest to most aggressive:\n\n- **FP8 / INT8, W8A8**: weights *and* activations in 8 bits, running on low-precision tensor cores (FP8 needs Ada or Hopper and newer). Usually near-lossless, and it also speeds up compute-bound prefill. INT8 needs outlier handling (LLM.int8(), SmoothQuant).\n- **INT4 weight-only, W4A16**: weights ~4× smaller than FP16, dequantized to 16-bit inside the matmul. **GPTQ** (second-order error correction) and **AWQ** (scales up the ~1% of salient channels, found from activations) are the standard serving formats. **bitsandbytes NF4** is the easy quantize-on-load option behind QLoRA. **GGUF** (llama.cpp, e.g. `Q4_K_M`) targets CPUs, Macs and laptops.\n- **3 bits or fewer**: large quality drops except on the biggest models.\n\nRule of thumb: 8-bit is safe; 4-bit costs little on 70B models but visibly more on 7–8B ones and on math, code and long context. Never ship one without re-running your own evals.",
+    "es": "La **cuantización** guarda los números de un modelo con menos bits: los pesos (y a veces las activaciones y el [[kv-cache]]) pasan de floats de 16 bits a 8 o 4 bits, más un factor de escala por grupo de valores para reconstruirlos.\n\nPor qué acelera: el **decode** con batch chico está limitado por el ancho de banda de memoria, porque cada token nuevo lee todos los pesos desde HBM (ver [[prefill-decode]]). Menos bytes por peso significa menos tiempo por token, y la memoria liberada se va al KV cache y a batches más grandes.\n\nEl menú, de lo más seguro a lo más agresivo:\n\n- **FP8 / INT8, W8A8**: pesos *y* activaciones en 8 bits, sobre tensor cores de baja precisión (FP8 requiere Ada o Hopper en adelante). Suele ser casi sin pérdida y también acelera el prefill, que está limitado por cómputo. INT8 necesita manejar outliers (LLM.int8(), SmoothQuant).\n- **INT4 solo pesos, W4A16**: pesos ~4× más chicos que en FP16, que se decuantizan a 16 bits dentro del matmul. **GPTQ** (corrección de error de segundo orden) y **AWQ** (escala el ~1% de canales más importantes, detectados por las activaciones) son los formatos estándar para serving. **bitsandbytes NF4** es la opción fácil que cuantiza al cargar y la base de QLoRA. **GGUF** (llama.cpp, por ejemplo `Q4_K_M`) apunta a CPUs, Macs y laptops.\n- **3 bits o menos**: caídas de calidad grandes, salvo en los modelos más grandes.\n\nRegla práctica: 8 bits es seguro; 4 bits cuesta poco en modelos de 70B pero se nota más en los de 7–8B y en matemáticas, código y contexto largo. Nunca lo despliegues sin volver a correr tus propios evals."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  W[\"BF16 weights<br/>~16 GB\"] --> Q[\"Quantizer<br/>GPTQ or AWQ\"]\n  C[\"Calibration set<br/>~128 samples\"] --> Q\n  Q --> P[(\"INT4 + scales<br/>~5.5 GB\")]\n  P -->|4x fewer bytes read| D[\"Kernel dequantizes<br/>in registers\"]\n  D --> M[\"BF16 matmul<br/>with activations\"]\n  M --> T[Next token]",
+    "caption": {
+      "en": "Weight-only INT4 for an 8B model: quantize once offline with a small calibration set; at runtime the kernel reads 4-bit weights and dequantizes on the fly.",
+      "es": "INT4 solo pesos para un modelo de 8B: se cuantiza una vez offline con un set de calibración chico; en ejecución el kernel lee pesos de 4 bits y los decuantiza al vuelo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Load a model in 4-bit, two ways", "es": "Cargar un modelo en 4 bits, de dos formas" },
+    "source": "import torch\nfrom transformers import AutoModelForCausalLM, BitsAndBytesConfig\n\nMODEL = \"meta-llama/Llama-3.1-8B-Instruct\"  # any causal LM on the Hub\n\n# A) Quantize on load with bitsandbytes NF4: easy, QLoRA-style, not the fastest kernels\nbnb = BitsAndBytesConfig(\n    load_in_4bit=True,\n    bnb_4bit_quant_type=\"nf4\",              # 4-bit 'normal float', suits ~Gaussian weights\n    bnb_4bit_use_double_quant=True,         # quantize the scales too: ~0.37 bit/param saved\n    bnb_4bit_compute_dtype=torch.bfloat16,  # matmuls run in bf16 after dequantizing\n)\nmodel = AutoModelForCausalLM.from_pretrained(MODEL, quantization_config=bnb, device_map=\"auto\")\nprint(f\"{model.get_memory_footprint() / 1e9:.1f} GB\")  # ~16 GB in bf16 -> ~5-6 GB\n\n# B) Production: serve a pre-quantized AWQ/GPTQ checkpoint with fast kernels\nfrom vllm import LLM\n\nllm = LLM(\n    model=\"hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4\",  # example AWQ repo\n    quantization=\"awq\",     # usually auto-detected from the checkpoint config\n    kv_cache_dtype=\"fp8\",   # optional: halve the KV cache too; re-check long-context evals\n)"
+  },
+  "example": {
+    "en": "A team serves Llama-3.1-70B. In BF16 the weights alone are ~140 GB: two 80 GB H100s, with little room left for KV cache. Switching to FP8 (~70 GB of weights) on the same two GPUs frees ~70 GB for KV, so batches grow several times and cost per token drops; their golden set moves by less than half a point. An AWQ INT4 build (~40 GB) fits on a single H100 and decodes faster at low concurrency, but loses 3 points on their text-to-SQL eval, so they use it only for a cheaper internal tier.",
+    "es": "Un equipo sirve Llama-3.1-70B. En BF16 solo los pesos ocupan ~140 GB: dos H100 de 80 GB, con poco espacio para el KV cache. Al pasar a FP8 (~70 GB de pesos) en las mismas dos GPUs liberan ~70 GB para KV, así que los batches crecen varias veces y baja el costo por token; su golden set se mueve menos de medio punto. Una versión AWQ INT4 (~40 GB) cabe en una sola H100 y hace decode más rápido con poca concurrencia, pero pierde 3 puntos en su eval de text-to-SQL, así que la usan solo para un tier interno más barato."
+  },
+  "pros": [
+    { "en": "~2× (8-bit) to ~4× (4-bit) less weight memory: fewer GPUs, bigger batches, longer contexts.", "es": "~2× (8 bits) a ~4× (4 bits) menos memoria de pesos: menos GPUs, batches más grandes, contextos más largos." },
+    { "en": "Faster memory-bound decode; FP8 W8A8 also speeds compute-bound prefill on Hopper/Ada.", "es": "Decode más rápido cuando está limitado por memoria; FP8 W8A8 también acelera el prefill en Hopper/Ada." },
+    { "en": "Mainstream: pre-quantized checkpoints and kernels in vLLM, SGLang, TensorRT-LLM and llama.cpp.", "es": "Es estándar: hay checkpoints ya cuantizados y kernels en vLLM, SGLang, TensorRT-LLM y llama.cpp." },
+    { "en": "Makes local and edge deployment possible: an 8B model in 4-bit GGUF runs on a laptop.", "es": "Hace posible el despliegue local y en el edge: un modelo de 8B en GGUF de 4 bits corre en una laptop." }
+  ],
+  "cons": [
+    { "en": "Quality loss is uneven: small models, math, code, long context and non-English degrade first, and averages hide it.", "es": "La pérdida de calidad es desigual: modelos chicos, matemáticas, código, contexto largo y otros idiomas se degradan primero, y los promedios lo esconden." },
+    { "en": "Weight-only INT4 gains vanish, and can turn into a slowdown, at large batch sizes.", "es": "Las ganancias de INT4 solo pesos desaparecen, y pueden volverse una pérdida, con batches grandes." },
+    { "en": "Hardware and kernel lock-in: FP8 needs Ada/Hopper or newer, and format support varies per engine.", "es": "Dependencia de hardware y kernels: FP8 requiere Ada/Hopper o más nuevo, y el soporte de formatos cambia según el motor." }
+  ],
+  "whenToUse": {
+    "en": "Self-hosting when memory or cost is the constraint: FP8 as the default on Hopper/Ada, INT4 AWQ/GPTQ to fit a bigger model on fewer GPUs or cut low-concurrency latency, GGUF for laptops and edge.",
+    "es": "Cuando hospedas tú el modelo y la memoria o el costo te limitan: FP8 por defecto en Hopper/Ada, INT4 AWQ/GPTQ para meter un modelo más grande en menos GPUs o bajar la latencia con poca concurrencia, GGUF para laptops y edge."
+  },
+  "whenNotToUse": {
+    "en": "When you can't measure the quality hit on your own evals, on small models where every bit counts, or for high-throughput batch serving where weight-only INT4 buys little: use FP8 there.",
+    "es": "Cuando no puedes medir la pérdida de calidad con tus propios evals, en modelos chicos donde cada bit cuenta, o en serving por lotes de alto throughput donde INT4 solo pesos aporta poco: ahí usa FP8."
+  },
+  "numbers": [
+    { "en": "Bytes per parameter: BF16 2, FP8/INT8 1, INT4 0.5. A 70B model is ~140 / ~70 / ~35 GB, plus ~5–10% for scales.", "es": "Bytes por parámetro: BF16 2, FP8/INT8 1, INT4 0.5. Un modelo de 70B ocupa ~140 / ~70 / ~35 GB, más ~5–10% de escalas." },
+    { "en": "Rule of thumb: batch-1 decode ceiling ≈ HBM bandwidth ÷ weight bytes. 8B on an H100 (3.35 TB/s): ~200 tok/s in BF16, roughly 3× that in INT4.", "es": "Regla práctica: techo del decode con batch 1 ≈ ancho de banda de HBM ÷ bytes de pesos. 8B en una H100 (3.35 TB/s): ~200 tok/s en BF16, aproximadamente 3× eso en INT4." },
+    { "en": "GPTQ quantized 175B-parameter models to 3–4 bits in ~4 GPU hours.", "es": "GPTQ cuantizó modelos de 175B parámetros a 3–4 bits en ~4 horas de GPU." },
+    { "en": "QLoRA's double quantization saves ~0.37 bits per parameter (~3 GB on a 65B model).", "es": "La doble cuantización de QLoRA ahorra ~0.37 bits por parámetro (~3 GB en un modelo de 65B)." }
+  ],
+  "pitfalls": [
+    { "en": "Judging only by perplexity or MMLU: damage shows first in long context, reasoning, tool-call formats and non-English. Run your task evals.", "es": "Juzgar solo por perplejidad o MMLU: el daño aparece primero en contexto largo, razonamiento, formato de tool calls y otros idiomas. Corre tus evals de la tarea." },
+    { "en": "Serving production traffic with bitsandbytes NF4: it was built to save memory in QLoRA training, and AWQ/GPTQ kernels decode much faster.", "es": "Servir tráfico de producción con bitsandbytes NF4: se diseñó para ahorrar memoria al entrenar con QLoRA, y los kernels de AWQ/GPTQ hacen decode mucho más rápido." },
+    { "en": "Calibrating GPTQ/AWQ on English Wikipedia and then serving Spanish code.", "es": "Calibrar GPTQ/AWQ con Wikipedia en inglés y después servir código en español." },
+    { "en": "Expecting weight-only INT4 to raise throughput at batch 64+: you are compute-bound there, so FP8 W8A8 is the lever.", "es": "Esperar que INT4 solo pesos suba el throughput con batch de 64 o más: ahí estás limitado por cómputo, así que la palanca es FP8 W8A8." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "We need to serve a 70B model more cheaply. How do you approach quantization?", "es": "Necesitamos servir un modelo de 70B más barato. ¿Cómo encaras la cuantización?" },
+      "a": {
+        "en": "I start from the bottleneck. If we are memory-bound, low concurrency or out of VRAM, weight-only INT4 with AWQ or GPTQ cuts weights ~4× and speeds decode. If we run large batches, FP8 W8A8 on H100s is my default: near-lossless, and it speeds the compute-bound side too. Then I gate on evals, not perplexity: our golden set with slices for long context, code and non-English, where 4-bit breaks first. And I compare against the real alternative, a smaller model in BF16 at equal cost.",
+        "es": "Parto del cuello de botella. Si estamos limitados por memoria, con poca concurrencia o sin VRAM, INT4 solo pesos con AWQ o GPTQ reduce los pesos ~4× y acelera el decode. Si corremos batches grandes, mi opción por defecto es FP8 W8A8 en H100: casi sin pérdida, y también acelera la parte limitada por cómputo. Después decido con evals, no con perplejidad: nuestro golden set con cortes de contexto largo, código y otros idiomas, donde 4 bits falla primero. Y lo comparo con la alternativa real: un modelo más chico en BF16 al mismo costo."
+      }
+    },
+    {
+      "q": { "en": "Why does 4-bit quantization speed up decode but not necessarily prefill?", "es": "¿Por qué la cuantización a 4 bits acelera el decode pero no necesariamente el prefill?" },
+      "a": {
+        "en": "Decode produces one token per sequence per step, so each step reads every weight from HBM to do very little math: it is bandwidth-bound, and reading ~4× fewer bytes speeds it up almost proportionally. Prefill processes thousands of tokens per weight read, so it is compute-bound. Weight-only INT4 still dequantizes to 16-bit and runs 16-bit matmuls, so prefill gains nothing and pays some overhead. To speed prefill you need low-precision math itself: FP8 or INT8 W8A8 tensor cores.",
+        "es": "El decode produce un token por secuencia en cada paso, así que cada paso lee todos los pesos desde HBM para hacer muy pocas cuentas: está limitado por ancho de banda, y leer ~4× menos bytes lo acelera casi en la misma proporción. El prefill procesa miles de tokens por cada lectura de pesos, así que está limitado por cómputo. INT4 solo pesos igual decuantiza a 16 bits y hace matmuls de 16 bits, así que el prefill no gana nada y paga algo de overhead. Para acelerar el prefill necesitas que las cuentas mismas sean de baja precisión: tensor cores FP8 o INT8 W8A8."
+      }
+    }
+  ],
+  "related": ["gpu-memory-math", "prefill-decode", "kv-cache", "lora", "api-vs-self-host", "distillation"],
+  "sources": [
+    { "title": "Frantar et al. — GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers", "url": "https://arxiv.org/abs/2210.17323" },
+    { "title": "Lin et al. — AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration", "url": "https://arxiv.org/abs/2306.00978" },
+    { "title": "Dettmers et al. — QLoRA: Efficient Finetuning of Quantized LLMs", "url": "https://arxiv.org/abs/2305.14314" },
+    { "title": "Dettmers et al. — LLM.int8(): 8-bit Matrix Multiplication for Transformers at Scale", "url": "https://arxiv.org/abs/2208.07339" }
+  ]
+}

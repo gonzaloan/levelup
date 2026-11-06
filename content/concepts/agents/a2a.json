@@ -1,0 +1,88 @@
+{
+  "id": "a2a",
+  "domain": "agents",
+  "level": "advanced",
+  "title": { "en": "Agent-to-agent protocols (A2A)", "es": "Protocolos agente a agente (A2A)" },
+  "aliases": ["A2A", "Agent2Agent", "Agent Card", "agent interoperability", "agent-to-agent", "inter-agent protocol"],
+  "tldr": {
+    "en": "An open protocol (Google, Apr 2025; now Linux Foundation) for agents from different vendors to discover each other through an Agent Card and delegate long-running tasks over HTTP. It complements MCP (agent-to-tool).",
+    "es": "Un protocolo abierto (Google, abr. 2025; hoy en la Linux Foundation) para que agentes de distintos proveedores se descubran mediante una Agent Card y se deleguen tareas largas por HTTP. Complementa a MCP (agente a herramienta)."
+  },
+  "analogy": {
+    "en": "Hiring a subcontractor: you read their public profile, send a work order, get status updates and questions, and receive deliverables, without ever seeing how their shop works inside.",
+    "es": "Contratar a un subcontratista: lees su perfil público, envías una orden de trabajo, recibes avances y preguntas, y al final los entregables, sin ver nunca cómo funciona su taller por dentro."
+  },
+  "explain": {
+    "en": "**A2A (Agent2Agent)** is an open protocol that lets agents from different teams or vendors delegate work to each other. Google launched it in April 2025 with 50+ partners and donated it to the Linux Foundation in June 2025.\n\nHow it works:\n\n- **Discovery**: each agent publishes an **Agent Card**, a JSON document at a well-known URL (`/.well-known/agent-card.json`) listing its skills, endpoint, input/output modes and auth schemes.\n- **Tasks**: a client agent sends a **message**; longer work becomes a **task** with a lifecycle (`submitted → working → input-required → completed / failed`). Results come back as **artifacts** made of parts (text, files, JSON).\n- **Transport**: JSON-RPC 2.0 over HTTPS (`message/send`, `tasks/get`), **SSE** for streaming progress, and **push notifications** (webhooks) for hours-long jobs. v0.3 added gRPC.\n- **Opacity**: agents never share memory, prompts or tools; each is a black box behind a contract.\n\n**A2A vs MCP**: [[mcp]] connects an agent *down* to tools and data, with the agent in control. A2A connects agents *sideways* as peers that negotiate, ask follow-up questions and run long tasks. A remote A2A agent often uses MCP internally.\n\nReality check: A2A is younger and less adopted than MCP, the spec still changes between versions, and a remote agent's output is untrusted input. Inside one codebase, a function call or [[orchestrator-workers]] beats a network protocol.",
+    "es": "**A2A (Agent2Agent)** es un protocolo abierto que permite que agentes de distintos equipos o proveedores se deleguen trabajo. Google lo lanzó en abril de 2025 con más de 50 socios y lo donó a la Linux Foundation en junio de 2025.\n\nCómo funciona:\n\n- **Descubrimiento**: cada agente publica una **Agent Card**, un documento JSON en una URL conocida (`/.well-known/agent-card.json`) con sus habilidades, endpoint, modos de entrada y salida, y esquemas de autenticación.\n- **Tareas**: un agente cliente envía un **mensaje**; el trabajo largo se convierte en una **tarea** con ciclo de vida (`submitted → working → input-required → completed / failed`). Los resultados vuelven como **artifacts** formados por partes (texto, archivos, JSON).\n- **Transporte**: JSON-RPC 2.0 sobre HTTPS (`message/send`, `tasks/get`), **SSE** para transmitir el avance y **push notifications** (webhooks) para trabajos que duran horas. La v0.3 agregó gRPC.\n- **Opacidad**: los agentes nunca comparten memoria, prompts ni herramientas; cada uno es una caja negra detrás de un contrato.\n\n**A2A vs. MCP**: [[mcp]] conecta un agente *hacia abajo* con herramientas y datos, y el agente lleva el control. A2A conecta agentes *de lado* como pares que negocian, hacen preguntas de seguimiento y ejecutan tareas largas. Un agente A2A remoto muchas veces usa MCP por dentro.\n\nBaño de realidad: A2A es más joven y menos adoptado que MCP, la especificación todavía cambia entre versiones y la salida de un agente remoto es entrada no confiable. Dentro de un mismo código, una llamada a función o [[orchestrator-workers]] le gana a un protocolo de red."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant C as Client agent\n  participant R as Remote agent\n  participant T as Its tools via MCP\n  C->>R: GET /.well-known/agent-card.json\n  R-->>C: Agent Card (skills, auth)\n  C->>R: message/send (goal)\n  R-->>C: Task id, state working\n  R->>T: tools/call (hidden from C)\n  T-->>R: results\n  R-->>C: state input-required + question\n  C->>R: message/send (answer, same context)\n  R-->>C: completed + artifacts",
+    "caption": {
+      "en": "Discover through the Agent Card, delegate a task, answer follow-ups in the same context, receive artifacts. How the remote agent works stays opaque.",
+      "es": "Descubre mediante la Agent Card, delega una tarea, responde preguntas en el mismo contexto y recibe artifacts. Cómo trabaja el agente remoto queda oculto."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Discover a remote agent and delegate a task", "es": "Descubrir un agente remoto y delegarle una tarea" },
+    "source": "import time, uuid\nimport httpx\n\nAGENT = \"https://agents.supplier.example\"   # another org's agent: treat as untrusted\n\ndef rpc(url: str, method: str, params: dict, token: str) -> dict:\n    body = {\"jsonrpc\": \"2.0\", \"id\": str(uuid.uuid4()), \"method\": method, \"params\": params}\n    r = httpx.post(url, json=body, headers={\"Authorization\": f\"Bearer {token}\"}, timeout=30)\n    r.raise_for_status()\n    return r.json()[\"result\"]\n\n# 1) Discovery: the Agent Card lists skills, endpoint, auth schemes, streaming support\ncard = httpx.get(f\"{AGENT}/.well-known/agent-card.json\").json()\nassert any(s[\"id\"] == \"quote-bulk-order\" for s in card[\"skills\"])\ntoken = get_oauth_token(card[\"securitySchemes\"])   # helper: your IdP + their scheme\n\n# 2) Send work as a message; long work comes back as a Task with an id\ntask = rpc(card[\"url\"], \"message/send\", {\"message\": {\n    \"role\": \"user\", \"messageId\": str(uuid.uuid4()),\n    \"parts\": [{\"kind\": \"text\", \"text\": \"Quote 500 units of SKU 88-A, delivery by Dec 15\"}],\n}}, token)\n\n# 3) Track it (production: message/stream over SSE, or a push-notification webhook)\nwhile task[\"status\"][\"state\"] in (\"submitted\", \"working\"):\n    time.sleep(5)\n    task = rpc(card[\"url\"], \"tasks/get\", {\"id\": task[\"id\"]}, token)\n\nif task[\"status\"][\"state\"] == \"input-required\":\n    ask_human(task[\"status\"].get(\"message\"))   # the remote agent needs more info\nfor art in task.get(\"artifacts\", []):          # outputs: text, files, structured data\n    handle(validate(art[\"parts\"]))             # untrusted input: schema-check first"
+  },
+  "example": {
+    "en": "A retailer's procurement agent needs bulk quotes from three suppliers, each running its own agent on a different framework and cloud. Without a standard: three bespoke APIs, three auth flows, three polling schemes. With A2A it reads each supplier's Agent Card, sends one `message/send` per supplier and gets three tasks back. One supplier answers `input-required` (*\"which warehouse?\"*), resolved in the same context. Quotes arrive as structured artifacts 2–40 minutes later via push notifications. The procurement agent never sees the suppliers' prompts or tools, and validates every artifact against a schema before a human approves the order.",
+    "es": "El agente de compras de un retailer necesita cotizaciones por volumen de tres proveedores, cada uno con su propio agente sobre un framework y una nube distintos. Sin un estándar: tres APIs a medida, tres flujos de autenticación y tres esquemas de polling. Con A2A lee la Agent Card de cada proveedor, envía un `message/send` a cada uno y recibe tres tareas. Un proveedor responde `input-required` (*\"¿a qué almacén?\"*) y se resuelve en el mismo contexto. Las cotizaciones llegan como artifacts estructurados entre 2 y 40 minutos después mediante push notifications. El agente de compras nunca ve los prompts ni las herramientas de los proveedores, y valida cada artifact contra un esquema antes de que una persona apruebe la orden."
+  },
+  "pros": [
+    { "en": "Vendor-neutral: agents on different frameworks and clouds interoperate through one contract.", "es": "Neutral respecto al proveedor: agentes en distintos frameworks y nubes interoperan con un solo contrato." },
+    { "en": "Built for long-running, stateful work: task lifecycle, streaming, push notifications, input-required.", "es": "Pensado para trabajo largo y con estado: ciclo de vida de tareas, streaming, push notifications e input-required." },
+    { "en": "Opaque by design: collaborate without exposing prompts, tools or internal data.", "es": "Opaco por diseño: colaboras sin exponer prompts, herramientas ni datos internos." },
+    { "en": "Reuses standard web plumbing: HTTPS, OAuth/OIDC, API keys, mTLS.", "es": "Reutiliza la infraestructura web estándar: HTTPS, OAuth/OIDC, API keys y mTLS." }
+  ],
+  "cons": [
+    { "en": "Young and evolving: methods were renamed between versions (e.g. `tasks/send` became `message/send`).", "es": "Joven y en evolución: los métodos cambiaron de nombre entre versiones (p. ej. `tasks/send` pasó a `message/send`)." },
+    { "en": "Far less real adoption than MCP; many integrations are still demos.", "es": "Mucha menos adopción real que MCP; muchas integraciones todavía son demos." },
+    { "en": "Each hop adds latency, cost and a trust boundary; debugging spans organizations.", "es": "Cada salto suma latencia, costo y una frontera de confianza; depurar implica a varias organizaciones." },
+    { "en": "Cross-agent prompt injection: a remote agent's output can steer yours.", "es": "Prompt injection entre agentes: la salida de un agente remoto puede dirigir al tuyo." }
+  ],
+  "whenToUse": {
+    "en": "Agents owned by different organizations or vendors that must delegate long-running, multi-turn work to each other: supplier networks, enterprise platforms (CRM agent ↔ ITSM agent), agent marketplaces.",
+    "es": "Agentes de distintas organizaciones o proveedores que deben delegarse trabajo largo y de varios turnos: redes de proveedores, plataformas empresariales (agente de CRM ↔ agente de ITSM), marketplaces de agentes."
+  },
+  "whenNotToUse": {
+    "en": "Agents inside one codebase or team: call them as functions or sub-agents. If the remote \"agent\" is really a stateless capability, expose it as an MCP tool; that is simpler and far better supported.",
+    "es": "Agentes dentro de un mismo código o equipo: llámalos como funciones o subagentes. Si el \"agente\" remoto en realidad es una capacidad sin estado, exponlo como tool MCP; es más simple y tiene mucho más soporte."
+  },
+  "numbers": [
+    { "en": "Launched Apr 2025 by Google with 50+ partners; moved to the Linux Foundation in Jun 2025 (founding members include AWS, Cisco, Microsoft, Salesforce, SAP, ServiceNow).", "es": "Lanzado en abr. 2025 por Google con más de 50 socios; pasó a la Linux Foundation en jun. 2025 (entre los miembros fundadores: AWS, Cisco, Microsoft, Salesforce, SAP, ServiceNow)." },
+    { "en": "Wire formats: JSON-RPC 2.0 over HTTPS, SSE streaming, webhook push; v0.3 (Jul 2025) added gRPC and signed Agent Cards.", "es": "Formatos: JSON-RPC 2.0 sobre HTTPS, streaming con SSE y push por webhook; la v0.3 (jul. 2025) agregó gRPC y Agent Cards firmadas." },
+    { "en": "Rule of thumb: each agent hop is a full LLM loop (seconds to minutes), so keep delegation chains to 1–2 hops.", "es": "Regla práctica: cada salto entre agentes es un ciclo completo de LLM (de segundos a minutos), así que limita las cadenas de delegación a 1–2 saltos." }
+  ],
+  "pitfalls": [
+    { "en": "Using A2A between agents you own in one repo: a network protocol where a function call would do.", "es": "Usar A2A entre agentes propios en un mismo repo: un protocolo de red donde bastaba una llamada a función." },
+    { "en": "Trusting an Agent Card at face value: anyone can publish one claiming any skill. Verify domain, signature and auth.", "es": "Creerle a una Agent Card sin más: cualquiera puede publicar una que diga tener cualquier habilidad. Verifica dominio, firma y autenticación." },
+    { "en": "Sending the remote agent your user's full context or credentials instead of the minimum the task needs.", "es": "Mandarle al agente remoto todo el contexto o las credenciales de tu usuario en lugar de lo mínimo que la tarea necesita." },
+    { "en": "Blocking synchronously on long tasks instead of streaming or push notifications with timeouts.", "es": "Esperar de forma síncrona tareas largas en vez de usar streaming o push notifications con timeouts." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "MCP or A2A: do I need both?", "es": "¿MCP o A2A? ¿Necesito los dos?" },
+      "a": {
+        "en": "They answer different questions. MCP is agent-to-tool: my agent discovers and calls functions and reads data, and stays in control. A2A is agent-to-agent: I delegate a goal to an autonomous peer that may take minutes, ask me follow-up questions and return artifacts, without exposing its internals. Most systems need only MCP today. I add A2A when I must delegate to an agent another organization or vendor owns. If the remote thing is really a stateless capability, I'd consume it as an MCP tool instead.",
+        "es": "Responden preguntas distintas. MCP es agente a herramienta: mi agente descubre y llama funciones, lee datos y mantiene el control. A2A es agente a agente: delego un objetivo a un par autónomo que puede tardar minutos, hacerme preguntas de seguimiento y devolver artifacts, sin exponer cómo funciona por dentro. Hoy la mayoría de los sistemas solo necesita MCP. Agrego A2A cuando tengo que delegar a un agente que es de otra organización o proveedor. Si lo remoto en realidad es una capacidad sin estado, prefiero consumirlo como tool MCP."
+      }
+    },
+    {
+      "q": { "en": "What security concerns does A2A raise?", "es": "¿Qué preocupaciones de seguridad plantea A2A?" },
+      "a": {
+        "en": "Three trust boundaries. Identity: an Agent Card is just JSON at a URL, so I verify the domain, use signed cards where available and authenticate with OAuth or mTLS, never anonymously. Data: I send the minimum context the task needs, never my user's credentials, and I log what crossed the boundary. Output: the remote agent's messages and artifacts are untrusted input and a prompt-injection vector, so I schema-validate them and require human approval before they trigger side effects like payments.",
+        "es": "Hay tres fronteras de confianza. Identidad: una Agent Card es solo un JSON en una URL, así que verifico el dominio, uso tarjetas firmadas cuando existen y me autentico con OAuth o mTLS, nunca de forma anónima. Datos: envío el contexto mínimo que necesita la tarea, nunca las credenciales de mi usuario, y registro lo que cruzó la frontera. Salida: los mensajes y artifacts del agente remoto son entrada no confiable y un vector de prompt injection, así que los valido contra un esquema y exijo aprobación humana antes de que disparen efectos secundarios como pagos."
+      }
+    }
+  ],
+  "related": ["mcp", "multi-agent", "orchestrator-workers", "durable-agents", "prompt-injection", "api-design"],
+  "sources": [
+    { "title": "Google Developers Blog — A2A: A new era of agent interoperability (2025)", "url": "https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/" },
+    { "title": "A2A Protocol — documentation and specification", "url": "https://a2a-protocol.org/" },
+    { "title": "A2A on GitHub (Linux Foundation project)", "url": "https://github.com/a2aproject/A2A" }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "id": "tool-calling",
+  "domain": "agents",
+  "level": "core",
+  "title": { "en": "Tool / function calling", "es": "Tool calling / function calling" },
+  "aliases": ["function calling", "tool use", "tool_use", "tool_calls", "tool_choice", "parallel tool calls", "JSON Schema tools"],
+  "tldr": {
+    "en": "The model never runs anything: it emits a tool name plus JSON arguments, your code validates and executes it, and the result goes back as a message so the model can continue.",
+    "es": "El modelo nunca ejecuta nada: emite el nombre de una herramienta y argumentos en JSON, tu código los valida y ejecuta, y el resultado vuelve como mensaje para que el modelo continúe."
+  },
+  "analogy": {
+    "en": "A manager who can only act through request forms: \"refund order A-123\". Finance checks the form, does the refund and sends back a receipt. The manager never touches the bank.",
+    "es": "Un gerente que solo puede actuar con formularios: \"reembolsar el pedido A-123\". Finanzas revisa el formulario, hace el reembolso y le devuelve un comprobante. El gerente nunca toca el banco."
+  },
+  "explain": {
+    "en": "**Tool calling** (function calling) lets a model use your code. The protocol:\n\n1. You send the conversation plus **tool definitions**: `name`, `description` and a **JSON Schema** for the parameters. They cost prompt tokens on every call.\n2. If a tool helps, the model replies with a **structured call** instead of prose, e.g. `get_order({\"order_id\": \"A-123\"})`, tagged with a call id.\n3. **Your code** parses, validates, authorizes and executes it. The model never runs anything itself.\n4. You append the result as a message tied to that id (`tool` role in OpenAI, a `tool_result` block in Anthropic) and call the model again.\n5. It answers or asks for more calls. That cycle is the agent loop ([[react]]).\n\nControls worth knowing:\n\n- **`tool_choice`**: `auto` (model decides), `required`/`any` (must call one), a named tool (forced), or `none`.\n- **Parallel calls**: one turn can hold several independent calls; run them concurrently and return all results together. Disable it when order matters.\n- **Strict schemas** (OpenAI `strict: true`, constrained decoding as in [[structured-outputs]]): arguments always match the schema, but can still be *wrong*. Validate values.\n- **Errors are results**: return `Error: order A-123 not found` (Anthropic: `is_error: true`) so the model can recover.\n\nTreat tool results as untrusted input: a [[prompt-injection]] vector.",
+    "es": "El **tool calling** (function calling) le permite al modelo usar tu código. El protocolo:\n\n1. Envías la conversación más las **definiciones de herramientas**: `name`, `description` y un **JSON Schema** para los parámetros. Cuestan tokens de prompt en cada llamada.\n2. Si una herramienta sirve, el modelo responde con una **llamada estructurada** en vez de prosa, por ejemplo `get_order({\"order_id\": \"A-123\"})`, marcada con un id de llamada.\n3. **Tu código** la parsea, valida, autoriza y ejecuta. El modelo nunca ejecuta nada por sí mismo.\n4. Agregas el resultado como un mensaje ligado a ese id (rol `tool` en OpenAI, un bloque `tool_result` en Anthropic) y vuelves a llamar al modelo.\n5. El modelo responde o pide más llamadas. Ese ciclo es el loop del agente ([[react]]).\n\nControles que conviene conocer:\n\n- **`tool_choice`**: `auto` (decide el modelo), `required`/`any` (debe llamar alguna), una herramienta específica (forzada) o `none`.\n- **Llamadas en paralelo**: un turno puede traer varias llamadas independientes; ejecútalas de forma concurrente y devuelve todos los resultados juntos. Desactívalo cuando el orden importa.\n- **Esquemas estrictos** (`strict: true` en OpenAI, decodificación restringida como en [[structured-outputs]]): los argumentos siempre cumplen el esquema, pero pueden estar *equivocados*. Valida los valores.\n- **Los errores son resultados**: devuelve `Error: order A-123 not found` (en Anthropic, `is_error: true`) para que el modelo se recupere.\n\nTrata los resultados de las herramientas como entrada no confiable: son un vector de [[prompt-injection]]."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant App as Your code\n  participant M as Model\n  participant T as Tool or API\n  App->>M: messages + tool schemas\n  M-->>App: tool_use get_order(A-123)\n  App->>App: validate args, authorize\n  App->>T: execute\n  T-->>App: result or error\n  App->>M: tool_result (same call id)\n  M-->>App: final answer or more calls",
+    "caption": {
+      "en": "The model only proposes calls; your code validates, authorizes and executes them.",
+      "es": "El modelo solo propone llamadas; tu código las valida, autoriza y ejecuta."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Minimal tool loop with the Anthropic SDK", "es": "Loop mínimo de herramientas con el SDK de Anthropic" },
+    "source": "import anthropic\n\nclient = anthropic.Anthropic()\nMODEL = \"claude-sonnet-4-5\"  # any tool-capable model\n\nTOOLS = [{\n    \"name\": \"get_order\",\n    \"description\": \"Look up one order by id. Returns status, items and refund state.\",\n    \"input_schema\": {\n        \"type\": \"object\",\n        \"properties\": {\"order_id\": {\"type\": \"string\", \"description\": \"Like A-123\"}},\n        \"required\": [\"order_id\"],\n    },\n}]\nIMPL = {\"get_order\": get_order}  # your real functions\n\ndef run(user_msg: str, max_turns: int = 6) -> str:\n    messages = [{\"role\": \"user\", \"content\": user_msg}]\n    for _ in range(max_turns):\n        resp = client.messages.create(model=MODEL, max_tokens=1024,\n                                      tools=TOOLS, messages=messages)\n        if resp.stop_reason != \"tool_use\":  # plain answer: done\n            return \"\".join(b.text for b in resp.content if b.type == \"text\")\n        messages.append({\"role\": \"assistant\", \"content\": resp.content})  # keep the calls\n        results = []\n        for b in [b for b in resp.content if b.type == \"tool_use\"]:  # may be parallel\n            try:  # validate + authorize here: the model only *asked*\n                out, err = str(IMPL[b.name](**b.input)), False\n            except Exception as e:\n                out, err = f\"Error: {e}\", True  # let the model recover\n            results.append({\"type\": \"tool_result\", \"tool_use_id\": b.id,\n                            \"content\": out, \"is_error\": err})\n        messages.append({\"role\": \"user\", \"content\": results})  # all results, one message\n    raise RuntimeError(\"no final answer within max_turns\")"
+  },
+  "example": {
+    "en": "A banking assistant gets *\"How much did I spend on Uber last month?\"*. The model returns `search_transactions(merchant=\"Uber\", start=\"2026-10-01\", end=\"2026-10-31\")`. The schema has **no** `account_id` parameter: your code injects it from the session, so an injected prompt can't query someone else's account. It runs a read-only query and returns 7 rows as ~150 tokens of compact JSON, not 40 raw fields per row. The model answers *\"$143.20 across 7 rides\"*: two model calls, ~2 s. Moving money goes through a separate tool that requires explicit user confirmation.",
+    "es": "Un asistente bancario recibe *\"¿Cuánto gasté en Uber el mes pasado?\"*. El modelo devuelve `search_transactions(merchant=\"Uber\", start=\"2026-10-01\", end=\"2026-10-31\")`. El esquema **no** tiene parámetro `account_id`: tu código lo inyecta desde la sesión, así un prompt inyectado no puede consultar la cuenta de otra persona. Corre una consulta de solo lectura y devuelve 7 filas como ~150 tokens de JSON compacto, no 40 campos crudos por fila. El modelo responde *\"$143.20 en 7 viajes\"*: dos llamadas al modelo, ~2 s. Mover dinero pasa por otra herramienta que exige confirmación explícita del usuario."
+  },
+  "pros": [
+    { "en": "Turns the model into a planner over real systems: APIs, databases, search, code execution.", "es": "Convierte al modelo en un planificador sobre sistemas reales: APIs, bases de datos, búsqueda, ejecución de código." },
+    { "en": "Schema-shaped arguments instead of parsing free text with regex.", "es": "Argumentos con la forma del esquema en lugar de parsear texto libre con regex." },
+    { "en": "Your code stays the security boundary: every action passes your validation and authorization.", "es": "Tu código sigue siendo la frontera de seguridad: cada acción pasa por tu validación y autorización." },
+    { "en": "Parallel calls collapse independent lookups into one round trip.", "es": "Las llamadas en paralelo juntan consultas independientes en un solo viaje de ida y vuelta." }
+  ],
+  "cons": [
+    { "en": "Every round trip is another full model call: latency and tokens add up.", "es": "Cada ida y vuelta es otra llamada completa al modelo: la latencia y los tokens se acumulan." },
+    { "en": "Tool definitions are re-sent on every request and eat context.", "es": "Las definiciones de herramientas se reenvían en cada request y consumen contexto." },
+    { "en": "Valid-looking arguments can still be wrong: wrong id, wrong date range, invented values.", "es": "Argumentos que parecen válidos pueden estar mal: id equivocado, rango de fechas incorrecto, valores inventados." }
+  ],
+  "whenToUse": {
+    "en": "Whenever the model needs fresh or private data, exact computation, or to take actions: lookups, search, SQL, code execution, tickets, emails. Also a reliable way to get structured output (force one tool).",
+    "es": "Siempre que el modelo necesite datos frescos o privados, cálculos exactos o ejecutar acciones: consultas, búsqueda, SQL, ejecución de código, tickets, correos. También sirve para obtener salida estructurada confiable (forzando una herramienta)."
+  },
+  "whenNotToUse": {
+    "en": "When your code already knows which call to make: run it yourself and put the result in the prompt, skipping a round trip. Keep dangerous actions out of the toolset entirely.",
+    "es": "Cuando tu código ya sabe qué llamada hacer: ejecútala tú y pon el resultado en el prompt, sin un viaje extra al modelo. Deja las acciones peligrosas fuera del conjunto de herramientas."
+  },
+  "numbers": [
+    { "en": "τ-bench (2024): gpt-4o function-calling agents solved <50% of tasks, and pass^8 (all 8 retries succeed) was <25% in retail.", "es": "τ-bench (2024): agentes con function calling sobre gpt-4o resolvieron <50% de las tareas, y pass^8 (que acierten los 8 intentos) fue <25% en retail." },
+    { "en": "Anthropic adds a hidden tool-use system prompt of ~300–350 tokens on recent Claude models whenever tools are passed.", "es": "Anthropic agrega un system prompt oculto de uso de herramientas de ~300–350 tokens en los modelos Claude recientes cada vez que envías tools." },
+    { "en": "Rule of thumb: a tool definition costs ~50–300 tokens, so 30 tools add several thousand tokens to every call.", "es": "Regla práctica: una definición de herramienta cuesta ~50–300 tokens, así que 30 herramientas suman varios miles de tokens a cada llamada." },
+    { "en": "Latency: N sequential tool steps ≈ N model calls; independent calls returned in one parallel turn cost one.", "es": "Latencia: N pasos de herramientas en secuencia ≈ N llamadas al modelo; las llamadas independientes en un mismo turno paralelo cuestan una." }
+  ],
+  "pitfalls": [
+    { "en": "Letting the model supply identity or tenant ids: inject them server-side from the session.", "es": "Dejar que el modelo ponga la identidad o el id del tenant: inyéctalos del lado del servidor desde la sesión." },
+    { "en": "Dropping the assistant turn that holds the calls, or mismatching call ids: the API rejects the request.", "es": "Omitir el turno del asistente que contiene las llamadas, o no hacer coincidir los ids: la API rechaza el request." },
+    { "en": "Raising exceptions instead of returning errors as results: the loop dies where the model could have retried.", "es": "Lanzar excepciones en vez de devolver los errores como resultado: el loop muere donde el modelo podría haber reintentado." },
+    { "en": "Returning raw 10K-row payloads: truncate, paginate and summarize ([[tool-design]]).", "es": "Devolver payloads crudos de 10K filas: trunca, pagina y resume ([[tool-design]])." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Does the model execute the function? Why does it matter?", "es": "¿El modelo ejecuta la función? ¿Por qué importa?" },
+      "a": {
+        "en": "No. It only emits a name and JSON arguments; my code decides whether anything runs. That makes my code the security boundary: I validate arguments against the schema and business rules, take identity and permissions from the session rather than from the model, and require confirmation for irreversible actions. Side effects are mine to make safe too: idempotency keys on writes, timeouts, and errors returned as tool results so the model can recover instead of the loop crashing.",
+        "es": "No. Solo emite un nombre y argumentos en JSON; mi código decide si algo se ejecuta. Eso convierte a mi código en la frontera de seguridad: valido los argumentos contra el esquema y las reglas de negocio, tomo la identidad y los permisos de la sesión y no del modelo, y pido confirmación para acciones irreversibles. Los efectos secundarios también son mi responsabilidad: llaves de idempotencia en escrituras, timeouts y errores devueltos como resultado de la herramienta para que el modelo se recupere en vez de que se caiga el loop."
+      }
+    },
+    {
+      "q": { "en": "The agent must choose among 150 internal tools. How do you design it?", "es": "El agente debe elegir entre 150 herramientas internas. ¿Cómo lo diseñas?" },
+      "a": {
+        "en": "I don't put 150 definitions in every prompt: they cost thousands of tokens per call and selection accuracy drops as tools overlap. First I consolidate into fewer task-shaped tools with namespaced names. Then I scope by context: a router or the current workflow step exposes only the 10–20 relevant ones, or the model searches a tool catalog and loads definitions on demand. I measure tool-selection and argument accuracy on an eval set built from real traces, before and after.",
+        "es": "No pongo 150 definiciones en cada prompt: cuestan miles de tokens por llamada y la precisión al elegir baja cuando las herramientas se solapan. Primero consolido en menos herramientas orientadas a tareas, con nombres con namespace. Después acoto por contexto: un router o el paso actual del workflow expone solo las 10–20 relevantes, o el modelo busca en un catálogo y carga definiciones bajo demanda. Mido la precisión al elegir herramienta y argumentos en un set de eval armado con trazas reales, antes y después."
+      }
+    }
+  ],
+  "related": ["tool-design", "react", "structured-outputs", "mcp", "prompt-injection", "agents-vs-workflows"],
+  "sources": [
+    { "title": "Anthropic — Tool use with Claude (docs)", "url": "https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview" },
+    { "title": "OpenAI — Function calling (docs)", "url": "https://platform.openai.com/docs/guides/function-calling" },
+    { "title": "Yao et al. — τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains (2024)", "url": "https://arxiv.org/abs/2406.12045" },
+    { "title": "Berkeley Function Calling Leaderboard (BFCL)", "url": "https://gorilla.cs.berkeley.edu/leaderboard.html" }
+  ]
+}

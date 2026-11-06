@@ -1,0 +1,96 @@
+{
+  "id": "llm-gateway",
+  "domain": "inference",
+  "level": "advanced",
+  "title": { "en": "LLM gateway", "es": "LLM gateway (gateway de IA)" },
+  "aliases": ["AI gateway", "LLM proxy", "model gateway", "virtual keys", "LiteLLM", "Portkey", "Envoy AI Gateway", "Kong AI Gateway"],
+  "tldr": {
+    "en": "One proxy in front of every model provider: apps call a single API, and the gateway handles keys, per-team token quotas, retries and fallbacks, caching, redaction, logging and cost attribution in one place.",
+    "es": "Un solo proxy delante de todos los proveedores de modelos: las apps llaman a una única API y el gateway resuelve keys, cuotas de tokens por equipo, reintentos y fallbacks, caché, enmascaramiento, logs y atribución de costos en un solo lugar."
+  },
+  "analogy": {
+    "en": "A company travel desk: employees ask for a flight, the desk books it with the corporate card, enforces each department's budget, rebooks on another airline when one cancels, and sends finance one itemized bill.",
+    "es": "La agencia de viajes interna de una empresa: pides un vuelo, ella lo compra con la tarjeta corporativa, respeta el presupuesto de cada área, te cambia de aerolínea si una cancela y le manda a finanzas una sola factura detallada."
+  },
+  "explain": {
+    "en": "An **LLM gateway** is a reverse proxy between every application and every model provider. Apps call one OpenAI-compatible endpoint with a gateway-issued key; the gateway decides whether the call is allowed, where it goes and what gets recorded.\n\nWhat it centralizes:\n\n- **Identity**: teams get **virtual keys**. Real provider keys never leave the gateway, and you can revoke one team without rotating everyone.\n- **Quotas**: per-team limits on requests *and* tokens per minute, plus dollar budgets. One 100k-token call is 1 request but can drain a whole TPM budget.\n- **Reliability**: retries with backoff on 429/5xx, load balancing across keys and regions, cross-provider **fallbacks**.\n- **Cost and tracing**: every call logged with model, tokens, latency, cost and team tag. That is your chargeback and your [[llm-observability]].\n- **Policy**: PII redaction, [[guardrails]] hooks, model allowlists, [[semantic-caching]].\n\nCommon picks: **LiteLLM** (open-source proxy), **Portkey**, **Kong AI Gateway**, **Envoy AI Gateway**, **Cloudflare AI Gateway**.\n\nWhy architects care: it is the **control point of an AI platform**. Once all traffic flows through it, switching a model, enforcing a new policy or answering *\"who spent $40k last week?\"* is a config change, not a migration across 30 services.",
+    "es": "Un **LLM gateway** es un reverse proxy entre todas tus aplicaciones y todos los proveedores de modelos. Las apps llaman a un único endpoint compatible con la API de OpenAI usando una key emitida por el gateway; el gateway decide si la llamada se permite, a dónde va y qué se registra.\n\nQué centraliza:\n\n- **Identidad**: cada equipo recibe **virtual keys**. Las keys reales del proveedor nunca salen del gateway y puedes revocar a un equipo sin rotar las de todos.\n- **Cuotas**: límites por equipo de requests *y* de tokens por minuto, más presupuestos en dólares. Una llamada de 100k tokens es 1 request, pero puede agotar todo un presupuesto de TPM.\n- **Confiabilidad**: reintentos con backoff ante 429/5xx, balanceo entre keys y regiones, y **fallbacks** a otro proveedor.\n- **Costos y trazas**: cada llamada queda registrada con modelo, tokens, latencia, costo y equipo. Esa es tu base de chargeback y tu [[llm-observability]].\n- **Políticas**: enmascaramiento de PII, hooks de [[guardrails]], listas de modelos permitidos, [[semantic-caching]].\n\nOpciones comunes: **LiteLLM** (proxy open source), **Portkey**, **Kong AI Gateway**, **Envoy AI Gateway**, **Cloudflare AI Gateway**.\n\nPor qué le importa a un arquitecto: es el **punto de control de una plataforma de IA**. Cuando todo el tráfico pasa por ahí, cambiar de modelo, imponer una política nueva o responder *\"¿quién gastó $40k la semana pasada?\"* es un cambio de configuración, no una migración en 30 servicios."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  A1[Chat app] --> G[\"Gateway<br/>virtual key auth\"]\n  A2[Agent service] --> G\n  A3[Batch job] --> G\n  G --> Q{\"Quota OK?<br/>RPM + TPM\"}\n  Q -->|no| E[429 to caller]\n  Q -->|yes| P[\"PII redaction<br/>+ guardrails\"]\n  P --> C{Cache hit?}\n  C -->|yes| H[Return cached answer]\n  C -->|no| R{\"Router<br/>retry + fallback\"}\n  R -->|primary| P1[OpenAI]\n  R -->|fallback| P2[Anthropic]\n  R -->|cheap tier| P3[Self-hosted vLLM]\n  G -.-> L[(\"Logs, traces,<br/>cost per team\")]",
+    "caption": {
+      "en": "Every call crosses one control point: identity, quota, policy and cache are checked before any provider sees it, and the bill is tagged to a team.",
+      "es": "Cada llamada cruza un único punto de control: identidad, cuota, políticas y caché se revisan antes de que la vea un proveedor, y el costo queda asignado a un equipo."
+    }
+  },
+  "code": {
+    "lang": "yaml",
+    "title": { "en": "LiteLLM proxy: aliases, fallbacks, cache, virtual keys", "es": "Proxy LiteLLM: alias, fallbacks, caché y virtual keys" },
+    "source": "# LiteLLM proxy config.yaml. Apps keep the OpenAI SDK and only change:\n#   OpenAI(base_url=\"https://llm-gw.internal/v1\", api_key=TEAM_VIRTUAL_KEY)\nmodel_list:\n  - model_name: chat-default             # alias apps call; swap the model behind it\n    litellm_params:\n      model: openai/gpt-4.1-mini          # example ids: any provider/model\n      api_key: os.environ/OPENAI_API_KEY  # real key lives only here\n      rpm: 3000                           # capacity of this deployment\n      tpm: 2000000\n  - model_name: chat-fallback\n    litellm_params:\n      model: anthropic/claude-sonnet-4-5\n      api_key: os.environ/ANTHROPIC_API_KEY\n\nlitellm_settings:\n  num_retries: 2                          # 429 / 5xx / timeouts, with backoff\n  request_timeout: 60\n  fallbacks: [{\"chat-default\": [\"chat-fallback\"]}]\n  cache: true                             # exact-match response cache\n  cache_params:\n    type: redis\n\ngeneral_settings:\n  master_key: os.environ/LITELLM_MASTER_KEY\n  database_url: os.environ/DATABASE_URL   # virtual keys, budgets, spend logs\n\n# One key per team: POST /key/generate\n#   {\"team_id\": \"search\", \"models\": [\"chat-default\"],\n#    \"rpm_limit\": 300, \"tpm_limit\": 200000,\n#    \"max_budget\": 2000, \"budget_duration\": \"30d\"}"
+  },
+  "example": {
+    "en": "A company has 25 teams calling OpenAI directly, ~40 keys scattered across repos and one shared bill. They put LiteLLM in front: each team gets a virtual key with a monthly budget and a TPM cap, and `chat-default` falls back to Claude. Week one, a nightly job sending 80k-token prompts hits its own 200k TPM cap instead of throttling the support bot. Month two, during a ~40-minute provider outage, the bot fails over and stays up. Finance gets per-team spend, and no app code changed beyond a base URL.",
+    "es": "Una empresa tiene 25 equipos llamando directo a OpenAI, ~40 keys regadas por los repos y una sola factura compartida. Ponen LiteLLM adelante: cada equipo recibe una virtual key con presupuesto mensual y tope de TPM, y `chat-default` hace fallback a Claude. La primera semana, un job nocturno que manda prompts de 80k tokens choca con su propio tope de 200k TPM en lugar de frenar al bot de soporte. El segundo mes, durante una caída de ~40 minutos del proveedor, el bot cambia de proveedor y sigue arriba. Finanzas ve el gasto por equipo y ninguna app cambió más que su base URL."
+  },
+  "pros": [
+    { "en": "Swap models, add providers or enforce new policy in one place, without touching apps.", "es": "Cambias modelos, agregas proveedores o impones políticas nuevas en un solo lugar, sin tocar las apps." },
+    { "en": "Real cost attribution and chargeback per team, feature and model.", "es": "Atribución real de costos y chargeback por equipo, funcionalidad y modelo." },
+    { "en": "Provider outages and 429s become fallbacks instead of incidents.", "es": "Las caídas del proveedor y los 429 se vuelven fallbacks en lugar de incidentes." },
+    { "en": "Provider keys stay out of app code; virtual keys are scoped and revocable.", "es": "Las keys del proveedor quedan fuera del código; las virtual keys tienen alcance limitado y se pueden revocar." }
+  ],
+  "cons": [
+    { "en": "A new critical-path dependency: if it goes down, every AI feature goes down.", "es": "Una dependencia nueva en el camino crítico: si se cae, se caen todas las funciones de IA." },
+    { "en": "One more hop; it must pass streams through unbuffered and stay in single-digit ms.", "es": "Un salto más; debe dejar pasar el streaming sin buffer y agregar pocos milisegundos." },
+    { "en": "A lowest-common-denominator API can hide provider-specific features unless it supports passthrough.", "es": "Una API de mínimo común denominador puede esconder funciones propias de cada proveedor si no soporta passthrough." }
+  ],
+  "whenToUse": {
+    "en": "As soon as several teams or several providers call LLMs: the moment you need spend per team, central key management, quotas or failover.",
+    "es": "En cuanto varios equipos o varios proveedores usan LLMs: el momento en que necesitas gasto por equipo, gestión central de keys, cuotas o failover."
+  },
+  "whenNotToUse": {
+    "en": "One app, one team, one provider: the SDK with retries is enough. And don't build one from scratch before trying an open-source or managed gateway.",
+    "es": "Una app, un equipo, un proveedor: el SDK con reintentos alcanza. Y no construyas uno desde cero antes de probar un gateway open source o administrado."
+  },
+  "numbers": [
+    { "en": "Provider limits are two-dimensional: requests/min and tokens/min (Anthropic splits input and output TPM). Your quotas must be too.", "es": "Los límites de los proveedores tienen dos ejes: requests/min y tokens/min (Anthropic separa TPM de entrada y de salida). Tus cuotas también deben tenerlos." },
+    { "en": "Retry 429, 500/502/503, 529 (Anthropic overloaded) and timeouts with backoff + jitter; never retry 400/401/403.", "es": "Reintenta 429, 500/502/503, 529 (overloaded de Anthropic) y timeouts con backoff + jitter; nunca reintentes 400/401/403." },
+    { "en": "Rule of thumb: a gateway should add single-digit ms per call, negligible next to hundreds of ms of TTFT.", "es": "Regla práctica: un gateway debería agregar pocos milisegundos por llamada, despreciable frente a cientos de ms de TTFT." },
+    { "en": "LiteLLM exposes 100+ providers behind the OpenAI API format.", "es": "LiteLLM expone más de 100 proveedores detrás del formato de la API de OpenAI." }
+  ],
+  "pitfalls": [
+    { "en": "Limiting requests only: one batch job with 100k-token prompts starves everyone. Cap tokens per minute too.", "es": "Limitar solo requests: un job batch con prompts de 100k tokens deja sin capacidad a todos. Limita también tokens por minuto." },
+    { "en": "Falling back to a model nobody evaluated with that prompt: the outage becomes a silent quality drop.", "es": "Hacer fallback a un modelo que nadie evaluó con ese prompt: la caída se convierte en una baja de calidad silenciosa." },
+    { "en": "Logging full prompts unredacted: the gateway becomes the biggest PII store in the company.", "es": "Guardar prompts completos sin enmascarar: el gateway se vuelve el mayor almacén de PII de la empresa." },
+    { "en": "Running a single instance with in-memory counters: a new SPOF and limits that drift per replica. Use ≥2 replicas and shared Redis.", "es": "Correr una sola instancia con contadores en memoria: un nuevo punto único de falla y límites distintos por réplica. Usa ≥2 réplicas y Redis compartido." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why put a gateway in front of LLM providers instead of letting each team use the SDK?", "es": "¿Por qué poner un gateway delante de los proveedores en vez de que cada equipo use el SDK?" },
+      "a": {
+        "en": "Because keys, quotas, spend, failover, logging and PII policy are cross-cutting. Doing them in 30 services gives 30 implementations that drift and no single ledger of who spent what. A gateway gives me one place for policy and one source of truth for cost. The trade-off is a new critical-path hop, so I keep it thin and stateless, run it multi-zone with limits in Redis, and keep business logic out of it. I'd start with LiteLLM or a managed gateway rather than build one.",
+        "es": "Porque keys, cuotas, gasto, failover, logs y políticas de PII son transversales. Hacerlo en 30 servicios da 30 implementaciones que divergen y ningún registro único de quién gastó qué. Con un gateway tengo un solo lugar para políticas y una sola fuente de verdad del costo. El trade-off es un salto más en el camino crítico, así que lo mantengo delgado y sin estado, lo corro en varias zonas con límites en Redis y sin lógica de negocio. Empezaría con LiteLLM o un gateway administrado antes que construir uno."
+      }
+    },
+    {
+      "q": { "en": "Design per-team rate limiting for a shared LLM platform.", "es": "Diseña rate limiting por equipo para una plataforma compartida de LLMs." },
+      "a": {
+        "en": "I limit on two axes, requests and tokens per minute, because one long-context call costs as much as hundreds of short ones. Output tokens aren't known up front, so at admission I reserve input tokens plus max_tokens and reconcile with real usage from the response. Counters live in Redis with sliding windows, and monthly dollar budgets alert at 80%. Team quotas must sum below the provider's org limit with headroom, and interactive traffic gets priority over batch, or one team's burst becomes everyone's 429s.",
+        "es": "Limito en dos ejes, requests y tokens por minuto, porque una llamada de contexto largo cuesta lo mismo que cientos de llamadas cortas. Los tokens de salida no se conocen de antemano, así que al admitir reservo tokens de entrada más max_tokens y reconcilio con el uso real de la respuesta. Los contadores viven en Redis con ventanas deslizantes y los presupuestos mensuales en dólares alertan al 80%. La suma de cuotas debe quedar por debajo del límite de la organización con margen, y el tráfico interactivo tiene prioridad sobre el batch; si no, la ráfaga de un equipo se vuelve 429 para todos."
+      }
+    },
+    {
+      "q": { "en": "What breaks when the gateway fails over from GPT to Claude?", "es": "¿Qué se rompe cuando el gateway hace failover de GPT a Claude?" },
+      "a": {
+        "en": "Anything tuned to one model: prompts, tool-call and structured-output behavior, context window size, token counts since the tokenizers differ, and the prompt cache, which starts cold. So I treat fallbacks as pre-evaluated pairs: each route's fallback passed the same eval suite, with its own prompt variant if needed. Where I can, I fail over to the same model in another region or cloud, like Claude on Bedrock or GPT on Azure, because that changes nothing about behavior.",
+        "es": "Todo lo ajustado a un modelo: prompts, comportamiento de tool calls y structured outputs, tamaño de la ventana de contexto, conteo de tokens porque los tokenizadores difieren, y la caché de prompts, que arranca fría. Por eso trato los fallbacks como pares ya evaluados: el fallback de cada ruta pasó la misma suite de evals, con su propia variante de prompt si hace falta. Cuando puedo, hago failover al mismo modelo en otra región o nube, como Claude en Bedrock o GPT en Azure, porque eso no cambia el comportamiento."
+      }
+    }
+  ],
+  "related": ["model-routing", "semantic-caching", "llm-observability", "rate-limiting", "guardrails", "case-ai-platform"],
+  "sources": [
+    { "title": "LiteLLM — Proxy Server (LLM Gateway)", "url": "https://docs.litellm.ai/docs/simple_proxy" },
+    { "title": "Envoy AI Gateway — documentation", "url": "https://aigateway.envoyproxy.io/" },
+    { "title": "Cloudflare AI Gateway — documentation", "url": "https://developers.cloudflare.com/ai-gateway/" },
+    { "title": "Portkey AI Gateway (open source)", "url": "https://github.com/Portkey-AI/gateway" }
+  ]
+}
