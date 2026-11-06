@@ -2,8 +2,20 @@
   "id": "sagas-outbox",
   "domain": "systems",
   "level": "advanced",
-  "title": { "en": "Sagas & the outbox pattern", "es": "Sagas y el patrón outbox" },
-  "aliases": ["saga", "compensating transaction", "transactional outbox", "dual-write problem", "CDC", "Debezium", "orchestration vs choreography", "2PC"],
+  "title": {
+    "en": "Sagas & the outbox pattern",
+    "es": "Sagas y el patrón outbox"
+  },
+  "aliases": [
+    "saga",
+    "compensating transaction",
+    "transactional outbox",
+    "dual-write problem",
+    "CDC",
+    "Debezium",
+    "orchestration vs choreography",
+    "2PC"
+  ],
   "tldr": {
     "en": "Without distributed transactions, a saga chains local transactions and undoes completed steps with compensating actions on failure; the outbox makes each \"update DB + publish event\" atomic by writing both in one local transaction.",
     "es": "Sin transacciones distribuidas, una saga encadena transacciones locales y deshace los pasos completados con acciones compensatorias si algo falla; el outbox hace atómico cada \"actualizar la base + publicar evento\" escribiendo ambos en una sola transacción local."
@@ -25,7 +37,10 @@
   },
   "code": {
     "lang": "python",
-    "title": { "en": "Outbox write and a polling relay", "es": "Escritura al outbox y un relay por polling" },
+    "title": {
+      "en": "Outbox write and a polling relay",
+      "es": "Escritura al outbox y un relay por polling"
+    },
     "source": "import json, uuid\nimport psycopg\nfrom psycopg.types.json import Jsonb\n\ndef place_order(conn: psycopg.Connection, user_id: int, total: int) -> int:\n    # Order row and its event commit together or not at all: no dual write\n    with conn.transaction():\n        order_id = conn.execute(\n            \"INSERT INTO orders (user_id, total, status) \"\n            \"VALUES (%s, %s, 'PENDING') RETURNING id\", (user_id, total)).fetchone()[0]\n        conn.execute(\n            \"INSERT INTO outbox (id, aggregate_id, type, payload) VALUES (%s, %s, %s, %s)\",\n            (uuid.uuid4(), order_id, \"OrderPlaced\",\n             Jsonb({\"order_id\": order_id, \"total\": total})))\n    return order_id\n\ndef relay_once(conn: psycopg.Connection, producer, batch: int = 100) -> None:\n    # Debezium would tail the WAL instead of polling. At-least-once: a crash\n    # after flush() but before DELETE re-publishes, so consumers dedupe by id.\n    with conn.transaction():\n        rows = conn.execute(\n            \"SELECT id, aggregate_id, type, payload FROM outbox \"\n            \"ORDER BY created_at LIMIT %s FOR UPDATE\", (batch,)).fetchall()\n        for id_, agg, type_, payload in rows:\n            producer.send(\"orders\",\n                          key=str(agg).encode(),   # same key = same partition = ordered\n                          value=json.dumps({\"id\": str(id_), \"type\": type_, **payload}).encode())\n        producer.flush()\n        conn.execute(\"DELETE FROM outbox WHERE id = ANY(%s)\", ([r[0] for r in rows],))"
   },
   "example": {
@@ -33,15 +48,36 @@
     "es": "Un agente de viajes (LLM) planea tres tool calls: reservar un vuelo ($420), reservar un hotel ($310) y cobrar la tarjeta. La API del hotel responde *agotado*. El orquestador (Temporal), no el modelo, ejecuta la compensación registrada `cancel_flight(booking_id)`, reintentando hasta que funcione, y el agente vuelve a planear con otro hotel. La escritura en la base de cada herramienta y su evento `ToolExecuted` pasan por un outbox, así que facturación nunca cobra una reserva revertida ni se pierde una confirmada. Cobrar la tarjeta es el pivote: va al final y detrás de la confirmación del usuario."
   },
   "pros": [
-    { "en": "Cross-service consistency without 2PC or distributed locks; each service keeps its own database.", "es": "Consistencia entre servicios sin 2PC ni locks distribuidos; cada servicio conserva su propia base." },
-    { "en": "Failures get an explicit, tested recovery path instead of manual cleanup.", "es": "Las fallas tienen un camino de recuperación explícito y probado en lugar de limpieza manual." },
-    { "en": "The outbox makes \"state change + event\" atomic with a plain local transaction.", "es": "El outbox hace atómico el \"cambio de estado + evento\" con una simple transacción local." }
+    {
+      "en": "Cross-service consistency without 2PC or distributed locks; each service keeps its own database.",
+      "es": "Consistencia entre servicios sin 2PC ni locks distribuidos; cada servicio conserva su propia base."
+    },
+    {
+      "en": "Failures get an explicit, tested recovery path instead of manual cleanup.",
+      "es": "Las fallas tienen un camino de recuperación explícito y probado en lugar de limpieza manual."
+    },
+    {
+      "en": "The outbox makes \"state change + event\" atomic with a plain local transaction.",
+      "es": "El outbox hace atómico el \"cambio de estado + evento\" con una simple transacción local."
+    }
   ],
   "cons": [
-    { "en": "No isolation: intermediate states are visible, so you need semantic locks and careful step order.", "es": "Sin aislamiento: los estados intermedios son visibles, así que necesitas locks semánticos y un orden cuidadoso de pasos." },
-    { "en": "Compensations must be designed, idempotent and retried; some actions (a sent email) can't be undone.", "es": "Las compensaciones hay que diseñarlas, hacerlas idempotentes y reintentarlas; algunas acciones (un correo enviado) no se pueden deshacer." },
-    { "en": "The outbox adds relay lag and at-least-once duplicates.", "es": "El outbox agrega el atraso del relay y duplicados por la entrega at-least-once." },
-    { "en": "Choreographed sagas are hard to trace and debug across services.", "es": "Las sagas coreografiadas son difíciles de rastrear y depurar entre servicios." }
+    {
+      "en": "No isolation: intermediate states are visible, so you need semantic locks and careful step order.",
+      "es": "Sin aislamiento: los estados intermedios son visibles, así que necesitas locks semánticos y un orden cuidadoso de pasos."
+    },
+    {
+      "en": "Compensations must be designed, idempotent and retried; some actions (a sent email) can't be undone.",
+      "es": "Las compensaciones hay que diseñarlas, hacerlas idempotentes y reintentarlas; algunas acciones (un correo enviado) no se pueden deshacer."
+    },
+    {
+      "en": "The outbox adds relay lag and at-least-once duplicates.",
+      "es": "El outbox agrega el atraso del relay y duplicados por la entrega at-least-once."
+    },
+    {
+      "en": "Choreographed sagas are hard to trace and debug across services.",
+      "es": "Las sagas coreografiadas son difíciles de rastrear y depurar entre servicios."
+    }
   ],
   "whenToUse": {
     "en": "An operation spans services or external APIs that each own their data and you need all-or-compensated outcomes: orders, payments, bookings, multi-step agent actions. Outbox: whenever a DB change must reliably emit an event.",
@@ -52,44 +88,93 @@
     "es": "Cuando todo vive en una sola base: usa una transacción normal. No partas un servicio para terminar necesitando una saga; los pasos que deben estar estrictamente aislados van en una sola base."
   },
   "numbers": [
-    { "en": "Sagas were introduced by Garcia-Molina and Salem in 1987, for long-lived transactions in a single database.", "es": "Las sagas las propusieron Garcia-Molina y Salem en 1987, para transacciones de larga duración en una sola base." },
-    { "en": "2PC: two round trips with locks held throughout; a coordinator crash after PREPARE leaves participants blocked.", "es": "2PC: dos viajes de ida y vuelta con locks retenidos todo el tiempo; si el coordinador cae después del PREPARE, los participantes quedan bloqueados." },
-    { "en": "Postgres keeps WAL for an unconsumed replication slot indefinitely unless `max_slot_wal_keep_size` (PG 13+) caps it.", "es": "Postgres retiene el WAL de un replication slot sin consumir indefinidamente, salvo que `max_slot_wal_keep_size` (PG 13+) lo limite." }
+    {
+      "en": "Sagas were introduced by Garcia-Molina and Salem in 1987, for long-lived transactions in a single database.",
+      "es": "Las sagas las propusieron Garcia-Molina y Salem en 1987, para transacciones de larga duración en una sola base."
+    },
+    {
+      "en": "2PC: two round trips with locks held throughout; a coordinator crash after PREPARE leaves participants blocked.",
+      "es": "2PC: dos viajes de ida y vuelta con locks retenidos todo el tiempo; si el coordinador cae después del PREPARE, los participantes quedan bloqueados."
+    },
+    {
+      "en": "Postgres keeps WAL for an unconsumed replication slot indefinitely unless `max_slot_wal_keep_size` (PG 13+) caps it.",
+      "es": "Postgres retiene el WAL de un replication slot sin consumir indefinidamente, salvo que `max_slot_wal_keep_size` (PG 13+) lo limite."
+    }
   ],
   "pitfalls": [
-    { "en": "Publishing to Kafka right after commit and calling it an outbox: that's still a dual write.", "es": "Publicar a Kafka justo después del commit y llamarlo outbox: sigue siendo una doble escritura." },
-    { "en": "Non-idempotent compensations or consumers: at-least-once delivery runs the refund twice.", "es": "Compensaciones o consumidores no idempotentes: con entrega at-least-once el reembolso se ejecuta dos veces." },
-    { "en": "Letting the LLM improvise the undo: compensations are code registered per tool, not generated text.", "es": "Dejar que el LLM improvise cómo deshacer: las compensaciones son código registrado por herramienta, no texto generado." },
-    { "en": "An abandoned Debezium replication slot retains WAL until the Postgres disk fills.", "es": "Un replication slot de Debezium abandonado retiene WAL hasta llenar el disco de Postgres." }
+    {
+      "en": "Publishing to Kafka right after commit and calling it an outbox: that's still a dual write.",
+      "es": "Publicar a Kafka justo después del commit y llamarlo outbox: sigue siendo una doble escritura."
+    },
+    {
+      "en": "Non-idempotent compensations or consumers: at-least-once delivery runs the refund twice.",
+      "es": "Compensaciones o consumidores no idempotentes: con entrega at-least-once el reembolso se ejecuta dos veces."
+    },
+    {
+      "en": "Letting the LLM improvise the undo: compensations are code registered per tool, not generated text.",
+      "es": "Dejar que el LLM improvise cómo deshacer: las compensaciones son código registrado por herramienta, no texto generado."
+    },
+    {
+      "en": "An abandoned Debezium replication slot retains WAL until the Postgres disk fills.",
+      "es": "Un replication slot de Debezium abandonado retiene WAL hasta llenar el disco de Postgres."
+    }
   ],
   "interview": [
     {
-      "q": { "en": "How do you keep orders and payments consistent across two services without 2PC?", "es": "¿Cómo mantienes consistentes pedidos y pagos entre dos servicios sin 2PC?" },
+      "q": {
+        "en": "How do you keep orders and payments consistent across two services without 2PC?",
+        "es": "¿Cómo mantienes consistentes pedidos y pagos entre dos servicios sin 2PC?"
+      },
       "a": {
         "en": "With a saga. The order service creates the order as PENDING in a local transaction and emits OrderPlaced through an outbox. The payment service charges and emits PaymentSucceeded or PaymentFailed; the order becomes CONFIRMED, or the compensation cancels it and releases stock. I orchestrate it with Temporal or Step Functions so the flow lives in one place and retries are durable. The trade-off: no isolation, so PENDING is a semantic lock readers must respect, and every step and compensation must be idempotent.",
         "es": "Con una saga. El servicio de pedidos crea el pedido como PENDING en una transacción local y emite OrderPlaced mediante un outbox. El servicio de pagos cobra y emite PaymentSucceeded o PaymentFailed; el pedido pasa a CONFIRMED, o la compensación lo cancela y libera el stock. Lo orquesto con Temporal o Step Functions para que el flujo viva en un solo lugar y los reintentos sean durables. El trade-off: no hay aislamiento, así que PENDING es un lock semántico que los lectores deben respetar, y cada paso y compensación debe ser idempotente."
       }
     },
     {
-      "q": { "en": "What is the dual-write problem and how does the outbox fix it?", "es": "¿Qué es el problema de la doble escritura y cómo lo resuelve el outbox?" },
+      "q": {
+        "en": "What is the dual-write problem and how does the outbox fix it?",
+        "es": "¿Qué es el problema de la doble escritura y cómo lo resuelve el outbox?"
+      },
       "a": {
         "en": "Any code that writes the database and then publishes to a broker does two non-atomic writes. Crash between them and the event is lost; publish first and roll back, and you've announced something that never happened. The outbox makes it one write: the event goes into an outbox table in the same local transaction as the business row, and a relay, a poller or Debezium reading the WAL, publishes it. That's at-least-once, not exactly-once, so consumers dedupe by event id, usually with an inbox table.",
         "es": "Cualquier código que escribe en la base y luego publica a un broker hace dos escrituras no atómicas. Si se cae entre ambas, el evento se pierde; si publica primero y hace rollback, anunció algo que nunca pasó. El outbox lo convierte en una sola escritura: el evento va a una tabla outbox en la misma transacción local que la fila de negocio, y un relay (un poller o Debezium leyendo el WAL) lo publica. Eso es at-least-once, no exactly-once, así que los consumidores deduplican por id de evento, normalmente con una tabla inbox."
       }
     },
     {
-      "q": { "en": "An agent executes multi-step actions in real systems. How do you make failures safe?", "es": "Un agente ejecuta acciones de varios pasos en sistemas reales. ¿Cómo haces seguras las fallas?" },
+      "q": {
+        "en": "An agent executes multi-step actions in real systems. How do you make failures safe?",
+        "es": "Un agente ejecuta acciones de varios pasos en sistemas reales. ¿Cómo haces seguras las fallas?"
+      },
       "a": {
         "en": "I treat the run as a saga. Each tool declares its compensation in code, like cancel_booking for book_hotel, and a durable orchestrator, not the model, runs compensations in reverse order with retries. Reversible steps go first; the irreversible pivot, charging a card or sending an email, goes last and behind human approval. Every tool call carries an idempotency key, so a retry after a timeout doesn't double-book. After a rollback the LLM may propose a new plan; it never decides how to undo.",
         "es": "Trato la ejecución como una saga. Cada herramienta declara su compensación en código, como cancel_booking para book_hotel, y un orquestador durable, no el modelo, ejecuta las compensaciones en orden inverso con reintentos. Los pasos reversibles van primero; el pivote irreversible, cobrar una tarjeta o enviar un correo, va al final y detrás de una aprobación humana. Cada tool call lleva una idempotency key, así que un reintento tras un timeout no reserva dos veces. Tras un rollback el LLM puede proponer un plan nuevo; nunca decide cómo deshacer."
       }
     }
   ],
-  "related": ["idempotency", "event-driven", "durable-agents", "queues-streams", "microservices", "human-in-the-loop"],
+  "related": [
+    "idempotency",
+    "event-driven",
+    "durable-agents",
+    "queues-streams",
+    "microservices",
+    "human-in-the-loop"
+  ],
   "sources": [
-    { "title": "Garcia-Molina & Salem — Sagas (SIGMOD 1987)", "url": "https://www.cs.cornell.edu/andru/cs711/2002fa/reading/sagas.pdf" },
-    { "title": "microservices.io — Pattern: Saga", "url": "https://microservices.io/patterns/data/saga.html" },
-    { "title": "microservices.io — Pattern: Transactional outbox", "url": "https://microservices.io/patterns/data/transactional-outbox.html" },
-    { "title": "Debezium — Outbox Event Router", "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html" }
+    {
+      "title": "Garcia-Molina & Salem — Sagas (SIGMOD 1987)",
+      "url": "https://doi.org/10.1145/38713.38742"
+    },
+    {
+      "title": "microservices.io — Pattern: Saga",
+      "url": "https://microservices.io/patterns/data/saga.html"
+    },
+    {
+      "title": "microservices.io — Pattern: Transactional outbox",
+      "url": "https://microservices.io/patterns/data/transactional-outbox.html"
+    },
+    {
+      "title": "Debezium — Outbox Event Router",
+      "url": "https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html"
+    }
   ]
 }

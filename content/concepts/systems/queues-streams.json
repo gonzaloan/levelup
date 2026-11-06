@@ -2,8 +2,20 @@
   "id": "queues-streams",
   "domain": "systems",
   "level": "core",
-  "title": { "en": "Queues vs streams (Kafka)", "es": "Colas vs streams (Kafka)" },
-  "aliases": ["message queue", "Kafka", "SQS", "RabbitMQ", "Kinesis", "consumer group", "dead-letter queue", "DLQ"],
+  "title": {
+    "en": "Queues vs streams (Kafka)",
+    "es": "Colas vs streams (Kafka)"
+  },
+  "aliases": [
+    "message queue",
+    "Kafka",
+    "SQS",
+    "RabbitMQ",
+    "Kinesis",
+    "consumer group",
+    "dead-letter queue",
+    "DLQ"
+  ],
   "tldr": {
     "en": "A queue hands each message to one worker and deletes it on ack; a stream (Kafka) keeps an ordered, replayable log that many consumer groups read at their own offsets.",
     "es": "Una cola entrega cada mensaje a un worker y lo borra al confirmarlo; un stream (Kafka) guarda un log ordenado y reproducible que muchos consumer groups leen, cada uno desde su propio offset."
@@ -25,7 +37,10 @@
   },
   "code": {
     "lang": "python",
-    "title": { "en": "At-least-once embedding consumer with manual commits", "es": "Consumidor de embeddings at-least-once con commits manuales" },
+    "title": {
+      "en": "At-least-once embedding consumer with manual commits",
+      "es": "Consumidor de embeddings at-least-once con commits manuales"
+    },
     "source": "from confluent_kafka import Consumer\n\nconsumer = Consumer({\n    \"bootstrap.servers\": \"kafka:9092\",\n    \"group.id\": \"embedder-v2\",        # new group = own offsets = full replay\n    \"auto.offset.reset\": \"earliest\",  # a brand-new group starts at the oldest event\n    \"enable.auto.commit\": False,       # commit only after the work is durable\n})\nconsumer.subscribe([\"doc-changes\"])    # keyed by doc_id: per-doc ordering\n\nwhile True:\n    msgs = consumer.consume(num_messages=64, timeout=1.0)\n    batch = [m for m in msgs if m.error() is None]\n    if not batch:\n        continue\n    docs = [parse(m.value()) for m in batch]\n    vectors = embed([d.text for d in docs])        # one batched GPU/API call\n    vector_db.upsert(ids=[d.id for d in docs], vectors=vectors)  # idempotent: replays are safe\n    consumer.commit(asynchronous=False)  # crash before this line = redelivery, not loss"
   },
   "example": {
@@ -33,14 +48,32 @@
     "es": "Un producto de preguntas sobre documentos ingiere ~200k ediciones al día. Las ediciones van a un topic compactado de Kafka, `doc-changes`, con clave `doc_id` y 12 particiones, así que siempre se conserva la última versión de cada documento. El grupo `embedder` corre hasta 12 consumidores. Para pasar a un modelo de embeddings nuevo, arrancas el grupo `embedder-v2` desde el offset 0 hacia un índice nuevo, evalúas y cambias el alias: sin volver a rastrear nada. Por otro lado, los pedidos de reportes de 30 páginas (2–4 min cada uno) van a una cola SQS: la API responde `202` con un id de job, los workers con GPU escalan según la profundidad de la cola y un job que falla 3 veces termina en una DLQ en lugar de repetirse para siempre."
   },
   "pros": [
-    { "en": "Decouple producers and consumers in time and rate: absorb spikes, survive consumer outages.", "es": "Desacoplan productores y consumidores en tiempo y ritmo: absorben picos y sobreviven a caídas de los consumidores." },
-    { "en": "Queue: the simplest way to fan work out to N workers, with retries and a DLQ built in.", "es": "Cola: la forma más simple de repartir trabajo entre N workers, con reintentos y DLQ incluidos." },
-    { "en": "Stream: one event feed, many independent readers, and replay for backfills and new consumers.", "es": "Stream: un solo flujo de eventos, muchos lectores independientes y reprocesamiento para backfills y consumidores nuevos." }
+    {
+      "en": "Decouple producers and consumers in time and rate: absorb spikes, survive consumer outages.",
+      "es": "Desacoplan productores y consumidores en tiempo y ritmo: absorben picos y sobreviven a caídas de los consumidores."
+    },
+    {
+      "en": "Queue: the simplest way to fan work out to N workers, with retries and a DLQ built in.",
+      "es": "Cola: la forma más simple de repartir trabajo entre N workers, con reintentos y DLQ incluidos."
+    },
+    {
+      "en": "Stream: one event feed, many independent readers, and replay for backfills and new consumers.",
+      "es": "Stream: un solo flujo de eventos, muchos lectores independientes y reprocesamiento para backfills y consumidores nuevos."
+    }
   ],
   "cons": [
-    { "en": "At-least-once is the norm, so every consumer must be idempotent.", "es": "At-least-once es la norma, así que cada consumidor debe ser idempotente." },
-    { "en": "Async adds latency and operational surface: lag, DLQ triage, rebalances.", "es": "Lo asíncrono agrega latencia y superficie operativa: lag, revisión de la DLQ, rebalanceos." },
-    { "en": "Kafka ties parallelism and ordering to partitions; adding partitions to a keyed topic remaps keys.", "es": "Kafka ata el paralelismo y el orden a las particiones; agregar particiones a un topic con clave reasigna las claves." }
+    {
+      "en": "At-least-once is the norm, so every consumer must be idempotent.",
+      "es": "At-least-once es la norma, así que cada consumidor debe ser idempotente."
+    },
+    {
+      "en": "Async adds latency and operational surface: lag, DLQ triage, rebalances.",
+      "es": "Lo asíncrono agrega latencia y superficie operativa: lag, revisión de la DLQ, rebalanceos."
+    },
+    {
+      "en": "Kafka ties parallelism and ordering to partitions; adding partitions to a keyed topic remaps keys.",
+      "es": "Kafka ata el paralelismo y el orden a las particiones; agregar particiones a un topic con clave reasigna las claves."
+    }
   ],
   "whenToUse": {
     "en": "Queue: background jobs that each need one worker (LLM generations, document parsing, emails). Stream: events several systems consume, needing per-entity order or replay (CDC, ingestion, audit, analytics).",
@@ -51,45 +84,97 @@
     "es": "Cuando quien llama necesita la respuesta dentro de la misma petición (llama al servicio y listo), o para pocos eventos al día, donde una tabla con una columna de estado es más simple."
   },
   "numbers": [
-    { "en": "Kafka default retention: 7 days (`log.retention.hours=168`); compacted topics keep the latest value per key indefinitely.", "es": "Retención por defecto en Kafka: 7 días (`log.retention.hours=168`); los topics compactados conservan indefinidamente el último valor por clave." },
-    { "en": "SQS visibility timeout: 30 s default, 12 h max; message retention 4 days default, 14 days max.", "es": "Visibility timeout de SQS: 30 s por defecto y 12 h como máximo; retención de mensajes de 4 días por defecto y 14 como máximo." },
-    { "en": "Kinesis shard: 1 MB/s or 1,000 records/s in, 2 MB/s out.", "es": "Shard de Kinesis: 1 MB/s o 1,000 registros/s de entrada y 2 MB/s de salida." },
-    { "en": "A consumer group's parallelism ≤ partition count; extra consumers sit idle.", "es": "El paralelismo de un consumer group ≤ número de particiones; los consumidores extra quedan ociosos." },
-    { "en": "Little's law for sizing: jobs in flight = arrival rate × time in system (50 jobs/s × 180 s = 9,000).", "es": "Ley de Little para dimensionar: jobs en curso = tasa de llegada × tiempo en el sistema (50 jobs/s × 180 s = 9,000)." }
+    {
+      "en": "Kafka default retention: 7 days (`log.retention.hours=168`); compacted topics keep the latest value per key indefinitely.",
+      "es": "Retención por defecto en Kafka: 7 días (`log.retention.hours=168`); los topics compactados conservan indefinidamente el último valor por clave."
+    },
+    {
+      "en": "SQS visibility timeout: 30 s default, 12 h max; message retention 4 days default, 14 days max.",
+      "es": "Visibility timeout de SQS: 30 s por defecto y 12 h como máximo; retención de mensajes de 4 días por defecto y 14 como máximo."
+    },
+    {
+      "en": "Kinesis shard: 1 MB/s or 1,000 records/s in, 2 MB/s out.",
+      "es": "Shard de Kinesis: 1 MB/s o 1,000 registros/s de entrada y 2 MB/s de salida."
+    },
+    {
+      "en": "A consumer group's parallelism ≤ partition count; extra consumers sit idle.",
+      "es": "El paralelismo de un consumer group ≤ número de particiones; los consumidores extra quedan ociosos."
+    },
+    {
+      "en": "Little's law for sizing: jobs in flight = arrival rate × time in system (50 jobs/s × 180 s = 9,000).",
+      "es": "Ley de Little para dimensionar: jobs en curso = tasa de llegada × tiempo en el sistema (50 jobs/s × 180 s = 9,000)."
+    }
   ],
   "pitfalls": [
-    { "en": "Visibility timeout shorter than the job: a 5-minute LLM generation with a 30 s timeout gets picked up by a second worker.", "es": "Un visibility timeout más corto que el job: una generación de LLM de 5 minutos con un timeout de 30 s la toma un segundo worker." },
-    { "en": "Non-idempotent consumers: a rebalance or timeout redelivers, and you charge, email or embed twice.", "es": "Consumidores no idempotentes: un rebalanceo o un timeout reentrega el mensaje y cobras, envías el email o generas el embedding dos veces." },
-    { "en": "Keying by a huge tenant: one partition saturates while the others idle.", "es": "Usar como clave un tenant enorme: una partición se satura mientras las demás están ociosas." },
-    { "en": "No DLQ, or no alert on it: a poison message retries forever in a queue, or blocks its whole partition in Kafka.", "es": "No tener DLQ, o no alertar sobre ella: un mensaje venenoso se reintenta para siempre en una cola o bloquea toda su partición en Kafka." }
+    {
+      "en": "Visibility timeout shorter than the job: a 5-minute LLM generation with a 30 s timeout gets picked up by a second worker.",
+      "es": "Un visibility timeout más corto que el job: una generación de LLM de 5 minutos con un timeout de 30 s la toma un segundo worker."
+    },
+    {
+      "en": "Non-idempotent consumers: a rebalance or timeout redelivers, and you charge, email or embed twice.",
+      "es": "Consumidores no idempotentes: un rebalanceo o un timeout reentrega el mensaje y cobras, envías el email o generas el embedding dos veces."
+    },
+    {
+      "en": "Keying by a huge tenant: one partition saturates while the others idle.",
+      "es": "Usar como clave un tenant enorme: una partición se satura mientras las demás están ociosas."
+    },
+    {
+      "en": "No DLQ, or no alert on it: a poison message retries forever in a queue, or blocks its whole partition in Kafka.",
+      "es": "No tener DLQ, o no alertar sobre ella: un mensaje venenoso se reintenta para siempre en una cola o bloquea toda su partición en Kafka."
+    }
   ],
   "interview": [
     {
-      "q": { "en": "When would you choose Kafka over SQS?", "es": "¿Cuándo elegirías Kafka en vez de SQS?" },
+      "q": {
+        "en": "When would you choose Kafka over SQS?",
+        "es": "¿Cuándo elegirías Kafka en vez de SQS?"
+      },
       "a": {
         "en": "I ask whether the message is a task or a fact. A task, like 'generate this report', needs exactly one worker, retries and a DLQ: SQS or RabbitMQ, with little to operate. A fact, like 'document 812 changed', is something several systems react to, often in order per entity, and that I'll want to replay when I add a consumer or change the embedding model: that's Kafka or Kinesis. The trade-off is operational cost: partitions, retention and consumer lag become mine to own.",
         "es": "Me pregunto si el mensaje es una tarea o un hecho. Una tarea, como 'genera este reporte', necesita un solo worker, reintentos y una DLQ: SQS o RabbitMQ, con poco que operar. Un hecho, como 'el documento 812 cambió', es algo a lo que reaccionan varios sistemas, muchas veces en orden por entidad, y que voy a querer reprocesar cuando agregue un consumidor o cambie el modelo de embeddings: eso es Kafka o Kinesis. El trade-off es el costo operativo: particiones, retención y lag de consumidores pasan a ser mi problema."
       }
     },
     {
-      "q": { "en": "How do you guarantee each message is processed exactly once?", "es": "¿Cómo garantizas que cada mensaje se procese exactamente una vez?" },
+      "q": {
+        "en": "How do you guarantee each message is processed exactly once?",
+        "es": "¿Cómo garantizas que cada mensaje se procese exactamente una vez?"
+      },
       "a": {
         "en": "Across systems, I don't: I build effectively-once from at-least-once plus idempotent processing. The consumer commits its offset only after the effect is durable, and the effect is an upsert by natural key, or a write that records the message id in the same transaction and skips ids it has seen. Kafka transactions give exactly-once for read-process-write inside Kafka, but the moment I call a payment API or a vector DB, that boundary ends and idempotency keys take over.",
         "es": "Entre sistemas, no lo garantizo: construyo effectively-once con at-least-once más procesamiento idempotente. El consumidor confirma su offset solo después de que el efecto es durable, y el efecto es un upsert por clave natural, o una escritura que registra el id del mensaje en la misma transacción y salta los ids ya vistos. Las transacciones de Kafka dan exactly-once para leer-procesar-escribir dentro de Kafka, pero en cuanto llamo a una API de pagos o a una base vectorial, esa frontera termina y entran las claves de idempotencia."
       }
     },
     {
-      "q": { "en": "How would you serve LLM jobs that take 3 minutes each?", "es": "¿Cómo servirías jobs de LLM que tardan 3 minutos cada uno?" },
+      "q": {
+        "en": "How would you serve LLM jobs that take 3 minutes each?",
+        "es": "¿Cómo servirías jobs de LLM que tardan 3 minutos cada uno?"
+      },
       "a": {
         "en": "Asynchronously. The API validates, stores the job with an idempotency key and returns 202 with a job id; the client polls, or gets an SSE stream or a webhook. Jobs go to a queue and GPU workers pull at their own pace, so a spike becomes a backlog instead of timeouts. I set the visibility timeout above p99 job time or extend it with heartbeats, send failures to a DLQ after 3 attempts, autoscale workers on queue depth, and keep separate queues per priority tier.",
         "es": "De forma asíncrona. La API valida, guarda el job con una clave de idempotencia y responde 202 con un id de job; el cliente hace polling o recibe un stream SSE o un webhook. Los jobs van a una cola y los workers con GPU los toman a su ritmo, así que un pico se vuelve backlog en vez de timeouts. Pongo el visibility timeout por encima del p99 del job o lo extiendo con heartbeats, mando las fallas a una DLQ tras 3 intentos, escalo los workers según la profundidad de la cola y mantengo colas separadas por nivel de prioridad."
       }
     }
   ],
-  "related": ["idempotency", "event-driven", "sagas-outbox", "batch-inference", "retries-backoff", "durable-agents"],
+  "related": [
+    "idempotency",
+    "event-driven",
+    "sagas-outbox",
+    "batch-inference",
+    "retries-backoff",
+    "durable-agents"
+  ],
   "sources": [
-    { "title": "Jay Kreps — The Log: What every software engineer should know about real-time data's unifying abstraction", "url": "https://engineering.linkedin.com/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying" },
-    { "title": "Apache Kafka — Documentation", "url": "https://kafka.apache.org/documentation/" },
-    { "title": "Amazon SQS — Visibility timeout", "url": "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html" }
+    {
+      "title": "Apache Kafka documentation — Design (log, partitions, consumer groups)",
+      "url": "https://kafka.apache.org/documentation/#design"
+    },
+    {
+      "title": "Apache Kafka — Documentation",
+      "url": "https://kafka.apache.org/documentation/"
+    },
+    {
+      "title": "Amazon SQS — Visibility timeout",
+      "url": "https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-visibility-timeout.html"
+    }
   ]
 }

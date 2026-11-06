@@ -16,7 +16,10 @@ test("concept page has every section and a rendered diagram", async ({ page }) =
   for (const id of ["tldr", "how", "diagram", "code", "example", "tradeoffs", "pitfalls", "interview", "related"]) {
     await expect(page.locator(`#${id}`)).toBeVisible();
   }
-  await expect(page.locator(".dg-dark svg")).toBeVisible();
+  // Exactly one variant of the diagram is visible: the one matching the active theme.
+  const theme = await page.evaluate(() => document.documentElement.dataset.theme);
+  await expect(page.locator(`.dg-${theme} svg`)).toBeVisible();
+  await expect(page.locator(`.dg-${theme === "dark" ? "light" : "dark"} svg`)).toBeHidden();
   await page.locator(".qa summary").first().click();
   await expect(page.locator(".qa-a").first()).toBeVisible();
 });

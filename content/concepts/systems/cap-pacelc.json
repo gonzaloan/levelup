@@ -2,8 +2,18 @@
   "id": "cap-pacelc",
   "domain": "systems",
   "level": "core",
-  "title": { "en": "CAP & PACELC", "es": "CAP y PACELC" },
-  "aliases": ["CAP theorem", "PACELC", "Brewer's theorem", "CP vs AP", "partition tolerance", "consistency vs availability"],
+  "title": {
+    "en": "CAP & PACELC",
+    "es": "CAP y PACELC"
+  },
+  "aliases": [
+    "CAP theorem",
+    "PACELC",
+    "Brewer's theorem",
+    "CP vs AP",
+    "partition tolerance",
+    "consistency vs availability"
+  ],
   "tldr": {
     "en": "During a network partition, a replicated system either refuses some requests (consistency) or serves possibly stale data (availability). PACELC adds: otherwise, every request trades latency against consistency.",
     "es": "Durante una partición de red, un sistema replicado o rechaza algunas solicitudes (consistencia) o sirve datos posiblemente desactualizados (disponibilidad). PACELC agrega: si no hay partición, cada solicitud cambia latencia por consistencia."
@@ -25,7 +35,10 @@
   },
   "code": {
     "lang": "python",
-    "title": { "en": "Choosing PA/EL or PC/EC per query in Cassandra", "es": "Elegir PA/EL o PC/EC por consulta en Cassandra" },
+    "title": {
+      "en": "Choosing PA/EL or PC/EC per query in Cassandra",
+      "es": "Elegir PA/EL o PC/EC por consulta en Cassandra"
+    },
     "source": "from cassandra import ConsistencyLevel\nfrom cassandra.cluster import Cluster\nfrom cassandra.query import SimpleStatement\n\nsession = Cluster([\"10.0.0.1\", \"10.0.0.2\"]).connect(\"kb\")  # keyspace with RF=3\n\n# PA/EL: answer from 1 replica. Fast, survives a partition, may be stale.\nget_chunks = SimpleStatement(\n    \"SELECT text FROM chunks WHERE doc_id = %s\",\n    consistency_level=ConsistencyLevel.ONE)\n\n# PC/EC: 2 of 3 replicas must answer (QUORUM writes + QUORUM reads overlap).\n# If only 1 replica is reachable, this raises Unavailable instead of guessing.\ncan_read = SimpleStatement(\n    \"SELECT allowed FROM acl WHERE user_id = %s AND doc_id = %s\",\n    consistency_level=ConsistencyLevel.QUORUM)\n\ndef fetch(user_id, doc_id):\n    row = session.execute(can_read, (user_id, doc_id)).one()\n    if not (row and row.allowed):  # fail closed on deny or unknown\n        raise PermissionError(doc_id)\n    return [r.text for r in session.execute(get_chunks, (doc_id,))]"
   },
   "example": {
@@ -33,14 +46,32 @@
     "es": "Una empresa corre su asistente RAG en **us-east** y **eu-west**, con el índice vectorial replicado de forma asíncrona. El enlace entre regiones se cae **4 minutos**.\n\n- **Chunks**: Europa sigue respondiendo desde su réplica; solo le faltan los documentos ingeridos en EE. UU. durante esos minutos. Aceptable: PA/EL.\n- **ACLs**: un minuto antes, en EE. UU., sacaron a un empleado del grupo *M&A*. Si Europa confía en su copia desactualizada, recupera chunks confidenciales. Por eso las lecturas de ACL exigen quórum y **fallan cerradas** si no lo alcanzan: PC/EC.\n\nLa misma app, dos elecciones de CAP distintas."
   },
   "pros": [
-    { "en": "Forces an explicit decision about partitions before an outage makes it for you.", "es": "Obliga a decidir explícitamente qué pasa en una partición antes de que un incidente decida por ti." },
-    { "en": "PACELC surfaces the everyday latency cost of consistency, which CAP ignores.", "es": "PACELC hace visible el costo de latencia diario de la consistencia, que CAP ignora." },
-    { "en": "Shared vocabulary to compare datastores: Spanner PC/EC, Cassandra PA/EL.", "es": "Vocabulario común para comparar bases de datos: Spanner PC/EC, Cassandra PA/EL." }
+    {
+      "en": "Forces an explicit decision about partitions before an outage makes it for you.",
+      "es": "Obliga a decidir explícitamente qué pasa en una partición antes de que un incidente decida por ti."
+    },
+    {
+      "en": "PACELC surfaces the everyday latency cost of consistency, which CAP ignores.",
+      "es": "PACELC hace visible el costo de latencia diario de la consistencia, que CAP ignora."
+    },
+    {
+      "en": "Shared vocabulary to compare datastores: Spanner PC/EC, Cassandra PA/EL.",
+      "es": "Vocabulario común para comparar bases de datos: Spanner PC/EC, Cassandra PA/EL."
+    }
   ],
   "cons": [
-    { "en": "Narrow definitions: C means linearizability and A means every live node answers, so few real systems are purely either.", "es": "Definiciones estrechas: C es linealizabilidad y A es que todo nodo vivo responde, así que pocos sistemas reales son puramente una cosa." },
-    { "en": "Labels like \"AP database\" hide per-operation tuning (Cassandra, DynamoDB, MongoDB all expose it).", "es": "Etiquetas como \"base AP\" esconden el ajuste por operación (Cassandra, DynamoDB y MongoDB lo exponen)." },
-    { "en": "Says nothing about slow nodes, partial failures or how long a partition lasts.", "es": "No dice nada sobre nodos lentos, fallas parciales ni cuánto dura una partición." }
+    {
+      "en": "Narrow definitions: C means linearizability and A means every live node answers, so few real systems are purely either.",
+      "es": "Definiciones estrechas: C es linealizabilidad y A es que todo nodo vivo responde, así que pocos sistemas reales son puramente una cosa."
+    },
+    {
+      "en": "Labels like \"AP database\" hide per-operation tuning (Cassandra, DynamoDB, MongoDB all expose it).",
+      "es": "Etiquetas como \"base AP\" esconden el ajuste por operación (Cassandra, DynamoDB y MongoDB lo exponen)."
+    },
+    {
+      "en": "Says nothing about slow nodes, partial failures or how long a partition lasts.",
+      "es": "No dice nada sobre nodos lentos, fallas parciales ni cuánto dura una partición."
+    }
   ],
   "whenToUse": {
     "en": "When choosing a datastore or replication topology, especially multi-region, and when deciding per data type what happens if replicas can't talk to each other.",
@@ -51,38 +82,87 @@
     "es": "Como una sola etiqueta para todo el producto (\"somos AP\"). Aplícalo por operación; para una base de datos de un solo nodo no aplica en absoluto."
   },
   "numbers": [
-    { "en": "Cloud Spanner multi-region SLA: 99.999% (~5 min/year): a CP system can still be highly available.", "es": "SLA de Cloud Spanner multirregión: 99.999% (~5 min/año): un sistema CP también puede ser muy disponible." },
-    { "en": "Inter-continent round trip ~70–150 ms: the floor for an EC write that must reach another region.", "es": "Round trip entre continentes ~70–150 ms: el piso de una escritura EC que debe llegar a otra región." },
-    { "en": "N=3 replicas: R=2, W=2 overlap (R + W > N); R=1, W=1 is the fast EL setting.", "es": "N=3 réplicas: R=2, W=2 se solapan (R + W > N); R=1, W=1 es la configuración EL rápida." },
-    { "en": "Elasticsearch/OpenSearch default refresh interval: 1 s; new documents aren't searchable until then.", "es": "Intervalo de refresh por defecto en Elasticsearch/OpenSearch: 1 s; los documentos nuevos no se pueden buscar hasta entonces." }
+    {
+      "en": "Cloud Spanner multi-region SLA: 99.999% (~5 min/year): a CP system can still be highly available.",
+      "es": "SLA de Cloud Spanner multirregión: 99.999% (~5 min/año): un sistema CP también puede ser muy disponible."
+    },
+    {
+      "en": "Inter-continent round trip ~70–150 ms: the floor for an EC write that must reach another region.",
+      "es": "Round trip entre continentes ~70–150 ms: el piso de una escritura EC que debe llegar a otra región."
+    },
+    {
+      "en": "N=3 replicas: R=2, W=2 overlap (R + W > N); R=1, W=1 is the fast EL setting.",
+      "es": "N=3 réplicas: R=2, W=2 se solapan (R + W > N); R=1, W=1 es la configuración EL rápida."
+    },
+    {
+      "en": "Elasticsearch/OpenSearch default refresh interval: 1 s; new documents aren't searchable until then.",
+      "es": "Intervalo de refresh por defecto en Elasticsearch/OpenSearch: 1 s; los documentos nuevos no se pueden buscar hasta entonces."
+    }
   ],
   "pitfalls": [
-    { "en": "Claiming a distributed system is \"CA\": you don't get to skip partitions.", "es": "Decir que un sistema distribuido es \"CA\": no puedes saltarte las particiones." },
-    { "en": "Confusing CAP's C (linearizability) with ACID's C (integrity constraints).", "es": "Confundir la C de CAP (linealizabilidad) con la C de ACID (restricciones de integridad)." },
-    { "en": "Picking one label for the whole system instead of deciding per operation and data type.", "es": "Poner una sola etiqueta a todo el sistema en vez de decidir por operación y por tipo de dato." },
-    { "en": "Ignoring the else branch: partitions are rare, but latency vs consistency is paid on every request.", "es": "Ignorar la rama else: las particiones son raras, pero latencia contra consistencia se paga en cada solicitud." }
+    {
+      "en": "Claiming a distributed system is \"CA\": you don't get to skip partitions.",
+      "es": "Decir que un sistema distribuido es \"CA\": no puedes saltarte las particiones."
+    },
+    {
+      "en": "Confusing CAP's C (linearizability) with ACID's C (integrity constraints).",
+      "es": "Confundir la C de CAP (linealizabilidad) con la C de ACID (restricciones de integridad)."
+    },
+    {
+      "en": "Picking one label for the whole system instead of deciding per operation and data type.",
+      "es": "Poner una sola etiqueta a todo el sistema en vez de decidir por operación y por tipo de dato."
+    },
+    {
+      "en": "Ignoring the else branch: partitions are rare, but latency vs consistency is paid on every request.",
+      "es": "Ignorar la rama else: las particiones son raras, pero latencia contra consistencia se paga en cada solicitud."
+    }
   ],
   "interview": [
     {
-      "q": { "en": "Is your design CP or AP?", "es": "¿Tu diseño es CP o AP?" },
+      "q": {
+        "en": "Is your design CP or AP?",
+        "es": "¿Tu diseño es CP o AP?"
+      },
       "a": {
         "en": "It depends on the operation, and I'd say so explicitly. Chat history and RAG chunks are AP: a few seconds stale beats an error page. Billing, quotas and permission checks are CP: I'd rather return an error than double-charge or leak a document. Outside partitions, the PACELC question matters more because it's paid on every request: for most reads I choose latency with a bounded staleness I monitor, and pay for consistency only where correctness demands it.",
         "es": "Depende de la operación, y lo digo explícitamente. El historial de chat y los chunks de RAG son AP: unos segundos de atraso son mejores que una página de error. Facturación, cuotas y verificación de permisos son CP: prefiero devolver un error antes que cobrar dos veces o filtrar un documento. Fuera de las particiones, la pregunta de PACELC pesa más porque se paga en cada solicitud: en la mayoría de las lecturas elijo latencia con un atraso acotado que monitoreo, y pago la consistencia solo donde la corrección lo exige."
       }
     },
     {
-      "q": { "en": "Why isn't \"CA\" a valid choice?", "es": "¿Por qué \"CA\" no es una opción válida?" },
+      "q": {
+        "en": "Why isn't \"CA\" a valid choice?",
+        "es": "¿Por qué \"CA\" no es una opción válida?"
+      },
       "a": {
         "en": "Because once you have more than one node talking over a network, partitions happen: a switch fails, a long GC pause looks like a dead node. You can't decide not to tolerate them; you only decide what to do when one occurs, refuse or serve stale. Claiming CA really means \"we assume the network never fails\", which turns into an unplanned choice the first time it does. The only true CA system is a single node, and that isn't distributed.",
         "es": "Porque en cuanto tienes más de un nodo comunicándose por una red, las particiones ocurren: falla un switch, una pausa larga de GC parece un nodo caído. No puedes decidir no tolerarlas; solo decides qué hacer cuando ocurre una: rechazar o servir datos viejos. Decir CA en realidad significa \"suponemos que la red nunca falla\", y eso se vuelve una decisión no planeada la primera vez que falla. El único sistema CA de verdad es un solo nodo, y eso no es distribuido."
       }
     }
   ],
-  "related": ["consistency-models", "replication", "consensus", "permission-aware-retrieval", "vector-databases", "sql-vs-nosql"],
+  "related": [
+    "consistency-models",
+    "replication",
+    "consensus",
+    "permission-aware-retrieval",
+    "vector-databases",
+    "sql-vs-nosql"
+  ],
   "sources": [
-    { "title": "Eric Brewer — CAP Twelve Years Later: How the \"Rules\" Have Changed (InfoQ)", "url": "https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/" },
-    { "title": "Daniel Abadi — Consistency Tradeoffs in Modern Distributed Database System Design (PACELC)", "url": "https://www.cs.umd.edu/~abadi/papers/abadi-pacelc.pdf" },
-    { "title": "Martin Kleppmann — Please stop calling databases CP or AP", "url": "https://martin.kleppmann.com/2015/05/11/please-stop-calling-databases-cp-or-ap.html" },
-    { "title": "Google Cloud — Spanner Service Level Agreement", "url": "https://cloud.google.com/spanner/sla" }
+    {
+      "title": "Eric Brewer — CAP Twelve Years Later: How the \"Rules\" Have Changed (InfoQ)",
+      "url": "https://www.infoq.com/articles/cap-twelve-years-later-how-the-rules-have-changed/"
+    },
+    {
+      "title": "Daniel Abadi — Consistency Tradeoffs in Modern Distributed Database System Design (PACELC)",
+      "url": "https://ieeexplore.ieee.org/document/6127847"
+    },
+    {
+      "title": "Martin Kleppmann — Please stop calling databases CP or AP",
+      "url": "https://martin.kleppmann.com/2015/05/11/please-stop-calling-databases-cp-or-ap.html"
+    },
+    {
+      "title": "Google Cloud — Spanner Service Level Agreement",
+      "url": "https://cloud.google.com/spanner/sla"
+    }
   ]
 }
