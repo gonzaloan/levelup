@@ -10,6 +10,12 @@ marked.use({
     html({ text }) {
       return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
     },
+    // "~" means "approximately" all over this content ("~5 ms ... ~40M"); GFM would turn the
+    // span between two of them into strikethrough. Put the tildes back instead.
+    del(token) {
+      const n = /^~+/.exec(token.raw)?.[0] ?? "~";
+      return n + this.parser.parseInline(token.tokens) + n;
+    },
     link({ href, text }) {
       const external = /^https?:/.test(href);
       return external

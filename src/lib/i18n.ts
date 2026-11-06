@@ -72,7 +72,7 @@ const UI = {
     en: "The framework for an AI system design round, worked designs, the numbers to have at hand, and every question in this guide.",
     es: "El framework para una ronda de diseño de sistemas de IA, diseños resueltos, los números a mano y todas las preguntas de esta guía.",
   },
-  framework: { en: "The 45-minute framework", es: "El framework de 45 minutos" },
+  framework: { en: "The system-design round, step by step", es: "La ronda de diseño, paso a paso" },
   cases: { en: "Worked designs", es: "Diseños resueltos" },
   questionBank: { en: "Question bank", es: "Banco de preguntas" },
   numbersBank: { en: "Numbers to have at hand", es: "Números a mano" },
