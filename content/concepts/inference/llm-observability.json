@@ -1,0 +1,95 @@
+{
+  "id": "llm-observability",
+  "domain": "inference",
+  "level": "core",
+  "title": { "en": "LLM observability & tracing", "es": "Observabilidad y tracing de LLMs" },
+  "aliases": ["LLM tracing", "LLM monitoring", "OpenTelemetry GenAI", "Langfuse", "LangSmith", "Arize Phoenix", "Helicone", "trace replay"],
+  "tldr": {
+    "en": "Record every request as a trace with one span per step (retrieval, model call, tool call), carrying prompt version, tokens, latency, cost and feedback, so you can explain, price and replay any answer.",
+    "es": "Registra cada petición como una traza con un span por paso (recuperación, llamada al modelo, tool call), con versión del prompt, tokens, latencia, costo y feedback, para poder explicar, costear y reproducir cualquier respuesta."
+  },
+  "analogy": {
+    "en": "A flight data recorder: when something goes wrong you don't guess what the pilot saw, you play back every instrument reading and every input in order.",
+    "es": "La caja negra de un avión: cuando algo sale mal no adivinas qué vio el piloto, reproduces en orden cada lectura de los instrumentos y cada acción."
+  },
+  "explain": {
+    "en": "**LLM observability** means every request leaves a trace you can read later: what was sent, what came back, how long it took, what it cost and whether the user was happy. Classic APM says a request took 8 s with status 200; LLM tracing says *why* the answer was wrong: stale chunks, the same tool called 6 times, a prompt version that doubled tokens.\n\nOne **trace** per request, one **span** per step. On each span record:\n\n- prompt template **and version**, rendered messages, model, params\n- retrieved doc ids and scores; tool calls with arguments and results\n- input, output and cached tokens; TTFT and total latency; cost; finish reason\n- user, session and tenant ids, plus **feedback** (thumbs, edits, retries) joined later by trace id\n\nEmit it with the **OpenTelemetry GenAI semantic conventions** (`gen_ai.request.model`, `gen_ai.usage.input_tokens`...) so any backend can read it: **Langfuse** (open source, self-hostable), **LangSmith**, **Arize Phoenix**, **Helicone** (proxy-based), **Braintrust**, or your existing APM.\n\nPayloads are the hard part: large and full of PII. Redact before export, keep metrics on 100% of traffic but sample full payloads, and give prompts shorter retention than metrics ([[pii-privacy]]).\n\nThe payoff is **replay**: open a bad trace, rerun it with a fixed prompt, then add it to your eval set ([[offline-online-evals]]).",
+    "es": "La **observabilidad de LLMs** significa que cada petición deja una traza que puedes leer después: qué se envió, qué volvió, cuánto tardó, cuánto costó y si el usuario quedó conforme. El APM clásico te dice que una petición tardó 8 s con status 200; el tracing de LLMs te dice *por qué* la respuesta fue mala: chunks desactualizados, la misma herramienta llamada 6 veces, una versión del prompt que duplicó los tokens.\n\nUna **traza** por petición, un **span** por paso. En cada span registra:\n\n- plantilla del prompt **y su versión**, mensajes renderizados, modelo, parámetros\n- ids y scores de los documentos recuperados; tool calls con argumentos y resultados\n- tokens de entrada, de salida y en caché; TTFT y latencia total; costo; finish reason\n- ids de usuario, sesión y tenant, más el **feedback** (pulgares, ediciones, reintentos) unido después por trace id\n\nEmítelo con las **convenciones semánticas GenAI de OpenTelemetry** (`gen_ai.request.model`, `gen_ai.usage.input_tokens`...) para que cualquier backend lo lea: **Langfuse** (open source, self-hosteable), **LangSmith**, **Arize Phoenix**, **Helicone** (basado en proxy), **Braintrust** o tu APM actual.\n\nLo difícil son los payloads: pesados y llenos de PII. Enmascara antes de exportar, conserva métricas del 100% del tráfico pero muestrea los payloads completos, y dale a los prompts una retención más corta que a las métricas ([[pii-privacy]]).\n\nLa recompensa es el **replay**: abres una traza mala, la vuelves a correr con el prompt corregido y la agregas a tu set de evals ([[offline-online-evals]])."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  A[User request] --> T[\"Root span<br/>user, tenant, session\"]\n  T --> S1[\"retrieve<br/>doc ids + scores\"]\n  T --> S2[\"llm chat<br/>prompt v14, tokens\"]\n  T --> S3[\"tool call<br/>args + result\"]\n  S1 & S2 & S3 -->|OTel GenAI spans| C[\"Collector<br/>redact + sample\"]\n  C --> B[(Trace store)]\n  F[User feedback] -.->|joined by trace id| B\n  B --> D[\"Dashboards<br/>cost, latency, quality\"]\n  B --> R[\"Replay, then<br/>add to evals\"]",
+    "caption": {
+      "en": "Each step becomes a child span of one trace; feedback joins by trace id, and the same store feeds dashboards, debugging and the eval set.",
+      "es": "Cada paso se vuelve un span hijo de una sola traza; el feedback se une por trace id, y el mismo almacén alimenta dashboards, depuración y el set de evals."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "OpenTelemetry spans with GenAI attributes", "es": "Spans de OpenTelemetry con atributos GenAI" },
+    "source": "from opentelemetry import trace\nfrom openai import OpenAI\n\nMODEL = \"gpt-4.1-mini\"  # any chat model\ntracer = trace.get_tracer(\"support-bot\")\nclient = OpenAI()\n\ndef answer(question: str, user_id: str) -> tuple[str, str]:\n    with tracer.start_as_current_span(\"support.answer\") as root:\n        root.set_attribute(\"app.user\", pseudonymize(user_id))  # no raw PII\n        with tracer.start_as_current_span(\"retrieve\") as s:\n            docs = search(question, k=8)\n            s.set_attribute(\"app.retrieval.doc_ids\", [d.id for d in docs])\n        prompt = prompts.get(\"support-answer\", version=14)  # versioned template\n        with tracer.start_as_current_span(f\"chat {MODEL}\") as s:  # GenAI span name\n            s.set_attribute(\"gen_ai.operation.name\", \"chat\")\n            s.set_attribute(\"gen_ai.request.model\", MODEL)\n            s.set_attribute(\"gen_ai.request.temperature\", 0.2)\n            s.set_attribute(\"app.prompt.version\", prompt.version)\n            r = client.chat.completions.create(model=MODEL, temperature=0.2,\n                    messages=prompt.render(question=question, docs=docs))\n            s.set_attribute(\"gen_ai.response.model\", r.model)\n            s.set_attribute(\"gen_ai.usage.input_tokens\", r.usage.prompt_tokens)\n            s.set_attribute(\"gen_ai.usage.output_tokens\", r.usage.completion_tokens)\n            s.set_attribute(\"app.cost_usd\", price(r.model, r.usage))\n        trace_id = format(root.get_span_context().trace_id, \"032x\")\n        return r.choices[0].message.content, trace_id  # UI sends feedback with it\n\n# Export over OTLP to Langfuse, Phoenix or your APM; auto-instrumentors\n# (OpenLLMetry, OpenInference) can set the gen_ai.* attributes for you."
+  },
+  "example": {
+    "en": "A support bot's thumbs-down rate jumps from ~4% to ~11% on a Tuesday while latency and error dashboards stay flat. Filtering traces by negative feedback shows the retrieval spans returning articles from a retired help center that a Monday index job re-added. Replaying 50 bad traces with those docs filtered out fixes 46. The 50 traces go into the eval set, so CI catches the regression next time. Root cause took about an hour because the payloads were there to read.",
+    "es": "La tasa de pulgares abajo de un bot de soporte salta de ~4% a ~11% un martes, mientras los dashboards de latencia y errores siguen planos. Al filtrar las trazas por feedback negativo, los spans de recuperación muestran artículos de un centro de ayuda retirado que un job de indexación volvió a agregar el lunes. Reproducir 50 trazas malas sin esos documentos arregla 46. Las 50 trazas entran al set de evals, así que el CI atrapará la regresión la próxima vez. Encontrar la causa tomó cerca de una hora porque los payloads estaban ahí para leerlos."
+  },
+  "pros": [
+    { "en": "Debug by reading what the model actually saw instead of guessing.", "es": "Depuras leyendo lo que el modelo realmente vio en lugar de adivinar." },
+    { "en": "Cost and latency attributed per feature, prompt version, model and tenant.", "es": "Costo y latencia atribuidos por funcionalidad, versión del prompt, modelo y tenant." },
+    { "en": "Production traces become eval cases and regression tests.", "es": "Las trazas de producción se convierten en casos de eval y pruebas de regresión." }
+  ],
+  "cons": [
+    { "en": "Payloads are heavy: a 20k-token RAG prompt is ~80 KB per span before outputs.", "es": "Los payloads pesan: un prompt RAG de 20k tokens ocupa ~80 KB por span, sin contar la salida." },
+    { "en": "Stored prompts are a PII and compliance surface: retention, access control, deletion requests.", "es": "Los prompts guardados son una superficie de PII y cumplimiento: retención, control de acceso, solicitudes de borrado." },
+    { "en": "GenAI semantic conventions are still evolving; attribute names shift between versions.", "es": "Las convenciones semánticas GenAI todavía evolucionan; los nombres de atributos cambian entre versiones." }
+  ],
+  "whenToUse": {
+    "en": "From the first production user. It is cheapest to add before launch, and it feeds evals, cost control and incident response.",
+    "es": "Desde el primer usuario en producción. Es más barato agregarla antes del lanzamiento, y alimenta los evals, el control de costos y la respuesta a incidentes."
+  },
+  "whenNotToUse": {
+    "en": "Never skip it; scale it down. For huge, low-risk volume keep metrics on everything and sample payloads hard; under strict privacy rules log hashes and lengths instead of text.",
+    "es": "Nunca la omitas; redúcela. Con volumen enorme y bajo riesgo, conserva métricas de todo y muestrea mucho los payloads; con reglas estrictas de privacidad, registra hashes y longitudes en lugar de texto."
+  },
+  "numbers": [
+    { "en": "OTel GenAI core attributes: gen_ai.request.model, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens. Capturing message content is opt-in.", "es": "Atributos centrales de OTel GenAI: gen_ai.request.model, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens. Capturar el contenido de los mensajes es opcional (opt-in)." },
+    { "en": "Rule of thumb for sampling: metrics on 100% of requests; full payloads on all errors and negative feedback plus ~1–10% of the rest.", "es": "Regla práctica de muestreo: métricas del 100% de las peticiones; payloads completos de todos los errores y del feedback negativo, más ~1–10% del resto." },
+    { "en": "Rule of thumb: ~4 characters per English token, so payload storage is ~4 bytes × tokens per span.", "es": "Regla práctica: ~4 caracteres por token en inglés, así que el payload ocupa ~4 bytes × tokens por span." },
+    { "en": "Four dashboards: cost (per team, feature, model), latency (TTFT and total at p50/p95/p99), errors (429, 5xx, timeouts, refusals), quality (feedback, online eval scores).", "es": "Cuatro dashboards: costo (por equipo, funcionalidad, modelo), latencia (TTFT y total en p50/p95/p99), errores (429, 5xx, timeouts, rechazos), calidad (feedback, scores de evals online)." }
+  ],
+  "pitfalls": [
+    { "en": "Logging only the final answer: without retrieved docs and prompt version, a trace explains nothing.", "es": "Registrar solo la respuesta final: sin documentos recuperados ni versión del prompt, una traza no explica nada." },
+    { "en": "Raw PII and secrets in traces with the same retention and access as ordinary app logs.", "es": "PII y secretos sin enmascarar en las trazas, con la misma retención y acceso que los logs comunes de la app." },
+    { "en": "No trace id on the feedback event, so a thumbs-down can never be investigated.", "es": "Feedback sin trace id, así que un pulgar abajo nunca se puede investigar." },
+    { "en": "Watching averages: mean cost and latency hide the long tail. Track p95/p99 and per-tenant breakdowns.", "es": "Mirar promedios: el costo y la latencia promedio esconden la cola larga. Sigue p95/p99 y el desglose por tenant." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "What do you log for each LLM request, and why?", "es": "¿Qué registras de cada petición a un LLM y por qué?" },
+      "a": {
+        "en": "Enough to replay it and price it. A trace per request with a span per step: retrieval with doc ids and scores, each model call with template and version, rendered messages, model and params, tool calls with arguments and results, then tokens including cached, TTFT, total latency, cost and finish reason. Plus user, tenant and session ids so feedback and cost roll up. I emit it with the OpenTelemetry GenAI conventions so the backend is swappable: Langfuse or Phoenix today, my APM vendor tomorrow.",
+        "es": "Lo suficiente para reproducirla y costearla. Una traza por petición con un span por paso: recuperación con ids y scores de documentos, cada llamada al modelo con plantilla y versión, mensajes renderizados, modelo y parámetros, tool calls con argumentos y resultados, y luego tokens incluyendo los de caché, TTFT, latencia total, costo y finish reason. Además ids de usuario, tenant y sesión para agregar feedback y costo. Lo emito con las convenciones GenAI de OpenTelemetry para poder cambiar de backend: Langfuse o Phoenix hoy, mi proveedor de APM mañana."
+      }
+    },
+    {
+      "q": { "en": "Legal says prompts contain customer PII. Do you stop logging them?", "es": "Legal dice que los prompts contienen PII de clientes. ¿Dejas de registrarlos?" },
+      "a": {
+        "en": "No, I change how I log them, because without payloads I can't debug quality. I redact at the collector before export, with patterns plus an NER tool like Presidio, and pseudonymize user ids. I split storage: metadata and metrics on normal retention, payloads in a restricted store with short retention, say 30 days, and audited access. I sample payloads: all errors and thumbs-down, a few percent of the rest. For the strictest tenants I log hashes and lengths only.",
+        "es": "No, cambio la forma de registrarlos, porque sin payloads no puedo depurar la calidad. Enmascaro en el collector antes de exportar, con patrones más una herramienta de NER como Presidio, y uso seudónimos para los ids de usuario. Separo el almacenamiento: metadatos y métricas con retención normal, payloads en un almacén restringido con retención corta, digamos 30 días, y acceso auditado. Muestreo los payloads: todos los errores y pulgares abajo, unos pocos por ciento del resto. Para los tenants más estrictos registro solo hashes y longitudes."
+      }
+    },
+    {
+      "q": { "en": "How is LLM observability different from regular APM?", "es": "¿En qué se diferencia la observabilidad de LLMs del APM tradicional?" },
+      "a": {
+        "en": "APM answers whether the system is up and fast, and treats the call as a black box that returned 200. Most LLM failures also return 200: a hallucination, a wrong tool, a prompt that doubled tokens. So I need the content, meaning inputs, retrieved context and outputs, plus signals APM lacks: feedback, online eval scores, cost per request. I still use the same OpenTelemetry plumbing and trace ids, so the LLM span sits inside the normal distributed trace next to the database call.",
+        "es": "El APM responde si el sistema está arriba y es rápido, y trata la llamada como una caja negra que devolvió 200. La mayoría de las fallas de un LLM también devuelven 200: una alucinación, una herramienta equivocada, un prompt que duplicó los tokens. Por eso necesito el contenido, es decir entradas, contexto recuperado y salidas, más señales que el APM no tiene: feedback, scores de evals online, costo por petición. Igual uso la misma plomería de OpenTelemetry y los mismos trace ids, así que el span del LLM queda dentro de la traza distribuida normal, junto a la llamada a la base de datos."
+      }
+    }
+  ],
+  "related": ["observability", "inference-metrics", "llm-gateway", "offline-online-evals", "pii-privacy", "prompt-management"],
+  "sources": [
+    { "title": "OpenTelemetry — Semantic conventions for generative AI", "url": "https://opentelemetry.io/docs/specs/semconv/gen-ai/" },
+    { "title": "Langfuse — Documentation", "url": "https://langfuse.com/docs" },
+    { "title": "Arize Phoenix (open source)", "url": "https://github.com/Arize-ai/phoenix" },
+    { "title": "OpenLLMetry — OpenTelemetry instrumentation for LLMs", "url": "https://github.com/traceloop/openllmetry" }
+  ]
+}

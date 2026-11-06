@@ -1,0 +1,88 @@
+{
+  "id": "agent-evals",
+  "domain": "evals",
+  "level": "advanced",
+  "title": { "en": "Evaluating agents", "es": "Evaluar agentes" },
+  "aliases": ["agent evaluation", "trajectory evaluation", "pass^k", "pass@k", "τ-bench", "tau-bench", "SWE-bench", "end-state grading"],
+  "tldr": {
+    "en": "Run each task several times in a sandbox; grade the outcome (the end state) and the trajectory (required and forbidden tool calls, steps, cost), and report pass^k — users need reliability, not one lucky run.",
+    "es": "Corre cada tarea varias veces en un sandbox; califica el resultado (el estado final) y la trayectoria (llamadas obligatorias y prohibidas, pasos, costo), y reporta pass^k: los usuarios necesitan confiabilidad, no una corrida con suerte."
+  },
+  "analogy": {
+    "en": "A driving test: the car must end up parked in the right spot (outcome), the driver must not run a red light on the way (trajectory), and one clean drive doesn't prove a reliable driver.",
+    "es": "Un examen de manejo: el auto tiene que terminar estacionado en el lugar correcto (resultado), el conductor no puede pasarse un semáforo en rojo en el camino (trayectoria), y un solo recorrido limpio no demuestra que sea confiable."
+  },
+  "explain": {
+    "en": "An agent's output isn't a string — it's a **sequence of actions that changes the world**, so grade it at two levels:\n\n- **Outcome** — did the task succeed? Check the **end state**, not the agent's final message: DB rows, files, whether tests pass. τ-bench compares the final database to the expected one; SWE-bench runs the repo's tests on the agent's patch.\n- **Trajectory** — how did it get there? **Required** calls (verify identity before a refund), **forbidden** ones (delete without confirmation), argument correctness, steps, turns, tokens and cost. Use these as constraints and budgets, not an exact path to match: valid paths vary.\n\n**Transcript graders** — an [[llm-as-judge]] reading the full trace — cover what code can't: policy adherence, tone, asking before acting.\n\nThe harness matters as much as the metric:\n\n- **Sandboxed, resettable environments** (containers, mocked APIs, seeded DBs), so trials are isolated and side effects are safe.\n- **Simulated users** for multi-turn tasks.\n- **Repeated trials**, because agents are nondeterministic. **pass@k** = P(at least one of k succeeds): fine when a human or a test picks the best. **pass^k** = P(all k succeed): what a customer-facing agent needs. τ-bench showed reliability collapsing across trials; even with independent runs, 90% per trial is only ~43% for 8 of 8.\n\nStart with 20–50 tasks drawn from real failures, and grade the outcome first.",
+    "es": "La salida de un agente no es un texto: es una **secuencia de acciones que cambia el mundo**, así que se califica en dos niveles:\n\n- **Resultado**: ¿se cumplió la tarea? Revisa el **estado final**, no el último mensaje del agente: filas en la base de datos, archivos, si pasan los tests. τ-bench compara la base de datos final con la esperada; SWE-bench corre los tests del repositorio sobre el parche del agente.\n- **Trayectoria**: ¿cómo llegó? Llamadas **obligatorias** (verificar identidad antes de un reembolso), **prohibidas** (borrar sin confirmación), argumentos correctos, pasos, turnos, tokens y costo. Úsalas como restricciones y presupuestos, no como un camino exacto que copiar: hay varios caminos válidos.\n\nLos **calificadores de transcript** (un [[llm-as-judge]] que lee la traza completa) cubren lo que el código no puede: cumplimiento de políticas, tono, preguntar antes de actuar.\n\nEl harness importa tanto como la métrica:\n\n- **Entornos aislados y reiniciables** (contenedores, APIs simuladas, bases de datos precargadas), para que cada intento sea independiente y los efectos secundarios no hagan daño.\n- **Usuarios simulados** para tareas de varios turnos.\n- **Intentos repetidos**, porque los agentes no son deterministas. **pass@k** = P(al menos uno de k funciona): sirve cuando un humano o un test elige el mejor. **pass^k** = P(los k funcionan): lo que necesita un agente frente a clientes. τ-bench mostró que la confiabilidad se desploma entre intentos; incluso con corridas independientes, 90% por intento es apenas ~43% para 8 de 8.\n\nEmpieza con 20–50 tareas sacadas de fallas reales y califica primero el resultado."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  T[\"Task + seed state\"] -->|k trials| S[\"Fresh sandbox<br/>per trial\"]\n  S --> A[Agent run]\n  U[Simulated user] -.-> A\n  A --> TR[(Trajectory log)]\n  A --> E[(End state)]\n  E --> O{\"Outcome check<br/>DB rows, tests\"}\n  TR --> J{\"Trajectory checks<br/>required, forbidden\"}\n  O --> M[\"pass@k and pass^k\"]\n  J --> M",
+    "caption": {
+      "en": "Every trial starts from the same seeded state; outcome and trajectory are graded separately, then aggregated over k trials.",
+      "es": "Cada intento arranca desde el mismo estado inicial; el resultado y la trayectoria se califican por separado y luego se agregan sobre k intentos."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Outcome + trajectory checks, pass@k vs pass^k", "es": "Checks de resultado y trayectoria, pass@k vs pass^k" },
+    "source": "from math import comb\n\ndef run_trial(task) -> dict:\n    env = Sandbox.from_snapshot(task.seed)       # fresh, isolated state every trial\n    trace = agent.run(task.goal, tools=env.tools, user=task.user_sim)\n    calls = [step.tool for step in trace.steps if step.tool]\n    return {\n        # Outcome: read the world, not the agent's \"Done, refund issued!\"\n        \"outcome\": env.query(task.check_sql) == task.expected_rows,\n        # Trajectory: constraints, not an exact path (several paths are valid)\n        \"required\": all(t in calls for t in task.required_tools),        # verify_identity\n        \"forbidden\": not any(t in calls for t in task.forbidden_tools),  # delete_account\n        \"steps\": len(trace.steps),\n        \"cost_usd\": trace.cost_usd,\n    }\n\ndef pass_at_k(n: int, c: int, k: int) -> float:   # P(at least one of k succeeds)\n    return 1 - comb(n - c, k) / comb(n, k)\n\ndef pass_hat_k(n: int, c: int, k: int) -> float:  # P(all k succeed): reliability\n    return comb(c, k) / comb(n, k)\n\nN, K = 8, 4   # run n trials per task, estimate for any k <= n\nfor task in tasks:\n    runs = [run_trial(task) for _ in range(N)]\n    c = sum(r[\"outcome\"] and r[\"required\"] and r[\"forbidden\"] for r in runs)\n    avg_cost = sum(r[\"cost_usd\"] for r in runs) / N\n    print(task.id, f\"pass@{K}={pass_at_k(N, c, K):.2f}\",\n          f\"pass^{K}={pass_hat_k(N, c, K):.2f}\", f\"avg_cost=${avg_cost:.2f}\")"
+  },
+  "example": {
+    "en": "A refund agent passes 46 of 50 tasks in a single run: 92%, ready to ship? With 8 trials per task, pass^8 is 58% — over 40% of tasks fail at least once in eight attempts. Trajectory checks add a second finding: in 6% of successful runs the agent issued the refund *before* calling `verify_identity`. The end state was right; the path broke policy. The team moves that ordering into a hard code guard and gates releases on pass^4 ≥ 85% with zero forbidden-call violations.",
+    "es": "Un agente de reembolsos resuelve 46 de 50 tareas en una sola corrida: 92%, ¿listo para producción? Con 8 intentos por tarea, pass^8 da 58%: más del 40% de las tareas falla al menos una vez en ocho intentos. Los checks de trayectoria suman un segundo hallazgo: en el 6% de las corridas exitosas el agente hizo el reembolso *antes* de llamar a `verify_identity`. El estado final era correcto; el camino violó la política. El equipo pasa ese orden a una validación rígida en código y condiciona cada release a pass^4 ≥ 85% sin ninguna llamada prohibida."
+  },
+  "pros": [
+    { "en": "End-state checks are objective and deterministic, even when the path varies.", "es": "Los checks de estado final son objetivos y deterministas, aunque el camino varíe." },
+    { "en": "Trajectory metrics catch policy violations and waste that a correct outcome hides.", "es": "Las métricas de trayectoria detectan violaciones de política y desperdicio que un resultado correcto esconde." },
+    { "en": "pass^k exposes flakiness that single-run scores hide.", "es": "pass^k expone la inestabilidad que los puntajes de una sola corrida esconden." }
+  ],
+  "cons": [
+    { "en": "Realistic sandboxes, seeded data and user simulators are real engineering work.", "es": "Los sandboxes realistas, los datos precargados y los simuladores de usuario son trabajo de ingeniería serio." },
+    { "en": "k trials multiply cost and time: 50 tasks × 8 trials = 400 agent runs.", "es": "Los k intentos multiplican costo y tiempo: 50 tareas × 8 intentos = 400 corridas del agente." },
+    { "en": "Simulated users and transcript judges add their own noise and bias.", "es": "Los usuarios simulados y los jueces de transcript agregan su propio ruido y sesgo." }
+  ],
+  "whenToUse": {
+    "en": "Any system where the model takes multi-step actions with tools: support agents, coding agents, computer use, workflows that write to databases or call external APIs.",
+    "es": "Cualquier sistema donde el modelo ejecuta acciones de varios pasos con herramientas: agentes de soporte, agentes de código, computer use, flujos que escriben en bases de datos o llaman APIs externas."
+  },
+  "whenNotToUse": {
+    "en": "Single-call features (classification, extraction, one-shot answers): plain output evals are simpler. And don't grade an exact tool sequence when several valid paths exist.",
+    "es": "Funciones de una sola llamada (clasificación, extracción, respuestas directas): las evals de salida simples alcanzan. Y no califiques una secuencia exacta de herramientas cuando hay varios caminos válidos."
+  },
+  "numbers": [
+    { "en": "τ-bench (Yao et al., 2024): gpt-4o function-calling agents solved <50% of tasks, and pass^8 was <25% in the retail domain.", "es": "τ-bench (Yao et al., 2024): agentes con function calling sobre gpt-4o resolvieron <50% de las tareas, y pass^8 fue <25% en el dominio retail." },
+    { "en": "Independent trials at 90% per-trial success: pass^8 = 0.9^8 ≈ 43%, while pass@8 ≈ 100%.", "es": "Intentos independientes con 90% de éxito cada uno: pass^8 = 0.9^8 ≈ 43%, mientras que pass@8 ≈ 100%." },
+    { "en": "SWE-bench: 2,294 real GitHub issues from 12 Python repos, graded by the repo's tests; SWE-bench Verified is a 500-task human-validated subset.", "es": "SWE-bench: 2,294 issues reales de GitHub de 12 repos de Python, calificados con los tests del repo; SWE-bench Verified es un subconjunto de 500 tareas validado por humanos." },
+    { "en": "Rule of thumb: start with 20–50 tasks from real failures, 3–10 trials each.", "es": "Regla práctica: empieza con 20–50 tareas sacadas de fallas reales, con 3–10 intentos cada una." }
+  ],
+  "pitfalls": [
+    { "en": "Trusting the agent's final message (\"Done, refund issued!\") instead of checking the end state.", "es": "Confiar en el mensaje final del agente (\"¡Listo, reembolso emitido!\") en vez de revisar el estado final." },
+    { "en": "Asserting one exact tool sequence: it penalizes valid alternatives and breaks on every prompt change.", "es": "Exigir una secuencia exacta de herramientas: penaliza alternativas válidas y se rompe con cada cambio de prompt." },
+    { "en": "Single-trial evals: a flaky agent looks fine until you repeat the run.", "es": "Evals de un solo intento: un agente inestable parece estar bien hasta que repites la corrida." },
+    { "en": "Shared, non-reset environments: one trial's side effects leak into the next.", "es": "Entornos compartidos que no se reinician: los efectos secundarios de un intento se filtran al siguiente." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you evaluate a customer-support agent before launch?", "es": "¿Cómo evaluarías un agente de atención al cliente antes del lanzamiento?" },
+      "a": {
+        "en": "I'd build 50–100 tasks from real tickets, each with a seeded sandbox — CRM, orders DB, mocked payments API — a simulated user persona and a goal. The primary grade is the end state: the right rows changed and nothing else did. On top I check the trajectory — identity verified before any account change, no forbidden calls, steps and cost within budget — plus an LLM transcript grader for policy and tone. I run every task 5–8 times and gate launch on pass^k and zero critical violations, not on a single-run average.",
+        "es": "Armaría 50–100 tareas a partir de tickets reales, cada una con un sandbox precargado (CRM, base de pedidos, API de pagos simulada), una persona de usuario simulado y un objetivo. La calificación principal es el estado final: cambiaron las filas correctas y nada más. Encima reviso la trayectoria (identidad verificada antes de cualquier cambio en la cuenta, ninguna llamada prohibida, pasos y costo dentro del presupuesto) y sumo un LLM juez de transcript para política y tono. Corro cada tarea 5–8 veces y condiciono el lanzamiento a pass^k y cero violaciones críticas, no a un promedio de una sola corrida."
+      }
+    },
+    {
+      "q": { "en": "pass@k or pass^k: which do you report?", "es": "pass@k o pass^k: ¿cuál reportas?" },
+      "a": {
+        "en": "It depends on who consumes the output. pass@k fits when a human or a verifier picks the best of k attempts, like a coding assistant proposing patches that tests then filter. pass^k fits when every run reaches a customer: they experience each attempt, so all of them must work. For production agents I report pass^k, because τ-bench showed reliability collapsing across trials even when single-run success looked acceptable, and the gap between pass@1 and pass^k is my flakiness signal.",
+        "es": "Depende de quién consume la salida. pass@k sirve cuando un humano o un verificador elige el mejor de k intentos, como un asistente de código que propone parches que luego filtran los tests. pass^k sirve cuando cada corrida llega a un cliente: el cliente vive cada intento, así que todos tienen que funcionar. Para agentes en producción reporto pass^k, porque τ-bench mostró que la confiabilidad se desploma entre intentos aunque el éxito de una sola corrida pareciera aceptable, y la brecha entre pass@1 y pass^k es mi señal de inestabilidad."
+      }
+    }
+  ],
+  "related": ["agent-reliability", "nondeterminism", "llm-as-judge", "deterministic-graders", "benchmarks", "tool-calling"],
+  "sources": [
+    { "title": "Yao et al. — τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains (2024)", "url": "https://arxiv.org/abs/2406.12045" },
+    { "title": "Jimenez et al. — SWE-bench: Can Language Models Resolve Real-World GitHub Issues? (2023)", "url": "https://arxiv.org/abs/2310.06770" },
+    { "title": "OpenAI — Introducing SWE-bench Verified", "url": "https://openai.com/index/introducing-swe-bench-verified/" },
+    { "title": "Chen et al. — Evaluating Large Language Models Trained on Code (pass@k, 2021)", "url": "https://arxiv.org/abs/2107.03374" }
+  ]
+}

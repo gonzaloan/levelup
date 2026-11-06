@@ -1,0 +1,87 @@
+{
+  "id": "groundedness",
+  "domain": "evals",
+  "level": "advanced",
+  "title": { "en": "Measuring hallucination & groundedness", "es": "Medir alucinaciones y groundedness" },
+  "aliases": ["faithfulness", "hallucination rate", "RAGAS faithfulness", "SelfCheckGPT", "HHEM", "NLI verification", "claim decomposition", "FActScore"],
+  "tldr": {
+    "en": "Split the answer into atomic claims, check each against the provided context with an NLI model or LLM judge, and report the unsupported share per slice. Faithful-to-context is not the same as factually true.",
+    "es": "Divide la respuesta en afirmaciones atómicas, verifica cada una contra el contexto entregado con un modelo NLI o un LLM juez y reporta la proporción sin respaldo por segmento. Ser fiel al contexto no es lo mismo que ser verdadero."
+  },
+  "analogy": {
+    "en": "A fact-checker with a highlighter: for every sentence in the article, find the line in the source notes that backs it. Sentences left without a highlight are the hallucinations, even if they happen to be true.",
+    "es": "Un verificador de datos con un resaltador: para cada oración del artículo busca la línea de las notas de origen que la respalda. Las oraciones que quedan sin resaltar son las alucinaciones, aunque por casualidad sean ciertas."
+  },
+  "explain": {
+    "en": "Two questions hide under \"hallucination\":\n\n- **Groundedness / faithfulness** — is every claim supported by the *context you gave the model* (retrieved docs, tool results)? Checkable without knowing the truth; it's what RAG and agents need.\n- **Factuality** — is it *true in the world*? Needs a trusted reference or experts.\n\nAn answer can be faithful but wrong (stale document) or correct but ungrounded (from model memory) — still a bug in a system that must answer from its sources.\n\nThe standard recipe is **claim decomposition + verification**:\n\n1. An LLM splits the answer into atomic, self-contained claims.\n2. An **NLI model** (entailment classifier) or an [[llm-as-judge]] checks each claim against the context.\n3. **RAGAS faithfulness** = supported claims ÷ total claims. Answer-level **hallucination rate** = share of answers with ≥ 1 unsupported claim.\n\nOther tools:\n\n- **Vectara HHEM** — a small open classifier scoring (source, claim) consistency; cheap enough for every request.\n- **SelfCheckGPT** — no context? Sample the answer several times; claims that don't recur across samples are likely invented.\n- **Citation checks** — does each cited passage actually entail its sentence ([[citations-grounding]])?\n\nReport per **slice** (document type, language, empty retrieval, numeric questions): a 3% average can hide 20% on tables.",
+    "es": "Bajo la palabra \"alucinación\" se esconden dos preguntas:\n\n- **Groundedness / faithfulness**: ¿cada afirmación está respaldada por el *contexto que le diste al modelo* (documentos recuperados, resultados de herramientas)? Se puede verificar sin conocer la verdad; es lo que necesitan RAG y los agentes.\n- **Factualidad**: ¿es *verdad en el mundo*? Requiere una referencia confiable o expertos.\n\nUna respuesta puede ser fiel pero incorrecta (documento desactualizado) o correcta pero sin respaldo (salió de la memoria del modelo), y eso sigue siendo un bug en un sistema que debe responder desde sus fuentes.\n\nLa receta estándar es **descomponer en afirmaciones y verificar**:\n\n1. Un LLM divide la respuesta en afirmaciones atómicas y autocontenidas.\n2. Un **modelo NLI** (clasificador de entailment) o un [[llm-as-judge]] verifica cada una contra el contexto.\n3. **Faithfulness de RAGAS** = afirmaciones respaldadas ÷ afirmaciones totales. La **tasa de alucinación** por respuesta = proporción de respuestas con ≥ 1 afirmación sin respaldo.\n\nOtras herramientas:\n\n- **Vectara HHEM**: un clasificador abierto y pequeño que puntúa la consistencia de cada par (fuente, afirmación); lo bastante barato para cada request.\n- **SelfCheckGPT**: ¿no hay contexto? Muestrea la respuesta varias veces; las afirmaciones que no se repiten entre muestras probablemente son inventadas.\n- **Verificación de citas**: ¿cada pasaje citado respalda de verdad su oración ([[citations-grounding]])?\n\nReporta por **segmento** (tipo de documento, idioma, recuperación vacía, preguntas numéricas): un promedio de 3% puede esconder un 20% en tablas."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  A[Generated answer] --> D[\"Split into<br/>atomic claims\"]\n  D --> V{Claim entailed by context?}\n  C[(Retrieved context)] --> V\n  V -->|yes| S[Supported]\n  V -->|no| U[Unsupported]\n  S --> F[\"Faithfulness =<br/>supported / total\"]\n  U --> F\n  U --> H[Human review queue]\n  F --> R[Report per slice]",
+    "caption": {
+      "en": "Verification is per claim, so one invented figure inside a long, mostly correct answer is still caught.",
+      "es": "La verificación es por afirmación, así que una cifra inventada dentro de una respuesta larga y casi toda correcta igual se detecta."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Claim-level faithfulness with HHEM, reported per slice", "es": "Faithfulness por afirmación con HHEM, reportada por segmento" },
+    "source": "import pandas as pd\nfrom transformers import AutoModelForSequenceClassification\n\n# HHEM: small open classifier; scores (premise, hypothesis) from 0 (unsupported) to 1\nhhem = AutoModelForSequenceClassification.from_pretrained(\n    \"vectara/hallucination_evaluation_model\", trust_remote_code=True)\n\ndef check(context: str, answer: str, threshold: float = 0.5) -> dict:\n    claims = extract_claims(answer)   # LLM call: atomic, self-contained claims\n    if not claims:                    # e.g. \"I don't know\": track abstention separately\n        return {\"faithfulness\": None, \"hallucinated\": False, \"unsupported\": []}\n    scores = hhem.predict([(context, c) for c in claims]).tolist()\n    unsupported = [c for c, s in zip(claims, scores) if s < threshold]\n    return {\n        \"faithfulness\": 1 - len(unsupported) / len(claims),  # RAGAS-style ratio\n        \"hallucinated\": bool(unsupported),                   # answer-level flag\n        \"unsupported\": unsupported,                          # what a human should read\n    }\n\nrows = [check(r.context, r.answer) | {\"slice\": r.doc_type} for r in eval_set]\nreport = pd.DataFrame(rows).groupby(\"slice\").agg(\n    faithfulness=(\"faithfulness\", \"mean\"),\n    hallucination_rate=(\"hallucinated\", \"mean\"),\n    n=(\"hallucinated\", \"size\"),\n)\nprint(report.sort_values(\"hallucination_rate\", ascending=False))  # worst slice first"
+  },
+  "example": {
+    "en": "A benefits assistant scores 0.94 faithfulness on 500 eval questions — looks fine. Sliced by source type, answers built from PDF tables score 0.71: the parser flattened the columns, so the model \"repairs\" numbers from memory, and 38% of those answers contain at least one unsupported claim. Fixing table parsing lifts the slice to 0.93. A nightly HHEM check on 5% of production answers now alerts when any slice falls below 0.9, and flagged claims go to a reviewer queue.",
+    "es": "Un asistente de beneficios laborales obtiene 0.94 de faithfulness sobre 500 preguntas de evaluación; parece bien. Al segmentar por tipo de fuente, las respuestas armadas desde tablas en PDF dan 0.71: el parser aplanó las columnas, así que el modelo \"repara\" los números de memoria, y el 38% de esas respuestas tiene al menos una afirmación sin respaldo. Arreglar el parseo de tablas sube el segmento a 0.93. Ahora un check nocturno con HHEM sobre el 5% de las respuestas de producción alerta cuando algún segmento baja de 0.9, y las afirmaciones marcadas van a una cola de revisión."
+  },
+  "pros": [
+    { "en": "Checks grounding without knowing the true answer, so it scales to production traffic.", "es": "Verifica el respaldo sin conocer la respuesta correcta, así que escala al tráfico de producción." },
+    { "en": "Claim-level output points at exactly which sentence was invented.", "es": "El resultado por afirmación señala exactamente qué oración se inventó." },
+    { "en": "NLI classifiers like HHEM are cheap enough to run on every response.", "es": "Los clasificadores NLI como HHEM son lo bastante baratos para correr en cada respuesta." }
+  ],
+  "cons": [
+    { "en": "Claim extraction and verification are themselves model calls that make mistakes.", "es": "Extraer y verificar afirmaciones también son llamadas a modelos que se equivocan." },
+    { "en": "Blind to wrong-but-faithful answers built on bad or stale context.", "es": "No ve las respuestas fieles pero incorrectas construidas sobre contexto malo o desactualizado." },
+    { "en": "Struggles with numbers, tables, multi-hop reasoning and very long contexts.", "es": "Tiene problemas con números, tablas, razonamiento multi-hop y contextos muy largos." }
+  ],
+  "whenToUse": {
+    "en": "RAG, summarization, extraction and agents answering from tool results — anywhere the output must be backed by a given source. Run it offline on the golden set and online on sampled traffic.",
+    "es": "RAG, resúmenes, extracción y agentes que responden desde resultados de herramientas: donde sea que la salida deba estar respaldada por una fuente dada. Córrelo offline sobre el golden set y online sobre una muestra del tráfico."
+  },
+  "whenNotToUse": {
+    "en": "Creative or open-ended tasks, or factual questions with no source to check against: there you need reference answers, SelfCheckGPT-style consistency or experts.",
+    "es": "Tareas creativas o abiertas, o preguntas factuales sin una fuente contra la cual verificar: ahí necesitas respuestas de referencia, consistencia estilo SelfCheckGPT o expertos."
+  },
+  "numbers": [
+    { "en": "RAGAS faithfulness = claims supported by the retrieved context ÷ total claims in the answer (0–1).", "es": "Faithfulness de RAGAS = afirmaciones respaldadas por el contexto recuperado ÷ total de afirmaciones de la respuesta (0–1)." },
+    { "en": "FActScore (Min et al., 2023): only ~58% of the atomic facts in ChatGPT-generated biographies were supported.", "es": "FActScore (Min et al., 2023): solo ~58% de los hechos atómicos en biografías generadas por ChatGPT estaban respaldados." },
+    { "en": "Vectara HHEM scores each (source, claim) pair from 0 (hallucinated) to 1 (consistent); 0.5 is the usual cut-off.", "es": "Vectara HHEM puntúa cada par (fuente, afirmación) de 0 (alucinado) a 1 (consistente); 0.5 es el corte habitual." }
+  ],
+  "pitfalls": [
+    { "en": "Treating faithfulness as correctness: a perfectly grounded answer from a stale document is still wrong.", "es": "Confundir faithfulness con corrección: una respuesta perfectamente respaldada por un documento desactualizado sigue estando mal." },
+    { "en": "Verifying the whole answer at once instead of per claim: one invented figure hides in a long reply.", "es": "Verificar la respuesta completa de una vez en vez de por afirmación: una cifra inventada se esconde en una respuesta larga." },
+    { "en": "Trusting the verifier without calibrating it on human-labeled hallucinations.", "es": "Confiar en el verificador sin calibrarlo contra alucinaciones etiquetadas por humanos." },
+    { "en": "Scoring \"I don't know\" as a failure: abstaining when evidence is missing is correct; track it separately.", "es": "Contar un \"no lo sé\" como falla: abstenerse cuando falta evidencia es lo correcto; mídelo por separado." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you measure hallucination in a RAG system?", "es": "¿Cómo medirías las alucinaciones en un sistema RAG?" },
+      "a": {
+        "en": "First I separate faithfulness from correctness. For faithfulness, I decompose each answer into atomic claims and check each against the retrieved context: an NLI model like HHEM for cheap coverage of sampled production traffic, and a calibrated LLM judge offline. I report claim-level faithfulness and answer-level hallucination rate per slice, worst slice first. For correctness I compare against reference answers in the golden set. And I include unanswerable questions, because the right behavior there is to abstain, and that's where most invention happens.",
+        "es": "Primero separo faithfulness de corrección. Para faithfulness, descompongo cada respuesta en afirmaciones atómicas y verifico cada una contra el contexto recuperado: un modelo NLI como HHEM para cubrir de forma barata una muestra del tráfico de producción, y un LLM juez calibrado offline. Reporto faithfulness por afirmación y tasa de alucinación por respuesta, por segmento y empezando por el peor. Para la corrección comparo contra las respuestas de referencia del golden set. E incluyo preguntas sin respuesta, porque ahí lo correcto es abstenerse y ahí es donde más se inventa."
+      }
+    },
+    {
+      "q": { "en": "There's no retrieved context: the model answers from memory. How do you detect hallucinations?", "es": "No hay contexto recuperado: el modelo responde de memoria. ¿Cómo detectas alucinaciones?" },
+      "a": {
+        "en": "Without a source I can't measure grounding, so I use proxies. SelfCheckGPT-style consistency: sample the answer several times at non-zero temperature and flag claims that don't recur, since invented facts tend to vary while known ones repeat. Offline, I measure factuality against a reference set with claim-level scoring like FActScore. But the better fix is architectural: give the model a source through retrieval or a tool, so the question becomes groundedness, which I can measure on every answer.",
+        "es": "Sin una fuente no puedo medir el respaldo, así que uso aproximaciones. Consistencia estilo SelfCheckGPT: muestreo la respuesta varias veces con temperatura mayor a cero y marco las afirmaciones que no se repiten, porque los hechos inventados tienden a variar y los conocidos se repiten. Offline, mido factualidad contra un set de referencia con puntaje por afirmación, como FActScore. Pero la mejor solución es de arquitectura: darle al modelo una fuente vía recuperación o una herramienta, para que la pregunta pase a ser de groundedness, que puedo medir en cada respuesta."
+      }
+    }
+  ],
+  "related": ["hallucinations", "citations-grounding", "rag-evaluation", "llm-as-judge", "self-consistency", "golden-datasets"],
+  "sources": [
+    { "title": "Es et al. — RAGAS: Automated Evaluation of Retrieval Augmented Generation (2023)", "url": "https://arxiv.org/abs/2309.15217" },
+    { "title": "Manakul et al. — SelfCheckGPT: Zero-Resource Black-Box Hallucination Detection for Generative Large Language Models (2023)", "url": "https://arxiv.org/abs/2303.08896" },
+    { "title": "Min et al. — FActScore: Fine-grained Atomic Evaluation of Factual Precision in Long Form Text Generation (2023)", "url": "https://arxiv.org/abs/2305.14251" },
+    { "title": "Vectara — HHEM (Hughes Hallucination Evaluation Model) model card", "url": "https://huggingface.co/vectara/hallucination_evaluation_model" }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "id": "embedding-finetuning",
+  "domain": "training",
+  "level": "advanced",
+  "title": { "en": "Fine-tuning embeddings & rerankers", "es": "Fine-tuning de embeddings y rerankers" },
+  "aliases": ["embedding fine-tuning", "contrastive learning", "MultipleNegativesRankingLoss", "MNRL", "InfoNCE", "hard negative mining", "in-batch negatives", "reranker fine-tuning"],
+  "tldr": {
+    "en": "Train your retriever on domain (query, relevant passage) pairs with a contrastive loss, using LLM-generated queries and mined hard negatives. A tuned embedder means re-indexing everything; a tuned reranker doesn't.",
+    "es": "Entrena tu recuperador con pares (consulta, pasaje relevante) de tu dominio y una pérdida contrastiva, usando consultas generadas por un LLM y hard negatives minados. Un embedder ajustado obliga a reindexar todo; un reranker ajustado, no."
+  },
+  "analogy": {
+    "en": "Training a new librarian with flashcards: \"this question goes to this shelf, not the look-alike shelf next to it\". The look-alike shelves teach the most.",
+    "es": "Entrenar a un bibliotecario nuevo con tarjetas: \"esta pregunta va a este estante, no al estante parecido de al lado\". Los estantes parecidos son los que más enseñan."
+  },
+  "explain": {
+    "en": "General embedding models learn what \"similar\" means from web data, so they miss your jargon: *\"PTO\"* vs *\"leave of absence\"*, SKU codes, internal product names. Fine-tuning re-teaches similarity with your own examples.\n\n**The signal is contrastive.** Each example is a (query, positive) pair, optionally plus a **hard negative**: a passage that looks relevant but isn't. With **MultipleNegativesRankingLoss** (InfoNCE), every other positive in the batch is a free negative, so a batch of 64 gives each query 63 negatives; bigger batches help.\n\n**Where the data comes from:**\n\n1. **Synthetic queries**: an LLM writes 1–3 questions each chunk answers ([[synthetic-data]]). Keep a pair only if its chunk ranks near the top for that query (a round-trip filter) to drop vague questions.\n2. **Hard negatives**: retrieve with the base model or BM25 and sample from ranks ~10–50. Skip the very top: unlabeled true positives hide there and would teach the model to push away right answers.\n3. **Real signals**: passages users clicked or the LLM cited are the best positives you'll get.\n\n**Rerankers** ([[reranking]]) train as cross-encoders on the same data with a classification or listwise loss, and swapping one in needs **no re-index**, so it's often the cheaper first move.\n\nAn embedding fine-tune changes every vector: you must re-embed the whole corpus ([[index-lifecycle]]). Judge it only on real, held-out queries ([[rag-evaluation]]).",
+    "es": "Los modelos de embeddings generales aprenden qué significa \"parecido\" a partir de datos de la web, así que no entienden tu jerga: *\"PTO\"* frente a *\"permiso con goce de sueldo\"*, códigos de SKU, nombres internos de productos. El fine-tuning les vuelve a enseñar qué es similar con tus propios ejemplos.\n\n**La señal es contrastiva.** Cada ejemplo es un par (consulta, positivo), opcionalmente con un **hard negative**: un pasaje que parece relevante pero no lo es. Con **MultipleNegativesRankingLoss** (InfoNCE), cada uno de los otros positivos del batch funciona como negativo gratis, así que un batch de 64 le da a cada consulta 63 negativos; los batches más grandes ayudan.\n\n**De dónde salen los datos:**\n\n1. **Consultas sintéticas**: un LLM escribe 1–3 preguntas que cada chunk responde ([[synthetic-data]]). Conserva un par solo si su chunk queda arriba para esa consulta (un filtro de ida y vuelta), para descartar preguntas vagas.\n2. **Hard negatives**: recupera con el modelo base o con BM25 y muestrea de los puestos ~10–50. Evita los primeros: ahí se esconden positivos reales sin etiquetar, que le enseñarían al modelo a alejar respuestas correctas.\n3. **Señales reales**: los pasajes en los que los usuarios hicieron clic o que el LLM citó son los mejores positivos que vas a conseguir.\n\nLos **rerankers** ([[reranking]]) se entrenan como cross-encoders con los mismos datos y una pérdida de clasificación o listwise, y cambiar uno **no requiere reindexar**, así que suele ser el primer paso más barato.\n\nUn fine-tuning de embeddings cambia todos los vectores: tienes que regenerar los embeddings de todo el corpus ([[index-lifecycle]]). Júzgalo solo con consultas reales y reservadas ([[rag-evaluation]])."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  C[(Your chunks)] --> L[\"LLM writes<br/>queries per chunk\"]\n  L --> F[\"Round-trip filter\"]\n  F --> P[\"(query, positive)<br/>pairs\"]\n  P --> H[\"Mine hard negatives<br/>ranks 10-50\"]\n  H --> T[\"Train with MNRL<br/>in-batch negatives\"]\n  T --> E{\"Beats base on<br/>real queries?\"}\n  Q[(Held-out real queries)] --> E\n  E -->|yes| R[\"Re-embed corpus,<br/>swap index\"]\n  E -->|no| X[Keep base model]",
+    "caption": {
+      "en": "Synthetic pairs and mined negatives train the model; only real held-out queries decide whether the re-index is worth paying for.",
+      "es": "Los pares sintéticos y los negativos minados entrenan el modelo; solo las consultas reales reservadas deciden si vale la pena pagar la reindexación."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Hard negatives + MNRL with sentence-transformers", "es": "Hard negatives + MNRL con sentence-transformers" },
+    "source": "from datasets import load_dataset\nfrom sentence_transformers import (SentenceTransformer, SentenceTransformerTrainer,\n                                   SentenceTransformerTrainingArguments)\nfrom sentence_transformers.losses import MultipleNegativesRankingLoss\nfrom sentence_transformers.training_args import BatchSamplers\nfrom sentence_transformers.util import mine_hard_negatives\n\nBASE = \"BAAI/bge-base-en-v1.5\"  # any open embedding model\nmodel = SentenceTransformer(BASE)\n\n# (anchor, positive) pairs: LLM-written queries per chunk, round-trip filtered\npairs = load_dataset(\"json\", data_files=\"synthetic_pairs.jsonl\", split=\"train\")\n\n# Hard negatives from ranks 10-50: skip the top, where false negatives hide\ntriplets = mine_hard_negatives(pairs, model, range_min=10, range_max=50,\n                               num_negatives=1, sampling_strategy=\"random\")\n\n# InfoNCE: each query vs its positive, its hard negative and every other doc in the batch\nloss = MultipleNegativesRankingLoss(model)\nargs = SentenceTransformerTrainingArguments(\n    output_dir=\"bge-ft\", num_train_epochs=1, per_device_train_batch_size=64,\n    learning_rate=2e-5, warmup_ratio=0.1, bf16=True,\n    batch_sampler=BatchSamplers.NO_DUPLICATES,  # duplicates = fake negatives\n)\nSentenceTransformerTrainer(model=model, args=args, train_dataset=triplets, loss=loss).train()\nmodel.save(\"bge-ft/final\")\n# Next: recall@10 / nDCG@10 on REAL held-out queries, then re-embed the corpus"
+  },
+  "example": {
+    "en": "An internal IT-helpdesk RAG has 40k chunks of runbooks. On 300 real, labelled employee questions, bge-base gets recall@10 = 0.61; it doesn't connect *\"VPN keeps dropping\"* with the *\"GlobalProtect tunnel reset\"* runbook. An LLM writes 2 questions per chunk (80k pairs; 52k survive the round-trip filter), hard negatives come from ranks 10–50, and one epoch on a single L4 takes ~40 minutes. Recall@10 rises to 0.74 on the same 300 questions. Re-embedding 40k chunks takes minutes; the team schedules a re-tune when the runbook corpus doubles.",
+    "es": "Un RAG interno de mesa de ayuda de TI tiene 40k chunks de runbooks. Con 300 preguntas reales y etiquetadas de empleados, bge-base logra recall@10 = 0.61; no conecta *\"la VPN se cae a cada rato\"* con el runbook *\"reinicio del túnel de GlobalProtect\"*. Un LLM escribe 2 preguntas por chunk (80k pares; 52k pasan el filtro de ida y vuelta), los hard negatives salen de los puestos 10–50 y una época en una sola L4 tarda ~40 minutos. El recall@10 sube a 0.74 con las mismas 300 preguntas. Regenerar los embeddings de 40k chunks toma minutos; el equipo agenda un nuevo ajuste para cuando el corpus de runbooks se duplique."
+  },
+  "pros": [
+    { "en": "Fixes domain jargon, acronyms and internal names that general models embed poorly.", "es": "Corrige la jerga del dominio, las siglas y los nombres internos que los modelos generales representan mal." },
+    { "en": "Cheap to train: a base-size open model fine-tunes in under an hour on one GPU from synthetic data.", "es": "Barato de entrenar: un modelo abierto de tamaño base se ajusta en menos de una hora en una GPU con datos sintéticos." },
+    { "en": "Can let a small, fast self-hosted model match a larger API model on your domain.", "es": "Puede lograr que un modelo pequeño, rápido y autohospedado iguale a uno más grande por API en tu dominio." },
+    { "en": "Reranker fine-tunes need no re-index, so they roll out and roll back easily.", "es": "Los fine-tunings de rerankers no requieren reindexar, así que se despliegan y se revierten con facilidad." }
+  ],
+  "cons": [
+    { "en": "A new embedding model means re-embedding and re-indexing the whole corpus, plus a migration plan.", "es": "Un nuevo modelo de embeddings implica regenerar los embeddings y reindexar todo el corpus, más un plan de migración." },
+    { "en": "Needs open weights or a provider that supports it; with a closed embedding API, a small query-side adapter is the usual workaround.", "es": "Necesita pesos abiertos o un proveedor que lo ofrezca; con una API de embeddings cerrada, la alternativa habitual es un adapter pequeño del lado de la consulta." },
+    { "en": "Can overfit to the style of synthetic queries and lose general retrieval quality.", "es": "Puede sobreajustarse al estilo de las consultas sintéticas y perder calidad de recuperación general." }
+  ],
+  "whenToUse": {
+    "en": "Recall on real queries stays poor after hybrid search and a reranker, the misses are domain vocabulary, you can run an open model, and you have a labelled eval set to prove the gain.",
+    "es": "El recall con consultas reales sigue bajo después de búsqueda híbrida y un reranker, las fallas son de vocabulario del dominio, puedes correr un modelo abierto y tienes un set de evaluación etiquetado para demostrar la mejora."
+  },
+  "whenNotToUse": {
+    "en": "Before trying hybrid search and an off-the-shelf reranker, without a held-out eval of real queries, or when frequent re-indexing of a fast-changing corpus is unaffordable.",
+    "es": "Antes de probar búsqueda híbrida y un reranker listo para usar, sin una evaluación reservada con consultas reales, o cuando no puedes pagar reindexar seguido un corpus que cambia rápido."
+  },
+  "numbers": [
+    { "en": "MNRL: a batch of B pairs gives each query B−1 free in-batch negatives; default scale 20 (temperature 0.05).", "es": "MNRL: un batch de B pares le da a cada consulta B−1 negativos gratis dentro del batch; escala por defecto 20 (temperatura 0.05)." },
+    { "en": "Rule of thumb: ~1k–10k good pairs move a base-size (~110M) model; training takes minutes to an hour on one GPU.", "es": "Regla práctica: ~1k–10k pares buenos mueven un modelo de tamaño base (~110M); entrenar toma de minutos a una hora en una GPU." },
+    { "en": "Rule of thumb: sample hard negatives from ranks ~10–50, not the top few, where false negatives live.", "es": "Regla práctica: muestrea hard negatives de los puestos ~10–50, no de los primeros, donde viven los falsos negativos." },
+    { "en": "Re-index cost: 10M chunks × ~500 tokens = 5B tokens to re-embed after every model change.", "es": "Costo de reindexar: 10M chunks × ~500 tokens = 5B tokens que volver a embeber tras cada cambio de modelo." }
+  ],
+  "pitfalls": [
+    { "en": "Evaluating on synthetic queries generated from the same chunks: it measures memorization, not retrieval.", "es": "Evaluar con consultas sintéticas generadas de los mismos chunks: mide memorización, no recuperación." },
+    { "en": "Hardest negatives that are actually relevant: the model learns to push correct answers away.", "es": "Hard negatives tan difíciles que en realidad son relevantes: el modelo aprende a alejar las respuestas correctas." },
+    { "en": "Duplicate texts in a batch acting as false in-batch negatives; use a no-duplicates batch sampler.", "es": "Textos duplicados en un batch que actúan como falsos negativos; usa un batch sampler sin duplicados." },
+    { "en": "Dropping the model's query/passage prefixes (E5 expects `query: ` and `passage: `) at training or inference time.", "es": "Omitir los prefijos de consulta y pasaje del modelo (E5 espera `query: ` y `passage: `) al entrenar o al inferir." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Retrieval on our internal docs is weak. When would you fine-tune the embedding model?", "es": "La recuperación sobre nuestros documentos internos es débil. ¿Cuándo harías fine-tuning del modelo de embeddings?" },
+      "a": {
+        "en": "Late on the cheap list, not first. I'd error-analyze misses on real queries. Exact codes and names: hybrid search with BM25 fixes them for free. Right chunk retrieved but ranked low: a reranker. If the misses are domain vocabulary the vector model doesn't connect, I fine-tune: LLM-generated queries per chunk, a round-trip filter, hard negatives from ranks 10–50, MultipleNegativesRankingLoss. I ship only if recall@10 improves on held-out real queries, and I budget the full re-embed plus an index migration with rollback.",
+        "es": "Tarde en la lista de opciones baratas, no primero. Analizaría los errores con consultas reales. Si son códigos y nombres exactos, la búsqueda híbrida con BM25 los resuelve gratis. Si el chunk correcto se recupera pero queda abajo, un reranker. Si las fallas son vocabulario del dominio que el modelo vectorial no conecta, hago fine-tuning: consultas generadas por un LLM para cada chunk, un filtro de ida y vuelta, hard negatives de los puestos 10–50 y MultipleNegativesRankingLoss. Solo despliego si el recall@10 mejora con consultas reales reservadas, y presupuesto regenerar todos los embeddings más una migración de índice con rollback."
+      }
+    },
+    {
+      "q": { "en": "Why do hard negatives matter, and how can they hurt?", "es": "¿Por qué importan los hard negatives y cómo pueden perjudicar?" },
+      "a": {
+        "en": "In-batch negatives are random passages, so after a few steps they're trivially easy and contribute almost no gradient. Hard negatives, passages that share words or topic but don't answer, are where the model learns fine distinctions. The danger is false negatives: in a real corpus, many top-ranked passages for a synthetic query are genuinely relevant but unlabeled, and training on them teaches the model to push right answers away. So I skip the top ranks, sample from a band like 10–50, and drop candidates a cross-encoder scores as relevant.",
+        "es": "Los negativos dentro del batch son pasajes al azar, así que tras unos pasos son trivialmente fáciles y casi no aportan gradiente. Los hard negatives, pasajes que comparten palabras o tema pero no responden, son donde el modelo aprende las distinciones finas. El peligro son los falsos negativos: en un corpus real, muchos pasajes que quedan arriba para una consulta sintética son relevantes de verdad pero no están etiquetados, y entrenar con ellos le enseña al modelo a alejar las respuestas correctas. Por eso evito los primeros puestos, muestreo de una franja como 10–50 y descarto los candidatos que un cross-encoder califica como relevantes."
+      }
+    },
+    {
+      "q": { "en": "Embedding fine-tune or reranker fine-tune: which first?", "es": "¿Fine-tuning del modelo de embeddings o del reranker: cuál primero?" },
+      "a": {
+        "en": "Usually the reranker. It trains on the same pairs, swaps in without touching the index and rolls back instantly. But it can only reorder what first-stage retrieval returns: if the right chunk isn't in the top 50, no reranker saves it, and then the embedder (or hybrid search) is the fix. So I measure recall@50 first. High recall with poor ordering means reranker; poor recall means embedder, with the re-index cost accepted up front.",
+        "es": "Normalmente el reranker. Se entrena con los mismos pares, se cambia sin tocar el índice y se revierte al instante. Pero solo puede reordenar lo que devuelve la primera etapa: si el chunk correcto no está en el top 50, ningún reranker lo rescata, y ahí la solución es el embedder (o la búsqueda híbrida). Así que primero mido recall@50. Recall alto con mal orden significa reranker; recall bajo significa embedder, aceptando desde el inicio el costo de reindexar."
+      }
+    }
+  ],
+  "related": ["embedding-models", "reranking", "synthetic-data", "rag-evaluation", "index-lifecycle", "hybrid-search"],
+  "sources": [
+    { "title": "Karpukhin et al. — Dense Passage Retrieval for Open-Domain Question Answering (DPR)", "url": "https://arxiv.org/abs/2004.04906" },
+    { "title": "Wang et al. — GPL: Generative Pseudo Labeling for Unsupervised Domain Adaptation of Dense Retrieval", "url": "https://arxiv.org/abs/2112.07577" },
+    { "title": "Hugging Face — Training and Finetuning Embedding Models with Sentence Transformers v3", "url": "https://huggingface.co/blog/train-sentence-transformers" },
+    { "title": "Sentence Transformers — Loss Overview", "url": "https://sbert.net/docs/sentence_transformer/loss_overview.html" }
+  ]
+}

@@ -1,0 +1,84 @@
+{
+  "id": "token-economics",
+  "domain": "inference",
+  "level": "core",
+  "title": { "en": "Token economics & cost estimation", "es": "Economía de tokens y estimación de costos" },
+  "aliases": ["LLM cost estimation", "cost per request", "input vs output pricing", "price per million tokens", "unit economics", "cost per task", "LLM FinOps"],
+  "tldr": {
+    "en": "Cost = input tokens × input price + output tokens × output price, summed over every call. Estimate per request, multiply by volume, then pull the levers: caching, shorter prompts, smaller models, batch.",
+    "es": "Costo = tokens de entrada × precio de entrada + tokens de salida × precio de salida, sumado sobre cada llamada. Estima por petición, multiplica por volumen y luego mueve las palancas: caching, prompts más cortos, modelos más chicos, batch."
+  },
+  "explain": {
+    "en": "Providers bill per token, with separate input and output prices quoted per million tokens. **Output usually costs ~4–8× input** because each output token is a sequential decode step, while input is processed in parallel during [[prefill-decode]].\n\n**Per call:** `in_tokens × in_price + out_tokens × out_price`. **Per task**, sum every call: an agent loop, or RAG with a query rewrite and a judge, makes several.\n\nWhat people miss:\n\n- **Input dominates volume.** System prompt, tool schemas, retrieved chunks and history are resent on every call; chat history makes a conversation's total input grow roughly quadratically with turns.\n- **Hidden output.** Reasoning tokens are billed as output even when you never see them.\n- **Tokens are not words.** ~0.75 English words per token; other languages often need more tokens for the same text.\n\n**Levers**, cheapest first:\n\n1. Trim the prompt: fewer, better chunks; summarize old history.\n2. [[prompt-caching]]: cached input reads at ~10–50% of the base price.\n3. Cap output: `max_tokens`, terse formats, structured outputs.\n4. A smaller model, or [[model-routing]] for the easy traffic.\n5. Batch APIs (~50% off) for anything that can wait 24 h.\n\nEstimate from real logs with p50 *and* p95 token counts, multiply by volume, and add headroom for retries and growth.",
+    "es": "Los proveedores cobran por token, con precios separados para entrada y salida, expresados por millón de tokens. **La salida suele costar ~4–8× la entrada**, porque cada token de salida es un paso de decode secuencial, mientras que la entrada se procesa en paralelo durante el [[prefill-decode]].\n\n**Por llamada:** `tokens_in × precio_in + tokens_out × precio_out`. **Por tarea**, suma todas las llamadas: un loop de agente, o un RAG con reescritura de consulta y un juez, hace varias.\n\nLo que se suele pasar por alto:\n\n- **La entrada domina el volumen.** System prompt, esquemas de herramientas, chunks recuperados e historial se reenvían en cada llamada; el historial hace que la entrada total de una conversación crezca de forma casi cuadrática con los turnos.\n- **Salida oculta.** Los tokens de razonamiento se cobran como salida aunque nunca los veas.\n- **Los tokens no son palabras.** ~0.75 palabras en inglés por token; otros idiomas, como el español, suelen necesitar más tokens para el mismo texto.\n\n**Palancas**, de la más barata a la más cara:\n\n1. Recorta el prompt: menos chunks y mejores; resume el historial viejo.\n2. [[prompt-caching]]: la entrada en caché se lee a ~10–50% del precio base.\n3. Limita la salida: `max_tokens`, formatos concisos, salidas estructuradas.\n4. Un modelo más chico, o [[model-routing]] para el tráfico fácil.\n5. APIs batch (~50% de descuento) para todo lo que pueda esperar 24 h.\n\nEstima con logs reales usando conteos de tokens p50 *y* p95, multiplica por el volumen y deja margen para reintentos y crecimiento."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  S[\"System + tools<br/>3k, cacheable\"] --> IN[Input tokens]\n  R[\"Retrieved chunks<br/>4k\"] --> IN\n  H[\"History + question<br/>1k\"] --> IN\n  IN -->|\"x $3 per 1M\"| C[Cost per request]\n  O[\"Output<br/>400 tokens\"] -->|\"x $15 per 1M\"| C\n  C -->|\"x 600k per month\"| M[Monthly bill]",
+    "caption": {
+      "en": "Input is most of the tokens, output carries the pricier rate; the bill is cost per request times volume.",
+      "es": "La entrada es la mayoría de los tokens y la salida lleva la tarifa más cara; la factura es el costo por petición por el volumen."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Monthly estimate for a RAG assistant, with two levers", "es": "Estimación mensual de un asistente RAG, con dos palancas" },
+    "source": "# Monthly cost of a RAG support assistant. All inputs are ASSUMPTIONS:\n# take token counts from your logs (p50 and p95) and prices from the provider's page.\nPRICE_IN, PRICE_OUT = 3.00, 15.00     # $ per 1M tokens, Sonnet-class list price (2025)\nCACHE_WRITE, CACHE_READ = 1.25, 0.10  # Anthropic-style multipliers on the input price\n\nREQUESTS_PER_MONTH = 20_000 * 30\nSTATIC = 3_000      # system prompt + tool schemas: identical on every call\nRETRIEVED = 4_000   # RAG chunks: different on every request\nHISTORY = 1_000     # recent turns + the user's question\nOUTPUT = 400        # answer tokens (reasoning tokens would bill here too)\n\ndef per_request(cache_hit: float | None = None, retrieved: int = RETRIEVED) -> float:\n    # cache_hit=None: caching off. Otherwise misses pay the write, hits the read.\n    f = 1.0 if cache_hit is None else (1 - cache_hit) * CACHE_WRITE + cache_hit * CACHE_READ\n    input_cost = (STATIC * f + retrieved + HISTORY) * PRICE_IN\n    return (input_cost + OUTPUT * PRICE_OUT) / 1e6\n\nfor label, cost in [\n    (\"baseline\", per_request()),\n    (\"+ prompt caching, 90% hits\", per_request(cache_hit=0.9)),\n    (\"+ 2k retrieved tokens, not 4k\", per_request(cache_hit=0.9, retrieved=2_000)),\n]:\n    print(f\"{label:<30} ${cost:.4f}/req  ${cost * REQUESTS_PER_MONTH:>7,.0f}/month\")\n# baseline                       $0.0300/req  $ 18,000/month\n# + prompt caching, 90% hits     $0.0229/req  $ 13,761/month\n# + 2k retrieved tokens, not 4k  $0.0169/req  $ 10,161/month"
+  },
+  "example": {
+    "en": "A support assistant handles 20k requests/day: ~8,000 input tokens (3k static prompt and tools, 4k retrieved chunks, 1k history) and ~400 output tokens. At $3/$15 per 1M (a Sonnet-class list price, 2025): 8,000 × $3/1M = $0.024 plus 400 × $15/1M = $0.006, so **$0.03 per request, ~$18k/month**. Output is ~5% of the tokens but 20% of the bill. Caching the static prefix (90% hits) brings it to ~$13.8k; sending 2k tokens of better-reranked chunks instead of 4k brings it to ~$10.2k, a ~44% cut without changing the model.",
+    "es": "Un asistente de soporte atiende 20k peticiones al día: ~8,000 tokens de entrada (3k de prompt estático y herramientas, 4k de chunks recuperados, 1k de historial) y ~400 de salida. A $3/$15 por 1M (precio de lista de un modelo tipo Sonnet, 2025): 8,000 × $3/1M = $0.024 más 400 × $15/1M = $0.006, o sea **$0.03 por petición, ~$18k al mes**. La salida es ~5% de los tokens pero 20% de la factura. Cachear el prefijo estático (90% de hits) la baja a ~$13.8k; mandar 2k tokens de chunks mejor reordenados en vez de 4k la deja en ~$10.2k, un recorte de ~44% sin cambiar de modelo."
+  },
+  "pros": [
+    { "en": "Turns \"AI is expensive\" into a per-request number that product and finance can reason about.", "es": "Convierte \"la IA es cara\" en un número por petición con el que producto y finanzas pueden razonar." },
+    { "en": "Shows which lever matters: in most RAG and agent apps, input tokens drive the bill.", "es": "Muestra qué palanca importa: en la mayoría de las apps de RAG y agentes, los tokens de entrada mandan en la factura." },
+    { "en": "Catches runaway designs (agent loops, unbounded history) before launch, not on the invoice.", "es": "Detecta diseños que se disparan (loops de agentes, historial sin límite) antes del lanzamiento, no en la factura." }
+  ],
+  "cons": [
+    { "en": "Only as good as the token distribution: p95 prompts and agent loops break averages.", "es": "Vale lo que vale la distribución de tokens: los prompts p95 y los loops de agentes rompen los promedios." },
+    { "en": "Prices change several times a year; keep the model as a script, not a memorized number.", "es": "Los precios cambian varias veces al año; mantén la estimación como script, no como un número memorizado." }
+  ],
+  "whenToUse": {
+    "en": "Before launching any LLM feature, when choosing between models or architectures, and whenever a design adds calls per task (agents, rewrites, judges).",
+    "es": "Antes de lanzar cualquier funcionalidad con LLMs, al elegir entre modelos o arquitecturas, y cada vez que un diseño agrega llamadas por tarea (agentes, reescrituras, jueces)."
+  },
+  "whenNotToUse": {
+    "en": "Don't shave tokens on a low-traffic prototype before it works, and never let cost per token override quality: optimize cost per *successful* task.",
+    "es": "No recortes tokens en un prototipo con poco tráfico antes de que funcione, y nunca dejes que el costo por token le gane a la calidad: optimiza el costo por tarea *exitosa*."
+  },
+  "numbers": [
+    { "en": "~4 characters ≈ 1 token ≈ 0.75 English words (OpenAI rule of thumb).", "es": "~4 caracteres ≈ 1 token ≈ 0.75 palabras en inglés (regla práctica de OpenAI)." },
+    { "en": "Output ~4–8× input on 2025 list prices per 1M: GPT-4.1 $2/$8, Claude Sonnet 4 $3/$15, GPT-5 $1.25/$10.", "es": "Salida ~4–8× la entrada en precios de lista de 2025 por 1M: GPT-4.1 $2/$8, Claude Sonnet 4 $3/$15, GPT-5 $1.25/$10." },
+    { "en": "Cached input reads: ~0.1× base on Anthropic; 50–90% off on OpenAI depending on the model.", "es": "Lectura de entrada en caché: ~0.1× el precio base en Anthropic; 50–90% de descuento en OpenAI según el modelo." },
+    { "en": "Batch APIs: ~50% off for results within 24 h.", "es": "APIs batch: ~50% de descuento a cambio de resultados en hasta 24 h." },
+    { "en": "History: if each turn adds k tokens, N turns send ~k·N²/2 input tokens in total.", "es": "Historial: si cada turno agrega k tokens, N turnos envían ~k·N²/2 tokens de entrada en total." }
+  ],
+  "pitfalls": [
+    { "en": "Estimating from averages: long-tail prompts and agent loops dominate the bill. Use p95 and cost per task.", "es": "Estimar con promedios: los prompts de la cola larga y los loops de agentes dominan la factura. Usa p95 y costo por tarea." },
+    { "en": "Forgetting reasoning tokens: a short visible answer from a thinking model can bill thousands of output tokens.", "es": "Olvidar los tokens de razonamiento: una respuesta visible corta de un modelo que razona puede cobrar miles de tokens de salida." },
+    { "en": "Resending the full chat history forever: window it, summarize it or cap it.", "es": "Reenviar el historial completo para siempre: usa una ventana, resúmelo o ponle tope." },
+    { "en": "Ignoring retries, eval runs and judge calls: they are real traffic on the same invoice.", "es": "Ignorar reintentos, corridas de evals y llamadas a jueces: son tráfico real en la misma factura." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Estimate the monthly LLM cost of this feature on the whiteboard.", "es": "Estima en el pizarrón el costo mensual de LLM de esta funcionalidad." },
+      "a": {
+        "en": "I build it bottom-up. Tokens per request from the prompt layout: system and tools, retrieved context, history, question and expected output, at p50 and p95, not one number. Calls per task: RAG with a query rewrite and a judge is three calls, not one. Then cost per task is the sum of input times input price plus output times output price, times tasks per day, times 30. I add headroom for retries and growth, and show the sensitivity: which term dominates and what caching, routing or a smaller context would save.",
+        "es": "Lo armo de abajo hacia arriba. Tokens por petición según el layout del prompt: system y herramientas, contexto recuperado, historial, pregunta y salida esperada, en p50 y p95, no un solo número. Llamadas por tarea: un RAG con reescritura de consulta y un juez son tres llamadas, no una. Luego, costo por tarea es la suma de entrada por precio de entrada más salida por precio de salida, por tareas al día, por 30. Agrego margen para reintentos y crecimiento, y muestro la sensibilidad: qué término domina y cuánto ahorrarían el caching, el routing o un contexto más corto."
+      }
+    },
+    {
+      "q": { "en": "The LLM bill doubled last month with flat traffic. How do you investigate?", "es": "La factura de LLM se duplicó el mes pasado con el tráfico estable. ¿Cómo investigas?" },
+      "a": {
+        "en": "Same traffic at double cost means tokens per request or price per token changed. I break the bill down by feature, model and token type (input, cached input, output, reasoning) from the gateway logs. Usual culprits: a prompt edit that broke the cache prefix so hits fell to zero, an agent taking more steps, history no longer truncated, a model upgrade with more thinking tokens, or retries during a provider incident. Then I add per-feature budgets and alerts so the next spike shows up in a day, not on the invoice.",
+        "es": "Mismo tráfico al doble de costo significa que cambiaron los tokens por petición o el precio por token. Desgloso la factura por funcionalidad, modelo y tipo de token (entrada, entrada en caché, salida, razonamiento) con los logs del gateway. Los sospechosos de siempre: un cambio en el prompt que rompió el prefijo cacheado y bajó los hits a cero, un agente que da más pasos, un historial que ya no se recorta, un cambio de modelo con más tokens de razonamiento o reintentos durante un incidente del proveedor. Después pongo presupuestos y alertas por funcionalidad para que el próximo pico aparezca en un día, no en la factura."
+      }
+    }
+  ],
+  "related": ["prompt-caching", "model-routing", "batch-inference", "api-vs-self-host", "ai-finops", "tokens"],
+  "sources": [
+    { "title": "OpenAI — API pricing", "url": "https://openai.com/api/pricing/" },
+    { "title": "Anthropic — Pricing", "url": "https://docs.anthropic.com/en/docs/about-claude/pricing" },
+    { "title": "OpenAI — Batch API guide", "url": "https://platform.openai.com/docs/guides/batch" },
+    { "title": "OpenAI — tiktoken", "url": "https://github.com/openai/tiktoken" }
+  ]
+}

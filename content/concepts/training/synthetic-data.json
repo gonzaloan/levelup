@@ -1,0 +1,97 @@
+{
+  "id": "synthetic-data",
+  "domain": "training",
+  "level": "core",
+  "title": { "en": "Synthetic data", "es": "Datos sintéticos" },
+  "aliases": ["synthetic data generation", "Self-Instruct", "Evol-Instruct", "Persona Hub", "LLM-generated data", "data augmentation", "model collapse", "distilabel"],
+  "tldr": {
+    "en": "Use LLMs to generate training or eval data, then filter, dedup and verify it. It's cheap coverage for rare cases, but it inherits the generator's blind spots, so humans still check eval labels.",
+    "es": "Usa LLMs para generar datos de entrenamiento o evaluación y luego fíltralos, deduplícalos y verifícalos. Es cobertura barata para casos raros, pero hereda los puntos ciegos del generador, así que las etiquetas de eval las sigue revisando una persona."
+  },
+  "analogy": {
+    "en": "A teacher writing practice exams: fast and endless, but every question reflects what that teacher thinks matters. Students who only study those exams get surprised by the real one.",
+    "es": "Un profesor que escribe exámenes de práctica: rápido e inagotable, pero cada pregunta refleja lo que ese profesor cree importante. Quien solo estudia con esos exámenes se sorprende con el real."
+  },
+  "explain": {
+    "en": "**Synthetic data** is training or evaluation data produced by a model instead of collected from people. It's now the default for post-training: NVIDIA reported over 98% of Nemotron-4 340B's alignment data was synthetic.\n\nMain recipes:\n- **Self-Instruct**: start from ~175 human seed tasks; the LLM writes new instructions and answers; drop near-duplicates (ROUGE-L ≥ 0.7 to an existing one) and loop. Alpaca's 52k examples came from this.\n- **Evol-Instruct** (WizardLM): rewrite seed prompts to be harder (add constraints, deepen the reasoning) or broader, to climb difficulty.\n- **Persona-driven**: condition each generation on a persona (\"a pharmacist in Lima\", \"a junior SRE\") to force diversity; Persona Hub offers 1B of them.\n- **Grounded**: generate questions *from your own documents*, so the facts come from the source, not the model's memory.\n\nGenerating is the easy half. The pipeline is **generate → filter → dedup → verify**: schema checks, run the code, an [[llm-as-judge]] from a different model family, MinHash or embedding dedup ([[data-curation]]), and humans reviewing a random sample. The real test is downstream: train with and without the synthetic slice and compare on *real* held-out data.",
+    "es": "Los **datos sintéticos** son datos de entrenamiento o evaluación producidos por un modelo en lugar de recolectados de personas. Hoy son lo normal en post-training: NVIDIA reportó que más del 98% de los datos de alineación de Nemotron-4 340B fueron sintéticos.\n\nRecetas principales:\n- **Self-Instruct**: partes de ~175 tareas semilla escritas por personas; el LLM escribe instrucciones y respuestas nuevas; descartas los casi duplicados (ROUGE-L ≥ 0.7 contra alguna existente) y repites. Los 52 mil ejemplos de Alpaca salieron de ahí.\n- **Evol-Instruct** (WizardLM): reescribe prompts semilla para hacerlos más difíciles (agregar restricciones, profundizar el razonamiento) o más amplios, y así subir la dificultad.\n- **Por personas**: condiciona cada generación a una persona (\"una farmacéutica en Lima\", \"un SRE junior\") para forzar diversidad; Persona Hub ofrece mil millones.\n- **Anclado en documentos**: genera preguntas *a partir de tus propios documentos*, así los hechos salen de la fuente y no de la memoria del modelo.\n\nGenerar es la mitad fácil. El pipeline es **generar → filtrar → deduplicar → verificar**: chequeos de esquema, ejecutar el código, un [[llm-as-judge]] de otra familia de modelos, dedup con MinHash o embeddings ([[data-curation]]) y personas revisando una muestra aleatoria. La prueba real está aguas abajo: entrena con y sin los datos sintéticos y compara sobre datos *reales* reservados."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  S[(\"Seeds, docs,<br/>personas\")] --> G[\"Generator LLM<br/>inputs + outputs\"]\n  G --> F{\"Filter<br/>schema, tests, judge\"}\n  F -->|fail| X[Discard]\n  F -->|pass| D[\"Dedup<br/>MinHash or embeddings\"]\n  D --> H{\"Human review<br/>random sample\"}\n  H --> T[(Training set)]\n  H --> E[(Eval inputs)]\n  D -.->|evolve harder| G",
+    "caption": {
+      "en": "Generation is one box; the quality comes from the filters, the dedup and the human-reviewed sample.",
+      "es": "Generar es una sola caja; la calidad sale de los filtros, la deduplicación y la muestra revisada por personas."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Persona-driven generation with structured output", "es": "Generación por personas con salida estructurada" },
+    "source": "import random\nfrom openai import OpenAI\nfrom pydantic import BaseModel\n\nMODEL = \"gpt-4.1-mini\"   # any capable chat model; judge with a different family\nclient = OpenAI()\nrng = random.Random(7)   # seeded: reproducible datasets\n\nclass Ticket(BaseModel):\n    message: str          # what the customer writes\n    intent: str           # the label we will train or evaluate on\n\nPERSONAS = [\"retired teacher, not technical, long paragraphs\",\n            \"SRE at a fintech, terse, pastes stack traces\",\n            \"shop owner in Bogota, writes in Spanish, angry\"]\nINTENTS = [\"refund\", \"bug_report\", \"change_plan\", \"cancel\", \"how_to\"]\n\ndef generate(n: int) -> list[Ticket]:\n    out = []\n    for _ in range(n):\n        persona, intent = rng.choice(PERSONAS), rng.choice(INTENTS)\n        r = client.responses.parse(\n            model=MODEL, temperature=1.0, text_format=Ticket,\n            input=f\"Write a realistic support message from a {persona}. \"\n                  f\"Intent: {intent}. Don't name the intent; add one irrelevant detail.\")\n        out.append(r.output_parsed)\n    return out\n\ntickets = dedup_minhash(generate(5_000), threshold=0.8)          # near-copies kill diversity\ntickets = [t for t in tickets if relabel(t.message) == t.intent]  # a 2nd model must agree\nreview_queue(rng.sample(tickets, 200))                            # humans before training"
+  },
+  "example": {
+    "en": "A team building a help-center bot has only 300 real user questions. They generate 2,000 more from 400 help articles, crossing 20 personas with three difficulty levels. MinHash dedup removes 18%; a judge from another model family drops questions the source article can't answer; two support agents review a 10% sample and fix expected answers. The surprise: synthetic questions are cleaner than real ones (no typos, one intent each), and the bot scores 12 points higher on them. They keep the 300 real questions as the headline metric and use the synthetic ones to cover rare topics.",
+    "es": "Un equipo que construye un bot para su centro de ayuda tiene solo 300 preguntas reales de usuarios. Genera 2000 más a partir de 400 artículos, cruzando 20 personas con tres niveles de dificultad. La dedup con MinHash elimina el 18%; un juez de otra familia de modelos descarta las preguntas que el artículo fuente no puede responder; dos agentes de soporte revisan una muestra del 10% y corrigen las respuestas esperadas. La sorpresa: las preguntas sintéticas son más limpias que las reales (sin errores de tipeo, una sola intención) y el bot saca 12 puntos más en ellas. Mantienen las 300 reales como métrica principal y usan las sintéticas para cubrir temas raros."
+  },
+  "pros": [
+    { "en": "Thousands of labeled examples in hours instead of weeks of annotation.", "es": "Miles de ejemplos etiquetados en horas en lugar de semanas de anotación." },
+    { "en": "Targets gaps on purpose: rare intents, edge cases, other languages, adversarial inputs.", "es": "Ataca huecos a propósito: intenciones raras, casos límite, otros idiomas, entradas adversarias." },
+    { "en": "Keeps real customer data out of training sets (though a generator can still leak memorized text).", "es": "Mantiene los datos reales de clientes fuera de los sets de entrenamiento (aunque el generador puede filtrar texto memorizado)." },
+    { "en": "Fully controllable distribution: you choose difficulty, balance and format.", "es": "Distribución totalmente controlable: tú eliges dificultad, balance y formato." }
+  ],
+  "cons": [
+    { "en": "Bounded by the generator: inherits its errors, style and biases, and can amplify them.", "es": "Limitado por el generador: hereda sus errores, estilo y sesgos, y puede amplificarlos." },
+    { "en": "Too clean: synthetic inputs lack the typos, ambiguity and mixed intents of real traffic.", "es": "Demasiado limpio: las entradas sintéticas no tienen los errores, la ambigüedad ni las intenciones mezcladas del tráfico real." },
+    { "en": "Recursive training on model output erodes the tails of the distribution (model collapse).", "es": "Entrenar de forma recursiva con salidas de modelos erosiona las colas de la distribución (model collapse)." },
+    { "en": "Provider terms may forbid using outputs to train competing models.", "es": "Los términos del proveedor pueden prohibir usar sus salidas para entrenar modelos competidores." }
+  ],
+  "whenToUse": {
+    "en": "Bootstrapping SFT or preference data when real labels are scarce, covering rare cases and languages, generating eval inputs at scale, and distilling a big model into a small one, always with verification and a human-reviewed sample.",
+    "es": "Para arrancar datos de SFT o de preferencias cuando hay pocas etiquetas reales, cubrir casos raros e idiomas, generar entradas de eval a escala y destilar un modelo grande en uno pequeño, siempre con verificación y una muestra revisada por personas."
+  },
+  "whenNotToUse": {
+    "en": "As the only ground truth for evals, when plenty of real labeled data already exists, or for high-stakes labels (medical, legal) with no verifier and no expert review.",
+    "es": "Como única verdad de referencia para evals, cuando ya tienes muchos datos reales etiquetados, o para etiquetas de alto riesgo (médicas, legales) sin verificador ni revisión experta."
+  },
+  "numbers": [
+    { "en": "Self-Instruct: 175 human seed tasks grew into ~52k instructions; Stanford's Alpaca reproduced it for under $500 of API calls.", "es": "Self-Instruct: 175 tareas semilla humanas crecieron a ~52 mil instrucciones; Alpaca de Stanford lo reprodujo con menos de $500 de llamadas a la API." },
+    { "en": "Nemotron-4 340B: over 98% of the data used in its alignment process was synthetic.", "es": "Nemotron-4 340B: más del 98% de los datos usados en su proceso de alineación fueron sintéticos." },
+    { "en": "phi-1 (1.3B): 50.6% HumanEval pass@1, trained on ~6B filtered web tokens plus <1B tokens of GPT-3.5-written textbooks.", "es": "phi-1 (1.3B): 50.6% de pass@1 en HumanEval, entrenado con ~6B tokens web filtrados más <1B tokens de libros de texto escritos por GPT-3.5." },
+    { "en": "Persona Hub: 1B personas (~13% of the world's population) to diversify generation.", "es": "Persona Hub: mil millones de personas (~13% de la población mundial) para diversificar la generación." }
+  ],
+  "pitfalls": [
+    { "en": "Low diversity: one model, one template and one temperature give 10,000 paraphrases of 50 ideas. Vary personas, seeds and constraints; measure cluster coverage.", "es": "Poca diversidad: un modelo, una plantilla y una temperatura dan 10 mil paráfrasis de 50 ideas. Varía personas, semillas y restricciones; mide la cobertura por clusters." },
+    { "en": "The same model generates, answers and judges: shared blind spots, inflated scores. Judge with a different family and anchor evals on human labels.", "es": "El mismo modelo genera, responde y juzga: puntos ciegos compartidos y puntajes inflados. Juzga con otra familia y ancla las evals en etiquetas humanas." },
+    { "en": "Replacing real data with synthetic across generations: the tails vanish (model collapse). Accumulate synthetic data on top of real data instead.", "es": "Reemplazar datos reales por sintéticos generación tras generación: las colas desaparecen (model collapse). Mejor acumula los sintéticos encima de los reales." },
+    { "en": "Benchmark leakage: generators reproduce famous test items. Decontaminate synthetic sets against your evals like any other data.", "es": "Fuga de benchmarks: los generadores reproducen ítems de prueba famosos. Descontamina los sets sintéticos contra tus evals como cualquier otro dato." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you know synthetic training data is actually good?", "es": "¿Cómo sabes si unos datos sintéticos de entrenamiento son realmente buenos?" },
+      "a": {
+        "en": "I treat it as untrusted until proven. First, per-example checks: schema validation, executing code, or a judge from a different model family with a rubric. Second, set-level checks: dedup with MinHash or embeddings and measure diversity, because 10,000 paraphrases of the same idea add little. Third, humans review a random sample against an acceptance bar, say 95% correct. The final proof is an ablation: train with and without the synthetic slice and compare on real held-out data. If it doesn't move the real metric, it's just cost.",
+        "es": "Los trato como no confiables hasta que se demuestre lo contrario. Primero, chequeos por ejemplo: validación de esquema, ejecutar el código o un juez de otra familia de modelos con rúbrica. Segundo, chequeos del conjunto: dedup con MinHash o embeddings y medir la diversidad, porque 10 mil paráfrasis de la misma idea aportan poco. Tercero, personas revisan una muestra aleatoria contra un umbral de aceptación, digamos 95% correcto. La prueba final es una ablación: entrenar con y sin la parte sintética y comparar sobre datos reales reservados. Si no mueve la métrica real, solo es costo."
+      }
+    },
+    {
+      "q": { "en": "Can you build your eval set synthetically?", "es": "¿Puedes construir tu set de evaluación con datos sintéticos?" },
+      "a": {
+        "en": "The inputs, yes; the ground truth, carefully. I use an LLM to widen coverage: personas, edge cases, adversarial phrasings, rare topics. But domain experts review the expected outputs, and I anchor the headline metric on real production samples, because synthetic inputs are cleaner and systems usually score higher on them. I never let one model generate the questions, answer them and judge them. And I check that system rankings agree on the synthetic and real sets; if they don't, I trust the real one.",
+        "es": "Las entradas, sí; la verdad de referencia, con cuidado. Uso un LLM para ampliar la cobertura: personas, casos límite, formulaciones adversarias, temas raros. Pero expertos del dominio revisan las salidas esperadas, y anclo la métrica principal en muestras reales de producción, porque las entradas sintéticas son más limpias y los sistemas suelen sacar más puntaje con ellas. Nunca dejo que un mismo modelo genere las preguntas, las responda y las juzgue. Y verifico que el ranking de sistemas coincida en el set sintético y en el real; si no coincide, confío en el real."
+      }
+    },
+    {
+      "q": { "en": "What is model collapse, and should you worry about it?", "es": "¿Qué es el model collapse y debería preocuparte?" },
+      "a": {
+        "en": "Shumailov et al. showed that training each model generation on the previous generation's output narrows the distribution: rare events disappear first, and after several rounds the outputs degrade. In practice the risk comes from *replacing* real data with synthetic in a loop; follow-up work found that *accumulating* synthetic data on top of the original real data avoids the collapse. So I keep a real-data anchor, track which data is synthetic, and watch diversity metrics. It matters for web crawls too, since the web holds more and more LLM text.",
+        "es": "Shumailov et al. mostraron que entrenar cada generación de modelos con las salidas de la anterior estrecha la distribución: primero desaparecen los eventos raros y, tras varias rondas, las salidas se degradan. En la práctica el riesgo aparece al *reemplazar* datos reales por sintéticos en un ciclo; trabajos posteriores encontraron que *acumular* los sintéticos encima de los datos reales originales evita el colapso. Así que mantengo un ancla de datos reales, registro qué datos son sintéticos y vigilo métricas de diversidad. También importa para los crawls web, porque la web tiene cada vez más texto de LLMs."
+      }
+    }
+  ],
+  "related": ["distillation", "data-curation", "sft", "golden-datasets", "llm-as-judge", "pii-privacy"],
+  "sources": [
+    { "title": "Wang et al. — Self-Instruct: Aligning Language Models with Self-Generated Instructions", "url": "https://arxiv.org/abs/2212.10560" },
+    { "title": "Xu et al. — WizardLM: Empowering Large Language Models to Follow Complex Instructions (Evol-Instruct)", "url": "https://arxiv.org/abs/2304.12244" },
+    { "title": "Ge et al. — Scaling Synthetic Data Creation with 1,000,000,000 Personas", "url": "https://arxiv.org/abs/2406.20094" },
+    { "title": "Shumailov et al. — The Curse of Recursion: Training on Generated Data Makes Models Forget", "url": "https://arxiv.org/abs/2305.17493" }
+  ]
+}

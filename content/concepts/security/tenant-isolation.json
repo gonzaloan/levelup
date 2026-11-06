@@ -1,0 +1,87 @@
+{
+  "id": "tenant-isolation",
+  "domain": "security",
+  "level": "advanced",
+  "title": { "en": "Multi-tenant isolation in AI apps", "es": "Aislamiento multi-tenant en apps de IA" },
+  "aliases": ["tenant isolation", "cross-tenant leakage", "data isolation", "row-level security", "RLS", "namespaces", "BYOK"],
+  "tldr": {
+    "en": "Tenant A must never reach tenant B's data through any path (retrieval, cache, memory, fine-tuned weights, logs): derive the tenant from auth, enforce it server-side at every layer, and prove it with tests.",
+    "es": "El tenant A nunca debe llegar a los datos del tenant B por ninguna vía (recuperación, cache, memoria, pesos con fine-tuning, logs): deriva el tenant de la autenticación, aplícalo del lado del servidor en cada capa y demuéstralo con tests."
+  },
+  "analogy": {
+    "en": "An apartment building: tenants share the elevator, the plumbing and the doorman, but every unit has its own lock, and the doorman never hands out a key because of what a visitor says.",
+    "es": "Un edificio de departamentos: los inquilinos comparten ascensor, cañerías y portero, pero cada unidad tiene su propia cerradura, y el portero nunca entrega una llave por lo que diga un visitante."
+  },
+  "explain": {
+    "en": "In a multi-tenant AI product many customers share the same models, indexes, caches and pipelines. **Tenant isolation** means tenant A can never see, influence or be trained on tenant B's data, and AI adds leak paths classic SaaS didn't have:\n\n- **Retrieval**: one missing `tenant_id` filter and vector search returns another company's contract.\n- **Semantic cache**: a near-duplicate question hits an answer generated from another tenant's documents.\n- **Fine-tuning**: a shared model trained on everyone's data can regurgitate it.\n- **Context bleed**: shared agent memory, a session-id bug or a connection-pool race mixes conversations.\n- **Logs, traces and eval sets** that pool raw prompts across tenants.\n\nThe patterns:\n\n- Derive `tenant_id` from the **verified auth token** and enforce it **server-side** (database row-level security, a retrieval wrapper), never from the client or the LLM.\n- **Per-tenant namespaces or indexes** for large or regulated tenants; a shared index with a mandatory filter for the long tail.\n- **Cache keys** scoped by tenant *and* permission set ([[permission-aware-retrieval]]).\n- **Per-tenant encryption keys**: offboarding becomes deleting a key.\n- **No cross-tenant training** without explicit consent.\n- **Automated isolation tests** in CI: plant canaries, query as another tenant, expect zero results.",
+    "es": "En un producto de IA multi-tenant muchos clientes comparten los mismos modelos, índices, caches y pipelines. **Aislamiento de tenants** significa que el tenant A nunca puede ver ni influir en los datos del tenant B, ni entrenarse con ellos, y la IA agrega vías de fuga que el SaaS clásico no tenía:\n\n- **Recuperación**: falta un filtro por `tenant_id` y la búsqueda vectorial devuelve el contrato de otra empresa.\n- **Cache semántica**: una pregunta casi idéntica recibe una respuesta generada con documentos de otro tenant.\n- **Fine-tuning**: un modelo compartido entrenado con los datos de todos puede regurgitarlos.\n- **Mezcla de contexto**: memoria de agente compartida, un bug en el id de sesión o una condición de carrera en el pool de conexiones mezclan conversaciones.\n- **Logs, trazas y sets de evaluación** que juntan prompts crudos de varios tenants.\n\nLos patrones:\n\n- Deriva `tenant_id` del **token de autenticación verificado** y aplícalo **del lado del servidor** (row-level security en la base, un wrapper de recuperación), nunca desde el cliente ni desde el LLM.\n- **Namespaces o índices por tenant** para clientes grandes o regulados; un índice compartido con filtro obligatorio para la cola larga.\n- **Claves de cache** con alcance por tenant *y* por conjunto de permisos ([[permission-aware-retrieval]]).\n- **Claves de cifrado por tenant**: dar de baja a un cliente se reduce a borrar una clave.\n- **Nada de entrenamiento entre tenants** sin consentimiento explícito.\n- **Tests de aislamiento automatizados** en CI: siembra canarios, consulta como otro tenant y espera cero resultados."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  U[\"Request + JWT\"] --> G[\"API layer<br/>tenant from token\"]\n  G --> C{\"Cache lookup<br/>key: tenant + ACL\"}\n  C -->|hit| A[Answer]\n  C -->|miss| R[\"Retriever<br/>tenant filter enforced\"]\n  R --> I[(Tenant namespace)]\n  R --> M[LLM]\n  M --> A\n  G --> L[(Logs tagged by tenant)]\n  K[Per-tenant KMS key] -.-> I\n  T[Canary isolation tests] -.-> R",
+    "caption": {
+      "en": "The tenant is derived once from the verified token and enforced at every shared layer: cache, retrieval, storage and logs.",
+      "es": "El tenant se deriva una vez del token verificado y se aplica en cada capa compartida: cache, recuperación, almacenamiento y logs."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "Postgres row-level security over a pgvector table", "es": "Row-level security de Postgres sobre una tabla pgvector" },
+    "source": "-- One shared table; Postgres enforces isolation instead of every query remembering it\nALTER TABLE chunks ENABLE ROW LEVEL SECURITY;\nALTER TABLE chunks FORCE ROW LEVEL SECURITY;   -- applies to the table owner too\n\nCREATE POLICY tenant_isolation ON chunks\n  USING (tenant_id = current_setting('app.tenant_id')::uuid)\n  WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);\n\n-- The app connects as a role that cannot bypass RLS (and is not a superuser)\nCREATE ROLE app_rw LOGIN NOBYPASSRLS;\nGRANT SELECT, INSERT, UPDATE, DELETE ON chunks TO app_rw;\n\n-- Per request. $1 = tenant from the VERIFIED auth token,\n-- never from the request body or an LLM tool argument\nBEGIN;\nSELECT set_config('app.tenant_id', $1, true);  -- true = local to this transaction\nSELECT id, content\nFROM chunks\nORDER BY embedding <=> $2                       -- pgvector cosine distance\nLIMIT 20;                                       -- RLS adds the tenant filter for you\nCOMMIT;\n-- No tenant set -> the uuid cast errors out: the query fails closed"
+  },
+  "example": {
+    "en": "In March 2023 a bug in the `redis-py` client let some ChatGPT users see titles from other users' chat histories and exposed payment details of ~1.2% of Plus subscribers active in a 9-hour window. No model was involved: a shared cache connection returned someone else's data. Design response for a B2B RAG platform with 2,000 tenants: the 20 largest get dedicated namespaces and their own KMS keys, the rest share an index with RLS-enforced filters, the semantic-cache key is `hash(tenant, acl_set, query)`, and a CI job plants a canary phrase in every tenant and fails the deploy if any other tenant's search, cache or trace query returns it.",
+    "es": "En marzo de 2023 un bug en el cliente `redis-py` hizo que algunos usuarios de ChatGPT vieran títulos del historial de otros usuarios y expuso datos de pago de ~1.2% de los suscriptores Plus activos durante una ventana de 9 horas. No intervino ningún modelo: una conexión de cache compartida devolvió datos ajenos. Respuesta de diseño para una plataforma RAG B2B con 2,000 tenants: los 20 más grandes tienen namespaces dedicados y sus propias claves KMS, el resto comparte un índice con filtros aplicados por RLS, la clave de la cache semántica es `hash(tenant, acl_set, query)` y un job de CI siembra una frase canario en cada tenant y frena el deploy si la búsqueda, la cache o las trazas de cualquier otro tenant la devuelven."
+  },
+  "pros": [
+    { "en": "Defense in depth: one forgotten filter doesn't become a breach.", "es": "Defensa en profundidad: un filtro olvidado no se convierte en una brecha." },
+    { "en": "Per-tenant keys and namespaces make deletion and offboarding provable.", "es": "Las claves y namespaces por tenant hacen demostrables el borrado y la baja de un cliente." },
+    { "en": "Isolation tests turn a contractual promise into a CI check.", "es": "Los tests de aislamiento convierten una promesa contractual en un chequeo de CI." }
+  ],
+  "cons": [
+    { "en": "Dedicated indexes, keys or adapters per tenant multiply cost and ops; thousands of small tenants don't fit.", "es": "Índices, claves o adapters dedicados por tenant multiplican el costo y la operación; miles de tenants chicos no entran en ese modelo." },
+    { "en": "Tenant-scoped caches get fewer hits: answers can't be shared across customers.", "es": "Las caches con alcance por tenant tienen menos hits: las respuestas no se comparten entre clientes." },
+    { "en": "Filtered ANN search can lose recall or return fewer than k results for small tenants.", "es": "La búsqueda ANN filtrada puede perder recall o devolver menos de k resultados para tenants pequeños." }
+  ],
+  "whenToUse": {
+    "en": "Any B2B or multi-user AI product where customers' documents, prompts or outputs pass through shared infrastructure, which is every SaaS AI feature.",
+    "es": "Cualquier producto de IA B2B o multiusuario donde documentos, prompts o salidas de clientes pasan por infraestructura compartida, o sea, toda funcionalidad de IA en un SaaS."
+  },
+  "whenNotToUse": {
+    "en": "A fully single-tenant deployment (one VPC and model endpoint per customer) needs less of this but costs per-customer infrastructure; most products reserve it for the top regulated tier.",
+    "es": "Un despliegue totalmente single-tenant (una VPC y un endpoint de modelo por cliente) necesita menos de esto, pero cuesta infraestructura por cliente; la mayoría de los productos lo reserva para el plan regulado más alto."
+  },
+  "numbers": [
+    { "en": "ChatGPT, March 2023: a `redis-py` bug exposed payment details of ~1.2% of Plus subscribers active in a 9-hour window.", "es": "ChatGPT, marzo de 2023: un bug de `redis-py` expuso datos de pago de ~1.2% de los suscriptores Plus activos en una ventana de 9 horas." },
+    { "en": "OpenAI documents that prompt caches are not shared between organizations.", "es": "OpenAI documenta que las caches de prompts no se comparten entre organizaciones." },
+    { "en": "Carlini et al. (2021) extracted hundreds of verbatim training sequences from GPT-2, including names, phone numbers and emails.", "es": "Carlini et al. (2021) extrajeron de GPT-2 cientos de secuencias textuales de entrenamiento, incluidos nombres, teléfonos y correos." }
+  ],
+  "pitfalls": [
+    { "en": "Letting the client or the LLM pass `tenant_id` as a parameter or tool argument: an injection can change it.", "es": "Dejar que el cliente o el LLM pase `tenant_id` como parámetro o argumento de herramienta: una inyección puede cambiarlo." },
+    { "en": "Keying the semantic cache on query text alone: two tenants asking \"what's our refund policy?\" share one answer.", "es": "Usar solo el texto de la consulta como clave de la cache semántica: dos tenants que preguntan \"¿cuál es nuestra política de reembolsos?\" comparten una respuesta." },
+    { "en": "Admin tools, batch jobs and eval pipelines that bypass the filtered path \"just this once\".", "es": "Herramientas de admin, jobs batch y pipelines de evaluación que se saltan el camino filtrado \"solo esta vez\"." },
+    { "en": "Few-shot examples or demo data built from one customer's real records and shown to everyone.", "es": "Ejemplos few-shot o datos de demo armados con registros reales de un cliente y mostrados a todos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you prevent cross-tenant leaks in a multi-tenant RAG product?", "es": "¿Cómo evitas fugas entre tenants en un producto RAG multi-tenant?" },
+      "a": {
+        "en": "I list the leak paths first, because the vector filter is only one of them: retrieval, semantic cache, agent memory, fine-tuning, logs and evals. Then I make isolation structural: `tenant_id` comes from the verified token and the data layer enforces it, with RLS or a retrieval wrapper the app can't bypass, never a parameter the LLM controls. Large or regulated tenants get dedicated namespaces and their own KMS keys; caches are keyed by tenant and permission set. And I prove it with canary tests in CI, because isolation nobody tests regresses.",
+        "es": "Primero enumero las vías de fuga, porque el filtro vectorial es solo una: recuperación, cache semántica, memoria del agente, fine-tuning, logs y evals. Después hago que el aislamiento sea estructural: `tenant_id` sale del token verificado y lo aplica la capa de datos, con RLS o un wrapper de recuperación que la app no puede saltarse, nunca un parámetro que controle el LLM. Los tenants grandes o regulados tienen namespaces dedicados y sus propias claves KMS; las caches usan como clave el tenant y el conjunto de permisos. Y lo demuestro con tests canario en CI, porque el aislamiento que nadie prueba se rompe."
+      }
+    },
+    {
+      "q": { "en": "Should you fine-tune one shared model on all your customers' data?", "es": "¿Conviene hacer fine-tuning de un modelo compartido con los datos de todos tus clientes?" },
+      "a": {
+        "en": "Not without explicit contractual consent. Models memorize: Carlini et al. pulled verbatim training data, including contact details, out of GPT-2. A shared model trained on tenant A's tickets can emit them to tenant B, and you can't delete them from the weights. My default is a shared base model plus per-tenant retrieval for knowledge. If a tenant really needs adaptation, I train a per-tenant LoRA adapter only on their data, serve it with multi-LoRA batching, and delete it with the tenant.",
+        "es": "No sin consentimiento contractual explícito. Los modelos memorizan: Carlini et al. extrajeron de GPT-2 datos de entrenamiento textuales, incluidos datos de contacto. Un modelo compartido entrenado con los tickets del tenant A puede emitirlos al tenant B, y no puedes borrarlos de los pesos. Mi opción por defecto es un modelo base compartido más recuperación por tenant para el conocimiento. Si un tenant de verdad necesita adaptación, entreno un adapter LoRA por tenant solo con sus datos, lo sirvo con batching multi-LoRA y lo borro junto con el tenant."
+      }
+    }
+  ],
+  "related": ["multi-tenancy", "permission-aware-retrieval", "semantic-caching", "pii-privacy", "prompt-injection", "lora"],
+  "sources": [
+    { "title": "OpenAI — March 20 ChatGPT outage: Here's what happened", "url": "https://openai.com/index/march-20-chatgpt-outage/" },
+    { "title": "Carlini et al. — Extracting Training Data from Large Language Models", "url": "https://arxiv.org/abs/2012.07805" },
+    { "title": "PostgreSQL — Row Security Policies", "url": "https://www.postgresql.org/docs/current/ddl-rowsecurity.html" },
+    { "title": "OpenAI — Prompt caching guide", "url": "https://platform.openai.com/docs/guides/prompt-caching" }
+  ]
+}

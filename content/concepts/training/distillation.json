@@ -1,0 +1,90 @@
+{
+  "id": "distillation",
+  "domain": "training",
+  "level": "core",
+  "title": { "en": "Knowledge distillation", "es": "Destilación de conocimiento" },
+  "aliases": ["distillation", "knowledge distillation", "KD", "teacher-student", "soft labels", "DistilBERT", "model distillation", "GKD"],
+  "tldr": {
+    "en": "Train a small student to imitate a large teacher, via its probabilities or its generated text, keeping most of the quality on your task at a fraction of the cost and latency.",
+    "es": "Entrena un estudiante pequeño para imitar a un maestro grande, con sus probabilidades o con el texto que genera, y conserva casi toda la calidad en tu tarea a una fracción del costo y la latencia."
+  },
+  "analogy": {
+    "en": "An apprentice shadowing a master: not just copying final answers, but noticing when the master hesitates between two options. That hesitation is the extra signal soft labels carry.",
+    "es": "Un aprendiz que acompaña a un maestro: no solo copia las respuestas finales, también nota cuándo el maestro duda entre dos opciones. Esa duda es la señal extra que traen las soft labels."
+  },
+  "explain": {
+    "en": "**Knowledge distillation** trains a small *student* model to imitate a large *teacher*, so you keep most of the teacher's quality on your task at a fraction of the cost and latency.\n\nThree flavours:\n- **Logit (soft-label) distillation** (Hinton et al., 2015): the student matches the teacher's full probability distribution, softened by a temperature. \"Cat 0.7, lynx 0.2, dog 0.1\" carries far more signal than the hard label \"cat\". It needs the teacher's logits and, for LLMs, a shared tokenizer, so in practice an open teacher. Gemma 2 (2B, 9B) and Llama 3.2 (1B, 3B) were trained on larger models' token-level outputs.\n- **Sequence-level distillation**: the teacher *generates* answers and the student is trained on them with plain [[sft]]. It works through any API and is what most companies do. DeepSeek fine-tuned Qwen and Llama models on ~800k R1-generated samples and got strong small reasoners.\n- **On-policy distillation** (GKD): the student generates and the teacher scores its tokens, so the student learns from its own mistakes, not only from perfect teacher outputs.\n\nDistillation copies a *task distribution*, not general intelligence: the student matches the teacher on what you distilled and degrades off it.",
+    "es": "La **destilación de conocimiento** entrena un modelo *estudiante* pequeño para imitar a un *maestro* grande, de modo que conservas casi toda la calidad del maestro en tu tarea a una fracción del costo y la latencia.\n\nTres variantes:\n- **Destilación de logits (soft labels)** (Hinton et al., 2015): el estudiante imita la distribución de probabilidad completa del maestro, suavizada con una temperatura. \"Gato 0.7, lince 0.2, perro 0.1\" trae mucha más señal que la etiqueta dura \"gato\". Requiere los logits del maestro y, en LLMs, el mismo tokenizer, así que en la práctica un maestro abierto. Gemma 2 (2B, 9B) y Llama 3.2 (1B, 3B) se entrenaron con las salidas por token de modelos más grandes.\n- **Destilación a nivel de secuencia**: el maestro *genera* respuestas y el estudiante se entrena con ellas mediante [[sft]] normal. Funciona con cualquier API y es lo que hace la mayoría de las empresas. DeepSeek hizo fine-tuning de modelos Qwen y Llama con ~800 mil muestras generadas por R1 y obtuvo razonadores pequeños muy capaces.\n- **Destilación on-policy** (GKD): el estudiante genera y el maestro califica sus tokens, así el estudiante aprende de sus propios errores y no solo de salidas perfectas del maestro.\n\nLa destilación copia una *distribución de tareas*, no la inteligencia general: el estudiante iguala al maestro en lo que destilaste y empeora fuera de eso."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[(\"Real prompts<br/>from traffic\")] --> T[\"Teacher<br/>large model\"]\n  T -->|answers or logits| F{\"Filter<br/>verify and dedup\"}\n  F --> D[(Distillation set)]\n  D --> S[\"Train student<br/>small model\"]\n  S --> E{\"Eval vs teacher<br/>held-out slice\"}\n  E -->|gap too big| P\n  E -->|close enough| Sv[Serve student]\n  Sv -.->|low confidence| T",
+    "caption": {
+      "en": "The teacher labels real prompts once; the student serves them from then on, with the teacher as a fallback for low-confidence cases.",
+      "es": "El maestro etiqueta prompts reales una vez; el estudiante los atiende de ahí en adelante, con el maestro como respaldo en los casos de baja confianza."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Sequence-level distillation: API teacher, open student", "es": "Destilación a nivel de secuencia: maestro por API, estudiante abierto" },
+    "source": "from datasets import Dataset\nfrom openai import OpenAI\nfrom trl import SFTConfig, SFTTrainer\n\nTEACHER = \"gpt-4.1\"                     # any strong model whose terms allow this\nSTUDENT = \"Qwen/Qwen2.5-1.5B-Instruct\"  # small open model you will serve\nclient = OpenAI()\n\ndef teach(prompt: str) -> str:\n    # The teacher gets the long instructions and few-shots...\n    r = client.chat.completions.create(\n        model=TEACHER, temperature=0.3,\n        messages=[{\"role\": \"system\", \"content\": LONG_SYSTEM_PROMPT},\n                  {\"role\": \"user\", \"content\": prompt}])\n    return r.choices[0].message.content\n\nrows = []\nfor p in sample_production_prompts(n=20_000):    # real distribution, PII scrubbed\n    answer = teach(p)\n    if passes_checks(p, answer):                 # schema, verifier or judge\n        # ...the student sees only the bare prompt and learns them implicitly\n        rows.append({\"messages\": [{\"role\": \"user\", \"content\": p},\n                                  {\"role\": \"assistant\", \"content\": answer}]})\n\ntrainer = SFTTrainer(\n    model=STUDENT,\n    train_dataset=Dataset.from_list(rows),\n    args=SFTConfig(output_dir=\"student\", num_train_epochs=2, learning_rate=2e-5),\n)\ntrainer.train()\n# Gate the switch: student vs teacher on a held-out slice, per segment"
+  },
+  "example": {
+    "en": "A SaaS company routes 3M support tickets a month with a frontier model and a 2,500-token prompt of rules and examples: ~1.2 s per ticket and a five-figure monthly bill. The teacher labels 60k historical tickets; they keep the 52k where two teacher runs agree and fine-tune a 1.5B student on bare ticket text. On a held-out set the student matches the teacher's label 95% of the time at ~80 ms on one GPU. Tickets with student confidence below 0.7 (~6%) still go to the teacher, and they re-distill quarterly as categories change.",
+    "es": "Una empresa SaaS enruta 3 millones de tickets de soporte al mes con un modelo de frontera y un prompt de 2500 tokens con reglas y ejemplos: ~1.2 s por ticket y una factura mensual de cinco cifras. El maestro etiqueta 60 mil tickets históricos; se quedan con los 52 mil donde dos corridas del maestro coinciden y entrenan un estudiante de 1.5B solo con el texto del ticket. En un set reservado, el estudiante coincide con la etiqueta del maestro el 95% de las veces, con ~80 ms en una GPU. Los tickets con confianza del estudiante menor a 0.7 (~6%) siguen yendo al maestro, y vuelven a destilar cada trimestre porque las categorías cambian."
+  },
+  "pros": [
+    { "en": "Large cost and latency cuts at volume: a 1–8B student serves where a frontier model can't pay off.", "es": "Grandes recortes de costo y latencia a alto volumen: un estudiante de 1–8B atiende donde un modelo de frontera no es rentable." },
+    { "en": "Teacher labels arrive in hours, not weeks of human annotation.", "es": "Las etiquetas del maestro llegan en horas, no en semanas de anotación humana." },
+    { "en": "Bakes long prompts and few-shots into the weights, removing those tokens from every call.", "es": "Mete los prompts largos y los few-shots en los pesos, y quita esos tokens de cada llamada." },
+    { "en": "You own the student: self-host it, pin the version, run it offline or on-device.", "es": "El estudiante es tuyo: lo hospedas, fijas la versión y lo corres offline o en el dispositivo." }
+  ],
+  "cons": [
+    { "en": "The student inherits the teacher's errors and biases and is capped near its quality on the task.", "es": "El estudiante hereda los errores y sesgos del maestro y queda topado cerca de su calidad en la tarea." },
+    { "en": "Narrow: quality drops off the distilled distribution, and a changed task means re-distilling.", "es": "Es estrecho: la calidad cae fuera de la distribución destilada, y si la tarea cambia hay que volver a destilar." },
+    { "en": "Provider terms may forbid training competing models on outputs; logit distillation needs an open teacher.", "es": "Los términos del proveedor pueden prohibir entrenar modelos competidores con sus salidas; la destilación de logits requiere un maestro abierto." },
+    { "en": "Another pipeline to own: generation, filtering, eval and a retraining cadence.", "es": "Otro pipeline que mantener: generación, filtrado, evaluación y una cadencia de reentrenamiento." }
+  ],
+  "whenToUse": {
+    "en": "A large model already does a narrow, stable task well, but volume makes its cost or latency unacceptable, or you must run on-device or air-gapped. Try prompting a smaller model first.",
+    "es": "Un modelo grande ya resuelve bien una tarea acotada y estable, pero el volumen vuelve inaceptables su costo o su latencia, o necesitas correr en el dispositivo o sin conexión. Primero prueba con prompting sobre un modelo más pequeño."
+  },
+  "whenNotToUse": {
+    "en": "Low volume (the API bill is cheaper than the pipeline), broad open-ended tasks, tasks that change weekly, or when the teacher itself isn't good enough yet.",
+    "es": "Bajo volumen (la factura de la API sale más barata que el pipeline), tareas abiertas y amplias, tareas que cambian cada semana, o cuando el propio maestro todavía no es lo bastante bueno."
+  },
+  "numbers": [
+    { "en": "DistilBERT: ~40% smaller (66M vs 110M parameters), ~60% faster, keeps ~97% of BERT's GLUE performance.", "es": "DistilBERT: ~40% más pequeño (66M contra 110M parámetros), ~60% más rápido y conserva ~97% del desempeño de BERT en GLUE." },
+    { "en": "DeepSeek-R1-Distill-Qwen-32B: 72.6% AIME 2024 pass@1 vs o1-mini's 63.6%, from SFT alone on ~800k R1 samples.", "es": "DeepSeek-R1-Distill-Qwen-32B: 72.6% de pass@1 en AIME 2024 contra 63.6% de o1-mini, solo con SFT sobre ~800 mil muestras de R1." },
+    { "en": "Same paper: distilling R1 into Qwen-32B beat running large-scale RL on it directly (72.6% vs ~47% on AIME).", "es": "Mismo paper: destilar R1 en Qwen-32B superó a aplicarle RL a gran escala directamente (72.6% contra ~47% en AIME)." },
+    { "en": "Hinton's soft targets use a temperature T > 1 and scale the soft loss by T² to keep gradients comparable.", "es": "Los soft targets de Hinton usan una temperatura T > 1 y escalan la pérdida suave por T² para mantener gradientes comparables." }
+  ],
+  "pitfalls": [
+    { "en": "Distilling unfiltered teacher output: the student learns the hallucinations too. Verify, or keep only examples where several teacher samples agree.", "es": "Destilar la salida del maestro sin filtrar: el estudiante también aprende las alucinaciones. Verifica, o quédate solo con ejemplos donde varias muestras del maestro coinciden." },
+    { "en": "Synthetic prompts that don't match production: the student shines in eval and fails on real traffic. Distill on logged prompts.", "es": "Prompts sintéticos que no se parecen a producción: el estudiante brilla en la eval y falla con tráfico real. Destila sobre prompts registrados." },
+    { "en": "Ignoring terms of service: some providers forbid using outputs to build competing models. Check before you ship, not after.", "es": "Ignorar los términos de servicio: algunos proveedores prohíben usar sus salidas para construir modelos competidores. Revísalo antes de desplegar, no después." },
+    { "en": "Reporting one average: the student can match on easy cases and collapse on the hard tail. Evaluate by segment and keep a fallback to the teacher.", "es": "Reportar un solo promedio: el estudiante puede igualar en los casos fáciles y derrumbarse en la cola difícil. Evalúa por segmento y mantén el maestro como respaldo." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you distill instead of labeling with humans or just prompting a smaller model?", "es": "¿Cuándo destilarías en vez de etiquetar con personas o simplemente usar prompting con un modelo más pequeño?" },
+      "a": {
+        "en": "When a big model already does the task well and the problem is cost or latency at volume. I first try prompting a smaller model; if the gap is real, distillation is the cheapest way to close it, because the teacher produces labels in hours instead of weeks of annotation. It fits narrow, stable tasks: classification, extraction, routing, fixed-format generation. The trade-off is that I freeze a snapshot: when the task or the teacher changes I must re-run the pipeline, so I budget for that and keep the teacher as a fallback for low-confidence cases.",
+        "es": "Cuando un modelo grande ya hace bien la tarea y el problema es el costo o la latencia a alto volumen. Primero pruebo prompting con un modelo más pequeño; si la brecha es real, destilar es la forma más barata de cerrarla, porque el maestro produce etiquetas en horas en lugar de semanas de anotación. Encaja en tareas acotadas y estables: clasificación, extracción, ruteo, generación con formato fijo. El trade-off es que congelo una foto: cuando cambia la tarea o el maestro tengo que volver a correr el pipeline, así que lo presupuesto y dejo el maestro como respaldo para los casos de baja confianza."
+      }
+    },
+    {
+      "q": { "en": "Logit distillation or training on teacher outputs?", "es": "¿Destilación de logits o entrenar con las salidas del maestro?" },
+      "a": {
+        "en": "Logits carry the teacher's full distribution, including what it almost said, so each example teaches more and the student needs less data. But I need the logits and a compatible tokenizer, which in practice means an open teacher I host, for example a 70B distilled into an 8B of the same family. Through a closed API I only get text, so I do sequence-level distillation: more examples and heavy filtering. If the student stumbles on its own outputs at inference, on-policy distillation (GKD) helps: the student generates and the teacher grades its tokens.",
+        "es": "Los logits traen la distribución completa del maestro, incluso lo que casi dijo, así que cada ejemplo enseña más y el estudiante necesita menos datos. Pero necesito los logits y un tokenizer compatible, lo que en la práctica significa un maestro abierto que yo hospede, por ejemplo un 70B destilado en un 8B de la misma familia. Con una API cerrada solo recibo texto, así que hago destilación a nivel de secuencia: más ejemplos y mucho filtrado. Si el estudiante tropieza con sus propias salidas en inferencia, ayuda la destilación on-policy (GKD): el estudiante genera y el maestro califica sus tokens."
+      }
+    }
+  ],
+  "related": ["sft", "synthetic-data", "model-selection", "quantization", "token-economics", "reasoning-models"],
+  "sources": [
+    { "title": "Hinton, Vinyals, Dean — Distilling the Knowledge in a Neural Network", "url": "https://arxiv.org/abs/1503.02531" },
+    { "title": "Sanh et al. — DistilBERT, a distilled version of BERT", "url": "https://arxiv.org/abs/1910.01108" },
+    { "title": "DeepSeek-AI — DeepSeek-R1 (includes distilled Qwen and Llama models)", "url": "https://arxiv.org/abs/2501.12948" },
+    { "title": "Agarwal et al. — On-Policy Distillation of Language Models (GKD)", "url": "https://arxiv.org/abs/2306.13649" }
+  ]
+}

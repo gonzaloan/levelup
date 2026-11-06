@@ -1,0 +1,86 @@
+{
+  "id": "model-registry",
+  "domain": "mlops",
+  "level": "core",
+  "title": { "en": "Model registry & versioning", "es": "Model registry y versionado" },
+  "aliases": ["model registry", "model versioning", "MLflow Model Registry", "SageMaker Model Registry", "Vertex AI Model Registry", "model aliases", "champion/challenger"],
+  "tldr": {
+    "en": "A versioned catalog of deployable models with their lineage, metrics and approval state, so deploying and rolling back means moving a pointer, not retraining and hoping.",
+    "es": "Un catálogo versionado de modelos desplegables con su linaje, métricas y estado de aprobación, para que desplegar y hacer rollback sea mover un puntero, no reentrenar y cruzar los dedos."
+  },
+  "analogy": {
+    "en": "A package registry like npm or Docker Hub, but for models: immutable versions, tags like `prod`, and you roll back by pointing the tag at the previous version.",
+    "es": "Un registro de paquetes como npm o Docker Hub, pero para modelos: versiones inmutables, tags como `prod`, y haces rollback apuntando el tag a la versión anterior."
+  },
+  "explain": {
+    "en": "A **model registry** is the system of record between training and serving. Every training run good enough to ship is **registered** as an immutable, numbered version that carries:\n\n- the artifact (weights, or a container image/URI);\n- **lineage**: code commit, training data version, and the [[experiment-tracking]] run that produced it;\n- eval metrics, model card, owner and signature (input/output schema).\n\nDeployment never points at a file path. It points at a **stage or alias** (`staging`, `production`, `@champion`), and promotion is a gated transition: automated checks (eval thresholds, bias tests), then human approval where risk demands it. **Rollback** is moving the alias back to version N-1: seconds, no retraining.\n\nTools: MLflow (open source; 2.x deprecated fixed stages in favor of aliases), SageMaker Model Registry (model package groups with an approval status), Vertex AI Model Registry.\n\nFor LLM apps the deployable unit is a **bundle**: model id + prompt version + index version + tool schemas + guardrail config. Version and promote them together; changing any one of them is a release.",
+    "es": "Un **model registry** es el sistema de registro entre el entrenamiento y el serving. Cada corrida de entrenamiento que merece salir a producción se **registra** como una versión inmutable y numerada que incluye:\n\n- el artefacto (pesos, o una imagen de contenedor/URI);\n- el **linaje**: commit del código, versión de los datos de entrenamiento y la corrida de [[experiment-tracking]] que lo produjo;\n- métricas de evaluación, model card, responsable y firma (esquema de entrada/salida).\n\nEl deploy nunca apunta a una ruta de archivo: apunta a un **stage o alias** (`staging`, `production`, `@champion`), y promover es una transición con compuertas: chequeos automáticos (umbrales de eval, pruebas de sesgo) y luego aprobación humana cuando el riesgo lo exige. El **rollback** es mover el alias de vuelta a la versión N-1: segundos, sin reentrenar.\n\nHerramientas: MLflow (open source; la versión 2.x deprecó los stages fijos en favor de los alias), SageMaker Model Registry (model package groups con estado de aprobación) y Vertex AI Model Registry.\n\nEn apps con LLM la unidad desplegable es un **bundle**: id del modelo + versión del prompt + versión del índice + esquemas de tools + configuración de guardrails. Versiónalos y promuévelos juntos: cambiar cualquiera de ellos es un release."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  T[\"Training run<br/>commit + data v12\"] -->|register| V[\"Version 7<br/>metrics, lineage\"]\n  V --> G{\"Eval gate<br/>+ approval\"}\n  G -->|pass| A[\"Alias @production\"]\n  G -->|fail| K[Archived]\n  A --> S[Serving loads alias]\n  A -.->|\"rollback: repoint\"| P[\"Version 6\"]",
+    "caption": {
+      "en": "Serving resolves an alias, never a file; promotion and rollback are both just moving that alias.",
+      "es": "El serving resuelve un alias, nunca un archivo; promover y hacer rollback es simplemente mover ese alias."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Register, gate and roll back with MLflow aliases", "es": "Registrar, aprobar y hacer rollback con alias de MLflow" },
+    "source": "import mlflow\nfrom mlflow import MlflowClient\n\nclient = MlflowClient()\nNAME = \"fraud-scorer\"\n\n# Register the model logged by a tracked run: lineage comes for free\nmv = mlflow.register_model(f\"runs:/{run_id}/model\", NAME)\nclient.set_model_version_tag(NAME, mv.version, \"data_version\", \"txns@2026-10-31\")\n\nprev = client.get_model_version_by_alias(NAME, \"champion\")  # keep for rollback\n\n# Promotion = gated alias move, never a file copy\nif eval_auc(mv) >= prev_auc(prev) and approved_by_risk(mv):\n    client.set_registered_model_alias(NAME, \"champion\", mv.version)\n\n# Serving resolves the alias at load time\nmodel = mlflow.pyfunc.load_model(f\"models:/{NAME}@champion\")\n\n# Rollback: repoint the alias, no retraining\nclient.set_registered_model_alias(NAME, \"champion\", prev.version)"
+  },
+  "example": {
+    "en": "A credit-risk team ships v14 of a scoring model: offline AUC beats v13 by 0.8 points and the risk officer approves it in the registry. Two days later approvals in one region drop 6%. On-call repoints `@production` to v13 in under a minute. The registry's lineage shows v14 was trained on `applications@2026-10-01`, a snapshot with a broken join for that region, so the fix goes into the data pipeline, not the model.",
+    "es": "Un equipo de riesgo crediticio publica la v14 de un modelo de scoring: su AUC offline supera a la v13 por 0.8 puntos y el responsable de riesgo la aprueba en el registry. Dos días después, las aprobaciones en una región caen 6%. La guardia reapunta `@production` a la v13 en menos de un minuto. El linaje del registry muestra que la v14 se entrenó con `applications@2026-10-01`, un snapshot con un join roto para esa región, así que el arreglo va en el pipeline de datos, no en el modelo."
+  },
+  "pros": [
+    { "en": "One source of truth for what is running in production and how it was built.", "es": "Una única fuente de verdad sobre qué corre en producción y cómo se construyó." },
+    { "en": "Rollback is an alias move measured in seconds, not a retrain.", "es": "El rollback es mover un alias en segundos, no reentrenar." },
+    { "en": "Approval gates plus lineage give auditors (EU AI Act, SR 11-7 model risk) a paper trail.", "es": "Las compuertas de aprobación y el linaje dan a los auditores (EU AI Act, SR 11-7 de riesgo de modelos) un rastro documentado." }
+  ],
+  "cons": [
+    { "en": "Only as good as the discipline: one model deployed around it turns the registry into fiction.", "es": "Vale lo que vale la disciplina: un solo modelo desplegado por fuera convierte al registry en ficción." },
+    { "en": "Lineage is shallow unless experiment tracking and data versioning are wired in too.", "es": "El linaje es superficial si no conectas también el experiment tracking y el versionado de datos." },
+    { "en": "A registry is not a deployment system: you still need CD that resolves aliases and rolls out safely.", "es": "Un registry no es un sistema de deploy: igual necesitas un CD que resuelva los alias y despliegue de forma segura." }
+  ],
+  "whenToUse": {
+    "en": "As soon as more than one model version or more than one person touches production, and always for regulated decisions that need an audit trail.",
+    "es": "En cuanto más de una versión del modelo o más de una persona toca producción, y siempre en decisiones reguladas que necesitan un rastro de auditoría."
+  },
+  "whenNotToUse": {
+    "en": "A throwaway prototype, or an API-only LLM app with one prompt: git tags plus a prompt registry suffice until versions multiply.",
+    "es": "Un prototipo descartable, o una app que solo llama a un LLM por API con un único prompt: bastan tags de git y un registro de prompts hasta que las versiones se multipliquen."
+  },
+  "numbers": [
+    { "en": "MLflow 2.x deprecated the fixed Staging/Production stages in favor of free-form aliases (e.g. `@champion`) plus tags.", "es": "MLflow 2.x deprecó los stages fijos Staging/Production en favor de alias libres (por ejemplo `@champion`) más tags." },
+    { "en": "Rule of thumb: keep the last 2–3 production versions loadable so rollback is instant.", "es": "Regla práctica: mantén cargables las últimas 2–3 versiones de producción para que el rollback sea inmediato." },
+    { "en": "Rule of thumb: an LLM release pins ~5 things together: model snapshot, prompt, retrieval index, tool schemas, guardrail config.", "es": "Regla práctica: un release de LLM fija ~5 cosas juntas: snapshot del modelo, prompt, índice de recuperación, esquemas de tools y configuración de guardrails." }
+  ],
+  "pitfalls": [
+    { "en": "Deploying `latest` or a file path instead of an immutable version: nobody can say what is serving.", "es": "Desplegar `latest` o una ruta de archivo en vez de una versión inmutable: nadie puede decir qué está sirviendo." },
+    { "en": "Registering a model without its data version, so it can't be reproduced or explained later.", "es": "Registrar un modelo sin su versión de datos, así que después no se puede reproducir ni explicar." },
+    { "en": "Versioning the prompt in one place and the model in another: a 'prompt fix' silently ships on a different model.", "es": "Versionar el prompt en un lugar y el modelo en otro: un 'arreglo del prompt' sale en silencio sobre otro modelo." },
+    { "en": "Promotion by hand-clicking with no eval gate: the registry becomes a rubber stamp.", "es": "Promover con un clic manual sin compuerta de eval: el registry se vuelve un sello de goma." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you version an LLM application, not just a model?", "es": "¿Cómo versionarías una aplicación con LLM, no solo un modelo?" },
+      "a": {
+        "en": "I treat the release as a bundle: a pinned, dated model snapshot, the prompt version, the retrieval index version, tool schemas and guardrail config, plus the eval report that justified it. The bundle gets one version and one alias, so promotion and rollback move all of it together. The failure I'm avoiding is a floating provider alias moving underneath a prompt tuned for the old snapshot, so I pin model ids and re-run the eval suite on any change.",
+        "es": "Trato el release como un bundle: un snapshot del modelo fijado y con fecha, la versión del prompt, la versión del índice de recuperación, los esquemas de tools y la configuración de guardrails, más el reporte de evals que lo justificó. El bundle tiene una sola versión y un solo alias, así que promover y hacer rollback mueve todo junto. La falla que evito es un alias flotante del proveedor que cambia debajo de un prompt ajustado para el snapshot anterior; por eso fijo los ids de modelo y vuelvo a correr la suite de evals ante cualquier cambio."
+      }
+    },
+    {
+      "q": { "en": "Walk me through promoting a model to production.", "es": "Explícame cómo promueves un modelo a producción." },
+      "a": {
+        "en": "Training registers an immutable version with lineage: commit, data snapshot, run id. CI runs the gate: metrics against the current champion on the same frozen eval set, per-slice metrics so a global win can't hide a segment regression, plus latency and size checks. If it passes, and a human signs off for high-risk models, it goes to shadow or canary, then the `@production` alias moves. Rollback is repointing the alias, and I rehearse it, because an untested rollback isn't one.",
+        "es": "El entrenamiento registra una versión inmutable con linaje: commit, snapshot de datos, id de la corrida. El CI corre la compuerta: métricas contra el campeón actual sobre el mismo eval set congelado, métricas por segmento para que una mejora global no esconda una regresión, y chequeos de latencia y tamaño. Si pasa, y una persona firma en modelos de alto riesgo, va a shadow o canary y luego se mueve el alias `@production`. El rollback es reapuntar el alias, y lo ensayo, porque un rollback sin probar no es un rollback."
+      }
+    }
+  ],
+  "related": ["experiment-tracking", "ml-lifecycle", "llmops", "prompt-management", "eval-ci", "supply-chain"],
+  "sources": [
+    { "title": "MLflow — Model Registry", "url": "https://mlflow.org/docs/latest/model-registry.html" },
+    { "title": "Amazon SageMaker — Model Registry", "url": "https://docs.aws.amazon.com/sagemaker/latest/dg/model-registry.html" },
+    { "title": "Google Cloud — Introduction to Vertex AI Model Registry", "url": "https://cloud.google.com/vertex-ai/docs/model-registry/introduction" }
+  ]
+}

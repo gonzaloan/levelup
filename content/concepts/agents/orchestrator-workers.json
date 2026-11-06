@@ -1,0 +1,96 @@
+{
+  "id": "orchestrator-workers",
+  "domain": "agents",
+  "level": "advanced",
+  "title": { "en": "Pattern: orchestrator–workers", "es": "Patrón: orquestador–workers" },
+  "aliases": ["orchestrator-worker", "lead agent and subagents", "supervisor pattern", "planner-executor", "manager-worker", "dynamic task decomposition", "hierarchical agents"],
+  "tldr": {
+    "en": "A central LLM reads the task, decides at runtime which subtasks it needs, delegates each to a worker LLM and synthesizes the results: parallelization where the model, not your code, writes the task list.",
+    "es": "Un LLM central lee la tarea, decide en tiempo de ejecución qué subtareas hacen falta, delega cada una a un LLM worker y sintetiza los resultados: es paralelización donde la lista de tareas la escribe el modelo, no tu código."
+  },
+  "analogy": {
+    "en": "A general contractor walks the house, decides which trades the job needs (two electricians or none), briefs each one, and signs off on the combined result.",
+    "es": "Un contratista general recorre la casa, decide qué oficios necesita la obra (dos electricistas o ninguno), le explica a cada uno su parte y aprueba el resultado final."
+  },
+  "explain": {
+    "en": "In **orchestrator–workers**, one LLM (the orchestrator) reads the input and **decides the subtasks at runtime**: which files to edit, which questions to research, how many pieces there are. It sends each subtask to a **worker** (a separate LLM call with its own focused brief and a fresh context), then **synthesizes** their outputs into one result, possibly launching another round.\n\nThe topology looks like [[parallelization]], but the plan has a different author. In parallelization *your code* fixes the subtasks; here the *orchestrator* invents them per input. That fits work you can't predict: a code change touching 2 files or 20, a research question with an unknown number of angles.\n\nWorkers get **context isolation**: each sees only its brief, not the orchestrator's whole history, so it stays focused and can run in parallel. The price:\n\n- **Tokens**: Anthropic reports its multi-agent research system uses ~15× the tokens of a chat.\n- **Delegation**: vague briefs make workers duplicate or miss work; each brief needs an objective, an output format, tools and boundaries.\n- **Synthesis**: merging partial, overlapping or conflicting results is the hardest step.\n\nCap fan-out and rounds, and make workers return structured output.",
+    "es": "En **orquestador–workers**, un LLM (el orquestador) lee la entrada y **decide las subtareas en tiempo de ejecución**: qué archivos editar, qué preguntas investigar, cuántas piezas hay. Envía cada subtarea a un **worker** (una llamada separada al LLM con su propio encargo enfocado y un contexto limpio) y luego **sintetiza** sus salidas en un solo resultado, quizá lanzando otra ronda.\n\nLa topología se parece a la de [[parallelization]], pero el plan tiene otro autor. En la paralelización *tu código* fija las subtareas; aquí el *orquestador* las inventa según cada entrada. Eso encaja con trabajo que no puedes predecir: un cambio de código que toca 2 archivos o 20, una pregunta de investigación con un número desconocido de ángulos.\n\nLos workers tienen **aislamiento de contexto**: cada uno ve solo su encargo, no todo el historial del orquestador, así que se mantiene enfocado y puede correr en paralelo. El precio:\n\n- **Tokens**: Anthropic reporta que su sistema de investigación multiagente usa ~15× los tokens de un chat.\n- **Delegación**: los encargos vagos hacen que los workers dupliquen u omitan trabajo; cada encargo necesita objetivo, formato de salida, herramientas y límites.\n- **Síntesis**: unir resultados parciales, solapados o contradictorios es el paso más difícil.\n\nLimita el número de workers y de rondas, y haz que los workers devuelvan salida estructurada."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  T[Task] --> O[\"Orchestrator LLM<br/>plans subtasks\"]\n  O -->|brief 1| W1[\"Worker LLM<br/>fresh context\"]\n  O -->|brief 2| W2[\"Worker LLM<br/>fresh context\"]\n  O -->|brief N| W3[\"Worker LLM<br/>fresh context\"]\n  W1 --> S[\"Orchestrator<br/>synthesizes\"]\n  W2 --> S\n  W3 --> S\n  S -->|gaps found| O\n  S -->|done| R[Final result]",
+    "caption": {
+      "en": "Unlike parallelization, the number and content of subtasks come from the orchestrator per input; synthesis can trigger another round.",
+      "es": "A diferencia de la paralelización, el número y el contenido de las subtareas los decide el orquestador según la entrada; la síntesis puede disparar otra ronda."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Plan, fan out to workers, synthesize", "es": "Planificar, repartir entre workers y sintetizar" },
+    "source": "import asyncio, json\nfrom anthropic import AsyncAnthropic\n\nclient = AsyncAnthropic()\nLEAD = \"claude-sonnet-4-5\"   # stronger model plans and synthesizes\nWORKER = \"claude-haiku-4-5\"  # cheaper model executes narrow briefs\n\nasync def llm(model: str, prompt: str) -> str:\n    msg = await client.messages.create(model=model, max_tokens=4096,\n                                       messages=[{\"role\": \"user\", \"content\": prompt}])\n    return msg.content[0].text\n\nasync def orchestrate(task: str, max_workers: int = 5) -> str:\n    plan = json.loads(await llm(LEAD,\n        f\"Break this task into at most {max_workers} independent subtasks. \"\n        'Reply with JSON only: [{\"objective\": str, \"scope\": str, \"output_format\": str}]\\n\\n'\n        + task))\n    # The subtasks come from the model, not from code: that is the whole pattern\n    briefs = [f\"Objective: {s['objective']}\\nStay inside this scope: {s['scope']}\\n\"\n              f\"Return: {s['output_format']}\" for s in plan[:max_workers]]  # hard cap on fan-out\n    results = await asyncio.gather(*[llm(WORKER, b) for b in briefs],\n                                   return_exceptions=True)  # one failure must not sink all\n    findings = \"\\n\\n\".join(f\"## Subtask {i + 1}\\n{r}\" for i, r in enumerate(results)\n                           if not isinstance(r, Exception))\n    return await llm(LEAD, f\"Task: {task}\\n\\nWorker results:\\n{findings}\\n\\n\"\n                           \"Synthesize one answer. Resolve conflicts explicitly and list gaps.\")"
+  },
+  "example": {
+    "en": "A research assistant gets *\"Compare the EU AI Act, the NIST AI RMF and ISO 42001 for a bank deploying a credit model.\"* The orchestrator plans four subtasks (one per framework, plus one on banking-specific obligations) and sends each to a worker with a brief: objective, preferred sources, and *return a table of obligations with citations*. Workers run in parallel (~40 s instead of ~150 s serially). The orchestrator merges the tables, notices that two workers disagree on a high-risk classification, and launches one more worker to resolve it before writing the final comparison.",
+    "es": "Un asistente de investigación recibe *\"Compara la EU AI Act, el NIST AI RMF y la ISO 42001 para un banco que despliega un modelo de crédito\"*. El orquestador planifica cuatro subtareas (una por marco, más otra sobre obligaciones propias de la banca) y envía cada una a un worker con un encargo: objetivo, fuentes preferidas y *devuelve una tabla de obligaciones con citas*. Los workers corren en paralelo (~40 s en vez de ~150 s en serie). El orquestador une las tablas, nota que dos workers no coinciden en una clasificación de alto riesgo y lanza un worker más para resolverlo antes de escribir la comparación final."
+  },
+  "pros": [
+    { "en": "Handles tasks whose shape you can't predict: the plan adapts to each input.", "es": "Resuelve tareas cuya forma no puedes predecir: el plan se adapta a cada entrada." },
+    { "en": "Context isolation: each worker spends its whole window on one focused subtask.", "es": "Aislamiento de contexto: cada worker dedica toda su ventana a una sola subtarea enfocada." },
+    { "en": "Independent subtasks run in parallel, cutting wall-clock time on broad tasks.", "es": "Las subtareas independientes corren en paralelo y reducen el tiempo de reloj en tareas amplias." },
+    { "en": "Mix models: a strong orchestrator with cheaper workers.", "es": "Puedes combinar modelos: un orquestador potente con workers más baratos." }
+  ],
+  "cons": [
+    { "en": "Token-hungry: Anthropic measured ~15× a chat's tokens for multi-agent research.", "es": "Consume muchos tokens: Anthropic midió ~15× los tokens de un chat en investigación multiagente." },
+    { "en": "Nondeterministic plans: cost, latency and behaviour vary run to run, so evals must judge outcomes.", "es": "Planes no deterministas: el costo, la latencia y el comportamiento varían entre ejecuciones, así que los evals deben juzgar resultados." },
+    { "en": "Workers can't see each other's decisions, which hurts tightly coupled tasks.", "es": "Los workers no ven las decisiones de los demás, lo que perjudica las tareas muy acopladas." },
+    { "en": "Synthesis is a single point of failure: a weak merge wastes good worker output.", "es": "La síntesis es un punto único de falla: una mala unión desperdicia el buen trabajo de los workers." }
+  ],
+  "whenToUse": {
+    "en": "Complex tasks where the subtasks can't be predicted up front (multi-file code changes, research across many sources) and the answer is valuable enough to justify several times the tokens.",
+    "es": "Tareas complejas donde no se pueden predecir las subtareas de antemano (cambios de código en varios archivos, investigación sobre muchas fuentes) y la respuesta vale lo suficiente para justificar varias veces los tokens."
+  },
+  "whenNotToUse": {
+    "en": "Subtasks are known in advance (use parallelization), are tightly coupled and need shared context, or the task fits a single call or a single agent loop.",
+    "es": "Las subtareas se conocen de antemano (usa paralelización), están muy acopladas y necesitan contexto compartido, o la tarea cabe en una sola llamada o en un solo loop de agente."
+  },
+  "numbers": [
+    { "en": "Anthropic (2025): an Opus 4 lead with Sonnet 4 subagents beat single-agent Opus 4 by 90.2% on its internal research eval.", "es": "Anthropic (2025): un líder Opus 4 con subagentes Sonnet 4 superó en 90.2% a un solo agente Opus 4 en su eval interno de investigación." },
+    { "en": "Same post: agents use ~4× the tokens of chat; multi-agent systems ~15×.", "es": "Mismo artículo: los agentes usan ~4× los tokens de un chat; los sistemas multiagente, ~15×." },
+    { "en": "In Anthropic's BrowseComp analysis, token usage alone explained ~80% of the performance variance.", "es": "En el análisis de Anthropic sobre BrowseComp, el uso de tokens por sí solo explicó ~80% de la varianza de desempeño." },
+    { "en": "Spinning up 3–5 subagents in parallel (plus parallel tool calls) cut research time by up to 90% on complex queries.", "es": "Lanzar 3–5 subagentes en paralelo (más llamadas a herramientas en paralelo) redujo hasta 90% el tiempo de investigación en consultas complejas." }
+  ],
+  "pitfalls": [
+    { "en": "Over-delegation: Anthropic's early research agents spawned 50 subagents for simple queries. Put effort-scaling rules in the orchestrator prompt.", "es": "Delegar de más: los primeros agentes de investigación de Anthropic lanzaban 50 subagentes para consultas simples. Pon reglas de escala de esfuerzo en el prompt del orquestador." },
+    { "en": "Vague briefs (*research the chip shortage*): workers duplicate each other or leave gaps. Specify objective, format, tools and boundaries.", "es": "Encargos vagos (*investiga la escasez de chips*): los workers se duplican o dejan huecos. Especifica objetivo, formato, herramientas y límites." },
+    { "en": "Parallel workers writing the same files or records: conflicting edits. Partition the work, or let workers propose and one step apply.", "es": "Workers en paralelo escribiendo los mismos archivos o registros: ediciones en conflicto. Particiona el trabajo o deja que los workers propongan y que un solo paso aplique." },
+    { "en": "Using it when the subtasks are actually fixed: you pay for a planning call and nondeterminism for nothing.", "es": "Usarlo cuando las subtareas en realidad son fijas: pagas una llamada de planificación y no determinismo a cambio de nada." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "What's the difference between orchestrator–workers and parallelization, and why does it matter?", "es": "¿Qué diferencia hay entre orquestador–workers y paralelización, y por qué importa?" },
+      "a": {
+        "en": "Same topology, different author of the plan. In parallelization my code defines the subtasks, so cost, latency and evals are predictable. In orchestrator–workers the model decides the subtasks per input, which I need when the work can't be enumerated, like a refactor touching an unknown set of files. That flexibility costs determinism: plans vary between runs and token use can reach ~15× a chat's, so I cap fan-out and rounds and evaluate the final outcome rather than a fixed list of steps.",
+        "es": "Misma topología, distinto autor del plan. En la paralelización mi código define las subtareas, así que el costo, la latencia y los evals son predecibles. En orquestador–workers el modelo decide las subtareas según la entrada, y eso lo necesito cuando el trabajo no se puede enumerar, como un refactor que toca un conjunto desconocido de archivos. Esa flexibilidad cuesta determinismo: los planes varían entre ejecuciones y el uso de tokens puede llegar a ~15× el de un chat, así que limito workers y rondas y evalúo el resultado final en lugar de una lista fija de pasos."
+      }
+    },
+    {
+      "q": { "en": "How would you design a multi-file code-change system with this pattern?", "es": "¿Cómo diseñarías con este patrón un sistema que hace cambios de código en varios archivos?" },
+      "a": {
+        "en": "The orchestrator reads the request and a repo map, then emits a plan: which files, the change in each, and the interface contracts between them. Each worker gets one file plus those contracts in a fresh context; no two workers write the same file. A deterministic gate (apply patches, compile, run tests) sits before synthesis, and failures go back to the orchestrator with the test output, capped at about three rounds. The main failure mode is inconsistent edits across files, so the contracts in each brief are non-negotiable.",
+        "es": "El orquestador lee el pedido y un mapa del repo y emite un plan: qué archivos, el cambio en cada uno y los contratos de interfaz entre ellos. Cada worker recibe un archivo más esos contratos en un contexto limpio; nunca dos workers escriben el mismo archivo. Antes de la síntesis hay una compuerta determinista (aplicar los parches, compilar, correr los tests), y las fallas vuelven al orquestador con la salida de los tests, con un tope de unas tres rondas. La falla principal son ediciones inconsistentes entre archivos, así que los contratos en cada encargo no son negociables."
+      }
+    },
+    {
+      "q": { "en": "Why would a multi-agent setup beat a single agent, and when doesn't it?", "es": "¿Por qué un esquema multiagente le ganaría a un solo agente, y cuándo no?" },
+      "a": {
+        "en": "Mostly because it applies more context in parallel: each worker spends its own window on one subtask, so the total tokens and tool calls aimed at the problem grow. In Anthropic's analysis, token usage alone explained ~80% of performance variance on BrowseComp. It loses when subtasks are tightly coupled, as in most coding, because workers can't see each other's decisions, and when the task isn't worth ~15× the tokens of a chat. Breadth-first research is the sweet spot.",
+        "es": "Sobre todo porque aplica más contexto en paralelo: cada worker usa su propia ventana en una subtarea, así que crecen los tokens y las llamadas a herramientas dedicadas al problema. En el análisis de Anthropic, el uso de tokens por sí solo explicó ~80% de la varianza de desempeño en BrowseComp. Pierde cuando las subtareas están muy acopladas, como en la mayoría del trabajo de código, porque los workers no ven las decisiones de los demás, y cuando la tarea no vale ~15× los tokens de un chat. Su punto ideal es la investigación amplia."
+      }
+    }
+  ],
+  "related": ["parallelization", "multi-agent", "planning", "agents-vs-workflows", "context-engineering", "case-coding-assistant"],
+  "sources": [
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "Anthropic — How we built our multi-agent research system", "url": "https://www.anthropic.com/engineering/multi-agent-research-system" },
+    { "title": "Shen et al. — HuggingGPT: Solving AI Tasks with ChatGPT and its Friends in Hugging Face (2023)", "url": "https://arxiv.org/abs/2303.17580" }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "id": "continued-pretraining",
+  "domain": "training",
+  "level": "staff",
+  "title": { "en": "Continued pretraining", "es": "Continued pretraining (preentrenamiento continuo)" },
+  "aliases": ["CPT", "continual pretraining", "domain-adaptive pretraining", "DAPT", "TAPT", "mid-training", "domain adaptation"],
+  "tldr": {
+    "en": "Keep training a base model with the plain next-token objective on billions of unlabeled domain tokens so it absorbs a new domain or language; powerful but expensive, and for most enterprises RAG plus SFT wins.",
+    "es": "Sigue entrenando un modelo base con el objetivo simple de predecir el siguiente token sobre miles de millones de tokens de tu dominio, sin etiquetar, para que absorba un dominio o idioma nuevo; es potente pero caro, y para la mayoría de las empresas gana RAG más SFT."
+  },
+  "analogy": {
+    "en": "A general practitioner doing a radiology residency: same brain, now fluent in a new vocabulary, but it takes years and their general medicine may get rusty.",
+    "es": "Un médico general que hace una residencia en radiología: el mismo cerebro, ahora domina un vocabulario nuevo, pero le toma años y su medicina general puede oxidarse."
+  },
+  "explain": {
+    "en": "**Continued pretraining (CPT)** takes an existing base model and keeps running the *pretraining* objective, next-token prediction on raw unlabeled text, over a large domain corpus: contracts, clinical notes, a proprietary codebase, a new language. Where [[sft]] teaches *format and behaviour* from prompt/response pairs, CPT shifts *knowledge and fluency*: vocabulary, notation, style, facts.\n\nHow it's done:\n\n1. **Start from the base model**, not the chat model, then redo SFT and preference tuning on top: CPT erodes instruction following.\n2. **Data**: billions of deduplicated, quality-filtered tokens. For a new language, check tokenizer fertility (tokens per word) and extend the vocabulary if it's poor.\n3. **Replay** a slice of general data and **re-warm, then re-decay** the learning rate. [Ibrahim et al. 2024](https://arxiv.org/abs/2403.08763) showed this recipe matches retraining from scratch on all the data while limiting [[catastrophic-forgetting]].\n4. **Budget** with ~6 × params × tokens FLOPs, then compare against the cheap baseline: RAG + SFT on a general model.\n\nKnown results: Code Llama (Llama 2 + 500B code tokens) and Meditron (Llama 2 + ~48B medical tokens). BloombergGPT trained a 50B model from scratch on ~half financial data; general models like GPT-4 soon matched or beat it on several finance benchmarks.\n\nThe real cost is rarely GPU-hours. It's owning a **fork**: every new base model release means redoing CPT, SFT and evals.",
+    "es": "El **continued pretraining (CPT)** toma un modelo base existente y sigue corriendo el objetivo de *pretraining*, predecir el siguiente token sobre texto crudo sin etiquetar, con un corpus grande de tu dominio: contratos, notas clínicas, un codebase propietario, un idioma nuevo. Mientras el [[sft]] enseña *formato y comportamiento* a partir de pares prompt/respuesta, el CPT mueve *conocimiento y fluidez*: vocabulario, notación, estilo, hechos.\n\nCómo se hace:\n\n1. **Parte del modelo base**, no del modelo de chat, y luego rehaz el SFT y el ajuste por preferencias encima: el CPT erosiona el seguimiento de instrucciones.\n2. **Datos**: miles de millones de tokens deduplicados y filtrados por calidad. Para un idioma nuevo, revisa la fertilidad del tokenizer (tokens por palabra) y amplía el vocabulario si es mala.\n3. **Replay** de una porción de datos generales, y un learning rate que **vuelve a subir con warmup y vuelve a decaer**. [Ibrahim et al. 2024](https://arxiv.org/abs/2403.08763) mostraron que esta receta iguala a reentrenar desde cero con todos los datos y limita el [[catastrophic-forgetting]].\n4. **Presupuesto** con ~6 × parámetros × tokens FLOPs, y luego compara contra la alternativa barata: RAG + SFT sobre un modelo general.\n\nResultados conocidos: Code Llama (Llama 2 + 500B tokens de código) y Meditron (Llama 2 + ~48B tokens médicos). BloombergGPT entrenó un modelo de 50B desde cero con cerca de la mitad de datos financieros; modelos generales como GPT-4 pronto lo igualaron o superaron en varios benchmarks financieros.\n\nEl costo real rara vez son las horas de GPU. Es mantener un **fork**: cada nuevo modelo base implica rehacer CPT, SFT y evals."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  B[Base model] --> C[\"Continued pretraining<br/>next-token loss\"]\n  D[(\"Domain corpus<br/>billions of tokens\")] --> C\n  G[(\"General replay<br/>slice\")] --> C\n  C --> DB[Domain base model]\n  DB --> S[\"Redo SFT +<br/>preference tuning\"]\n  S --> M[Domain chat model]\n  M --> E{\"Beats RAG + SFT<br/>baseline?\"}\n  E -->|yes| K[\"Ship, redo per<br/>base release\"]\n  E -->|no| X[Drop the fork]",
+    "caption": {
+      "en": "CPT changes the base, so everything downstream must be rebuilt, and rebuilt again for each new base model.",
+      "es": "El CPT cambia el modelo base, así que todo lo que viene después se reconstruye, y se vuelve a reconstruir con cada modelo base nuevo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Budget, replay mix and a CPT run", "es": "Presupuesto, mezcla con replay y una corrida de CPT" },
+    "source": "from datasets import load_dataset, interleave_datasets\nfrom transformers import (AutoModelForCausalLM, AutoTokenizer, Trainer,\n                          TrainingArguments, DataCollatorForLanguageModeling)\n\nBASE = \"meta-llama/Llama-3.1-8B\"  # a BASE model, not the -Instruct one\ntok = AutoTokenizer.from_pretrained(BASE)\ntok.pad_token = tok.eos_token\nmodel = AutoModelForCausalLM.from_pretrained(BASE)\n\n# Budget first: training FLOPs ~= 6 * params * tokens\nparams, tokens = 8e9, 10e9\nprint(f\"{6 * params * tokens:.1e} FLOPs\")  # 4.8e+20 ~ 340 H100-hours at 40% MFU\n\ndomain = load_dataset(\"json\", data_files=\"contracts/*.jsonl\", split=\"train\", streaming=True)\ngeneral = load_dataset(\"HuggingFaceFW/fineweb-edu\", split=\"train\", streaming=True)\n# Replay general text so broad skills keep receiving gradient\nmix = interleave_datasets(\n    [domain.select_columns([\"text\"]), general.select_columns([\"text\"])],\n    probabilities=[0.8, 0.2], seed=0)\nmix = mix.map(lambda b: tok(b[\"text\"], truncation=True, max_length=4096),\n              batched=True, remove_columns=[\"text\"])\n\nargs = TrainingArguments(\n    output_dir=\"cpt\", bf16=True, max_steps=20_000,\n    learning_rate=3e-5, warmup_steps=500, lr_scheduler_type=\"cosine\",  # re-warm, re-decay\n    per_device_train_batch_size=4, gradient_accumulation_steps=16,\n)\nTrainer(model=model, args=args, train_dataset=mix,\n        data_collator=DataCollatorForLanguageModeling(tok, mlm=False)).train()\n# Real runs: FSDP across nodes + sequence packing. Then SFT + DPO, then eval vs RAG + SFT."
+  },
+  "example": {
+    "en": "A legal-tech company has ~5B tokens of contracts and court filings. CPT of an 8B base on 5B domain + 1B replay tokens is ~2.9e20 FLOPs, about 200 H100-hours: cheap. The expensive parts are three months of data cleaning and redoing SFT and DPO afterwards. Head-to-head on 400 held-out tasks, the CPT model wins clause *drafting* (autocomplete with nothing to retrieve), while RAG + SFT on a general model wins Q&A that must cite the current clause library. They ship CPT only for the drafting tool and budget a refresh per base-model generation.",
+    "es": "Una empresa de legal tech tiene ~5B tokens de contratos y escritos judiciales. Hacer CPT de un modelo base de 8B con 5B tokens del dominio + 1B de replay son ~2.9e20 FLOPs, unas 200 horas de H100: barato. Lo caro son tres meses de limpieza de datos y rehacer SFT y DPO después. En una comparación directa sobre 400 tareas reservadas, el modelo con CPT gana en *redacción* de cláusulas (autocompletado sin nada que recuperar), mientras que RAG + SFT sobre un modelo general gana en las preguntas que deben citar la biblioteca de cláusulas vigente. Despliegan CPT solo para la herramienta de redacción y presupuestan una actualización por cada generación de modelo base."
+  },
+  "pros": [
+    { "en": "Teaches vocabulary, notation and implicit knowledge that prompts and RAG can't inject, e.g. an internal DSL or a low-resource language.", "es": "Enseña vocabulario, notación y conocimiento implícito que los prompts y el RAG no pueden inyectar, como un DSL interno o un idioma con pocos recursos." },
+    { "en": "Knowledge lives in the weights: no retrieval latency, and it helps generation tasks with nothing to retrieve.", "es": "El conocimiento vive en los pesos: sin latencia de recuperación, y sirve para tareas de generación donde no hay nada que recuperar." },
+    { "en": "Can let a small self-hosted model rival a much larger general model in one narrow domain.", "es": "Puede permitir que un modelo pequeño autohospedado compita con uno general mucho más grande en un dominio acotado." }
+  ],
+  "cons": [
+    { "en": "Needs billions of clean tokens, real GPU budget and distributed-training skills.", "es": "Necesita miles de millones de tokens limpios, presupuesto real de GPU y experiencia en entrenamiento distribuido." },
+    { "en": "Erodes instruction following and safety: SFT and preference tuning must be redone on top.", "es": "Erosiona el seguimiento de instrucciones y la seguridad: hay que rehacer el SFT y el ajuste por preferencias encima." },
+    { "en": "You own a fork: each new base model release means repeating CPT, SFT and evals.", "es": "Mantienes un fork: cada nuevo modelo base implica repetir CPT, SFT y evals." },
+    { "en": "Knowledge is frozen and uncitable; facts that change still need RAG.", "es": "El conocimiento queda congelado y no se puede citar; los datos que cambian siguen necesitando RAG." }
+  ],
+  "whenToUse": {
+    "en": "You have billions of tokens of domain text whose vocabulary, notation or language the base handles poorly, a generation task with nothing to retrieve, and measured evidence that RAG + SFT falls short.",
+    "es": "Tienes miles de millones de tokens de un dominio cuyo vocabulario, notación o idioma el modelo base maneja mal, una tarea de generación sin nada que recuperar y evidencia medida de que RAG + SFT no alcanza."
+  },
+  "whenNotToUse": {
+    "en": "Enterprise Q&A over documents, fast-changing facts, anything needing citations, or a corpus of only millions of tokens. Start with RAG and SFT; most teams never need to change the base.",
+    "es": "Preguntas y respuestas sobre documentos de la empresa, datos que cambian rápido, todo lo que necesite citas, o un corpus de apenas millones de tokens. Empieza con RAG y SFT; la mayoría de los equipos nunca necesita cambiar el modelo base."
+  },
+  "numbers": [
+    { "en": "Training compute ≈ 6 × params × tokens FLOPs: 8B params on 10B tokens ≈ 4.8e20, ~340 H100-hours at 40% MFU.", "es": "Cómputo de entrenamiento ≈ 6 × parámetros × tokens FLOPs: 8B parámetros con 10B tokens ≈ 4.8e20, ~340 horas de H100 al 40% de MFU." },
+    { "en": "Code Llama: Llama 2 continued on 500B code tokens (+100B Python tokens for the Python variant).", "es": "Code Llama: Llama 2 continuado con 500B tokens de código (+100B tokens de Python para la variante Python)." },
+    { "en": "Meditron: Llama 2 continued on ~48B tokens of medical text.", "es": "Meditron: Llama 2 continuado con ~48B tokens de texto médico." },
+    { "en": "BloombergGPT: 50B params trained from scratch on 363B financial + 345B general tokens.", "es": "BloombergGPT: 50B parámetros entrenados desde cero con 363B tokens financieros + 345B generales." },
+    { "en": "Rule of thumb: replay ~5–25% general data, more for bigger shifts such as a new language.", "es": "Regla práctica: replay de ~5–25% de datos generales, más cuanto mayor sea el cambio, como un idioma nuevo." }
+  ],
+  "pitfalls": [
+    { "en": "Running CPT on the instruct model and shipping it: chat behaviour and safety tuning wash out.", "es": "Hacer CPT sobre el modelo instruct y desplegarlo así: el comportamiento de chat y el ajuste de seguridad se diluyen." },
+    { "en": "Comparing only against the untouched base instead of against RAG + SFT on a general model.", "es": "Comparar solo contra el modelo base sin tocar, en vez de contra RAG + SFT sobre un modelo general." },
+    { "en": "Ignoring the tokenizer: a language that splits into many tokens per word raises cost and slows learning.", "es": "Ignorar el tokenizer: un idioma que se parte en muchos tokens por palabra encarece todo y frena el aprendizaje." },
+    { "en": "Treating it as one-off, with no plan or budget to redo it on the next base model.", "es": "Tratarlo como algo de una sola vez, sin plan ni presupuesto para rehacerlo con el siguiente modelo base." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "The business wants a \"legal GPT\" trained on our 2M documents. Do you do continued pretraining?", "es": "El negocio quiere un \"GPT legal\" entrenado con nuestros 2M de documentos. ¿Haces continued pretraining?" },
+      "a": {
+        "en": "Probably not first. I'd ask what job it does. If it answers questions about our documents, RAG gives fresh, citable answers with no training, and SFT fixes format and tone. CPT pays when the model must *generate* in a domain whose vocabulary the base handles poorly, there's nothing to retrieve at runtime, and we have billions of clean tokens; 2M documents might be ~2–5B tokens, so it's feasible. I'd run a time-boxed bake-off, CPT + SFT versus RAG + SFT on held-out tasks, and include the cost of redoing it every base-model release.",
+        "es": "Probablemente no como primer paso. Preguntaría qué trabajo debe hacer. Si responde preguntas sobre nuestros documentos, RAG da respuestas actualizadas y con citas sin entrenar nada, y el SFT arregla formato y tono. El CPT conviene cuando el modelo debe *generar* en un dominio cuyo vocabulario el modelo base maneja mal, no hay nada que recuperar en tiempo de ejecución y tenemos miles de millones de tokens limpios; 2M de documentos pueden ser ~2–5B tokens, así que es viable. Haría una comparación acotada en tiempo, CPT + SFT contra RAG + SFT en tareas reservadas, e incluiría el costo de rehacerlo con cada nuevo modelo base."
+      }
+    },
+    {
+      "q": { "en": "After continued pretraining, the model stopped following instructions. Why, and how do you fix it?", "es": "Después del continued pretraining, el modelo dejó de seguir instrucciones. ¿Por qué y cómo lo arreglas?" },
+      "a": {
+        "en": "If we ran CPT on the instruct checkpoint, thousands of steps of raw next-token loss overwrote the thin SFT and preference layer: forgetting hits the last, smallest training stage first. If we ran it on the base, it never had instruction following to begin with. Either way, the fix is the pipeline the lab itself uses: CPT on the base with general-data replay and a re-warmed, re-decayed learning rate, then SFT and DPO on top, then regression evals for general skills and safety, not just domain perplexity.",
+        "es": "Si hicimos CPT sobre el checkpoint instruct, miles de pasos de pérdida de siguiente token sobre texto crudo sobrescribieron la capa delgada de SFT y preferencias: el olvido golpea primero la etapa de entrenamiento más reciente y más pequeña. Si lo hicimos sobre el modelo base, nunca tuvo seguimiento de instrucciones. En ambos casos, la solución es el mismo pipeline que usa el laboratorio: CPT sobre el modelo base con replay de datos generales y un learning rate que vuelve a subir y a decaer, luego SFT y DPO encima, y después evals de regresión de habilidades generales y seguridad, no solo la perplejidad del dominio."
+      }
+    },
+    {
+      "q": { "en": "How do you size the compute for a CPT run?", "es": "¿Cómo dimensionas el cómputo de una corrida de CPT?" },
+      "a": {
+        "en": "With the 6ND rule: training costs about 6 FLOPs per parameter per token. An 8B model on 10B tokens is 4.8e20 FLOPs. An H100 peaks near 1e15 dense BF16 FLOP/s and real runs reach ~40% MFU, so about 1.2 million GPU-seconds: ~340 H100-hours, or ~43 hours on one 8-GPU node. Then I tell stakeholders compute is the small line item; data cleaning, SFT re-runs, evals and redoing it per base release dominate.",
+        "es": "Con la regla 6ND: entrenar cuesta unos 6 FLOPs por parámetro por token. Un modelo de 8B con 10B tokens son 4.8e20 FLOPs. Una H100 llega a cerca de 1e15 FLOP/s densos en BF16 y las corridas reales alcanzan ~40% de MFU, así que son unos 1.2 millones de segundos de GPU: ~340 horas de H100, o ~43 horas en un nodo de 8 GPUs. Luego les explico a los stakeholders que el cómputo es la partida pequeña; dominan la limpieza de datos, las nuevas corridas de SFT, las evals y rehacerlo con cada modelo base."
+      }
+    }
+  ],
+  "related": ["catastrophic-forgetting", "adaptation-ladder", "sft", "llm-training-pipeline", "data-curation", "distributed-training"],
+  "sources": [
+    { "title": "Gururangan et al. — Don't Stop Pretraining: Adapt Language Models to Domains and Tasks", "url": "https://arxiv.org/abs/2004.10964" },
+    { "title": "Ibrahim et al. — Simple and Scalable Strategies to Continually Pre-train Large Language Models", "url": "https://arxiv.org/abs/2403.08763" },
+    { "title": "Rozière et al. — Code Llama: Open Foundation Models for Code", "url": "https://arxiv.org/abs/2308.12950" },
+    { "title": "Wu et al. — BloombergGPT: A Large Language Model for Finance", "url": "https://arxiv.org/abs/2303.17564" }
+  ]
+}

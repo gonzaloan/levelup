@@ -1,0 +1,95 @@
+{
+  "id": "evaluator-optimizer",
+  "domain": "agents",
+  "level": "advanced",
+  "title": { "en": "Pattern: evaluator–optimizer", "es": "Patrón: evaluador–optimizador" },
+  "aliases": ["generator-critic", "reflection loop", "Self-Refine", "Reflexion", "critique and revise", "generate-evaluate-revise", "LLM feedback loop"],
+  "tldr": {
+    "en": "One LLM generates, a second evaluates the output against explicit criteria and returns specific feedback, and the generator revises, looping until the output passes or a round limit is hit.",
+    "es": "Un LLM genera, otro evalúa la salida contra criterios explícitos y devuelve feedback concreto, y el generador corrige; el ciclo se repite hasta aprobar o llegar a un límite de rondas."
+  },
+  "analogy": {
+    "en": "A writer and an editor: the editor marks specific problems against the style guide, the writer revises, and the piece ships when the editor signs off or the deadline hits.",
+    "es": "Un escritor y un editor: el editor marca problemas concretos según la guía de estilo, el escritor corrige y el texto se publica cuando el editor aprueba o llega la fecha de entrega."
+  },
+  "explain": {
+    "en": "**Evaluator–optimizer** is a loop between two roles. The **generator** (optimizer) produces a draft. The **evaluator** checks it against explicit criteria and returns a verdict plus *specific* feedback (*\"line 3 switches from formal to casual\"*, not *\"could be better\"*). The generator revises with that feedback, and the loop repeats until the evaluator passes it or a **round limit** hits, typically 2–4.\n\nAnthropic names two signs of fit: a human's written feedback demonstrably improves the output, and an LLM can produce that same kind of feedback. Literary translation, constrained writing and multi-round search (*\"is the evidence complete yet?\"*) qualify.\n\nThe loop is only as good as its **evaluation signal**:\n\n- **Best**: external, deterministic checks such as tests, compilers, schema validation or a word count ([[deterministic-graders]]).\n- **Good**: a separate evaluator prompt with a rubric, often on a different model ([[llm-as-judge]]).\n- **Weak**: the same model asked *\"are you sure?\"* with no new information. Research shows intrinsic self-correction on reasoning often fails to help and can make answers worse.\n\nEach round costs at least two calls, so log the score per round; if round 3 rarely beats round 2, cap at 2.",
+    "es": "**Evaluador–optimizador** es un ciclo entre dos roles. El **generador** (optimizador) produce un borrador. El **evaluador** lo revisa contra criterios explícitos y devuelve un veredicto más feedback *concreto* (*\"la línea 3 pasa de formal a informal\"*, no *\"podría estar mejor\"*). El generador corrige con ese feedback y el ciclo se repite hasta que el evaluador aprueba o se llega a un **límite de rondas**, típicamente 2–4.\n\nAnthropic menciona dos señales de que encaja: el feedback escrito de una persona mejora de forma demostrable la salida, y un LLM puede producir ese mismo tipo de feedback. La traducción literaria, la escritura con restricciones y la búsqueda en varias rondas (*\"¿ya está completa la evidencia?\"*) cumplen.\n\nEl ciclo vale lo que vale su **señal de evaluación**:\n\n- **La mejor**: verificaciones externas y deterministas, como tests, compiladores, validación de esquema o un conteo de palabras ([[deterministic-graders]]).\n- **Buena**: un prompt evaluador separado con una rúbrica, a menudo sobre otro modelo ([[llm-as-judge]]).\n- **Débil**: el mismo modelo preguntándose *\"¿estás seguro?\"* sin información nueva. La investigación muestra que la autocorrección intrínseca en razonamiento muchas veces no ayuda y puede empeorar las respuestas.\n\nCada ronda cuesta al menos dos llamadas, así que registra el puntaje por ronda; si la ronda 3 casi nunca supera a la 2, pon el tope en 2."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  T[\"Task + criteria\"] --> G[\"Generator LLM<br/>draft\"]\n  G --> E{\"Evaluator<br/>meets criteria?\"}\n  E -->|\"fail + feedback\"| G\n  E -->|pass| O[Accept output]\n  E -->|\"round limit hit\"| B[\"Best-so-far<br/>or human\"]",
+    "caption": {
+      "en": "The loop converges only if feedback is specific and the evaluator is reliable; the round cap bounds cost and latency.",
+      "es": "El ciclo solo converge si el feedback es concreto y el evaluador es confiable; el tope de rondas acota costo y latencia."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Translation loop with a rubric evaluator and round cap", "es": "Ciclo de traducción con evaluador por rúbrica y tope de rondas" },
+    "source": "from openai import OpenAI\nfrom pydantic import BaseModel\n\nclient = OpenAI()\nGEN_MODEL = \"gpt-4.1\"        # any strong writer\nEVAL_MODEL = \"gpt-4.1-mini\"  # separate prompt, ideally another model: fewer shared blind spots\n\nclass Verdict(BaseModel):\n    passed: bool\n    score: int           # 1-5 on the rubric; log it per round\n    feedback: list[str]  # specific, located fixes, never \"make it better\"\n\nRUBRIC = \"Latin-American Spanish, tú form; idioms by meaning; keep formality and product names.\"\n\ndef generate(prompt: str) -> str:\n    r = client.chat.completions.create(model=GEN_MODEL, messages=[{\"role\": \"user\", \"content\": prompt}])\n    return r.choices[0].message.content\n\ndef evaluate(source: str, draft: str) -> Verdict:\n    r = client.chat.completions.parse(model=EVAL_MODEL, response_format=Verdict, messages=[\n        {\"role\": \"system\", \"content\": f\"Grade the translation strictly. Rubric: {RUBRIC}\"},\n        {\"role\": \"user\", \"content\": f\"SOURCE:\\n{source}\\n\\nTRANSLATION:\\n{draft}\"}])\n    return r.choices[0].message.parsed\n\ndef translate(source: str, max_rounds: int = 3) -> str:\n    prompt, best = f\"Translate to Spanish. {RUBRIC}\\n\\n{source}\", (0, \"\")\n    for _ in range(max_rounds):              # hard cap bounds cost and latency\n        draft = generate(prompt)\n        verdict = evaluate(source, draft)\n        best = max(best, (verdict.score, draft))\n        if verdict.passed:\n            return draft\n        fixes = \"\\n- \".join(verdict.feedback)\n        prompt = f\"Revise the draft. Fix exactly these issues:\\n- {fixes}\\n\\nSOURCE:\\n{source}\\n\\nDRAFT:\\n{draft}\"\n    return best[1]                           # out of rounds: best-scored draft, not the last one"
+  },
+  "example": {
+    "en": "A travel company localizes ~2,000 marketing strings per release into Latin-American Spanish. Single-pass translation kept literal idioms (*\"hit the road\"* → *\"golpear el camino\"*) and mixed *tú* and *usted*. They added an evaluator with a 4-point rubric (idiom meaning, *tú* form, brand names untouched, length within 120% of the source so it fits the UI) and up to 3 rounds. ~70% passed in round 1, ~25% in round 2, and the rest went to a human reviewer. The human edit rate dropped from ~30% to ~8% of strings.",
+    "es": "Una empresa de viajes localiza ~2000 textos de marketing por versión al español latinoamericano. La traducción en una sola pasada dejaba modismos literales (*\"hit the road\"* → *\"golpear el camino\"*) y mezclaba *tú* y *usted*. Agregaron un evaluador con una rúbrica de 4 puntos (sentido de los modismos, trato de *tú*, nombres de marca intactos y largo dentro del 120% del original para que quepa en la UI) y hasta 3 rondas. ~70% aprobó en la ronda 1, ~25% en la ronda 2 y el resto pasó a un revisor humano. La tasa de edición humana bajó de ~30% a ~8% de los textos."
+  },
+  "pros": [
+    { "en": "Measurable quality gains on tasks with clear criteria, without changing the model.", "es": "Mejoras de calidad medibles en tareas con criterios claros, sin cambiar de modelo." },
+    { "en": "Feedback is explicit and loggable, so you can see why an output changed.", "es": "El feedback es explícito y queda registrado, así que puedes ver por qué cambió una salida." },
+    { "en": "Plugs in real verifiers (tests, compilers, validators) as the strongest evaluator.", "es": "Admite verificadores reales (tests, compiladores, validadores) como el evaluador más fuerte." }
+  ],
+  "cons": [
+    { "en": "Each round is at least 2 sequential calls: latency and cost grow with rounds.", "es": "Cada ronda son al menos 2 llamadas secuenciales: la latencia y el costo crecen con las rondas." },
+    { "en": "A miscalibrated evaluator optimizes toward its own quirks, not toward quality.", "es": "Un evaluador mal calibrado optimiza hacia sus propias manías, no hacia la calidad." },
+    { "en": "Revisions can regress: fixing one criterion breaks another that was passing.", "es": "Las revisiones pueden retroceder: arreglar un criterio rompe otro que ya pasaba." }
+  ],
+  "whenToUse": {
+    "en": "Quality criteria are explicit, an evaluator (tests, rules or a rubric-driven LLM) can check them reliably, and a round of feedback measurably improves the output: translation nuance, constrained writing, code against tests, multi-round search.",
+    "es": "Los criterios de calidad son explícitos, un evaluador (tests, reglas o un LLM con rúbrica) puede verificarlos de forma confiable y una ronda de feedback mejora la salida de manera medible: matices de traducción, escritura con restricciones, código contra tests, búsqueda en varias rondas."
+  },
+  "whenNotToUse": {
+    "en": "There's no reliable evaluator, one pass already meets the bar, or the latency budget can't absorb 2–6 sequential calls. Never use self-critique as a substitute for ground truth.",
+    "es": "No hay un evaluador confiable, una sola pasada ya cumple el estándar o el presupuesto de latencia no aguanta 2–6 llamadas secuenciales. Nunca uses la autocrítica como sustituto de una verdad de referencia."
+  },
+  "numbers": [
+    { "en": "Self-Refine (2023): iterative self-feedback improved task performance by ~20% absolute on average across 7 tasks.", "es": "Self-Refine (2023): la retroalimentación iterativa del propio modelo mejoró el desempeño ~20% absoluto en promedio sobre 7 tareas." },
+    { "en": "Reflexion (2023): feedback from test runs lifted HumanEval pass@1 to 91%, versus 80% for GPT-4 alone.", "es": "Reflexion (2023): el feedback de correr tests llevó el pass@1 en HumanEval a 91%, frente a 80% de GPT-4 solo." },
+    { "en": "Huang et al. (2023): without external feedback, self-correction did not improve reasoning benchmarks and sometimes lowered accuracy.", "es": "Huang et al. (2023): sin feedback externo, la autocorrección no mejoró los benchmarks de razonamiento y a veces bajó la precisión." },
+    { "en": "Rule of thumb: cap at 2–4 rounds; most of the gain usually lands in the first one or two revisions.", "es": "Regla práctica: tope de 2–4 rondas; la mayor parte de la mejora suele llegar en las primeras una o dos revisiones." }
+  ],
+  "pitfalls": [
+    { "en": "Vague feedback (*improve clarity*): the generator can't act on it and the loop oscillates. Require specific, located fixes.", "es": "Feedback vago (*mejora la claridad*): el generador no puede actuar y el ciclo oscila. Exige correcciones concretas y ubicadas." },
+    { "en": "The same model and prompt grading its own work: shared blind spots, rubber-stamp passes. Use external checks or a separate evaluator.", "es": "El mismo modelo y prompt calificando su propio trabajo: puntos ciegos compartidos y aprobaciones automáticas. Usa verificaciones externas o un evaluador separado." },
+    { "en": "Returning the last draft instead of the best-scored one: later revisions can be worse.", "es": "Devolver el último borrador en vez del mejor puntuado: las revisiones posteriores pueden ser peores." },
+    { "en": "Never validating the evaluator against humans: you optimize toward its quirks. Rule of thumb: check agreement on ~100 labelled examples first.", "es": "No validar nunca el evaluador contra personas: optimizas hacia sus manías. Regla práctica: mide primero el acuerdo en ~100 ejemplos etiquetados." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When does an evaluator–optimizer loop actually improve output?", "es": "¿Cuándo un ciclo evaluador–optimizador mejora de verdad la salida?" },
+      "a": {
+        "en": "When two things hold: the criteria are explicit, and the feedback adds information the generator didn't use the first time. The strongest case is an external signal (failing tests, a compiler error, a schema violation), which is why coding agents iterate so well. A separate evaluator with a rubric also works for things like translation tone. What doesn't work reliably is asking the same model *are you sure?* on reasoning; studies found that can make answers worse. So I log score per round and cap where the curve flattens.",
+        "es": "Cuando se cumplen dos cosas: los criterios son explícitos y el feedback aporta información que el generador no usó la primera vez. El caso más fuerte es una señal externa (tests que fallan, un error del compilador, una violación de esquema), y por eso los agentes de código iteran tan bien. Un evaluador separado con rúbrica también funciona para cosas como el tono de una traducción. Lo que no funciona de forma confiable es preguntarle al mismo modelo *¿estás seguro?* en razonamiento; hay estudios que muestran que puede empeorar las respuestas. Por eso registro el puntaje por ronda y pongo el tope donde la curva se aplana."
+      }
+    },
+    {
+      "q": { "en": "How do you keep the loop from running forever or making things worse?", "es": "¿Cómo evitas que el ciclo corra para siempre o empeore las cosas?" },
+      "a": {
+        "en": "Three guards. A hard round cap, usually two or three, sized from the per-round score curve on my eval set. Keep the best-scored draft, not the last one, because revisions regress: a tone fix can break a constraint that was fine. And stop on no progress: if the score doesn't rise or the feedback repeats, return best-so-far or escalate to a human. I also budget latency explicitly, since three rounds can mean six sequential calls.",
+        "es": "Con tres protecciones. Un tope duro de rondas, normalmente dos o tres, definido a partir de la curva de puntaje por ronda en mi set de eval. Me quedo con el borrador mejor puntuado, no con el último, porque las revisiones retroceden: un arreglo de tono puede romper una restricción que estaba bien. Y corto si no hay progreso: si el puntaje no sube o el feedback se repite, devuelvo lo mejor hasta el momento o escalo a una persona. También presupuesto la latencia de forma explícita, porque tres rondas pueden ser seis llamadas secuenciales."
+      }
+    },
+    {
+      "q": { "en": "How is this different from using an LLM judge in offline evals?", "es": "¿En qué se diferencia de usar un LLM como juez en evals offline?" },
+      "a": {
+        "en": "Same kind of component, different place. Offline, the judge measures the system and its errors skew a metric. In the loop it sits in the request path, so its errors ship: a judge that rewards verbosity makes every answer longer. It also has to be fast and cheap enough to run per request. And I can't reuse that same judge to evaluate the system afterwards, because it would be grading its own homework; I keep an independent judge or human labels for evals.",
+        "es": "Es el mismo tipo de componente en otro lugar. Offline, el juez mide el sistema y sus errores sesgan una métrica. En el ciclo está en el camino de la solicitud, así que sus errores llegan a producción: un juez que premia la verbosidad hace que todas las respuestas sean más largas. Además tiene que ser lo bastante rápido y barato para correr en cada solicitud. Y no puedo reutilizar ese mismo juez para evaluar el sistema después, porque estaría corrigiendo su propia tarea; para los evals mantengo un juez independiente o etiquetas humanas."
+      }
+    }
+  ],
+  "related": ["llm-as-judge", "deterministic-graders", "prompt-chaining", "agents-vs-workflows", "agent-reliability", "self-consistency"],
+  "sources": [
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "Madaan et al. — Self-Refine: Iterative Refinement with Self-Feedback (2023)", "url": "https://arxiv.org/abs/2303.17651" },
+    { "title": "Shinn et al. — Reflexion: Language Agents with Verbal Reinforcement Learning (2023)", "url": "https://arxiv.org/abs/2303.11366" },
+    { "title": "Huang et al. — Large Language Models Cannot Self-Correct Reasoning Yet (2023)", "url": "https://arxiv.org/abs/2310.01798" }
+  ]
+}

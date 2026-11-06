@@ -1,0 +1,89 @@
+{
+  "id": "benchmarks",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Public benchmarks & contamination", "es": "Benchmarks públicos y contaminación" },
+  "aliases": ["MMLU", "GPQA", "SWE-bench", "HumanEval", "LMArena", "Chatbot Arena", "MTEB", "data contamination"],
+  "tldr": {
+    "en": "Public benchmarks measure generic capability on fixed test sets, and many are saturated or contaminated by training data. Use them to shortlist two to four models, then decide on your own eval set.",
+    "es": "Los benchmarks públicos miden capacidad genérica sobre sets de prueba fijos, y muchos están saturados o contaminados por los datos de entrenamiento. Úsalos para preseleccionar dos a cuatro modelos y decide con tu propio set de evaluación."
+  },
+  "analogy": {
+    "en": "An entrance-exam score gets a candidate an interview, not the job: leaked answers inflate it, and it says little about the work you actually need done.",
+    "es": "El puntaje de un examen de admisión le consigue una entrevista a un candidato, no el puesto: las respuestas filtradas lo inflan y dice poco del trabajo que de verdad necesitas."
+  },
+  "explain": {
+    "en": "A **public benchmark** is a fixed, shared test set with a scoring rule, used to compare models on one capability. Know what each one measures:\n\n- **MMLU**: 57 subjects, multiple choice. Broad knowledge; saturated around 90%.\n- **GPQA Diamond**: 198 \"Google-proof\" graduate-level science questions.\n- **AIME / MATH**: competition math with exact, checkable answers.\n- **HumanEval**: 164 Python functions scored by unit tests; saturated. **SWE-bench Verified**: 500 real GitHub issues, solved when the repo's tests pass. Agentic coding.\n- **LMArena** (ex Chatbot Arena): crowdsourced pairwise votes ranked Elo-style. Human preference, biased toward length and formatting.\n- **HELM**: many scenarios × many metrics (accuracy, calibration, robustness, toxicity).\n- **MTEB**: embedding models on retrieval, clustering, classification and similarity.\n\nTwo forces erode them. **Saturation**: once top models cluster near the ceiling, gaps are noise and label errors. **Contamination**: test items leak into web-scale training data, so the score measures memory. Defenses: questions published after the model's cutoff (LiveCodeBench, each new AIME), private held-out sets, canary strings and n-gram overlap checks.\n\nAnd **benchmarks ≠ your task**. Your data, prompts, tools and cost of errors differ, and vendors report numbers under different harnesses (few-shot, chain-of-thought, majority voting). Use leaderboards to **shortlist** 2–4 models, then decide on [[golden-datasets]] of your own.",
+    "es": "Un **benchmark público** es un set de prueba fijo y compartido con una regla de puntuación, que sirve para comparar modelos en una capacidad. Ten claro qué mide cada uno:\n\n- **MMLU**: 57 materias, opción múltiple. Conocimiento general; saturado alrededor de 90%.\n- **GPQA Diamond**: 198 preguntas de ciencias de nivel de posgrado, \"a prueba de Google\".\n- **AIME / MATH**: matemática de competencia con respuestas exactas y verificables.\n- **HumanEval**: 164 funciones en Python calificadas con tests unitarios; saturado. **SWE-bench Verified**: 500 issues reales de GitHub, resueltos cuando pasan los tests del repo. Coding agéntico.\n- **LMArena** (antes Chatbot Arena): votos por pares de usuarios, ordenados al estilo Elo. Mide preferencia humana, sesgada hacia la longitud y el formato.\n- **HELM**: muchos escenarios × muchas métricas (exactitud, calibración, robustez, toxicidad).\n- **MTEB**: modelos de embeddings en recuperación, clustering, clasificación y similitud.\n\nDos fuerzas los desgastan. **Saturación**: cuando los mejores modelos se amontonan cerca del techo, las diferencias son ruido y errores de etiquetado. **Contaminación**: los ítems de prueba se filtran a los datos de entrenamiento a escala web y el puntaje mide memoria. Defensas: preguntas publicadas después del corte del modelo (LiveCodeBench, cada nuevo AIME), sets privados reservados, canary strings y chequeos de solapamiento de n-gramas.\n\nY **los benchmarks no son tu tarea**. Tus datos, prompts, herramientas y costo de los errores son distintos, y los proveedores reportan números con harnesses diferentes (few-shot, chain-of-thought, voto por mayoría). Usa los leaderboards para **preseleccionar** 2–4 modelos y decide con tus propios [[golden-datasets]]."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  W[Web crawl] -.->|leaked test items| T[Model training]\n  T -.->|inflated scores| L[\"Leaderboards<br/>MMLU, GPQA, SWE-bench\"]\n  L --> F{\"Hard constraints<br/>cost, latency, license\"}\n  F --> S[\"Shortlist<br/>2-4 models\"]\n  S --> E[\"Your eval set<br/>real tasks\"]\n  G[(Golden set)] --> E\n  E --> D[Pick model]",
+    "caption": {
+      "en": "Leaderboards narrow the field, and leakage may inflate them; your own eval set makes the decision.",
+      "es": "Los leaderboards acotan las opciones, y las filtraciones pueden inflarlos; tu propio set de evaluación toma la decisión."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Two cheap contamination probes", "es": "Dos sondas baratas de contaminación" },
+    "source": "import re\nfrom difflib import SequenceMatcher\nfrom openai import OpenAI\n\nclient = OpenAI()\nMODEL = \"gpt-4.1-mini\"  # any chat model under suspicion\n\ndef ngrams(text: str, n: int = 13) -> set[tuple[str, ...]]:\n    toks = re.findall(r\"\\w+\", text.lower())\n    return {tuple(toks[i:i + n]) for i in range(len(toks) - n + 1)}\n\ndef overlap_rate(eval_items: list[str], train_docs: list[str], n: int = 13) -> float:\n    # Probe 1, data you control: did eval items leak into your fine-tuning set?\n    seen = set().union(*(ngrams(d, n) for d in train_docs))\n    return sum(bool(ngrams(x, n) & seen) for x in eval_items) / len(eval_items)\n\ndef completion_probe(item: str) -> float:\n    # Probe 2, closed model: can it finish a test item it should never have seen?\n    cut = len(item) // 2\n    out = client.chat.completions.create(\n        model=MODEL, temperature=0,\n        messages=[{\"role\": \"user\", \"content\": f\"Continue this text exactly:\\n{item[:cut]}\"}],\n    ).choices[0].message.content or \"\"\n    return SequenceMatcher(None, out[: len(item) - cut], item[cut:]).ratio()\n\nleak = overlap_rate(golden_questions, finetune_corpus)  # want exactly 0.0\nmemo = [completion_probe(q) for q in benchmark_sample]  # heuristic: > ~0.8 looks memorized"
+  },
+  "example": {
+    "en": "You need a model to extract clauses from Spanish contracts. Leaderboards put Model A 4 points above Model B on MMLU-Pro and ~30 Elo higher on LMArena. You filter by price and data residency, shortlist A, B and a cheaper C, and run your 300-document golden set. B wins field-level F1 (0.91 vs 0.87 for A); C reaches 0.89 at a third of A's cost. A's lead came from general knowledge and chat style, and this task rewards neither. You ship C, with B as fallback on low-confidence extractions.",
+    "es": "Necesitas un modelo para extraer cláusulas de contratos en español. Los leaderboards ponen al modelo A 4 puntos por encima del B en MMLU-Pro y ~30 de Elo más arriba en LMArena. Filtras por precio y residencia de datos, preseleccionas A, B y un C más barato, y corres tu golden set de 300 documentos. B gana en F1 por campo (0,91 contra 0,87 de A); C llega a 0,89 a un tercio del costo de A. La ventaja de A venía del conocimiento general y del estilo de chat, y esta tarea no premia ninguno de los dos. Lanzas C, con B como respaldo en extracciones de baja confianza."
+  },
+  "pros": [
+    { "en": "Free and fast: narrow dozens of models to a shortlist in an hour.", "es": "Gratis y rápido: reduces decenas de modelos a una lista corta en una hora." },
+    { "en": "Specialized ones (SWE-bench, MTEB retrieval) track some real workloads closely.", "es": "Los especializados (SWE-bench, la parte de recuperación de MTEB) siguen de cerca algunas cargas reales." },
+    { "en": "A shared yardstick to sanity-check vendor claims and capability trends.", "es": "Una vara común para contrastar lo que dicen los proveedores y seguir la evolución de capacidades." }
+  ],
+  "cons": [
+    { "en": "Saturation and contamination: top scores separate by noise and memory.", "es": "Saturación y contaminación: los puntajes de arriba se separan por ruido y memoria." },
+    { "en": "Harness differences (shots, CoT, voting) make vendor-reported numbers non-comparable.", "es": "Las diferencias de harness (shots, CoT, votación) hacen que los números de cada proveedor no sean comparables." },
+    { "en": "They measure generic capability, not your data, prompts, tools or error costs.", "es": "Miden capacidad genérica, no tus datos, prompts, herramientas ni el costo de tus errores." }
+  ],
+  "whenToUse": {
+    "en": "To shortlist candidates and rule out models clearly too weak for a capability (coding, math, multilingual, embeddings) before spending on your own evals.",
+    "es": "Para preseleccionar candidatos y descartar modelos claramente débiles en una capacidad (código, matemática, multilingüe, embeddings) antes de invertir en tus propias evaluaciones."
+  },
+  "whenNotToUse": {
+    "en": "As the final model choice, as a release gate, or to claim your system is \"X% accurate\". Only your own eval set measures your task.",
+    "es": "Como elección final del modelo, como gate de release o para afirmar que tu sistema tiene \"X% de exactitud\". Solo tu propio set de evaluación mide tu tarea."
+  },
+  "numbers": [
+    { "en": "Sizes: HumanEval 164 problems; GPQA Diamond 198; SWE-bench Verified 500; MMLU ~16k questions in 57 subjects.", "es": "Tamaños: HumanEval 164 problemas; GPQA Diamond 198; SWE-bench Verified 500; MMLU ~16 mil preguntas en 57 materias." },
+    { "en": "SWE-bench (2023): the best model solved 1.96% of issues; by 2025, top agents passed ~70% of SWE-bench Verified.", "es": "SWE-bench (2023): el mejor modelo resolvió 1,96% de los issues; en 2025, los mejores agentes superaban ~70% de SWE-bench Verified." },
+    { "en": "GPQA: PhD experts score ~65% (~74% excluding clear mistakes); skilled non-experts with web access ~34%.", "es": "GPQA: expertos con doctorado sacan ~65% (~74% sin contar errores evidentes); no expertos capacitados con acceso a la web, ~34%." },
+    { "en": "MMLU-Redux (2024): ~6.5% of MMLU questions contain errors, so gaps near 90% partly measure label noise.", "es": "MMLU-Redux (2024): ~6,5% de las preguntas de MMLU tienen errores, así que las diferencias cerca de 90% miden en parte ruido de etiquetas." },
+    { "en": "GPT-3 paper (2020): contamination measured as 13-gram overlap between benchmark items and training data.", "es": "Paper de GPT-3 (2020): midió la contaminación como solapamiento de 13-gramas entre ítems del benchmark y datos de entrenamiento." }
+  ],
+  "pitfalls": [
+    { "en": "Choosing on a 1–2 point leaderboard gap: that is inside harness and noise differences.", "es": "Elegir por una diferencia de 1–2 puntos en un leaderboard: eso cae dentro de las diferencias de harness y del ruido." },
+    { "en": "Comparing vendor numbers run with different shots, CoT or majority voting.", "es": "Comparar números de proveedores obtenidos con distintos shots, CoT o voto por mayoría." },
+    { "en": "Picking an embedding model by MTEB average instead of the retrieval tasks in your language and domain.", "es": "Elegir un modelo de embeddings por el promedio de MTEB en vez de por las tareas de recuperación en tu idioma y dominio." },
+    { "en": "Fine-tuning on synthetic or scraped data that quietly contains your own eval items.", "es": "Hacer fine-tuning con datos sintéticos o scrapeados que, sin que lo notes, contienen tus propios ítems de evaluación." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you pick a model for a new product?", "es": "¿Cómo eliges un modelo para un producto nuevo?" },
+      "a": {
+        "en": "In two steps. First a shortlist: I filter by hard constraints (price, latency, context window, license, data residency), then use capability-relevant benchmarks, say SWE-bench Verified for coding or MTEB retrieval for embeddings, to keep two to four candidates. Then the decision happens on my own eval set: real tasks with graders, several trials each, with cost and latency measured on our prompts. Public benchmarks don't know our data, our tools or the cost of our errors, and a couple of points on a saturated benchmark is noise.",
+        "es": "En dos pasos. Primero una lista corta: filtro por restricciones duras (precio, latencia, ventana de contexto, licencia, residencia de datos) y uso benchmarks relevantes para la capacidad, como SWE-bench Verified para código o la parte de recuperación de MTEB para embeddings, para quedarme con dos a cuatro candidatos. Después la decisión se toma con mi propio set de evaluación: tareas reales con graders, varios intentos por tarea, y costo y latencia medidos con nuestros prompts. Los benchmarks públicos no conocen nuestros datos, nuestras herramientas ni el costo de nuestros errores, y un par de puntos en un benchmark saturado es ruido."
+      }
+    },
+    {
+      "q": { "en": "What is benchmark contamination and how would you detect it?", "es": "¿Qué es la contaminación de un benchmark y cómo la detectarías?" },
+      "a": {
+        "en": "It's when test items, or near copies, end up in training data, so the score measures recall instead of capability. Signals: the model does much better on items published before its cutoff than after, which is what LiveCodeBench checks; it can complete a test question verbatim from its first half; or it drops on fresh or paraphrased versions, as GSM1k showed for GSM8K. For our own data, I check 13-gram overlap between eval items and anything we fine-tune on, and I keep a private held-out set that never leaves our repo.",
+        "es": "Es cuando ítems de prueba, o copias casi exactas, terminan en los datos de entrenamiento, y el puntaje mide memoria en lugar de capacidad. Señales: el modelo rinde mucho mejor en ítems publicados antes de su corte que después, que es lo que revisa LiveCodeBench; puede completar al pie de la letra una pregunta a partir de su primera mitad; o cae en versiones nuevas o parafraseadas, como mostró GSM1k con GSM8K. Para nuestros datos, reviso el solapamiento de 13-gramas entre los ítems de evaluación y todo lo que usamos para fine-tuning, y mantengo un set privado reservado que nunca sale del repo."
+      }
+    }
+  ],
+  "related": ["model-selection", "golden-datasets", "embedding-models", "agent-evals", "eval-driven-development", "nondeterminism"],
+  "sources": [
+    { "title": "Rein et al. — GPQA: A Graduate-Level Google-Proof Q&A Benchmark", "url": "https://arxiv.org/abs/2311.12022" },
+    { "title": "Jimenez et al. — SWE-bench: Can Language Models Resolve Real-World GitHub Issues?", "url": "https://arxiv.org/abs/2310.06770" },
+    { "title": "Jain et al. — LiveCodeBench: Holistic and Contamination Free Evaluation of LLMs for Code", "url": "https://arxiv.org/abs/2403.07974" },
+    { "title": "Gema et al. — Are We Done with MMLU? (MMLU-Redux)", "url": "https://arxiv.org/abs/2406.04127" }
+  ]
+}

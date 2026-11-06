@@ -1,0 +1,88 @@
+{
+  "id": "model-routing",
+  "domain": "inference",
+  "level": "advanced",
+  "title": { "en": "Model routing & cascades", "es": "Routing de modelos y cascadas" },
+  "aliases": ["LLM router", "RouteLLM", "model cascade", "FrugalGPT", "fallback models", "semantic router", "LLM cascading"],
+  "tldr": {
+    "en": "Send each request to the cheapest model that can handle it, by rules, a learned classifier or a cascade that escalates on a failed check, and fall back to another provider on outages.",
+    "es": "Manda cada petición al modelo más barato que pueda resolverla, con reglas, un clasificador entrenado o una cascada que escala cuando falla una verificación, y cambia de proveedor cuando hay caídas."
+  },
+  "analogy": {
+    "en": "Hospital triage: a nurse handles most visits, sends the hard cases straight to a specialist, and if the nurse's quick check doesn't add up, the patient goes up a level.",
+    "es": "El triaje de un hospital: una enfermera resuelve la mayoría de las consultas, manda los casos difíciles directo al especialista y, si su revisión rápida no cuadra, el paciente sube de nivel."
+  },
+  "explain": {
+    "en": "**Model routing** picks a model per request instead of one model for everything. It pays because traffic is mixed and price gaps are large: within one family the small model can be ~20× cheaper.\n\nThree mechanisms, often combined:\n\n- **Rules**: route by task type, input length, tenant tier or feature. Free and transparent; the right first step.\n- **Learned router**: a small classifier predicts whether the cheap model will be good enough. **RouteLLM** (LMSYS, 2024) trains one on human preference data and reported **over 2× cost reduction at similar quality** on benchmarks such as MT Bench. A small LLM doing [[routing]], or embedding similarity to labeled examples, are cheaper variants.\n- **Cascade**: try the small model first; accept if a check passes (schema validation, tests, a verifier), otherwise escalate. Expected cost = small + P(escalate) × large, and escalated requests pay twice and wait longer.\n\n**Fallbacks** are routing for reliability: on 429s, 5xx or timeouts, retry the same model on another provider or region, then a different model, through an [[llm-gateway]].\n\nThe non-negotiable part: **measure quality per route.** Log the route on every request, evaluate each slice against your golden set and watch the escalation rate. A router that quietly sends hard cases to the small model saves money by losing users.",
+    "es": "El **routing de modelos** elige un modelo por petición en lugar de usar uno solo para todo. Conviene porque el tráfico es mixto y las diferencias de precio son grandes: dentro de una misma familia, el modelo chico puede ser ~20× más barato.\n\nTres mecanismos, que muchas veces se combinan:\n\n- **Reglas**: enrutar por tipo de tarea, largo de la entrada, plan del tenant o funcionalidad. Gratis y transparente; el primer paso correcto.\n- **Router entrenado**: un clasificador pequeño predice si el modelo barato alcanzará. **RouteLLM** (LMSYS, 2024) entrena uno con datos de preferencias humanas y reportó **más de 2× de reducción de costo con calidad similar** en benchmarks como MT Bench. Un LLM chico haciendo [[routing]], o la similitud de embeddings con ejemplos etiquetados, son variantes más baratas.\n- **Cascada**: prueba primero el modelo chico; acepta si pasa una verificación (validación de esquema, tests, un verificador) y si no, escala. Costo esperado = chico + P(escalar) × grande, y las peticiones escaladas pagan dos veces y esperan más.\n\nLos **fallbacks** son routing para confiabilidad: ante 429, 5xx o timeouts, reintenta el mismo modelo en otro proveedor o región y luego otro modelo, a través de un [[llm-gateway]].\n\nLo innegociable: **mide la calidad por ruta.** Registra la ruta en cada petición, evalúa cada segmento contra tu golden set y vigila la tasa de escalamiento. Un router que manda en silencio los casos difíciles al modelo chico ahorra dinero perdiendo usuarios."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[Request] --> R{Router}\n  R -->|easy| S[Small model]\n  R -->|hard by rule| L[Large model]\n  S --> V{Check passes?}\n  V -->|yes| A[Answer]\n  V -->|no, escalate| L\n  L --> A\n  L -.->|429 / outage| F[Fallback provider]\n  F --> A",
+    "caption": {
+      "en": "Rules or a classifier route up front; the cascade escalates only when a check on the small model's output fails.",
+      "es": "Las reglas o un clasificador enrutan de entrada; la cascada solo escala cuando falla una verificación sobre la salida del modelo chico."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Rule + cascade router with a verifiable check", "es": "Router de reglas + cascada con una verificación comprobable" },
+    "source": "from typing import Literal\nfrom openai import OpenAI\nfrom pydantic import BaseModel\n\nclient = OpenAI()\nSMALL = \"gpt-4.1-nano\"  # any cheap model\nLARGE = \"gpt-4.1\"       # any strong model\n\nclass Draft(BaseModel):\n    category: Literal[\"billing\", \"bug\", \"how_to\", \"account\", \"other\"]\n    reply: str\n    policy_id: str | None  # the policy the reply relies on, if any\n\ndef ask(model: str, ticket: str) -> Draft:\n    r = client.responses.parse(model=model, instructions=\"Triage and draft a reply.\",\n                               input=ticket, text_format=Draft)\n    return r.output_parsed\n\ndef passes_check(d: Draft) -> bool:\n    # Verifiable checks beat the model's self-reported confidence (poorly calibrated)\n    return d.category != \"other\" and (d.policy_id is None or kb_has(d.policy_id))\n\ndef route(ticket: str, tier: str) -> tuple[Draft, str]:\n    if tier == \"enterprise\" or len(ticket) > 6_000:  # rule: skip the cascade\n        return ask(LARGE, ticket), \"rule:large\"\n    try:\n        d = ask(SMALL, ticket)\n        if passes_check(d):\n            return d, \"small\"\n    except Exception:  # invalid output or provider error: escalate, don't fail\n        pass\n    return ask(LARGE, ticket), \"escalated\"  # log the route; eval each slice"
+  },
+  "example": {
+    "en": "A support app sends 1M tickets/month to a frontier model. Error analysis shows ~70% are password resets, order status and FAQ-style questions. They add a cascade: a model ~20× cheaper drafts the reply, a deterministic check (valid category, cited policy exists) gates it, and failures escalate. Escalation runs at 25%, so expected cost ≈ 0.05 + 0.25 × 1 = **0.30 of the all-frontier bill**, a ~70% cut. Overall resolution rate holds on the golden set, but one slice, refunds in Spanish, drops 6 points, so a rule now sends refunds straight to the large model.",
+    "es": "Una app de soporte manda 1M de tickets al mes a un modelo de frontera. El análisis de errores muestra que ~70% son cambios de contraseña, estado de pedidos y preguntas tipo FAQ. Agregan una cascada: un modelo ~20× más barato redacta la respuesta, una verificación determinista (categoría válida, la política citada existe) la filtra y lo que falla escala. El escalamiento queda en 25%, así que el costo esperado ≈ 0.05 + 0.25 × 1 = **0.30 de la factura con solo frontera**, un recorte de ~70%. La tasa de resolución general se mantiene en el golden set, pero un segmento, reembolsos en español, cae 6 puntos, así que ahora una regla manda los reembolsos directo al modelo grande."
+  },
+  "pros": [
+    { "en": "Large savings on mixed traffic: easy requests stop paying frontier prices.", "es": "Ahorros grandes con tráfico mixto: las peticiones fáciles dejan de pagar precios de frontera." },
+    { "en": "Lower latency for the easy majority, since small models answer faster.", "es": "Menor latencia para la mayoría fácil, porque los modelos chicos responden más rápido." },
+    { "en": "The same gateway layer gives provider fallbacks and model A/B tests.", "es": "La misma capa de gateway te da fallbacks entre proveedores y pruebas A/B de modelos." }
+  ],
+  "cons": [
+    { "en": "Another component to evaluate: a bad router hides quality loss inside averages.", "es": "Otro componente que evaluar: un mal router esconde la pérdida de calidad dentro de los promedios." },
+    { "en": "Cascades pay twice and add latency on every escalation.", "es": "Las cascadas pagan dos veces y suman latencia en cada escalamiento." },
+    { "en": "Routers drift: new models, prices and traffic move the right thresholds.", "es": "Los routers se desajustan: modelos nuevos, precios y tráfico mueven los umbrales correctos." }
+  ],
+  "whenToUse": {
+    "en": "Mixed traffic with a clear easy majority, a large price gap between candidate models, and an eval set that can measure quality per route.",
+    "es": "Tráfico mixto con una mayoría claramente fácil, una gran diferencia de precio entre los modelos candidatos y un set de evaluación que mida la calidad por ruta."
+  },
+  "whenNotToUse": {
+    "en": "Low volume, uniformly hard tasks, or no way to measure quality per slice: one good model plus caching is simpler and safer.",
+    "es": "Volumen bajo, tareas uniformemente difíciles o ninguna forma de medir la calidad por segmento: un buen modelo más caching es más simple y más seguro."
+  },
+  "numbers": [
+    { "en": "RouteLLM (LMSYS, 2024): over 2× cost reduction at similar quality; ~85% cheaper than GPT-4-only on MT Bench at 95% of its quality.", "es": "RouteLLM (LMSYS, 2024): más de 2× de reducción de costo con calidad similar; ~85% más barato que usar solo GPT-4 en MT Bench con el 95% de su calidad." },
+    { "en": "FrugalGPT (2023): cascades matched GPT-4 quality at up to 98% lower cost on its benchmarks.", "es": "FrugalGPT (2023): las cascadas igualaron la calidad de GPT-4 con hasta 98% menos costo en sus benchmarks." },
+    { "en": "Cascade cost = small + P(escalate) × large: a 20× cheaper model with 25% escalation costs ~30% of all-large.", "es": "Costo de cascada = chico + P(escalar) × grande: un modelo 20× más barato con 25% de escalamiento cuesta ~30% de usar solo el grande." },
+    { "en": "Price gap to exploit: GPT-4.1 $2 vs GPT-4.1-nano $0.10 per 1M input tokens (20×, 2025 list).", "es": "La diferencia de precio a aprovechar: GPT-4.1 $2 vs GPT-4.1-nano $0.10 por 1M de tokens de entrada (20×, lista de 2025)." }
+  ],
+  "pitfalls": [
+    { "en": "Trusting the model's self-reported confidence: it is poorly calibrated. Use verifiable checks or a trained router.", "es": "Confiar en la confianza que el modelo reporta de sí mismo: está mal calibrada. Usa verificaciones comprobables o un router entrenado." },
+    { "en": "Judging the router on average quality only: check each route and slice (language, tier, intent).", "es": "Juzgar el router solo por la calidad promedio: revisa cada ruta y segmento (idioma, plan, intención)." },
+    { "en": "Falling back to a model your prompts were never tested on: a fallback is a deployment, eval it.", "es": "Hacer fallback a un modelo con el que nunca probaste tus prompts: un fallback es un deploy, evalúalo." },
+    { "en": "A routing LLM call that costs nearly as much as the answer it is trying to save.", "es": "Una llamada de routing a un LLM que cuesta casi lo mismo que la respuesta que intenta ahorrar." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Router or cascade: how do you choose?", "es": "¿Router o cascada? ¿Cómo eliges?" },
+      "a": {
+        "en": "A router decides before generating, so it never pays twice, but it needs to predict difficulty from the input alone; that works when difficulty shows in task type, length or tenant. A cascade decides after seeing the small model's output, so it can use a real check (valid schema, tests passing, a cited source that exists), but escalations pay for both calls and add latency. I start with rules, add a cascade wherever I have a cheap verifiable check, and train a router only once I have enough labeled traffic to evaluate it.",
+        "es": "Un router decide antes de generar, así que nunca paga dos veces, pero tiene que predecir la dificultad solo con la entrada; funciona cuando la dificultad se nota en el tipo de tarea, el largo o el tenant. Una cascada decide después de ver la salida del modelo chico, así que puede usar una verificación real (esquema válido, tests que pasan, una fuente citada que existe), pero cada escalamiento paga las dos llamadas y suma latencia. Empiezo con reglas, agrego una cascada donde tengo una verificación barata y comprobable, y entreno un router solo cuando tengo suficiente tráfico etiquetado para evaluarlo."
+      }
+    },
+    {
+      "q": { "en": "How do you make sure routing doesn't quietly degrade quality?", "es": "¿Cómo te aseguras de que el routing no degrade la calidad en silencio?" },
+      "a": {
+        "en": "I log the route and model on every request and evaluate each route as its own slice against the golden set, not just the blended average, because a small average drop can hide a large drop in one segment. Online, I track escalation rate, user feedback and task success per route, and keep a small random sample going to the large model as a control. Any change to thresholds or models goes through the same offline eval and a staged rollout.",
+        "es": "Registro la ruta y el modelo en cada petición y evalúo cada ruta como su propio segmento contra el golden set, no solo el promedio combinado, porque una caída pequeña en el promedio puede esconder una caída grande en un segmento. En producción sigo la tasa de escalamiento, el feedback de usuarios y el éxito de la tarea por ruta, y mando una pequeña muestra aleatoria al modelo grande como grupo de control. Cualquier cambio de umbrales o modelos pasa por el mismo eval offline y un rollout gradual."
+      }
+    }
+  ],
+  "related": ["model-selection", "routing", "llm-gateway", "token-economics", "golden-datasets", "distillation"],
+  "sources": [
+    { "title": "Ong et al. — RouteLLM: Learning to Route LLMs with Preference Data", "url": "https://arxiv.org/abs/2406.18665" },
+    { "title": "LMSYS — RouteLLM: An Open-Source Framework for Cost-Effective LLM Routing", "url": "https://lmsys.org/blog/2024-07-01-routellm/" },
+    { "title": "Chen, Zaharia, Zou — FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance", "url": "https://arxiv.org/abs/2305.05176" },
+    { "title": "LiteLLM — Routing and fallbacks", "url": "https://docs.litellm.ai/docs/routing" }
+  ]
+}

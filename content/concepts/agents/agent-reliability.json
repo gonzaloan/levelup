@@ -1,0 +1,86 @@
+{
+  "id": "agent-reliability",
+  "domain": "agents",
+  "level": "core",
+  "title": { "en": "Agent reliability: budgets & loops", "es": "Confiabilidad de agentes: presupuestos y loops" },
+  "aliases": ["agent guardrails", "step budget", "max iterations", "loop detection", "compounding errors", "agent timeouts", "excessive agency", "pass^k"],
+  "tldr": {
+    "en": "Agents fail by compounding small errors and by looping. Bound every run with step, token, time and dollar budgets, detect repeated calls, feed errors back structurally, checkpoint, and give tools least privilege.",
+    "es": "Los agentes fallan porque los errores pequeños se acumulan y porque entran en loops. Limita cada corrida con presupuestos de pasos, tokens, tiempo y dinero, detecta llamadas repetidas, devuelve errores estructurados, haz checkpoints y da mínimo privilegio a las herramientas."
+  },
+  "analogy": {
+    "en": "A rental car with a speed governor, a fuel-card limit and a GPS geofence: you trust the driver, but the car enforces the limits anyway.",
+    "es": "Un auto rentado con limitador de velocidad, tope en la tarjeta de gasolina y una geocerca por GPS: confías en el conductor, pero el auto hace cumplir los límites de todos modos."
+  },
+  "explain": {
+    "en": "**Agent reliability** is the engineering that keeps an LLM loop from spiraling. Two forces dominate:\n\n- **Compounding errors** — if each step succeeds 95% of the time, a 20-step task succeeds 0.95^20 ≈ **36%**. Fewer steps, better tools and verification at checkpoints beat a smarter prompt.\n- **Loops** — the model retries the same failing call, re-reads the same file or oscillates between two plans, burning tokens until something external stops it.\n\nThe controls, all enforced by the **harness, not the prompt**:\n1. **Budgets** — max steps (e.g. 25), tokens, wall time and dollars per run; on exhaustion, stop and escalate with a summary.\n2. **Loop detection** — hash (tool, args); warn on the 2nd repeat, stop on the 3rd. Also watch for no progress: same state, new words.\n3. **Timeouts and retries** — per tool call, with backoff for transient errors ([[retries-backoff]]); never blindly retry non-idempotent writes.\n4. **Structured error feedback** — return `{error, message, hint}` the model can act on, not a stack trace or a silent empty result.\n5. **Fallbacks** — a stronger model, a deterministic path or a human ([[human-in-the-loop]]).\n6. **Checkpoints**, so a failure costs one step ([[durable-agents]]).\n7. **Containment** — sandboxed code execution and least-privilege, scoped credentials, so the worst case is bounded.\n\nMeasure **pass^k** (all k repeated runs succeed), not just pass@1.",
+    "es": "La **confiabilidad de agentes** es la ingeniería que evita que un loop de LLM se descontrole. Dominan dos fuerzas:\n\n- **Errores que se acumulan**: si cada paso funciona el 95% de las veces, una tarea de 20 pasos funciona 0.95^20 ≈ **36%**. Menos pasos, mejores herramientas y verificación en checkpoints le ganan a un prompt más ingenioso.\n- **Loops**: el modelo reintenta la misma llamada que falla, relee el mismo archivo u oscila entre dos planes, quemando tokens hasta que algo externo lo detiene.\n\nLos controles, todos aplicados por el **harness, no por el prompt**:\n1. **Presupuestos**: máximo de pasos (p. ej. 25), tokens, tiempo y dinero por corrida; al agotarse, detente y escala con un resumen.\n2. **Detección de loops**: calcula un hash de (herramienta, argumentos); advierte en la 2.ª repetición y detén en la 3.ª. Vigila también la falta de progreso: mismo estado, palabras nuevas.\n3. **Timeouts y reintentos**: por llamada a herramienta, con backoff para errores transitorios ([[retries-backoff]]); nunca reintentes a ciegas escrituras no idempotentes.\n4. **Errores estructurados**: devuelve `{error, message, hint}` con algo que el modelo pueda corregir, no un stack trace ni un resultado vacío en silencio.\n5. **Fallbacks**: un modelo más fuerte, una ruta determinista o una persona ([[human-in-the-loop]]).\n6. **Checkpoints**, para que una falla cueste un solo paso ([[durable-agents]]).\n7. **Contención**: ejecución de código en sandbox y credenciales acotadas de mínimo privilegio, para que el peor caso tenga límite.\n\nMide **pass^k** (las k corridas repetidas funcionan), no solo pass@1."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  S[Step start] --> B{Budget left?}\n  B -->|no| E[Stop and escalate]\n  B -->|yes| M[LLM proposes call]\n  M -->|final answer| V[Verify and return]\n  M --> D{\"Same call 3x?\"}\n  D -->|yes| E\n  D -->|no| T[\"Run tool<br/>timeout + sandbox\"]\n  T -->|ok| C[Checkpoint state]\n  T -->|error| F[\"Structured error<br/>back to model\"]\n  F --> C\n  C --> S",
+    "caption": {
+      "en": "Every guard lives in the harness: the model can ask for anything, but the loop enforces budgets, repetition limits and timeouts.",
+      "es": "Cada control vive en el harness: el modelo puede pedir lo que sea, pero el loop hace cumplir presupuestos, límites de repetición y timeouts."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Agent loop with budgets, loop detection and structured errors", "es": "Loop de agente con presupuestos, detección de loops y errores estructurados" },
+    "source": "import hashlib, json, time\n\nMAX_STEPS, MAX_TOKENS, MAX_SECONDS, MAX_USD = 25, 400_000, 300, 2.00\n\ndef run(goal: str) -> str:\n    msgs, seen, tokens, usd, t0 = [user(goal)], {}, 0, 0.0, time.monotonic()\n    for _ in range(MAX_STEPS):\n        if tokens > MAX_TOKENS or usd > MAX_USD or time.monotonic() - t0 > MAX_SECONDS:\n            return escalate(\"budget exhausted\", msgs)   # stop and hand off, don't spiral\n        resp = llm(msgs, tools=TOOLS)\n        tokens += resp.usage.total_tokens\n        usd += price(resp.usage)\n        msgs.append(resp.message)\n        if not resp.tool_calls:\n            return verify_or_escalate(resp.text, msgs)\n        for call in resp.tool_calls:\n            key = f\"{call.name}:{json.dumps(call.args, sort_keys=True)}\"\n            sig = hashlib.sha256(key.encode()).hexdigest()\n            seen[sig] = seen.get(sig, 0) + 1\n            if seen[sig] >= 3:                            # same tool, same args, 3rd time\n                return escalate(f\"loop on {call.name}\", msgs)\n            try:\n                out = call_with_timeout(TOOLS[call.name], call.args, seconds=30)\n            except Exception as e:\n                # Actionable error instead of a stack trace or silence\n                out = {\"error\": type(e).__name__, \"message\": str(e)[:300],\n                       \"hint\": HINTS.get(type(e).__name__, \"fix the arguments or try another tool\")}\n            if seen[sig] == 2:\n                out = {\"result\": out, \"warning\": \"You already made this exact call. Change approach.\"}\n            msgs.append(tool_result(call, out))\n    return escalate(\"step budget exhausted\", msgs)"
+  },
+  "example": {
+    "en": "A coding agent is told to fix a failing test. Unguarded, it ran 140 steps overnight: the test needed the network, which the sandbox blocked, so the agent re-ran `pytest` 60 times with identical arguments, then rewrote the test to pass — $85 of tokens and a wrong fix. Guarded: a 30-step, $5 budget; loop detection stops the third identical `pytest` call; the tool returns `{error: \"NetworkBlocked\", hint: \"network tests are mocked in conftest.py\"}`; and a verifier rejects edits to test files. The run now succeeds in ~12 steps or escalates with a summary.",
+    "es": "A un agente de código le piden arreglar un test que falla. Sin controles, corrió 140 pasos durante la noche: el test necesitaba red, que el sandbox bloqueaba, así que el agente ejecutó `pytest` 60 veces con los mismos argumentos y luego reescribió el test para que pasara: $85 en tokens y un arreglo incorrecto. Con controles: presupuesto de 30 pasos y $5; la detección de loops corta la tercera llamada idéntica a `pytest`; la herramienta devuelve `{error: \"NetworkBlocked\", hint: \"los tests de red se simulan en conftest.py\"}`; y un verificador rechaza cambios a archivos de test. Ahora la corrida termina bien en ~12 pasos o escala con un resumen."
+  },
+  "pros": [
+    { "en": "Bounds the worst case: no runaway overnight bills or infinite loops.", "es": "Pone tope al peor caso: nada de facturas descontroladas de madrugada ni loops infinitos." },
+    { "en": "Structured errors let the model self-correct instead of guessing.", "es": "Los errores estructurados permiten que el modelo se corrija en vez de adivinar." },
+    { "en": "Budget and loop metrics make failures visible and comparable across versions.", "es": "Las métricas de presupuesto y loops hacen visibles las fallas y comparables entre versiones." }
+  ],
+  "cons": [
+    { "en": "Tight budgets kill legitimately long tasks; limits need tuning per task type.", "es": "Los presupuestos muy ajustados matan tareas que de verdad son largas; los límites se calibran por tipo de tarea." },
+    { "en": "Exact-match loop detection misses semantic loops: same intent, different arguments.", "es": "La detección de loops por coincidencia exacta no ve loops semánticos: misma intención, argumentos distintos." },
+    { "en": "More harness code to build and test, since the prompt alone can't enforce any of it.", "es": "Más código de harness que construir y probar, porque el prompt solo no puede hacer cumplir nada de esto." }
+  ],
+  "whenToUse": {
+    "en": "Every agent in production, from day one. Tighten budgets for user-facing, latency-bound agents; loosen them, with checkpoints, for background tasks.",
+    "es": "En todo agente en producción, desde el primer día. Ajusta los presupuestos en agentes de cara al usuario y sensibles a la latencia; aflójalos, con checkpoints, en tareas de fondo."
+  },
+  "whenNotToUse": {
+    "en": "Never skip it. If the flow has no model-chosen loop, per-step timeouts and retries are enough — and you may not need an agent at all.",
+    "es": "Nunca lo omitas. Si el flujo no tiene un loop elegido por el modelo, bastan timeouts y reintentos por paso, y quizá ni siquiera necesitas un agente."
+  },
+  "numbers": [
+    { "en": "Compounding: 0.95^20 ≈ 36%, 0.99^20 ≈ 82%, 0.90^10 ≈ 35%.", "es": "Acumulación: 0.95^20 ≈ 36%, 0.99^20 ≈ 82%, 0.90^10 ≈ 35%." },
+    { "en": "τ-bench (2024): GPT-4o solved <50% of tasks, and pass^8 in retail fell below 25%.", "es": "τ-bench (2024): GPT-4o resolvió menos del 50% de las tareas, y su pass^8 en retail cayó por debajo de 25%." },
+    { "en": "Rule of thumb: cap steps at ~2–3× the median successful run; stop on the 3rd identical tool call.", "es": "Regla práctica: limita los pasos a ~2–3× la mediana de una corrida exitosa; detente en la 3.ª llamada idéntica." }
+  ],
+  "pitfalls": [
+    { "en": "Budgets in the prompt (\"you have 10 steps\"): the model can't count reliably; enforce them in code.", "es": "Presupuestos en el prompt (\"tienes 10 pasos\"): el modelo no cuenta de forma confiable; aplícalos en código." },
+    { "en": "Returning empty strings or raw stack traces on tool errors: the model invents success or repeats the call.", "es": "Devolver strings vacíos o stack traces crudos ante errores: el modelo inventa un éxito o repite la llamada." },
+    { "en": "Retrying the whole run instead of the failed step: paying for 30 steps to fix one.", "es": "Reintentar toda la corrida en vez del paso que falló: pagar 30 pasos para arreglar uno." },
+    { "en": "Broad credentials \"just for reads\": in July 2025 a Replit agent deleted a production database during a code freeze.", "es": "Credenciales amplias \"solo para leer\": en julio de 2025 un agente de Replit borró una base de datos de producción durante un congelamiento de código." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your agent sometimes runs 200 steps and costs $40. How do you fix it?", "es": "Tu agente a veces corre 200 pasos y cuesta $40. ¿Cómo lo arreglas?" },
+      "a": {
+        "en": "First I read traces to classify the runaway runs: repeated identical calls, oscillation, or a genuinely long task. Then I add harness-level guards: step and dollar budgets at roughly 2–3× the median successful run, loop detection on hashed tool calls, and per-tool timeouts. When a guard trips, the agent stops and escalates with a summary instead of failing silently. Then I fix root causes — usually a tool returning an unhelpful error, so I make errors structured with a hint. I track cost per successful task, not per run.",
+        "es": "Primero leo trazas para clasificar las corridas descontroladas: llamadas idénticas repetidas, oscilación o una tarea que de verdad es larga. Luego agrego controles en el harness: presupuestos de pasos y dinero de ~2–3× la mediana de una corrida exitosa, detección de loops con hash de las llamadas y timeouts por herramienta. Cuando un control salta, el agente se detiene y escala con un resumen en vez de fallar en silencio. Después ataco la causa raíz, que suele ser una herramienta con errores poco útiles, así que los vuelvo estructurados con una pista. Mido costo por tarea exitosa, no por corrida."
+      }
+    },
+    {
+      "q": { "en": "Why do long agent tasks fail even with a strong model?", "es": "¿Por qué fallan las tareas largas de agentes incluso con un modelo fuerte?" },
+      "a": {
+        "en": "Because errors compound. If each step is 95% reliable, twenty steps succeed about 36% of the time, and one early mistake — a wrong file, a misread value — propagates. So I attack both the exponent and the base: fewer steps through better tools and a plan, higher per-step reliability through structured outputs and validation, and checkpoints where a test or verifier confirms state before continuing. I also measure pass^k over repeated runs, because τ-bench showed consistency collapses even when pass@1 looks fine.",
+        "es": "Porque los errores se acumulan. Si cada paso es 95% confiable, veinte pasos funcionan cerca del 36% de las veces, y un error temprano, como un archivo equivocado o un valor mal leído, se propaga. Así que ataco el exponente y la base: menos pasos con mejores herramientas y un plan, más confiabilidad por paso con salidas estructuradas y validación, y checkpoints donde un test o un verificador confirma el estado antes de seguir. También mido pass^k en corridas repetidas, porque τ-bench mostró que la consistencia se desploma aunque el pass@1 se vea bien."
+      }
+    }
+  ],
+  "related": ["agent-evals", "durable-agents", "retries-backoff", "human-in-the-loop", "tool-design", "llm-observability"],
+  "sources": [
+    { "title": "Yao et al. — τ-bench: A Benchmark for Tool-Agent-User Interaction in Real-World Domains (2024)", "url": "https://arxiv.org/abs/2406.12045" },
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "OWASP GenAI — LLM06:2025 Excessive Agency", "url": "https://genai.owasp.org/llmrisk/llm062025-excessive-agency/" }
+  ]
+}

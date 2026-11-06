@@ -1,0 +1,89 @@
+{
+  "id": "gpu-memory-math",
+  "domain": "inference",
+  "level": "core",
+  "title": { "en": "GPU memory math", "es": "Cálculo de memoria de GPU" },
+  "aliases": ["VRAM sizing", "GPU sizing", "model memory footprint", "HBM", "memory-bandwidth-bound", "MBU", "capacity planning"],
+  "tldr": {
+    "en": "Weights take parameters × bytes (70B in FP16 ≈ 140 GB), the KV cache gets what's left and that leftover sets concurrency; batch-1 decode speed is capped at memory bandwidth ÷ weight bytes.",
+    "es": "Los pesos ocupan parámetros × bytes (70B en FP16 ≈ 140 GB), el KV cache se queda con lo que sobra y eso define la concurrencia; la velocidad de decode con batch 1 tiene un techo de ancho de banda ÷ bytes de pesos."
+  },
+  "analogy": {
+    "en": "A moving truck: the furniture (weights) takes fixed space, the boxes (KV cache) fill whatever is left, and how fast you unload depends on the width of the door, not on how strong the movers are.",
+    "es": "Un camión de mudanza: los muebles (pesos) ocupan un espacio fijo, las cajas (KV cache) llenan lo que queda y la velocidad de descarga depende del ancho de la puerta, no de la fuerza de los cargadores."
+  },
+  "explain": {
+    "en": "Three numbers decide whether a model fits, how many users it serves at once, and how fast it can talk.\n\n1. **Weights** = parameters × bytes per parameter. FP16/BF16 = 2 bytes, FP8/INT8 = 1, INT4 = 0.5. A 70B model is ~140 GB in FP16, ~70 GB in FP8, ~35 GB in INT4 (plus scales).\n2. **KV cache** per token = `2 × layers × kv_heads × head_dim × bytes`. Llama-3-70B in FP16: 2×80×8×128×2 = 320 KiB, so one 8k-token sequence holds ~2.7 GB ([[kv-cache]]).\n3. **Overhead**: CUDA context, CUDA graphs and activation buffers, a few GB per GPU. vLLM claims 90% of GPU memory by default (`gpu_memory_utilization=0.9`), loads the weights, profiles activations and turns the rest into KV blocks.\n\nThen **max concurrent sequences ≈ (usable memory − weights) ÷ (KV per token × context)**. Weights are a fixed cost; the KV pool is what you sell.\n\nBandwidth sets the speed limit. At batch 1, each decode step reads every weight once, so **tokens/s ≤ HBM bandwidth ÷ weight bytes**: a 7B FP16 model (14 GB) on an A100 (~2 TB/s) tops out near ~140 tokens/s, and real engines reach only part of that. Batching shares each read across sequences, so aggregate throughput grows with concurrency, which is why the KV pool matters ([[prefill-decode]]).",
+    "es": "Tres números deciden si un modelo cabe, a cuántos usuarios atiende a la vez y qué tan rápido puede hablar.\n\n1. **Pesos** = parámetros × bytes por parámetro. FP16/BF16 = 2 bytes, FP8/INT8 = 1, INT4 = 0.5. Un modelo de 70B ocupa ~140 GB en FP16, ~70 GB en FP8 y ~35 GB en INT4 (más las escalas).\n2. **KV cache** por token = `2 × capas × kv_heads × head_dim × bytes`. Llama-3-70B en FP16: 2×80×8×128×2 = 320 KiB, así que una secuencia de 8k tokens ocupa ~2.7 GB ([[kv-cache]]).\n3. **Overhead**: contexto de CUDA, CUDA graphs y buffers de activaciones, unos pocos GB por GPU. Por defecto vLLM toma el 90% de la memoria de la GPU (`gpu_memory_utilization=0.9`), carga los pesos, perfila las activaciones y convierte el resto en bloques de KV.\n\nEntonces **secuencias concurrentes máximas ≈ (memoria usable − pesos) ÷ (KV por token × contexto)**. Los pesos son un costo fijo; el pool de KV es lo que vendes.\n\nEl ancho de banda pone el límite de velocidad. Con batch 1, cada paso de decode lee todos los pesos una vez, así que **tokens/s ≤ ancho de banda de HBM ÷ bytes de pesos**: un modelo de 7B en FP16 (14 GB) en una A100 (~2 TB/s) llega como máximo a ~140 tokens/s, y los motores reales alcanzan solo una parte. El batching reparte cada lectura entre varias secuencias, así que el throughput total crece con la concurrencia, y por eso importa tanto el pool de KV ([[prefill-decode]])."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  G[\"GPU HBM<br/>80 GB H100\"] --> U[\"Usable 90%<br/>72 GB\"]\n  U --> W[\"Weights<br/>params × bytes\"]\n  U --> A[\"Activations + CUDA graphs\"]\n  U --> K[\"KV pool<br/>whatever is left\"]\n  K -->|divide by KV per sequence| C[\"Max concurrent<br/>sequences\"]\n  W -->|read once per step| S[\"Decode ceiling<br/>bandwidth ÷ weights\"]\n  C --> T[Aggregate throughput]\n  S --> T",
+    "caption": {
+      "en": "Weights are a fixed cost; the memory left becomes KV cache and sets concurrency, while bandwidth caps how fast each step runs.",
+      "es": "Los pesos son un costo fijo; la memoria que sobra se vuelve KV cache y define la concurrencia, mientras que el ancho de banda limita la velocidad de cada paso."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Size a 70B deployment: fit, concurrency, speed", "es": "Dimensionar un despliegue de 70B: cabe, concurrencia, velocidad" },
+    "source": "GB = 1e9\n\ndef kv_bytes_per_token(layers, kv_heads, head_dim, kv_bytes=2):\n    return 2 * layers * kv_heads * head_dim * kv_bytes  # one K and one V per layer\n\ndef plan(n_gpus, params_b, w_bytes, layers, kv_heads, head_dim, ctx, kv_bytes=2,\n         gpu_gb=80, util=0.90, overhead_gb=4):  # overhead: assumed, measure yours\n    usable = n_gpus * (gpu_gb * util - overhead_gb)  # minus activations, CUDA graphs\n    weights = params_b * w_bytes                     # 1B params x 1 byte = 1 GB\n    kv_pool = usable - weights\n    if kv_pool <= 0:\n        return f\"{n_gpus} GPU: weights {weights:.0f} GB > usable {usable:.0f} GB\"\n    per_seq = kv_bytes_per_token(layers, kv_heads, head_dim, kv_bytes) * ctx / GB\n    return f\"{n_gpus} GPU: KV pool {kv_pool:.0f} GB, ~{kv_pool // per_seq:.0f} seqs\"\n\n# Llama-3-70B (config.json: 80 layers, 8 KV heads, head_dim 128), 8k context\nL70 = dict(params_b=70, layers=80, kv_heads=8, head_dim=128, ctx=8192)\nprint(plan(1, w_bytes=2, **L70))              # FP16: 140 GB > usable 68 GB\nprint(plan(4, w_bytes=2, **L70))              # FP16, 4xH100: KV 132 GB, ~49 seqs\nprint(plan(2, w_bytes=1, kv_bytes=1, **L70))  # FP8 + FP8 KV, 2xH100: ~49 seqs\nprint(plan(1, w_bytes=0.5, **L70))            # INT4, 1xH100: KV 33 GB, ~12 seqs\n\n# Batch-1 decode ceiling: each token streams all weights from HBM once\ndef max_tokens_per_s(weight_gb, bandwidth_tb_s):\n    return bandwidth_tb_s * 1000 / weight_gb\n\nprint(max_tokens_per_s(14, 2.0))       # 7B FP16 on A100: ~143 tok/s\nprint(max_tokens_per_s(70, 2 * 3.35))  # 70B FP8 on 2xH100 (TP=2): ~96 tok/s"
+  },
+  "example": {
+    "en": "A team wants Llama-3-70B for an internal assistant, 8k contexts, ~40 concurrent users, and asks for \"one H100\". The math: FP16 weights (140 GB) don't fit. INT4 (~35–40 GB) fits but leaves room for only ~10–12 sequences at 8k, and may cost quality. FP16 on 4×H100 holds ~49 sequences; FP8 weights plus FP8 KV on 2×H100 hold the same ~49 on half the GPUs. You propose 2×H100 in FP8 once an eval confirms quality, with a per-user ceiling of ~96 tokens/s (6.7 TB/s ÷ 70 GB), well above reading speed.",
+    "es": "Un equipo quiere Llama-3-70B para un asistente interno, con contextos de 8k y ~40 usuarios concurrentes, y pide \"una H100\". Las cuentas: los pesos en FP16 (140 GB) no caben. En INT4 (~35–40 GB) sí caben, pero queda lugar para apenas ~10–12 secuencias de 8k, y puede costar calidad. En FP16 sobre 4×H100 entran ~49 secuencias; con pesos FP8 y KV en FP8 sobre 2×H100 entran las mismas ~49 con la mitad de GPUs. Propones 2×H100 en FP8 una vez que un eval confirme la calidad, con un techo por usuario de ~96 tokens/s (6.7 TB/s ÷ 70 GB), muy por encima de la velocidad de lectura."
+  },
+  "pros": [
+    { "en": "Answers \"does it fit, how many GPUs, how many users\" in minutes, before any benchmark.", "es": "Responde \"¿cabe?, ¿cuántas GPUs?, ¿cuántos usuarios?\" en minutos, antes de cualquier benchmark." },
+    { "en": "Exposes the real levers: quantization, GQA models, FP8 KV, context caps and tensor-parallel degree.", "es": "Muestra las palancas reales: cuantización, modelos con GQA, KV en FP8, límites de contexto y grado de tensor parallelism." },
+    { "en": "Gives a hard ceiling to sanity-check vendor claims and your own benchmark results.", "es": "Da un techo duro para verificar las promesas de los proveedores y tus propios benchmarks." }
+  ],
+  "cons": [
+    { "en": "Ignores engine details: fragmentation, CUDA graphs and activation peaks vary, so keep ~10–20% slack (rule of thumb).", "es": "Ignora detalles del motor: la fragmentación, los CUDA graphs y los picos de activaciones varían, así que deja ~10–20% de margen (regla práctica)." },
+    { "en": "Gives ceilings, not predictions: real kernels reach only part of peak bandwidth and FLOPs.", "es": "Da techos, no predicciones: los kernels reales alcanzan solo una parte del ancho de banda y los FLOPs pico." },
+    { "en": "Average context hides tails: a few max-length sequences can exhaust the KV pool and force preemption.", "es": "El contexto promedio esconde las colas: unas pocas secuencias de longitud máxima pueden agotar el pool de KV y forzar preemption." }
+  ],
+  "whenToUse": {
+    "en": "Before every model, GPU or context-length decision: capacity planning, self-host vs API cost, choosing a quantization level, and setting max context per tier.",
+    "es": "Antes de cada decisión de modelo, GPU o longitud de contexto: capacity planning, costo de self-hosting vs. API, elección del nivel de cuantización y contexto máximo por plan."
+  },
+  "whenNotToUse": {
+    "en": "It doesn't replace a load test before committing spend. And with a hosted API the provider owns the GPUs: reason in tokens, prices and rate limits instead.",
+    "es": "No reemplaza una prueba de carga antes de comprometer presupuesto. Y con una API hospedada las GPUs son del proveedor: razona en tokens, precios y rate limits."
+  },
+  "numbers": [
+    { "en": "Weights: 70B ≈ 140 GB in FP16, ~70 GB in FP8, ~35 GB in INT4 (+ scales).", "es": "Pesos: 70B ≈ 140 GB en FP16, ~70 GB en FP8, ~35 GB en INT4 (+ escalas)." },
+    { "en": "KV per token in FP16: Llama-3-8B 128 KiB, Llama-3-70B 320 KiB.", "es": "KV por token en FP16: Llama-3-8B 128 KiB, Llama-3-70B 320 KiB." },
+    { "en": "H100 SXM: 80 GB HBM3 at ~3.35 TB/s; H200: 141 GB at ~4.8 TB/s; A100 80 GB: ~2 TB/s.", "es": "H100 SXM: 80 GB de HBM3 a ~3.35 TB/s; H200: 141 GB a ~4.8 TB/s; A100 80 GB: ~2 TB/s." },
+    { "en": "Batch-1 decode ceiling = bandwidth ÷ weight bytes: 7B FP16 on A100 ≈ 140 tokens/s.", "es": "Techo de decode con batch 1 = ancho de banda ÷ bytes de pesos: 7B en FP16 en una A100 ≈ 140 tokens/s." },
+    { "en": "vLLM default gpu_memory_utilization = 0.9: 90% of each GPU for weights, activations and KV.", "es": "vLLM usa por defecto gpu_memory_utilization = 0.9: el 90% de cada GPU para pesos, activaciones y KV." }
+  ],
+  "pitfalls": [
+    { "en": "Sizing by weights alone: \"70B in INT4 fits in 40 GB\" leaves room for only a handful of long sequences.", "es": "Dimensionar solo por los pesos: \"70B en INT4 cabe en 40 GB\" deja lugar para apenas un puñado de secuencias largas." },
+    { "en": "Using num_attention_heads instead of num_key_value_heads, overestimating KV 4–8× for GQA models.", "es": "Usar num_attention_heads en vez de num_key_value_heads, lo que sobreestima el KV 4–8× en modelos con GQA." },
+    { "en": "Expecting INT4 to speed up everything: weight-only quantization helps bandwidth-bound decode, not compute-bound prefill.", "es": "Esperar que INT4 acelere todo: cuantizar solo los pesos ayuda al decode, limitado por ancho de banda, no al prefill, limitado por cómputo." },
+    { "en": "Splitting a model across GPUs without NVLink: tensor parallelism over PCIe can be slower than fewer, bigger GPUs.", "es": "Repartir un modelo entre GPUs sin NVLink: el tensor parallelism sobre PCIe puede ser más lento que usar menos GPUs más grandes." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Can we serve Llama-3-70B on a single H100?", "es": "¿Podemos servir Llama-3-70B en una sola H100?" },
+      "a": {
+        "en": "In FP16, no: 140 GB of weights against 80 GB. In FP8, 70 GB of weights leaves essentially no room for activations and KV cache. INT4 at ~35–40 GB fits with ~30 GB for KV, about 10–12 sequences at 8k context, and I'd need an eval to accept the quality loss. For real traffic I'd rather run FP8 on 2×H100 with tensor parallelism: the same ~49 concurrent 8k sequences as FP16 on four GPUs, at half the hardware.",
+        "es": "En FP16, no: 140 GB de pesos contra 80 GB. En FP8, los 70 GB de pesos no dejan prácticamente lugar para activaciones ni KV cache. En INT4, con ~35–40 GB, cabe y quedan ~30 GB para KV, unas 10–12 secuencias de 8k de contexto, y necesitaría un eval para aceptar la pérdida de calidad. Para tráfico real prefiero FP8 en 2×H100 con tensor parallelism: las mismas ~49 secuencias concurrentes de 8k que FP16 en cuatro GPUs, con la mitad del hardware."
+      }
+    },
+    {
+      "q": { "en": "Why does an H200 serve the same model faster than an H100 with the same compute?", "es": "¿Por qué una H200 sirve el mismo modelo más rápido que una H100 si tiene el mismo cómputo?" },
+      "a": {
+        "en": "Because decode is bandwidth-bound, not compute-bound. The H200 has the same Hopper compute but ~4.8 instead of ~3.35 TB/s of HBM bandwidth, so each decode step, which streams all weights and KV, can be up to ~1.4× faster. It also has 141 GB instead of 80, so after the weights there's far more KV cache, which means bigger batches and more throughput per GPU. Prefill is compute-bound and barely changes, so I'd expect the gain in TPOT and concurrency, not TTFT.",
+        "es": "Porque el decode está limitado por ancho de banda, no por cómputo. La H200 tiene el mismo cómputo Hopper pero ~4.8 en vez de ~3.35 TB/s de ancho de banda de HBM, así que cada paso de decode, que lee todos los pesos y el KV, puede ser hasta ~1.4× más rápido. Además tiene 141 GB en vez de 80, así que después de los pesos queda mucho más KV cache, lo que permite batches más grandes y más throughput por GPU. El prefill está limitado por cómputo y casi no cambia, así que esperaría la mejora en TPOT y concurrencia, no en TTFT."
+      }
+    }
+  ],
+  "related": ["kv-cache", "quantization", "prefill-decode", "paged-attention", "back-of-envelope", "api-vs-self-host"],
+  "sources": [
+    { "title": "Kipply — Transformer Inference Arithmetic", "url": "https://kipp.ly/transformer-inference-arithmetic/" },
+    { "title": "Databricks — LLM Inference Performance Engineering: Best Practices", "url": "https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices" },
+    { "title": "NVIDIA — H100 Tensor Core GPU", "url": "https://www.nvidia.com/en-us/data-center/h100/" },
+    { "title": "Meta — The Llama 3 Herd of Models", "url": "https://arxiv.org/abs/2407.21783" }
+  ]
+}
