@@ -1,0 +1,94 @@
+{
+  "id": "multi-tenancy",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Multi-tenancy patterns", "es": "Patrones de multi-tenancy" },
+  "aliases": ["multi-tenant", "silo model", "pool model", "bridge model", "noisy neighbor", "tenant catalog", "row-level security", "deployment stamps"],
+  "tldr": {
+    "en": "Serve many customers from one system by choosing, per layer, silo (dedicated), pool (shared with a tenant_id) or a bridge of both, trading cost per tenant against isolation, noisy neighbors and compliance.",
+    "es": "Atiende a muchos clientes desde un mismo sistema eligiendo, por capa, silo (dedicado), pool (compartido con un tenant_id) o un bridge de ambos, y balancea el costo por tenant contra el aislamiento, los vecinos ruidosos y el cumplimiento."
+  },
+  "analogy": {
+    "en": "An apartment building: pool tenants share plumbing and elevators, a silo tenant gets a detached house with its own meter, and a bridge is the penthouse with a private elevator in a shared building.",
+    "es": "Un edificio de departamentos: los inquilinos del pool comparten cañerías y ascensores, un inquilino en silo tiene una casa aparte con su propio medidor, y un bridge es el penthouse con ascensor privado dentro del edificio compartido."
+  },
+  "explain": {
+    "en": "**Multi-tenancy** means one system serves many customers (tenants) while each sees only its own data and gets predictable performance. AWS's SaaS guidance names three models, chosen **per layer** (compute, database, index, queue):\n\n- **Silo**: dedicated resources per tenant, up to a separate cloud account. Strongest isolation, easy residency, per-tenant keys and deletion; cost and ops grow linearly with tenants.\n- **Pool**: shared resources, every row and request carries a `tenant_id`. Lowest cost per tenant, one fleet to upgrade; isolation must be enforced below app code, e.g. Postgres **row-level security** ([[tenant-isolation]]).\n- **Bridge**: a mix, e.g. pooled app tier with a schema per tenant, or pool for free/pro tiers and silo for enterprise.\n\nThe pool's signature problem is the **noisy neighbor**: one tenant's bulk import saturates shared CPU, DB connections or GPUs. Contain it with per-tenant [[rate-limiting]] and quotas, fair queuing, and moving whales to their own shard or silo.\n\nTwo habits make it work:\n\n- A **tenant catalog**: one lookup mapping tenant → tier, database, index, region. Moving a tenant to a silo becomes a data copy plus one catalog update.\n- **Cost per tenant**: meter tokens, GPU-seconds and storage by `tenant_id`, or a heavy customer on a flat plan quietly costs more than it pays.\n\n**AI angle**: per-tenant vector namespaces, plus token quotas and model tiers enforced on the [[llm-gateway]].",
+    "es": "**Multi-tenancy** significa que un mismo sistema atiende a muchos clientes (tenants) mientras cada uno ve solo sus datos y recibe un rendimiento predecible. La guía SaaS de AWS nombra tres modelos, que se eligen **por capa** (cómputo, base de datos, índice, cola):\n\n- **Silo**: recursos dedicados por tenant, hasta una cuenta de nube separada. El aislamiento más fuerte, residencia de datos, llaves y borrado por tenant sin esfuerzo; el costo y la operación crecen de forma lineal con los tenants.\n- **Pool**: recursos compartidos, cada fila y cada petición lleva un `tenant_id`. El menor costo por tenant y una sola flota que actualizar; el aislamiento se debe imponer por debajo del código de la app, por ejemplo con **row-level security** de Postgres ([[tenant-isolation]]).\n- **Bridge**: una mezcla, por ejemplo un app tier compartido con un schema por tenant, o pool para los planes free/pro y silo para enterprise.\n\nEl problema típico del pool es el **vecino ruidoso**: la importación masiva de un tenant satura la CPU, las conexiones a la base de datos o las GPUs compartidas. Contenlo con [[rate-limiting]] y cuotas por tenant, colas justas y moviendo a los clientes gigantes a su propio shard o silo.\n\nDos hábitos lo hacen funcionar:\n\n- Un **catálogo de tenants**: una sola consulta que mapea tenant → plan, base de datos, índice, región. Mover un tenant a un silo se vuelve una copia de datos más un solo cambio en el catálogo.\n- **Costo por tenant**: mide tokens, segundos de GPU y almacenamiento por `tenant_id`, o un cliente pesado con tarifa plana te costará más de lo que paga sin que lo notes.\n\n**Ángulo IA**: namespaces vectoriales por tenant, además de cuotas de tokens y niveles de modelo aplicados en el [[llm-gateway]]."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  R[\"Request with JWT\"] --> G[\"Gateway: resolve tenant\"]\n  G --> K[(Tenant catalog)]\n  G --> Q{Within tenant quota?}\n  Q -->|no| X[\"429 + Retry-After\"]\n  Q -->|yes| T{Tenant tier}\n  T -->|free / pro| P[Pooled app tier]\n  P --> DB[(\"Shared Postgres<br/>RLS on tenant_id\")]\n  P --> VI[(\"Vector index<br/>namespace per tenant\")]\n  T -->|enterprise| S[Dedicated stack]\n  S --> SD[(\"Dedicated DB<br/>and index\")]",
+    "caption": {
+      "en": "A bridge model: tenant, tier and quota are resolved at the edge; pooled tenants share RLS-protected stores, enterprise tenants get a silo.",
+      "es": "Un modelo bridge: el tenant, su plan y su cuota se resuelven en la entrada; los tenants del pool comparten almacenes protegidos con RLS y los enterprise tienen un silo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Tenant catalog plus a per-tenant token budget", "es": "Catálogo de tenants y presupuesto de tokens por tenant" },
+    "source": "import time\nfrom dataclasses import dataclass\n\n@dataclass\nclass Tenant:\n    id: str\n    tier: str              # \"pro\" (pool) | \"enterprise\" (silo)\n    db_dsn: str            # shared pool DSN, or a dedicated one\n    namespace: str         # vector index namespace\n    tokens_per_min: int    # LLM quota, set by tier\n\n# The one place that knows where each tenant lives: moving a tenant = one row.\nCATALOG = {\n    \"acme\": Tenant(\"acme\", \"pro\", POOL_DSN, \"ns-acme\", 200_000),\n    \"bigbank\": Tenant(\"bigbank\", \"enterprise\", BIGBANK_DSN, \"ns-bigbank\", 2_000_000),\n}\n_buckets: dict[str, tuple[float, float]] = {}   # tenant -> (tokens left, last refill)\n\ndef take(t: Tenant, cost: int) -> bool:\n    \"\"\"Token bucket per tenant: one tenant's batch job can't starve the rest.\"\"\"\n    left, last = _buckets.get(t.id, (t.tokens_per_min, time.monotonic()))\n    now = time.monotonic()\n    left = min(t.tokens_per_min, left + (now - last) * t.tokens_per_min / 60)\n    ok = left >= cost\n    _buckets[t.id] = (left - cost if ok else left, now)\n    return ok\n\ndef handle(tenant_id: str, prompt: str) -> str:   # tenant_id from the verified JWT\n    t = CATALOG[tenant_id]\n    if not take(t, estimate_tokens(prompt)):\n        raise TooManyRequests(retry_after=10)      # 429 for this tenant only\n    docs = vector_search(prompt, namespace=t.namespace)\n    return call_llm(prompt, docs, db=t.db_dsn, tier=t.tier)"
+  },
+  "example": {
+    "en": "A document-AI SaaS runs 2,000 tenants on a pooled Postgres with RLS and one vector index with a namespace per tenant. A bank signs a large contract that requires EU residency and its own encryption key. Instead of re-architecting, they adopt a bridge: the bank gets a silo stack in an EU region from the same Terraform and images, and the catalog points it there. Meanwhile, one free-tier tenant's bulk ingest was eating ~60% of embedding throughput; a per-tenant tokens-per-minute quota restored p95 for everyone else.",
+    "es": "Un SaaS de IA para documentos corre 2,000 tenants sobre un Postgres compartido con RLS y un índice vectorial con un namespace por tenant. Un banco firma un contrato grande que exige residencia en la UE y su propia llave de cifrado. En vez de rehacer la arquitectura, adoptan un bridge: el banco recibe un stack en silo en una región de la UE, creado con el mismo Terraform y las mismas imágenes, y el catálogo apunta ahí. Mientras tanto, la ingesta masiva de un tenant del plan gratuito se comía ~60% del throughput de embeddings; una cuota de tokens por minuto por tenant devolvió el p95 a la normalidad para todos los demás."
+  },
+  "pros": [
+    { "en": "Pool: lowest cost per tenant and one fleet to deploy, migrate and monitor.", "es": "Pool: el menor costo por tenant y una sola flota que desplegar, migrar y monitorear." },
+    { "en": "Silo: strongest isolation, plus easy per-tenant residency, keys, backups and deletion.", "es": "Silo: el aislamiento más fuerte, además de residencia, llaves, backups y borrado por tenant sin complicaciones." },
+    { "en": "Bridge maps pricing tiers to isolation tiers, so enterprises pay for their silo.", "es": "El bridge alinea los planes de precio con los niveles de aislamiento, así los clientes enterprise pagan su silo." }
+  ],
+  "cons": [
+    { "en": "Pool: noisy neighbors by default, and one enforcement gap is a cross-tenant leak.", "es": "Pool: vecinos ruidosos por defecto, y un solo hueco en la validación es una fuga entre tenants." },
+    { "en": "Silo: cost and toil grow with every tenant; each migration runs N times.", "es": "Silo: el costo y el trabajo operativo crecen con cada tenant; cada migración corre N veces." },
+    { "en": "Bridge: two operating models to test, deploy and support.", "es": "Bridge: dos modelos de operación que probar, desplegar y mantener." }
+  ],
+  "whenToUse": {
+    "en": "Any SaaS or internal platform serving several customers or business units. Default to pool with database-enforced isolation; add silos for tenants whose contracts, regulation or load justify the cost.",
+    "es": "Cualquier SaaS o plataforma interna que atienda a varios clientes o unidades de negocio. Por defecto usa pool con aislamiento impuesto en la base de datos; agrega silos para los tenants cuyo contrato, regulación o carga justifiquen el costo."
+  },
+  "whenNotToUse": {
+    "en": "Don't pool a customer whose contract requires dedicated keys or residency just to save cost, and don't silo hundreds of small tenants: fixed per-stack cost eats the margin.",
+    "es": "No metas al pool a un cliente cuyo contrato exige llaves dedicadas o residencia solo para ahorrar, y no hagas silos para cientos de tenants pequeños: el costo fijo de cada stack se come el margen."
+  },
+  "numbers": [
+    { "en": "Postgres RLS is skipped for superusers and `BYPASSRLS` roles, and for the table owner unless `FORCE ROW LEVEL SECURITY` is set.", "es": "Postgres omite RLS para superusuarios y roles con `BYPASSRLS`, y para el dueño de la tabla salvo que actives `FORCE ROW LEVEL SECURITY`." },
+    { "en": "HTTP 429 Too Many Requests (RFC 6585) with `Retry-After` is the standard reply to a tenant over its quota.", "es": "HTTP 429 Too Many Requests (RFC 6585) con `Retry-After` es la respuesta estándar para un tenant que superó su cuota." },
+    { "en": "Postgres logical replication supports row filters since v15: copy one tenant's rows out of the pool with `WHERE tenant_id = ...`.", "es": "La replicación lógica de Postgres soporta filtros de filas desde la v15: copia las filas de un tenant fuera del pool con `WHERE tenant_id = ...`." }
+  ],
+  "pitfalls": [
+    { "en": "No per-tenant quotas or fair queuing, so one tenant's batch job becomes everyone's outage.", "es": "No tener cuotas por tenant ni colas justas, así el job batch de un tenant se vuelve la caída de todos." },
+    { "en": "Tenant placement hardcoded across services instead of a catalog, so moving one tenant to a silo is a rewrite.", "es": "Dónde vive cada tenant queda hardcodeado en varios servicios en vez de un catálogo, así mover un tenant a un silo es una reescritura." },
+    { "en": "A silo per tenant for hundreds of small customers: N migrations, N dashboards, N on-call surfaces.", "es": "Un silo por tenant para cientos de clientes pequeños: N migraciones, N dashboards y N frentes de guardia." },
+    { "en": "Not metering usage per tenant, so unprofitable customers stay invisible until the cloud bill arrives.", "es": "No medir el uso por tenant, así los clientes que dan pérdida siguen invisibles hasta que llega la factura de la nube." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Silo or pool for a new B2B AI SaaS?", "es": "¿Silo o pool para un SaaS B2B de IA nuevo?" },
+      "a": {
+        "en": "Pool by default, with isolation enforced by the platform rather than developer discipline: tenant_id from the verified token, Postgres row-level security, a vector namespace per tenant, and tenant-scoped cache keys. That gives me the lowest cost per tenant and one fleet to upgrade. But I'd keep a tenant catalog and deploy everything from the same templates, so the stack can also run as a silo, because the first enterprise deal will ask for residency or dedicated keys, and I want to sell that as a tier, not re-architect for it.",
+        "es": "Pool por defecto, con el aislamiento impuesto por la plataforma y no por la disciplina de cada desarrollador: tenant_id sacado del token verificado, row-level security en Postgres, un namespace vectorial por tenant y claves de cache con el tenant. Eso me da el menor costo por tenant y una sola flota que actualizar. Pero mantendría un catálogo de tenants y desplegaría todo desde las mismas plantillas, para que el stack también pueda correr como silo, porque el primer cliente enterprise va a pedir residencia o llaves dedicadas y quiero venderlo como un plan, no rehacer la arquitectura."
+      }
+    },
+    {
+      "q": { "en": "How do you handle a noisy neighbor?", "es": "¿Cómo manejas a un vecino ruidoso?" },
+      "a": {
+        "en": "First I make it visible: usage and latency per tenant, so I know who consumes what. Then I contain it in layers: per-tenant rate limits and token quotas at the gateway, concurrency caps and fair queuing in workers so one tenant's 10k-job batch can't starve the queue, and separate pools for batch and interactive traffic. If a tenant is structurally bigger than the rest, I move it to its own shard or silo and price that accordingly. Quotas are a product decision too, so I tie them to tiers.",
+        "es": "Primero lo hago visible: uso y latencia por tenant, para saber quién consume qué. Después lo contengo por capas: rate limits y cuotas de tokens por tenant en el gateway, límites de concurrencia y colas justas en los workers para que un batch de 10k jobs de un tenant no deje sin turno a los demás, y pools separados para tráfico batch e interactivo. Si un tenant es estructuralmente más grande que el resto, lo muevo a su propio shard o silo y lo cobro como corresponde. Las cuotas también son una decisión de producto, así que las ligo a los planes."
+      }
+    },
+    {
+      "q": { "en": "A pooled enterprise customer now requires a dedicated database. How do you move them?", "es": "Un cliente enterprise del pool ahora exige una base de datos dedicada. ¿Cómo lo mueves?" },
+      "a": {
+        "en": "If placement lives in a tenant catalog, it's a data migration, not a re-architecture. I stand up a silo from the same schema and images, copy that tenant's rows with logical replication filtered on tenant_id, and keep it in sync while I verify counts and checksums. Then I pause that tenant's writes for seconds, let replication catch up, flip its catalog entry and resume. Only that tenant sees the blip. Last, I delete its rows from the pool and confirm nothing still reads the old location.",
+        "es": "Si la ubicación vive en un catálogo de tenants, es una migración de datos, no un rediseño. Levanto un silo con el mismo schema y las mismas imágenes, copio las filas de ese tenant con replicación lógica filtrada por tenant_id y la mantengo sincronizada mientras verifico conteos y checksums. Después pauso las escrituras de ese tenant unos segundos, dejo que la replicación se ponga al día, cambio su entrada en el catálogo y reanudo. Solo ese tenant nota la pausa. Al final borro sus filas del pool y confirmo que nada sigue leyendo de la ubicación vieja."
+      }
+    }
+  ],
+  "related": ["tenant-isolation", "rate-limiting", "llm-gateway", "sharding", "permission-aware-retrieval", "ai-finops"],
+  "sources": [
+    { "title": "AWS SaaS Lens — Silo, pool, and bridge models", "url": "https://docs.aws.amazon.com/wellarchitected/latest/saas-lens/silo-pool-and-bridge-models.html" },
+    { "title": "AWS Whitepaper — SaaS Tenant Isolation Strategies", "url": "https://docs.aws.amazon.com/whitepapers/latest/saas-tenant-isolation-strategies/saas-tenant-isolation-strategies.html" },
+    { "title": "Azure Architecture Center — Tenancy models for a multitenant solution", "url": "https://learn.microsoft.com/en-us/azure/architecture/guide/multitenant/considerations/tenancy-models" },
+    { "title": "PostgreSQL — Row Security Policies", "url": "https://www.postgresql.org/docs/current/ddl-rowsecurity.html" }
+  ]
+}

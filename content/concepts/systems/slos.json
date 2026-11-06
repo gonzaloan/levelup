@@ -1,0 +1,95 @@
+{
+  "id": "slos",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "SLIs, SLOs & error budgets", "es": "SLIs, SLOs y presupuesto de errores" },
+  "aliases": ["SLI", "SLO", "SLA", "error budget", "burn rate", "service level objective", "nines", "availability target"],
+  "tldr": {
+    "en": "An SLI measures what users feel, an SLO sets its target, and the gap to 100% is an error budget you spend on change; alert on how fast you burn it, not on raw errors.",
+    "es": "Un SLI mide lo que sienten los usuarios, un SLO fija su objetivo y la distancia al 100% es un presupuesto de errores que gastas en cambios; alerta según qué tan rápido lo quemas, no por errores sueltos."
+  },
+  "analogy": {
+    "en": "A monthly data plan: 0.1% unreliability is your allowance. Spend it on risky launches if you like, but if you burn half in the first week, you slow down before you hit the cap.",
+    "es": "Un plan de datos mensual: el 0.1% de falta de confiabilidad es tu cuota. Gástala en lanzamientos riesgosos si quieres, pero si quemas la mitad en la primera semana, frenas antes de llegar al tope."
+  },
+  "explain": {
+    "en": "Three terms people mix up:\n\n- **SLI** (indicator): a measured ratio of good events to valid events, e.g. *\"% of requests answered successfully in under 2 s\"*. Measure it near the user (load balancer or client), not in app logs.\n- **SLO** (objective): the target for that SLI over a window, e.g. *\"99.9% over a rolling 30 days\"*. Owned by the team.\n- **SLA** (agreement): a contract with penalties such as service credits. Always looser than the SLO, so you hear the alarm before you pay.\n\nThe **error budget** is `1 − SLO`: 99.9% over 30 days allows 0.1% bad requests, or **~43 minutes** of full outage. It turns reliability into a rule: budget left → ship; budget spent → freeze risky launches and fix reliability. 100% is the wrong target: users on a ~99%-reliable phone network can't tell 99.99% from 99.999%.\n\n**Burn-rate alerts** page on *how fast* you spend it. Burn rate 1 empties it exactly at day 30; **14.4×** sustained for 1 h spends 2% of it and would empty it in ~2 days. Pair a long and a short window so the page fires fast and clears once fixed.\n\n**LLM SLIs** go beyond uptime: **TTFT p95** ([[inference-metrics]]), success rate (no 5xx, timeout or invalid JSON), a **quality rate** such as groundedness from sampled [[llm-as-judge]] scoring, and **cost per request**.",
+    "es": "Tres términos que se confunden seguido:\n\n- **SLI** (indicador): una proporción medida de eventos buenos sobre eventos válidos, por ejemplo *\"% de requests respondidos con éxito en menos de 2 s\"*. Mídelo cerca del usuario (balanceador o cliente), no en los logs de la app.\n- **SLO** (objetivo): la meta de ese SLI en una ventana, por ejemplo *\"99.9% en 30 días móviles\"*. Le pertenece al equipo.\n- **SLA** (acuerdo): un contrato con penalidades, como créditos de servicio. Siempre más laxo que el SLO, para que suene la alarma antes de pagar.\n\nEl **presupuesto de errores** (error budget) es `1 − SLO`: 99.9% en 30 días permite 0.1% de requests malos, o **~43 minutos** de caída total. Convierte la confiabilidad en una regla: si queda presupuesto, lanzas; si se agotó, congelas los lanzamientos riesgosos y arreglas la confiabilidad. El 100% es el objetivo equivocado: un usuario en una red móvil confiable al ~99% no distingue 99.99% de 99.999%.\n\nLas **alertas por burn rate** avisan según *qué tan rápido* lo gastas. Un burn rate de 1 agota el presupuesto justo el día 30; **14.4×** sostenido durante 1 h gasta el 2% y lo agotaría en ~2 días. Combina una ventana larga y una corta para que la alerta salte rápido y se apague cuando se arregla.\n\nLos **SLIs de un LLM** van más allá del uptime: **TTFT p95** ([[inference-metrics]]), tasa de éxito (sin 5xx, timeouts ni JSON inválido), una **tasa de calidad** como groundedness medida con [[llm-as-judge]] sobre una muestra, y **costo por request**."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  R[User requests] --> S[\"SLI: good / valid<br/>measured at gateway\"]\n  S --> O[\"SLO target<br/>99.9% per 30 days\"]\n  O --> B[\"Error budget<br/>0.1% = ~43 min\"]\n  B --> BR{Burn rate?}\n  BR -->|14.4x over 1h| P[Page on-call]\n  BR -->|1x over 3 days| T[Open a ticket]\n  B --> E{Budget left?}\n  E -->|yes| F[Ship features]\n  E -->|no| Z[\"Freeze risky launches<br/>fix reliability\"]",
+    "caption": {
+      "en": "The SLI feeds one budget that drives two decisions: who gets paged now, and whether the team ships or stabilizes this month.",
+      "es": "El SLI alimenta un solo presupuesto que guía dos decisiones: a quién se despierta ahora y si el equipo lanza o estabiliza este mes."
+    }
+  },
+  "code": {
+    "lang": "yaml",
+    "title": { "en": "Multiwindow burn-rate alerts in Prometheus", "es": "Alertas de burn rate multiventana en Prometheus" },
+    "source": "# SLO: 99.9% of chat requests are good (valid answer AND TTFT < 2 s) over 30 days.\n# Budget = 0.001, so burn rate = error_ratio / 0.001.\n# The app increments chat_valid_total on every request and\n# chat_good_total only when it met both conditions.\ngroups:\n  - name: chat-slo\n    rules:\n      - record: chat:error_ratio:rate5m\n        expr: 1 - sum(rate(chat_good_total[5m])) / sum(rate(chat_valid_total[5m]))\n      - record: chat:error_ratio:rate30m\n        expr: 1 - sum(rate(chat_good_total[30m])) / sum(rate(chat_valid_total[30m]))\n      - record: chat:error_ratio:rate1h\n        expr: 1 - sum(rate(chat_good_total[1h])) / sum(rate(chat_valid_total[1h]))\n      - record: chat:error_ratio:rate6h\n        expr: 1 - sum(rate(chat_good_total[6h])) / sum(rate(chat_valid_total[6h]))\n\n      - alert: ChatSLOFastBurn      # 2% of the monthly budget in 1 h\n        expr: (chat:error_ratio:rate1h > 14.4 * 0.001) and (chat:error_ratio:rate5m > 14.4 * 0.001)\n        labels: { severity: page }\n      - alert: ChatSLOSlowBurn      # 5% of the budget in 6 h\n        expr: (chat:error_ratio:rate6h > 6 * 0.001) and (chat:error_ratio:rate30m > 6 * 0.001)\n        labels: { severity: page }\n      # Short window (5m, 30m) = the alert resets minutes after the fix.\n      # Add a ticket at 1x over 3 days (short window 6h) for slow leaks."
+  },
+  "example": {
+    "en": "A RAG assistant handles 1M requests a month with an SLO of 99.5% *good* (success and TTFT under 2 s): a budget of 5,000 bad requests. A provider degradation fails 30% of calls, a 60× burn rate. The fast-burn alert (14.4× over 1 h, confirmed over 5 min) pages ~15 minutes in, and on-call shifts traffic to the fallback model at minute 25. Cost: ~170 bad requests, ~3.5% of the budget, so launches continue. A second SLO, 98% of sampled answers passing a groundedness judge, tracks whether the fallback's answers stay grounded.",
+    "es": "Un asistente RAG atiende 1M de requests al mes con un SLO de 99.5% de requests *buenos* (éxito y TTFT menor a 2 s): un presupuesto de 5,000 requests malos. Una degradación del proveedor hace fallar el 30% de las llamadas, un burn rate de 60×. La alerta de quema rápida (14.4× en 1 h, confirmada en 5 min) despierta a on-call a los ~15 minutos, y a los 25 minutos el tráfico ya va al modelo de respaldo. Costo: ~170 requests malos, ~3.5% del presupuesto, así que los lanzamientos siguen. Un segundo SLO, 98% de respuestas muestreadas que pasan un juez de groundedness, vigila que las respuestas del modelo de respaldo sigan fundamentadas."
+  },
+  "pros": [
+    { "en": "Turns \"is it reliable enough?\" into a number that product and engineering agreed on in advance.", "es": "Convierte \"¿es lo bastante confiable?\" en un número que producto e ingeniería acordaron de antemano." },
+    { "en": "Error budgets settle the speed-vs-stability fight with a rule instead of a meeting.", "es": "El presupuesto de errores resuelve la pelea entre velocidad y estabilidad con una regla en vez de una reunión." },
+    { "en": "Burn-rate alerts page on user impact, with far fewer false pages than static thresholds.", "es": "Las alertas por burn rate despiertan por impacto en usuarios, con muchas menos falsas alarmas que los umbrales fijos." }
+  ],
+  "cons": [
+    { "en": "Choosing SLIs is hard; the wrong SLI makes the team optimize the wrong thing.", "es": "Elegir SLIs es difícil; un SLI equivocado hace que el equipo optimice lo que no importa." },
+    { "en": "Low-traffic services make ratios noisy: 1 failure in 50 requests is already 2%.", "es": "En servicios con poco tráfico las proporciones son ruidosas: 1 falla en 50 requests ya es 2%." },
+    { "en": "LLM quality SLIs rely on sampled judges, which are slower, noisier and cost money.", "es": "Los SLIs de calidad de un LLM dependen de jueces sobre muestras, que son más lentos, más ruidosos y cuestan dinero." }
+  ],
+  "whenToUse": {
+    "en": "Any user-facing service, and every LLM feature past prototype. Also to reason about dependencies: know the availability your model API actually delivers before promising yours.",
+    "es": "En todo servicio que vea el usuario y en toda funcionalidad de LLM que ya pasó el prototipo. También para razonar sobre dependencias: conoce la disponibilidad real de tu API de modelos antes de prometer la tuya."
+  },
+  "whenNotToUse": {
+    "en": "Prototypes with no users, or as a dashboard of 40 metrics. If missing the SLO would change no decision, it isn't an SLO.",
+    "es": "En prototipos sin usuarios, o como un dashboard de 40 métricas. Si incumplir el SLO no cambiaría ninguna decisión, no es un SLO."
+  },
+  "numbers": [
+    { "en": "Error budget per 30 days: 99% ≈ 7.2 h, 99.9% ≈ 43 min, 99.99% ≈ 4.3 min.", "es": "Presupuesto de errores en 30 días: 99% ≈ 7.2 h, 99.9% ≈ 43 min, 99.99% ≈ 4.3 min." },
+    { "en": "SRE Workbook defaults: page at 14.4× over 1 h (2% of budget) and 6× over 6 h (5%); ticket at 1× over 3 days (10%).", "es": "Defaults del SRE Workbook: alerta urgente a 14.4× en 1 h (2% del presupuesto) y 6× en 6 h (5%); ticket a 1× en 3 días (10%)." },
+    { "en": "At a 14.4× burn rate, a 30-day budget is gone in ~2 days (30 / 14.4 ≈ 2.1).", "es": "Con un burn rate de 14.4×, un presupuesto de 30 días se agota en ~2 días (30 / 14.4 ≈ 2.1)." },
+    { "en": "Serial dependencies multiply: a 99.9% service on a 99.5% LLM API is ≈ 99.4% available without a fallback.", "es": "Las dependencias en serie se multiplican: un servicio al 99.9% sobre una API de LLM al 99.5% queda en ≈ 99.4% sin fallback." }
+  ],
+  "pitfalls": [
+    { "en": "Setting the SLO equal to the SLA: the first time you miss it, you also pay. Keep the SLO tighter.", "es": "Poner el SLO igual al SLA: la primera vez que lo incumples, también pagas. Mantén el SLO más estricto." },
+    { "en": "Measuring only in the app server: crashes, load balancer errors and client timeouts never reach those logs.", "es": "Medir solo en el servidor de la app: los crashes, los errores del balanceador y los timeouts del cliente nunca llegan a esos logs." },
+    { "en": "Counting HTTP 200 as success for LLMs: empty, truncated or invalid-JSON answers are failures too.", "es": "Contar un HTTP 200 como éxito en un LLM: las respuestas vacías, truncadas o con JSON inválido también son fallas." },
+    { "en": "Alerting on \"error rate above 1% for 5 min\": pages on blips and misses slow burns.", "es": "Alertar con \"tasa de error mayor a 1% durante 5 min\": despierta por picos breves y no ve las quemas lentas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Define SLIs and SLOs for an LLM chat assistant.", "es": "Define SLIs y SLOs para un asistente de chat con LLM." },
+      "a": {
+        "en": "I pick a few SLIs users actually feel. Availability: the share of requests that return a valid, complete answer, counting timeouts and malformed output as bad. Latency: TTFT p95 under about 1.5 s, since with streaming that's what users perceive. Quality: the share of sampled answers passing a groundedness judge, on a longer window because judges are noisy. Plus cost per request as a budget SLO. I set targets from current performance and what dependencies allow: on a 99.5% model API, I can't promise 99.9% without a fallback.",
+        "es": "Elijo pocos SLIs que el usuario realmente siente. Disponibilidad: la proporción de requests que devuelven una respuesta válida y completa, contando timeouts y salidas mal formadas como malas. Latencia: TTFT p95 bajo ~1.5 s, porque con streaming eso es lo que percibe el usuario. Calidad: la proporción de respuestas muestreadas que pasan un juez de groundedness, en una ventana más larga porque los jueces son ruidosos. Y costo por request como SLO de presupuesto. Fijo los objetivos según el desempeño actual y lo que permiten las dependencias: sobre una API de modelos al 99.5%, no puedo prometer 99.9% sin fallback."
+      }
+    },
+    {
+      "q": { "en": "Your error budget is gone halfway through the month. What happens?", "es": "Tu presupuesto de errores se agotó a mitad de mes. ¿Qué pasa?" },
+      "a": {
+        "en": "The error budget policy kicks in, one we agreed with product in advance so it isn't negotiated mid-incident. Risky launches freeze, except fixes and security patches, and the team works the top causes from the postmortems. If one dependency burned most of the budget, the action may be a fallback or a renegotiated SLO rather than a code freeze. And if we keep blowing budgets while users don't complain, the SLO is probably too strict, so I'd lower it.",
+        "es": "Entra en juego la política de presupuesto de errores, que acordamos con producto de antemano para no negociarla en medio de un incidente. Se congelan los lanzamientos riesgosos, salvo arreglos y parches de seguridad, y el equipo ataca las causas principales de los postmortems. Si una dependencia quemó la mayor parte del presupuesto, la acción puede ser un fallback o renegociar el SLO en vez de congelar código. Y si seguimos agotando presupuestos sin que los usuarios se quejen, el SLO probablemente es demasiado estricto y lo bajaría."
+      }
+    },
+    {
+      "q": { "en": "Why burn-rate alerts instead of \"error rate above 1%\"?", "es": "¿Por qué alertas por burn rate en vez de \"tasa de error mayor a 1%\"?" },
+      "a": {
+        "en": "A fixed threshold ignores time. Two percent errors for five minutes barely touches a monthly budget yet wakes someone at 3 a.m.; half a percent for days quietly drains it and never pages. Burn rate measures how fast the budget is going: 14.4× over an hour means 2% of the month is gone, which is worth waking up for. I pair each long window with a short one, 1 h with 5 min, so the alert fires quickly and resets soon after the fix.",
+        "es": "Un umbral fijo ignora el tiempo. Un 2% de errores durante cinco minutos casi no toca el presupuesto mensual y aun así despierta a alguien a las 3 a. m.; medio por ciento durante días lo drena en silencio y nunca alerta. El burn rate mide qué tan rápido se va el presupuesto: 14.4× durante una hora significa que se fue el 2% del mes, y eso sí justifica despertarse. Combino cada ventana larga con una corta, 1 h con 5 min, para que la alerta salte rápido y se apague poco después del arreglo."
+      }
+    }
+  ],
+  "related": ["observability", "llm-observability", "inference-metrics", "retries-backoff", "incident-leadership", "groundedness"],
+  "sources": [
+    { "title": "Google SRE Book — Service Level Objectives", "url": "https://sre.google/sre-book/service-level-objectives/" },
+    { "title": "Google SRE Workbook — Alerting on SLOs", "url": "https://sre.google/workbook/alerting-on-slos/" },
+    { "title": "Google SRE Workbook — Implementing SLOs", "url": "https://sre.google/workbook/implementing-slos/" },
+    { "title": "Google SRE Workbook — Example Error Budget Policy", "url": "https://sre.google/workbook/error-budget-policy/" }
+  ]
+}

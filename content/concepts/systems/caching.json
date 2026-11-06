@@ -1,0 +1,88 @@
+{
+  "id": "caching",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Caching strategies", "es": "Estrategias de caché" },
+  "aliases": ["cache-aside", "read-through", "write-through", "write-behind", "LRU", "TTL", "cache stampede", "Redis"],
+  "tldr": {
+    "en": "Keep copies of expensive reads in faster storage; choose how writes reach the cache, bound staleness with TTLs or invalidation, and protect the origin from stampedes when hot keys expire.",
+    "es": "Guarda copias de lecturas costosas en un almacenamiento más rápido; elige cómo llegan las escrituras a la caché, acota los datos viejos con TTLs o invalidación y protege el origen de las estampidas cuando expiran claves calientes."
+  },
+  "analogy": {
+    "en": "A barista keeps the five most-ordered pastries on the counter and fetches the rest from the back. If everything on the counter sells out at once, every customer queues at the back room.",
+    "es": "Un barista tiene en el mostrador los cinco panes más pedidos y trae el resto de la bodega. Si todo el mostrador se agota a la vez, todos los clientes hacen fila frente a la bodega."
+  },
+  "explain": {
+    "en": "A **cache** keeps a copy of expensive-to-get data in faster storage (process memory, Redis, a CDN edge) so repeated reads skip the slow path. Average latency is `hit_rate × cache_time + miss_rate × origin_time`, and origin load is proportional to the miss rate.\n\n**How data gets in:**\n- **Cache-aside** (the default): read the cache; on a miss, load from the DB and fill it. The cache can die without losing data.\n- **Read-through**: the same flow, but the cache layer loads on a miss.\n- **Write-through**: every write updates DB and cache synchronously — fresh reads, slower writes.\n- **Write-behind**: write to the cache, flush to the DB asynchronously — fast writes, data loss if the cache dies.\n\n**Staleness**: a **TTL** bounds how old data can get; **invalidation** deletes the key on write (delete, don't set, so racing writers can't cache an old value). **Eviction** when memory fills: **LRU** (recency) or **LFU** (frequency, resists one-off scans).\n\n**Stampede**: a hot key expires and thousands of requests hit the DB at once. Fixes: **request coalescing** (one fetch, the rest wait), **jittered TTLs**, **stale-while-revalidate**.\n\nAI stacks add three caches: provider [[prompt-caching]] of a stable prefix, response caches (exact or [[semantic-caching]]), and **embedding caches** keyed by `hash(model, text)` so re-ingestion skips unchanged chunks.",
+    "es": "Una **caché** guarda una copia de datos costosos de obtener en un almacenamiento más rápido (memoria del proceso, Redis, un edge de CDN) para que las lecturas repetidas se salten el camino lento. La latencia promedio es `hit_rate × tiempo_cache + miss_rate × tiempo_origen`, y la carga sobre el origen es proporcional al miss rate.\n\n**Cómo entran los datos:**\n- **Cache-aside** (el default): lee la caché; si falla, carga desde la base de datos y llénala. La caché puede caerse sin perder datos.\n- **Read-through**: el mismo flujo, pero la capa de caché carga cuando hay un miss.\n- **Write-through**: cada escritura actualiza base y caché de forma síncrona: lecturas frescas, escrituras más lentas.\n- **Write-behind**: escribe en la caché y vuelca a la base de forma asíncrona: escrituras rápidas, pero pierdes datos si la caché se cae.\n\n**Datos viejos**: un **TTL** acota qué tan viejo puede ser un dato; la **invalidación** borra la clave al escribir (bórrala, no la sobrescribas, para que escritores concurrentes no dejen un valor viejo). **Desalojo** cuando se llena la memoria: **LRU** (lo más reciente) o **LFU** (lo más frecuente, resiste escaneos únicos).\n\n**Estampida**: expira una clave caliente y miles de peticiones golpean la base a la vez. Soluciones: **request coalescing** (una sola carga, el resto espera), **TTLs con jitter** y **stale-while-revalidate**.\n\nLos stacks de IA suman tres cachés: [[prompt-caching]] del proveedor sobre un prefijo estable, cachés de respuestas (exactas o [[semantic-caching]]) y **cachés de embeddings** con clave `hash(model, text)` para que la reingesta se salte los chunks sin cambios."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  R[Request] --> C{\"Redis hit?\"}\n  C -->|hit| A[Return value]\n  C -->|miss| L{\"Rebuild lock<br/>acquired?\"}\n  L -->|yes| D[(Database)]\n  D --> W[\"SET key<br/>TTL 300s plus jitter\"]\n  W --> A\n  L -->|no| S[\"Wait briefly<br/>or serve stale\"]\n  S --> A",
+    "caption": {
+      "en": "Cache-aside with stampede protection: on a miss only the lock holder hits the database; everyone else waits or gets the stale copy.",
+      "es": "Cache-aside con protección contra estampidas: ante un miss solo quien tiene el lock va a la base de datos; los demás esperan o reciben la copia vieja."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Cache-aside with jittered TTL and request coalescing", "es": "Cache-aside con TTL con jitter y request coalescing" },
+    "source": "import json, random, time\nimport redis\n\nr = redis.Redis(decode_responses=True)\nBASE_TTL = 300  # seconds\n\ndef get_product(pid: str) -> dict:\n    key = f\"product:{pid}\"\n    if (hit := r.get(key)) is not None:\n        return json.loads(hit)                      # hit: sub-millisecond\n    # Miss: only one caller rebuilds the key (request coalescing)\n    if r.set(f\"lock:{key}\", \"1\", nx=True, ex=10):\n        try:\n            value = db_load_product(pid)            # slow path, e.g. 50 ms\n            ttl = int(BASE_TTL * random.uniform(0.9, 1.1))  # jitter: no synchronized expiry\n            r.set(key, json.dumps(value), ex=ttl)\n            return value\n        finally:\n            r.delete(f\"lock:{key}\")\n    for _ in range(20):                             # the rest wait up to ~1 s\n        time.sleep(0.05)\n        if (hit := r.get(key)) is not None:\n            return json.loads(hit)\n    return db_load_product(pid)                     # filler too slow: fall through\n\ndef update_product(pid: str, fields: dict) -> None:\n    db_update_product(pid, fields)\n    r.delete(f\"product:{pid}\")  # delete, don't set: racing writers can't cache old data"
+  },
+  "example": {
+    "en": "A RAG assistant answers 2M questions a day, with three caches stacked:\n\n- **Embedding cache** keyed by `sha256(model + chunk)`: the nightly re-ingest of 1M chunks finds 97% unchanged and embeds only ~30k.\n- **Response cache** keyed by normalized question + model + prompt version + index version, TTL 1 h: FAQ-style traffic gives a ~15% hit rate, and bumping the index version invalidates everything without a purge.\n- **Prompt cache**: the 8k-token system prompt and tool schemas form a stable prefix, read at ~0.1× the input price.",
+    "es": "Un asistente de RAG responde 2M preguntas al día, con tres cachés apiladas:\n\n- **Caché de embeddings** con clave `sha256(model + chunk)`: la reingesta nocturna de 1M chunks encuentra 97% sin cambios y solo genera ~30k embeddings.\n- **Caché de respuestas** con clave pregunta normalizada + modelo + versión del prompt + versión del índice, TTL de 1 h: el tráfico tipo FAQ da ~15% de hit rate, y subir la versión del índice invalida todo sin purgar nada.\n- **Prompt cache**: el system prompt de 8k tokens y los esquemas de tools forman un prefijo estable que se lee a ~0.1× el precio de input."
+  },
+  "pros": [
+    { "en": "Cuts latency and origin load by orders of magnitude on read-heavy, skewed traffic.", "es": "Reduce la latencia y la carga sobre el origen en órdenes de magnitud con tráfico sesgado y de mucha lectura." },
+    { "en": "Cheap capacity: one Redis node absorbs reads that would otherwise need many DB replicas.", "es": "Capacidad barata: un nodo de Redis absorbe lecturas que de otro modo necesitarían muchas réplicas de la base." },
+    { "en": "In AI stacks, every hit is an LLM or embedding call you don't pay for.", "es": "En stacks de IA, cada hit es una llamada al LLM o de embeddings que no pagas." }
+  ],
+  "cons": [
+    { "en": "Two copies of the truth: staleness and invalidation bugs are the classic failure.", "es": "Dos copias de la verdad: los datos viejos y los bugs de invalidación son la falla clásica." },
+    { "en": "Hit-ratio cliff: if the cache restarts cold or dies, the origin takes the full load at once.", "es": "Precipicio del hit ratio: si la caché reinicia en frío o se cae, el origen recibe toda la carga de golpe." },
+    { "en": "More infrastructure, memory cost and consistency reasoning on every write path.", "es": "Más infraestructura, costo de memoria y razonamiento de consistencia en cada camino de escritura." }
+  ],
+  "whenToUse": {
+    "en": "Read-heavy, skewed access (few keys get most reads), expensive recomputation (joins, embeddings, LLM calls), and data that tolerates seconds to minutes of staleness.",
+    "es": "Accesos de mucha lectura y sesgados (pocas claves reciben la mayoría de las lecturas), recálculos costosos (joins, embeddings, llamadas a LLMs) y datos que toleran segundos o minutos de desactualización."
+  },
+  "whenNotToUse": {
+    "en": "Write-heavy or uniformly random access (low hit rate), data that must be exact (balances, permissions), or personalized LLM output that rarely repeats.",
+    "es": "Accesos de mucha escritura o uniformemente aleatorios (hit rate bajo), datos que deben ser exactos (saldos, permisos) o salidas de LLM personalizadas que casi nunca se repiten."
+  },
+  "numbers": [
+    { "en": "Average latency = hit × cache + miss × origin: with 1 ms vs 50 ms, 90% hits → ~5.9 ms, 99% → ~1.5 ms.", "es": "Latencia promedio = hit × caché + miss × origen: con 1 ms contra 50 ms, 90% de hits → ~5.9 ms y 99% → ~1.5 ms." },
+    { "en": "Origin load scales with the miss rate: going from 90% to 99% hits cuts backend traffic 10×.", "es": "La carga del origen escala con el miss rate: pasar de 90% a 99% de hits reduce 10× el tráfico al backend." },
+    { "en": "Latency ladder (Jeff Dean): RAM reference ~100 ns, same-datacenter round trip ~0.5 ms, disk seek ~10 ms.", "es": "Escalera de latencias (Jeff Dean): acceso a RAM ~100 ns, ida y vuelta en el mismo datacenter ~0.5 ms, seek de disco ~10 ms." },
+    { "en": "Rule of thumb: one Redis instance handles ~100k simple ops/s at sub-millisecond latency.", "es": "Regla práctica: una instancia de Redis maneja ~100k operaciones simples por segundo con latencia submilisegundo." },
+    { "en": "Anthropic prompt-cache reads cost ~0.1× base input; the default TTL is 5 minutes, refreshed on each hit.", "es": "Leer de la prompt cache de Anthropic cuesta ~0.1× el input base; el TTL por defecto es de 5 minutos y se renueva con cada hit." }
+  ],
+  "pitfalls": [
+    { "en": "Setting the cache on write instead of deleting: two racing writers can leave the older value cached.", "es": "Escribir en la caché al actualizar en vez de borrar: dos escritores concurrentes pueden dejar cacheado el valor viejo." },
+    { "en": "Identical TTLs on keys loaded together (deploy, warm-up): they all expire in the same second. Add jitter.", "es": "TTLs idénticos en claves cargadas juntas (deploy, precalentamiento): todas expiran en el mismo segundo. Agrega jitter." },
+    { "en": "LLM response keys without model, prompt version and index version: you serve answers from an old model or a stale corpus.", "es": "Claves de respuestas de LLM sin modelo, versión del prompt ni versión del índice: sirves respuestas de un modelo viejo o de un corpus desactualizado." },
+    { "en": "Sharing cached LLM answers across tenants or users without their id or permissions in the key.", "es": "Compartir respuestas de LLM cacheadas entre tenants o usuarios sin su id o sus permisos en la clave." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your hit rate is 98%, yet the database falls over every few hours. What's going on?", "es": "Tu hit rate es 98% y aun así la base de datos se cae cada pocas horas. ¿Qué está pasando?" },
+      "a": {
+        "en": "Probably a stampede: a hot key, or a batch of keys loaded together, expires and thousands of concurrent misses hit the origin in the same second. A healthy average hides it. I'd confirm by correlating DB spikes with key expiries. Fixes, cheapest first: jittered TTLs, request coalescing so one caller rebuilds while the rest wait, and stale-while-revalidate for keys that tolerate it. Facebook's memcache paper uses leases for exactly this. Then I'd put a rate limit in front of the database as the backstop.",
+        "es": "Probablemente una estampida: una clave caliente, o un grupo de claves cargadas juntas, expira y miles de misses concurrentes golpean el origen en el mismo segundo. Un buen promedio lo esconde. Lo confirmaría correlacionando los picos de la base con las expiraciones. Soluciones, de la más barata a la más cara: TTLs con jitter, request coalescing para que uno reconstruya mientras el resto espera, y stale-while-revalidate para las claves que lo toleren. El paper de memcache de Facebook usa leases justo para esto. Después pondría un rate limit frente a la base como última defensa."
+      }
+    },
+    {
+      "q": { "en": "Where would you put caches in an LLM application?", "es": "¿Dónde pondrías cachés en una aplicación con LLMs?" },
+      "a": {
+        "en": "In layers, safest first. Provider prompt caching: I order the prompt so tools, system prompt and documents form a stable prefix, which cuts input cost and TTFT with zero staleness. An embedding cache keyed by model and content hash, so re-ingestion only pays for changed chunks. An exact-match response cache keyed by normalized input, model, prompt version and index version. A semantic cache only for FAQ-like traffic, with a strict threshold and an eval of false hits, because a wrong cached answer is worse than a slow one.",
+        "es": "Por capas, de la más segura a la más riesgosa. Prompt caching del proveedor: ordeno el prompt para que tools, system prompt y documentos formen un prefijo estable, lo que baja el costo de input y el TTFT sin datos viejos. Una caché de embeddings con clave de modelo y hash del contenido, para que la reingesta solo pague por los chunks modificados. Una caché de respuestas exactas con clave de input normalizado, modelo, versión del prompt y versión del índice. Una caché semántica solo para tráfico tipo FAQ, con un umbral estricto y una evaluación de falsos hits, porque una respuesta cacheada incorrecta es peor que una lenta."
+      }
+    }
+  ],
+  "related": ["prompt-caching", "semantic-caching", "consistency-models", "back-of-envelope", "consistent-hashing", "rate-limiting"],
+  "sources": [
+    { "title": "Nishtala et al. — Scaling Memcache at Facebook (NSDI 2013)", "url": "https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala" },
+    { "title": "RFC 5861 — HTTP Cache-Control Extensions for Stale Content", "url": "https://datatracker.ietf.org/doc/html/rfc5861" },
+    { "title": "AWS — Caching Best Practices", "url": "https://aws.amazon.com/caching/best-practices/" }
+  ]
+}

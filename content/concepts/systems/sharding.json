@@ -1,0 +1,88 @@
+{
+  "id": "sharding",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Partitioning & sharding", "es": "Particionamiento y sharding" },
+  "aliases": ["sharding", "partitioning", "shard key", "partition key", "hash partitioning", "range partitioning", "hot partition", "resharding"],
+  "tldr": {
+    "en": "Split data across nodes by a shard key, scaling writes and storage past one machine. The key decides load balance, which queries stay on one shard, and how painful rebalancing is.",
+    "es": "Reparte los datos entre nodos según una shard key para escalar escrituras y almacenamiento más allá de una máquina. La key decide el balance de carga, qué consultas quedan en un shard y cuánto duele rebalancear."
+  },
+  "analogy": {
+    "en": "A library spread over buildings: shelve by title range and browsing \"S\" is one trip, but one building gets crowded; shelve by hash and load is even, but browsing a range means visiting every building.",
+    "es": "Una biblioteca repartida en varios edificios: si ordenas por rango de títulos, buscar la \"S\" es un solo viaje, pero un edificio se satura; si ordenas por hash, la carga es pareja, pero recorrer un rango exige visitar todos los edificios."
+  },
+  "explain": {
+    "en": "**Partitioning** (sharding) splits a dataset so each node owns a subset; [[replication]] then copies each partition. Replication scales reads; partitioning scales **writes and storage**.\n\n- **Range partitioning** (Bigtable, HBase, CockroachDB): contiguous key ranges per shard. Range scans are cheap, but a monotonic key (timestamp, auto-increment ID) sends every insert to the last shard.\n- **Hash partitioning** (Cassandra, DynamoDB): `hash(key)` picks the shard. Even spread, but range queries fan out to every shard.\n\n**Hotspots** survive hashing: a celebrity key or whale tenant still lands on one shard. Split it with salted sub-keys (`key#0..7`) and fan its reads out, or give it its own shard.\n\n**Rebalancing**: never `hash % node_count`, since adding a node moves almost every key. Map many fixed logical partitions to nodes and move whole partitions, or use [[consistent-hashing]].\n\n**Secondary indexes**: *local* ones live inside each shard (cheap writes, scatter-gather reads); *global* ones are partitioned by the indexed value (one-shard reads, but writes touch several shards and usually update asynchronously).\n\n**Choose the shard key** so hot queries include it, cardinality is high and load is even. In multi-tenant SaaS that's often `tenant_id`: queries and transactions stay on one shard, and a vector search never fans out across tenants. Cross-shard joins and transactions (2PC) are the price of a wrong key.",
+    "es": "El **particionamiento** (sharding) divide un dataset para que cada nodo sea dueño de un subconjunto; luego la [[replication]] copia cada partición. La replicación escala lecturas; el particionamiento escala **escrituras y almacenamiento**.\n\n- **Por rangos** (Bigtable, HBase, CockroachDB): rangos contiguos de keys por shard. Los escaneos por rango son baratos, pero una key monótona (timestamp, ID autoincremental) manda cada inserción al último shard.\n- **Por hash** (Cassandra, DynamoDB): `hash(key)` elige el shard. Reparto parejo, pero las consultas por rango se abren a todos los shards.\n\nLos **hotspots** sobreviven al hash: una key de celebridad o un tenant gigante sigue cayendo en un solo shard. Divídelo con sub-keys con sal (`key#0..7`) y reparte sus lecturas, o dale su propio shard.\n\n**Rebalanceo**: nunca uses `hash % cantidad_de_nodos`, porque al sumar un nodo se mueven casi todas las keys. Asigna muchas particiones lógicas fijas a los nodos y mueve particiones completas, o usa [[consistent-hashing]].\n\n**Índices secundarios**: los *locales* viven dentro de cada shard (escrituras baratas, lecturas scatter-gather); los *globales* se particionan por el valor indexado (lecturas a un solo shard, pero las escrituras tocan varios shards y suelen actualizarse de forma asíncrona).\n\n**Elige la shard key** para que las consultas frecuentes la incluyan, tenga alta cardinalidad y reparta la carga. En SaaS multi-tenant suele ser `tenant_id`: consultas y transacciones quedan en un shard, y una búsqueda vectorial nunca se abre a otros tenants. Los joins y transacciones entre shards (2PC) son el precio de una key equivocada."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  Q[\"Query with shard key\"] --> RT{\"Router<br/>hash(key) mod 1024\"}\n  RT -->|\"partitions 0-255\"| S1[(Shard 1)]\n  RT -->|\"256-511\"| S2[(Shard 2)]\n  RT -->|\"512-767\"| S3[(Shard 3)]\n  RT -->|\"768-1023\"| S4[(Shard 4)]\n  X[\"Query without shard key\"] -.->|scatter| S1\n  X -.->|scatter| S2\n  X -.->|scatter| S3\n  X -.->|scatter| S4\n  S1 -.-> M[\"Gather and merge top-k\"]\n  S2 -.-> M\n  S3 -.-> M\n  S4 -.-> M",
+    "caption": {
+      "en": "With the shard key, the router hits one shard. Without it, every shard is queried and results are merged, so latency follows the slowest shard.",
+      "es": "Con la shard key, el router va a un solo shard. Sin ella, se consulta cada shard y se fusionan los resultados, así que la latencia la marca el shard más lento."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Fixed logical partitions, hot-key salting, rebalancing", "es": "Particiones lógicas fijas, sal para hot keys y rebalanceo" },
+    "source": "import hashlib\n\nN_PARTITIONS = 1024  # fixed forever, far more than nodes; never hash % node_count\n\n# partition -> node map lives in metadata (etcd, a config table), not in code\npartition_map = {p: f\"db-{p % 4}\" for p in range(N_PARTITIONS)}\n\ndef partition_of(key: str) -> int:\n    # Stable hash: Python's built-in hash() is randomized per process\n    digest = hashlib.md5(key.encode()).digest()\n    return int.from_bytes(digest[:8], \"big\") % N_PARTITIONS\n\ndef node_for(tenant_id: str) -> str:\n    return partition_map[partition_of(tenant_id)]\n\ndef hot_write_key(tenant_id: str, seq: int, salts: int = 8) -> str:\n    # A whale tenant's writes spread over 8 partitions; its reads fan out to 8, not 1024\n    return f\"{tenant_id}#{seq % salts}\"\n\ndef add_node(new_node: str, share: float) -> int:\n    # Rebalance by moving whole partitions; no key is ever rehashed\n    moved = list(range(0, N_PARTITIONS, round(1 / share)))\n    for p in moved:\n        partition_map[p] = new_node  # copy the partition's data first, then flip the map\n    return len(moved)\n\nprint(add_node(\"db-4\", share=0.2))  # 205 of 1024 partitions move (~20%)"
+  },
+  "example": {
+    "en": "A B2B assistant stores **500M** chunk embeddings for **5,000 tenants**, sharded by `tenant_id` over 8 nodes. Every retrieval includes the tenant, so each ANN query hits one shard and isolation is simple. Then one enterprise customer grows to **40%** of all vectors: its shard runs at 90% CPU while the others idle. Fix: move that whale to 3 dedicated shards, sub-partitioned by `(tenant_id, hash(doc_id))`. Its queries fan out to its own 3 shards and merge top-k; every other tenant still hits exactly one.",
+    "es": "Un asistente B2B guarda **500M** de embeddings de chunks para **5,000 tenants**, con sharding por `tenant_id` en 8 nodos. Cada recuperación incluye el tenant, así que cada consulta ANN va a un solo shard y el aislamiento es simple. Luego un cliente enterprise crece hasta el **40%** de todos los vectores: su shard corre al 90% de CPU mientras los demás están ociosos. Solución: mover a ese tenant gigante a 3 shards dedicados, subparticionados por `(tenant_id, hash(doc_id))`. Sus consultas se abren solo a sus 3 shards y fusionan el top-k; todos los demás tenants siguen yendo a uno solo."
+  },
+  "pros": [
+    { "en": "Scales writes and storage horizontally, past any single machine.", "es": "Escala escrituras y almacenamiento de forma horizontal, más allá de cualquier máquina." },
+    { "en": "Smaller per-shard data and indexes: faster queries, faster rebuilds and restores.", "es": "Menos datos e índices por shard: consultas más rápidas y reconstrucciones y restauraciones más rápidas." },
+    { "en": "Tenant-keyed shards give natural isolation and per-tenant placement (region, hardware).", "es": "Los shards por tenant dan aislamiento natural y ubicación por tenant (región, hardware)." }
+  ],
+  "cons": [
+    { "en": "Cross-shard queries scatter-gather, so tail latency follows the slowest shard.", "es": "Las consultas entre shards hacen scatter-gather, así que la latencia de cola la marca el shard más lento." },
+    { "en": "Cross-shard transactions need 2PC or sagas; joins move into the application.", "es": "Las transacciones entre shards necesitan 2PC o sagas; los joins pasan a la aplicación." },
+    { "en": "The shard key is close to a one-way door: changing it means migrating all the data.", "es": "La shard key es casi una puerta de un solo sentido: cambiarla implica migrar todos los datos." },
+    { "en": "More operations: rebalancing, hotspots, per-shard backups and schema changes.", "es": "Más operación: rebalanceos, hotspots, backups por shard y cambios de esquema." }
+  ],
+  "whenToUse": {
+    "en": "When one node can no longer hold the data or absorb the write rate after vertical scaling, read replicas and caching, or when tenants need physical isolation.",
+    "es": "Cuando un nodo ya no puede guardar los datos ni absorber el ritmo de escrituras tras escalar vertical, agregar réplicas de lectura y caché, o cuando los tenants necesitan aislamiento físico."
+  },
+  "whenNotToUse": {
+    "en": "Early: one well-sized Postgres with replicas carries a lot, and sharding adds permanent complexity. Also avoid it when most queries can't include a common shard key.",
+    "es": "Demasiado pronto: un Postgres bien dimensionado con réplicas aguanta mucho, y el sharding agrega complejidad permanente. Evítalo también cuando la mayoría de las consultas no puede incluir una shard key común."
+  },
+  "numbers": [
+    { "en": "Going from `hash % N` to `% (N+1)` moves ~N/(N+1) of keys (~91% at N=10); fixed partitions or consistent hashing move ~1/(N+1).", "es": "Pasar de `hash % N` a `% (N+1)` mueve ~N/(N+1) de las keys (~91% con N=10); las particiones fijas o el consistent hashing mueven ~1/(N+1)." },
+    { "en": "DynamoDB per-partition ceilings: 3,000 RCU, 1,000 WCU and 10 GB.", "es": "Límites por partición en DynamoDB: 3,000 RCU, 1,000 WCU y 10 GB." },
+    { "en": "DynamoDB: 5 local and 20 global secondary indexes per table (default quota); GSIs are eventually consistent.", "es": "DynamoDB: 5 índices secundarios locales y 20 globales por tabla (cuota por defecto); los GSI son eventualmente consistentes." },
+    { "en": "Instagram (2012) mapped several thousand logical Postgres shards onto far fewer physical servers.", "es": "Instagram (2012) asignó varios miles de shards lógicos de Postgres a muchos menos servidores físicos." }
+  ],
+  "pitfalls": [
+    { "en": "A monotonic shard key on range partitioning (timestamps, auto-increment): every insert hits the last shard.", "es": "Una shard key monótona con particionamiento por rangos (timestamps, autoincremental): cada inserción cae en el último shard." },
+    { "en": "Using `hash % node_count`: adding one node reshuffles nearly all the data.", "es": "Usar `hash % cantidad_de_nodos`: agregar un nodo reacomoda casi todos los datos." },
+    { "en": "A shard key most queries don't include: everything becomes scatter-gather.", "es": "Una shard key que la mayoría de las consultas no incluye: todo se vuelve scatter-gather." },
+    { "en": "Ignoring whales: `tenant_id` works until one tenant holds 40% of the data. Plan how to split big tenants.", "es": "Ignorar a los tenants gigantes: `tenant_id` funciona hasta que uno tiene el 40% de los datos. Planea cómo dividir a los grandes." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you choose a shard key for a multi-tenant SaaS?", "es": "¿Cómo eliges la shard key de un SaaS multi-tenant?" },
+      "a": {
+        "en": "I start from the dominant queries. If nearly every request is scoped to a tenant, `tenant_id` keeps queries, joins and transactions on one shard, and makes isolation and data residency easy. Then I check distribution: tenant sizes follow a power law, so I hash tenants onto many logical partitions and keep an escape hatch, moving a whale to dedicated shards with a composite key like `(tenant_id, doc_id)`. Cross-tenant analytics go to a warehouse instead of scatter-gather on the OLTP shards.",
+        "es": "Empiezo por las consultas dominantes. Si casi todas las solicitudes están acotadas a un tenant, `tenant_id` mantiene consultas, joins y transacciones en un solo shard, y facilita el aislamiento y la residencia de datos. Después reviso la distribución: el tamaño de los tenants sigue una ley de potencia, así que hago hash de los tenants sobre muchas particiones lógicas y dejo una salida de emergencia: mover a un tenant gigante a shards dedicados con una key compuesta como `(tenant_id, doc_id)`. La analítica entre tenants va a un warehouse, no a un scatter-gather sobre los shards OLTP."
+      }
+    },
+    {
+      "q": { "en": "One shard is at 90% CPU while the others are idle. What do you do?", "es": "Un shard está al 90% de CPU y los demás están ociosos. ¿Qué haces?" },
+      "a": {
+        "en": "First I find out whether it's one hot key or a hot range. A hot key, like a celebrity or a whale tenant, I cache if it's read-heavy, salt into sub-keys if it's write-heavy, or move to a dedicated shard. A hot range usually comes from a monotonic key like a timestamp, which means the key design is wrong: hash it or prefix it with a well-distributed field. Short term I split the partition and move half; long term I add per-key load metrics so the next one is caught early.",
+        "es": "Primero averiguo si es una key caliente o un rango caliente. Una key caliente, como una celebridad o un tenant gigante, la pongo en caché si es de lectura, la divido con sal en sub-keys si es de escritura o la muevo a un shard dedicado. Un rango caliente suele venir de una key monótona como un timestamp, lo que significa que el diseño de la key está mal: le aplico hash o le antepongo un campo bien distribuido. A corto plazo divido la partición y muevo la mitad; a largo plazo agrego métricas de carga por key para detectar el próximo a tiempo."
+      }
+    }
+  ],
+  "related": ["consistent-hashing", "replication", "multi-tenancy", "vector-databases", "tenant-isolation", "indexes"],
+  "sources": [
+    { "title": "Amazon DynamoDB — Best practices for designing and using partition keys effectively", "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/bp-partition-key-design.html" },
+    { "title": "Instagram Engineering — Sharding & IDs at Instagram", "url": "https://instagram-engineering.com/sharding-ids-at-instagram-1cf5a71e5a5c" },
+    { "title": "Martin Kleppmann — Designing Data-Intensive Applications", "url": "https://dataintensive.net/" }
+  ]
+}

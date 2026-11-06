@@ -1,0 +1,94 @@
+{
+  "id": "ai-finops",
+  "domain": "leadership",
+  "level": "advanced",
+  "title": { "en": "AI cost governance (FinOps for AI)", "es": "Gobierno de costos de IA (FinOps para IA)" },
+  "aliases": ["FinOps", "FinOps for AI", "LLM cost management", "cost attribution", "chargeback", "showback", "unit economics", "token spend"],
+  "tldr": {
+    "en": "Make AI spend visible, owned and predictable: tag every call at the gateway by team, feature and customer, track cost per business outcome, and pull the cheap levers before buying commitments.",
+    "es": "Haz que el gasto en IA sea visible, tenga dueño y sea predecible: etiqueta cada llamada en el gateway por equipo, funcionalidad y cliente, mide el costo por resultado de negocio y usa las palancas baratas antes de comprar compromisos."
+  },
+  "analogy": {
+    "en": "A shared office electricity bill that nobody owns keeps growing. Put a meter on each floor, show each team its own number, and lights start going off at night.",
+    "es": "La factura de luz compartida de una oficina, que no es de nadie, no deja de crecer. Pon un medidor por piso, muéstrale a cada equipo su propio número y las luces empiezan a apagarse de noche."
+  },
+  "explain": {
+    "en": "**AI FinOps** applies cloud FinOps (visibility, ownership, optimization) to model spend. Two things change: you pay per token, so a prompt edit is a cost change, and spend follows usage, not servers you provisioned.\n\nThe loop:\n\n1. **Attribute.** Every call goes through the [[llm-gateway]] tagged with `team`, `feature`, `customer`, `env`. Untagged calls are rejected or land in a visible *unallocated* bucket. Start with **showback** (each team sees its bill); move to **chargeback** once the numbers are trusted.\n2. **Budget and alert.** Monthly budget per team, alerts on *forecast* to exceed and on day-over-day spikes, hard caps on dev keys and agent loops.\n3. **Unit economics.** Divide cost by the outcome the business pays for: cost per resolved ticket, per processed document, per active user. Total spend rising is fine if unit cost falls.\n4. **Optimize, cheapest lever first.** Trim prompts and cap output tokens, [[prompt-caching]], [[model-routing]] to smaller models, [[semantic-caching]], [[batch-inference]] for anything not interactive. Self-hosted: watch **GPU utilization**, because an idle GPU costs the same as a busy one.\n5. **Commit and forecast.** Only on a stable baseline, buy reserved or provisioned capacity. Forecast as users × calls per user × tokens per call × price, and redo it when any factor moves.",
+    "es": "**FinOps para IA** aplica las ideas de FinOps en la nube (visibilidad, dueños, optimización) al gasto en modelos. Cambian dos cosas: pagas por token, así que editar un prompt es cambiar un costo, y el gasto sigue al uso, no a servidores que aprovisionaste.\n\nEl ciclo:\n\n1. **Atribuir.** Toda llamada pasa por el [[llm-gateway]] con etiquetas `team`, `feature`, `customer`, `env`. Las llamadas sin etiqueta se rechazan o caen en un balde visible de *no asignado*. Empieza con **showback** (cada equipo ve su factura) y pasa a **chargeback** cuando todos confíen en los números.\n2. **Presupuestar y alertar.** Presupuesto mensual por equipo, alertas cuando el *pronóstico* supera el presupuesto y ante picos diarios, y topes duros en keys de desarrollo y loops de agentes.\n3. **Economía unitaria.** Divide el costo por el resultado que paga el negocio: costo por ticket resuelto, por documento procesado, por usuario activo. Que el gasto total suba está bien si el costo unitario baja.\n4. **Optimizar, primero la palanca más barata.** Recorta prompts y limita los tokens de salida, [[prompt-caching]], [[model-routing]] hacia modelos más chicos, [[semantic-caching]] y [[batch-inference]] para todo lo que no sea interactivo. Si hospedas tus modelos, mira la **utilización de GPU**: una GPU ociosa cuesta lo mismo que una ocupada.\n5. **Comprometer y pronosticar.** Solo con una base estable compra capacidad reservada o aprovisionada. Pronostica como usuarios × llamadas por usuario × tokens por llamada × precio, y rehazlo cuando cambie cualquier factor."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  A[App call] --> G[\"Gateway tags<br/>team, feature, customer\"]\n  G --> L[(Usage logs)]\n  L --> D[\"Cost per feature<br/>and per outcome\"]\n  D --> B{Over forecast?}\n  B -->|no| R[Monthly review]\n  B -->|yes| O[\"Alert owner<br/>cap dev keys\"]\n  O --> V{Cheapest lever?}\n  V --> P[\"Trim prompt<br/>cap output\"]\n  V --> C[Cache or batch]\n  V --> M[Route to smaller model]\n  R --> K[\"Commit capacity<br/>on stable baseline\"]",
+    "caption": {
+      "en": "Attribution makes spend visible, unit cost makes it meaningful, and only a stable baseline justifies a commitment.",
+      "es": "La atribución hace visible el gasto, el costo unitario le da sentido y solo una base estable justifica un compromiso."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "Cost per feature and per outcome from gateway logs", "es": "Costo por funcionalidad y por resultado desde los logs del gateway" },
+    "source": "-- Last 30 days, prod only. gateway_logs: one row per LLM call, tagged at the gateway.\n-- model_prices: USD per 1M tokens with validity dates, because prices change.\nWITH spend AS (\n  SELECT COALESCE(g.feature, 'UNALLOCATED') AS feature,  -- make missing tags visible\n         SUM( g.uncached_input_tokens * p.input_usd_per_m\n            + g.cached_input_tokens   * p.cached_input_usd_per_m\n            + g.output_tokens         * p.output_usd_per_m ) / 1e6 AS cost_usd,\n         COUNT(*) AS calls\n  FROM gateway_logs g\n  JOIN model_prices p\n    ON p.model = g.model\n   AND g.ts >= p.valid_from AND g.ts < p.valid_to\n  WHERE g.ts >= CURRENT_DATE - INTERVAL '30 days'\n    AND g.env = 'prod'\n  GROUP BY 1\n),\nresults AS (  -- the outcome the business pays for, from the product's own tables\n  SELECT feature, COUNT(*) AS outcomes  -- e.g. resolved tickets, processed documents\n  FROM business_outcomes\n  WHERE ts >= CURRENT_DATE - INTERVAL '30 days'\n  GROUP BY feature\n)\nSELECT s.feature,\n       s.calls,\n       ROUND(s.cost_usd, 2)                         AS cost_usd,\n       r.outcomes,\n       ROUND(s.cost_usd / NULLIF(r.outcomes, 0), 4) AS cost_per_outcome\nFROM spend s\nLEFT JOIN results r USING (feature)\nORDER BY s.cost_usd DESC;"
+  },
+  "example": {
+    "en": "A support copilot costs $38k a month and finance wants it cut. Gateway tags show most of the spend is one feature: *summarize thread*, called on every page load with a 12k-token prompt. Cost per resolved ticket is $1.90. The team caches the summary per thread version, trims the system prompt from 4k to 1.5k tokens, caps output at 300 tokens, routes intent classification to a small model and moves nightly QA scoring to the batch API. Each change passes the eval set first. Spend drops to ~$17k with resolved tickets flat, so cost per ticket falls to ~$0.85, and that unit number, not the total, goes into the quarterly review.",
+    "es": "Un copiloto de soporte cuesta $38k al mes y finanzas quiere recortarlo. Las etiquetas del gateway muestran que casi todo el gasto es una funcionalidad: *resumir hilo*, que se llama en cada carga de página con un prompt de 12k tokens. El costo por ticket resuelto es $1.90. El equipo cachea el resumen por versión del hilo, recorta el system prompt de 4k a 1.5k tokens, limita la salida a 300 tokens, manda la clasificación de intención a un modelo chico y pasa el scoring nocturno de QA a la API de batch. Cada cambio pasa primero por el set de evals. El gasto baja a ~$17k con los mismos tickets resueltos, así que el costo por ticket cae a ~$0.85, y ese número unitario, no el total, es el que va a la revisión trimestral."
+  },
+  "pros": [
+    { "en": "Turns \"AI is expensive\" into named owners, features and unit costs you can act on.", "es": "Convierte \"la IA es cara\" en dueños, funcionalidades y costos unitarios concretos sobre los que puedes actuar." },
+    { "en": "Unit economics separate healthy growth from waste: spend can rise while cost per outcome falls.", "es": "La economía unitaria separa el crecimiento sano del desperdicio: el gasto puede subir mientras el costo por resultado baja." },
+    { "en": "Catches runaway agent loops and leaked keys in hours, not on the month-end invoice.", "es": "Detecta loops de agentes desbocados y keys filtradas en horas, no en la factura de fin de mes." }
+  ],
+  "cons": [
+    { "en": "Tagging discipline is real work; untagged spend quietly becomes nobody's problem.", "es": "La disciplina de etiquetado cuesta trabajo; el gasto sin etiqueta termina siendo problema de nadie." },
+    { "en": "Chargeback too early breeds disputes and teams gaming tags instead of optimizing.", "es": "Un chargeback prematuro genera disputas y equipos que maquillan etiquetas en vez de optimizar." },
+    { "en": "Cost cutting without evals silently degrades quality and can raise cost per outcome.", "es": "Recortar costos sin evals degrada la calidad en silencio y puede subir el costo por resultado." }
+  ],
+  "whenToUse": {
+    "en": "As soon as AI spend is a line item someone asks about: several teams share providers, a feature runs per user or per document, or you are about to sign a commitment.",
+    "es": "En cuanto el gasto en IA sea una línea por la que alguien pregunta: varios equipos comparten proveedores, una funcionalidad corre por usuario o por documento, o estás por firmar un compromiso."
+  },
+  "whenNotToUse": {
+    "en": "A single prototype on a capped card: the provider dashboard and a hard budget are enough. Don't build chargeback before anyone is spending real money.",
+    "es": "Un solo prototipo con una tarjeta con tope: el panel del proveedor y un presupuesto duro alcanzan. No armes chargeback antes de que alguien gaste dinero de verdad."
+  },
+  "numbers": [
+    { "en": "Batch APIs (OpenAI, Anthropic) bill asynchronous jobs at ~50% of the synchronous price, with up to 24 h turnaround.", "es": "Las APIs de batch (OpenAI, Anthropic) cobran los trabajos asíncronos a ~50% del precio síncrono, con hasta 24 h de entrega." },
+    { "en": "Output tokens list at several times the input price on major APIs (4× and 5× are common), so output caps pay off early.", "es": "En las APIs principales el token de salida cuesta varias veces el de entrada (4× y 5× son comunes), así que limitar la salida rinde pronto." },
+    { "en": "Forecast: monthly cost ≈ active users × calls per user × tokens per call × blended price per token.", "es": "Pronóstico: costo mensual ≈ usuarios activos × llamadas por usuario × tokens por llamada × precio combinado por token." },
+    { "en": "Self-hosted: cost per token = GPU cost per hour ÷ tokens actually served per hour. Utilization is the whole game.", "es": "Si hospedas: costo por token = costo de GPU por hora ÷ tokens realmente servidos por hora. La utilización lo es todo." }
+  ],
+  "pitfalls": [
+    { "en": "Attributing by API key only: a key shared by three features tells you nothing. Tag feature and customer per request.", "es": "Atribuir solo por API key: una key que comparten tres funcionalidades no te dice nada. Etiqueta funcionalidad y cliente en cada request." },
+    { "en": "Alerting at 100% of budget, when the money is already spent. Alert on forecast and on spikes.", "es": "Alertar al 100% del presupuesto, cuando el dinero ya se gastó. Alerta sobre el pronóstico y sobre los picos." },
+    { "en": "Switching to a cheaper model without an eval: it resolves fewer tickets and cost per resolved ticket goes up.", "es": "Cambiar a un modelo más barato sin eval: resuelve menos tickets y el costo por ticket resuelto sube." },
+    { "en": "Committing to capacity on a launch-month baseline, then migrating models and paying for capacity you no longer use.", "es": "Comprometer capacidad con la base del mes de lanzamiento, luego migrar de modelo y pagar capacidad que ya no usas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Finance says AI spend tripled this quarter. What do you do?", "es": "Finanzas dice que el gasto en IA se triplicó este trimestre. ¿Qué haces?" },
+      "a": {
+        "en": "First I separate growth from waste. I break spend down by feature and model from the gateway logs and divide by the business outcome. If usage tripled and cost per resolved ticket is flat or falling, that is success, and I say so with the unit number. If unit cost rose, I find the cause: a new agent loop, a prompt that grew, a model upgrade nobody re-priced. Then I pull the cheapest levers first, prompt trimming, output caps, caching, routing, batch, each gated by our evals so quality doesn't regress quietly.",
+        "es": "Primero separo crecimiento de desperdicio. Desgloso el gasto por funcionalidad y modelo desde los logs del gateway y lo divido por el resultado de negocio. Si el uso se triplicó y el costo por ticket resuelto está igual o bajando, es un éxito, y lo digo con el número unitario. Si el costo unitario subió, busco la causa: un loop de agente nuevo, un prompt que creció, un cambio de modelo que nadie volvió a costear. Después uso primero las palancas más baratas, recorte de prompts, topes de salida, caché, ruteo, batch, cada una validada con nuestros evals para que la calidad no empeore en silencio."
+      }
+    },
+    {
+      "q": { "en": "When would you commit to reserved or provisioned capacity?", "es": "¿Cuándo te comprometerías con capacidad reservada o aprovisionada?" },
+      "a": {
+        "en": "Only when the baseline is stable and I know which model it runs on. A commitment trades flexibility for a discount, and in AI the price of a given capability keeps falling and we change models often. So I commit to the floor of steady traffic, the trailing minimum rather than the peak, keep spikes on-demand, and prefer short terms or commitments that can move across models. For self-hosted GPUs I commit only after utilization is high, because idle reserved GPUs are pure waste.",
+        "es": "Solo cuando la base es estable y sé en qué modelo corre. Un compromiso cambia flexibilidad por descuento, y en IA el precio de una misma capacidad no deja de bajar y cambiamos de modelo seguido. Así que me comprometo con el piso del tráfico estable, el mínimo reciente y no el pico, dejo los picos on-demand y prefiero plazos cortos o compromisos que se puedan mover entre modelos. Con GPUs propias me comprometo solo cuando la utilización ya es alta, porque una GPU reservada ociosa es desperdicio puro."
+      }
+    },
+    {
+      "q": { "en": "How do you get teams to care about cost without slowing them down?", "es": "¿Cómo logras que los equipos se preocupen por el costo sin frenarlos?" },
+      "a": {
+        "en": "I make cost visible and owned rather than approved. Each team gets a showback dashboard with its spend and unit cost, a budget with alerts that go to the team, not to me, and hard caps only on dev keys and agent loops. Design review templates get one line: expected cost per request and per outcome. The trade-off is that some waste survives longer than under central approval, but I'd rather that than a ticket queue in front of every experiment.",
+        "es": "Hago el costo visible y con dueño, en lugar de pedir aprobaciones. Cada equipo tiene un dashboard de showback con su gasto y su costo unitario, un presupuesto con alertas que le llegan al equipo, no a mí, y topes duros solo en keys de desarrollo y loops de agentes. Las plantillas de revisión de diseño suman una línea: costo esperado por request y por resultado. El trade-off es que algo de desperdicio dura más que con aprobación central, pero lo prefiero a una cola de tickets delante de cada experimento."
+      }
+    }
+  ],
+  "related": ["token-economics", "llm-gateway", "model-routing", "prompt-caching", "batch-inference", "api-vs-self-host"],
+  "sources": [
+    { "title": "FinOps Foundation — FinOps for AI Overview", "url": "https://www.finops.org/wg/finops-for-ai-overview/" },
+    { "title": "FinOps Foundation — FinOps Framework", "url": "https://www.finops.org/framework/" },
+    { "title": "OpenAI — Batch API guide", "url": "https://platform.openai.com/docs/guides/batch" }
+  ]
+}
