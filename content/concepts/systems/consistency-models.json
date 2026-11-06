@@ -1,0 +1,88 @@
+{
+  "id": "consistency-models",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Consistency models", "es": "Modelos de consistencia" },
+  "aliases": ["linearizability", "strong consistency", "eventual consistency", "causal consistency", "read-your-writes", "monotonic reads", "quorum", "session guarantees"],
+  "tldr": {
+    "en": "The contract for what a read may return on replicated data, from linearizable (behaves like one up-to-date copy) to eventual (converges someday). Stronger contracts cost latency and availability.",
+    "es": "El contrato sobre qué puede devolver una lectura en datos replicados, desde linealizable (se comporta como una sola copia al día) hasta eventual (converge algún día). Los contratos más fuertes cuestan latencia y disponibilidad."
+  },
+  "analogy": {
+    "en": "A group chat: linearizable means everyone sees each message the instant it's sent; causal means a reply never shows up before its question; eventual means everyone gets the whole thread, sometime.",
+    "es": "Un chat grupal: linealizable es que todos ven cada mensaje en el instante en que se envía; causal es que una respuesta nunca aparece antes de su pregunta; eventual es que todos reciben el hilo completo, en algún momento."
+  },
+  "explain": {
+    "en": "A **consistency model** is the promise a replicated store makes about what reads can return. From strongest to weakest:\n\n- **Linearizable (strong)**: behaves like one copy. Once a write is acknowledged, every later read, from anyone, sees it.\n- **Sequential**: everyone sees all operations in the *same* order, respecting each client's own order, but not necessarily real time.\n- **Causal**: operations that depend on each other (question → reply) appear in that order to everyone; unrelated ones may differ. Roughly the strongest model that stays available during a partition.\n- **Session guarantees**: per-client promises, mainly **read-your-writes** (you see your own updates) and **monotonic reads** (you never go back in time).\n- **Eventual**: if writes stop, replicas converge. No bound on staleness.\n\nWith **quorums** (N replicas, W write acks, R read replies), **R + W > N** makes every read set overlap the latest write set, e.g. N=3, W=2, R=2.\n\nStrength costs **latency**: a linearizable write must reach a majority, which across regions means ~70–150 ms instead of ~1 ms. So choose per data: balances and uniqueness constraints need linearizable; like counts are fine eventual; chat history needs read-your-writes, or the LLM answers without the message the user just sent.",
+    "es": "Un **modelo de consistencia** es la promesa que hace un almacenamiento replicado sobre qué pueden devolver las lecturas. Del más fuerte al más débil:\n\n- **Linealizable (fuerte)**: se comporta como una sola copia. Una vez que se confirma una escritura, toda lectura posterior, de quien sea, la ve.\n- **Secuencial**: todos ven las operaciones en el *mismo* orden, respetando el orden propio de cada cliente, pero no necesariamente en tiempo real.\n- **Causal**: las operaciones que dependen entre sí (pregunta → respuesta) aparecen en ese orden para todos; las no relacionadas pueden variar. Es más o menos el modelo más fuerte que sigue disponible durante una partición.\n- **Garantías de sesión**: promesas por cliente, sobre todo **read-your-writes** (ves tus propias actualizaciones) y **lecturas monótonas** (nunca retrocedes en el tiempo).\n- **Eventual**: si las escrituras se detienen, las réplicas convergen. No hay límite para el atraso.\n\nCon **quórums** (N réplicas, W confirmaciones de escritura, R respuestas de lectura), **R + W > N** hace que todo conjunto de lectura se solape con el de la última escritura; por ejemplo, N=3, W=2, R=2.\n\nLa fuerza cuesta **latencia**: una escritura linealizable debe llegar a una mayoría, y entre regiones eso son ~70–150 ms en vez de ~1 ms. Así que elige por tipo de dato: saldos y restricciones de unicidad necesitan linealizable; los contadores de likes van bien con eventual; el historial de chat necesita read-your-writes, o el LLM responde sin el mensaje que el usuario acaba de enviar."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  W[\"Write v2 (W=2)\"] --> A[(\"Replica A: v2\")]\n  W --> B[(\"Replica B: v2\")]\n  W -.->|\"not yet\"| C[(\"Replica C: v1\")]\n  B --> R[\"Read (R=2)\"]\n  C --> R\n  R --> V[\"Newest version wins: v2\"]",
+    "caption": {
+      "en": "With N=3, W=2, R=2, any two replicas you read include at least one that took the write, so the newest version is visible.",
+      "es": "Con N=3, W=2, R=2, cualquier par de réplicas que leas incluye al menos una que recibió la escritura, así que la versión más nueva es visible."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Read-your-writes with Postgres replicas (LSN token)", "es": "Read-your-writes con réplicas de Postgres (token LSN)" },
+    "source": "import psycopg\n\ndef send_message(primary: psycopg.Connection, conv_id: str, text: str) -> str:\n    primary.execute(\"INSERT INTO messages (conv_id, body) VALUES (%s, %s)\", (conv_id, text))\n    primary.commit()\n    # WAL position after my commit: a \"causality token\" kept in the user's session\n    return primary.execute(\"SELECT pg_current_wal_lsn()::text\").fetchone()[0]\n\ndef caught_up(replica: psycopg.Connection, token: str) -> bool:\n    row = replica.execute(\"SELECT pg_last_wal_replay_lsn() >= %s::pg_lsn\", (token,)).fetchone()\n    return bool(row[0])\n\ndef load_history(primary, replicas, conv_id: str, token: str | None) -> list[str]:\n    # Any replica that replayed past my last write is good enough; otherwise use\n    # the primary. Never build the LLM prompt from a history missing my last turn.\n    conn = next((r for r in replicas if token is None or caught_up(r, token)), primary)\n    rows = conn.execute(\n        \"SELECT body FROM messages WHERE conv_id = %s ORDER BY id\", (conv_id,)\n    ).fetchall()\n    return [body for (body,) in rows]"
+  },
+  "example": {
+    "en": "A chat assistant writes each user message to the Postgres primary and builds the next prompt from a read replica. During a nightly batch load, replica lag reaches **2 s**. A user sends *\"Actually, answer in Spanish\"* and the model replies in English: the context came from a replica that hadn't seen the message yet. The model is fine; it's a **read-your-writes** violation. Fix: keep the WAL position of the user's last write and read only from replicas past it, else from the primary. The like counter on the same page stays eventual.",
+    "es": "Un asistente de chat escribe cada mensaje del usuario en el primario de Postgres y arma el siguiente prompt desde una réplica de lectura. Durante una carga batch nocturna, el lag de la réplica llega a **2 s**. Un usuario envía *\"Mejor responde en español\"* y el modelo contesta en inglés: el contexto salió de una réplica que todavía no veía ese mensaje. El modelo está bien; es una violación de **read-your-writes**. Solución: guarda la posición WAL de la última escritura del usuario y lee solo de réplicas que ya la pasaron o, si no, del primario. El contador de likes de la misma página sigue siendo eventual."
+  },
+  "pros": [
+    { "en": "Choosing per data type means you pay coordination cost only where correctness needs it.", "es": "Elegir por tipo de dato significa pagar el costo de coordinación solo donde la corrección lo necesita." },
+    { "en": "Session guarantees fix most user-visible anomalies at a fraction of linearizability's cost.", "es": "Las garantías de sesión arreglan la mayoría de las anomalías visibles para el usuario a una fracción del costo de la linealizabilidad." },
+    { "en": "Eventual consistency keeps reads local, fast and available through partitions.", "es": "La consistencia eventual mantiene las lecturas locales, rápidas y disponibles durante particiones." }
+  ],
+  "cons": [
+    { "en": "Linearizability costs a majority round trip per write: ~70–150 ms across regions.", "es": "La linealizabilidad cuesta un round trip a una mayoría por escritura: ~70–150 ms entre regiones." },
+    { "en": "Weaker models push anomaly handling into application code that few people test.", "es": "Los modelos más débiles empujan el manejo de anomalías al código de la aplicación, que poca gente prueba." },
+    { "en": "Vendor terms (\"strong\", \"session\", \"bounded staleness\") don't map cleanly to textbook models; read the fine print.", "es": "Los términos de cada proveedor (\"strong\", \"session\", \"bounded staleness\") no coinciden exactamente con los modelos teóricos; lee la letra chica." }
+  ],
+  "whenToUse": {
+    "en": "Whenever data is replicated or cached: decide per entity which anomalies users can tolerate, then pick the weakest model that rules out the rest.",
+    "es": "Siempre que los datos estén replicados o en caché: decide por entidad qué anomalías toleran los usuarios y elige el modelo más débil que descarte las demás."
+  },
+  "whenNotToUse": {
+    "en": "Don't buy global linearizability by default for counters, feeds or analytics: you pay latency and availability for a guarantee nobody notices.",
+    "es": "No compres linealizabilidad global por defecto para contadores, feeds o analítica: pagas latencia y disponibilidad por una garantía que nadie nota."
+  },
+  "numbers": [
+    { "en": "Quorum rule: R + W > N; the usual setting is N=3, W=2, R=2.", "es": "Regla de quórum: R + W > N; la configuración habitual es N=3, W=2, R=2." },
+    { "en": "DynamoDB reads are eventually consistent by default; a strongly consistent read costs 2× the read capacity.", "es": "En DynamoDB las lecturas son eventualmente consistentes por defecto; una lectura fuertemente consistente cuesta el doble de capacidad de lectura." },
+    { "en": "Amazon S3 has been strongly read-after-write consistent since December 2020.", "es": "Amazon S3 tiene consistencia fuerte de lectura después de escritura desde diciembre de 2020." },
+    { "en": "Spanner's commit wait covers TrueTime uncertainty: ~1–7 ms in the 2012 paper.", "es": "El commit wait de Spanner cubre la incertidumbre de TrueTime: ~1–7 ms según el paper de 2012." }
+  ],
+  "pitfalls": [
+    { "en": "Assuming R + W > N means linearizable: sloppy quorums, last-write-wins on concurrent writes and partial failures still return stale or lost data.", "es": "Suponer que R + W > N es linealizable: los sloppy quorums, last-write-wins en escrituras concurrentes y las fallas parciales siguen devolviendo datos viejos o perdidos." },
+    { "en": "Letting the ORM route reads to replicas and silently losing read-your-writes.", "es": "Dejar que el ORM mande las lecturas a réplicas y perder read-your-writes sin darte cuenta." },
+    { "en": "Defaulting to \"strong\" everywhere and paying a cross-region round trip on every write, even for counters.", "es": "Usar \"strong\" en todo por defecto y pagar un round trip entre regiones en cada escritura, incluso para contadores." },
+    { "en": "Load balancing reads across replicas with different lag: a comment appears, then vanishes on refresh. Use sticky routing per session.", "es": "Balancear lecturas entre réplicas con distinto lag: un comentario aparece y desaparece al recargar. Usa ruteo fijo por sesión." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "What consistency would you choose for an assistant's conversation history?", "es": "¿Qué consistencia elegirías para el historial de conversación de un asistente?" },
+      "a": {
+        "en": "Read-your-writes plus causal ordering, not global linearizability. The user must always see, and the model must always be prompted with, their own latest message, and a reply must never appear before its question. Other users rarely read that conversation, so cross-user real-time ordering buys nothing. I'd implement it with a session token, the WAL position of the last write, reading from any replica past it and falling back to the primary. Most reads stay on replicas, without the \"the model ignored me\" bug.",
+        "es": "Read-your-writes más orden causal, no linealizabilidad global. El usuario siempre debe ver su último mensaje, y el modelo siempre debe recibirlo en el prompt, y una respuesta nunca debe aparecer antes de su pregunta. Otros usuarios casi nunca leen esa conversación, así que el orden en tiempo real entre usuarios no aporta nada. Lo implementaría con un token de sesión, la posición WAL de la última escritura, leyendo de cualquier réplica que ya la pasó y, si no, del primario. La mayoría de las lecturas se quedan en réplicas, sin el bug de \"el modelo me ignoró\"."
+      }
+    },
+    {
+      "q": { "en": "Does R + W > N give you linearizability?", "es": "¿R + W > N te da linealizabilidad?" },
+      "a": {
+        "en": "No, only overlap. With concurrent writes and last-write-wins timestamps, clock skew can drop the newer value. Sloppy quorums with hinted handoff write to nodes outside the N. A write that reached only some replicas can be seen by one reader and missed by the next. Dynamo-style stores need synchronous read repair to get there, and in practice I'd use a consensus-backed store when I truly need it. Quorums give a strong likelihood of recency, not a guarantee.",
+        "es": "No, solo solapamiento. Con escrituras concurrentes y timestamps de last-write-wins, el desfase de relojes puede descartar el valor más nuevo. Los sloppy quorums con hinted handoff escriben en nodos fuera de los N. Una escritura que llegó solo a algunas réplicas puede verla un lector y no verla el siguiente. Los almacenamientos estilo Dynamo necesitan read repair síncrono para lograrlo, y en la práctica uso un almacenamiento basado en consenso cuando de verdad lo necesito. Los quórums dan alta probabilidad de leer lo más reciente, no una garantía."
+      }
+    }
+  ],
+  "related": ["cap-pacelc", "replication", "consensus", "caching", "agent-memory"],
+  "sources": [
+    { "title": "Jepsen — Consistency Models", "url": "https://jepsen.io/consistency" },
+    { "title": "Werner Vogels — Eventually Consistent", "url": "https://www.allthingsdistributed.com/2008/12/eventually_consistent.html" },
+    { "title": "Amazon DynamoDB — Read consistency", "url": "https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/HowItWorks.ReadConsistency.html" },
+    { "title": "Martin Kleppmann — Designing Data-Intensive Applications", "url": "https://dataintensive.net/" }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "id": "replication",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Replication", "es": "Replicación" },
+  "aliases": ["leader-follower", "primary-replica", "read replicas", "multi-leader", "leaderless replication", "failover", "replication lag", "split brain"],
+  "tldr": {
+    "en": "Keep copies of the same data on several nodes for durability, availability and read scale. You choose who accepts writes (one, many or any node) and whether to wait for copies before acknowledging.",
+    "es": "Mantén copias de los mismos datos en varios nodos para durabilidad, disponibilidad y escalar lecturas. Eliges quién acepta escrituras (uno, varios o cualquier nodo) y si esperas a las copias antes de confirmar."
+  },
+  "analogy": {
+    "en": "A head chef (leader) changes the recipes; line cooks (followers) copy them onto their cards. A cook who copies late serves yesterday's dish: that's replication lag.",
+    "es": "La chef principal (líder) cambia las recetas; los cocineros (seguidores) las copian en sus tarjetas. Un cocinero que copia tarde sirve el plato de ayer: eso es el lag de replicación."
+  },
+  "explain": {
+    "en": "**Replication** keeps the same data on several machines so you survive node loss and spread reads. Three topologies:\n\n- **Single-leader** (Postgres, MySQL, MongoDB): all writes go to the leader, which streams its log to followers. **Synchronous** followers ack before the commit returns: no data loss on failover, but more latency, and a dead follower can block writes. **Asynchronous** followers are fast but lag, so failover can lose the last seconds of writes. The usual compromise: one sync follower, the rest async.\n- **Multi-leader**: a leader per region accepts local writes and replicates to the others. Low write latency everywhere, but two regions can edit the same row, so you need **conflict resolution** (last-write-wins loses data; CRDTs or app-level merges don't).\n- **Leaderless** (Dynamo, Cassandra): clients write to W of N replicas and read from R. **Read repair** fixes stale replicas during reads; background anti-entropy fixes the rest.\n\n**Failover** promotes a follower when the leader dies. The danger is **split brain**: two nodes both accepting writes. Use consensus-based election (Patroni on etcd) plus **fencing**, so the old leader's writes are rejected.\n\n**Read replicas** scale reads but add **lag anomalies**: users who don't see their own update need read-your-writes routing, see [[consistency-models]].",
+    "es": "La **replicación** mantiene los mismos datos en varias máquinas para sobrevivir a la pérdida de un nodo y repartir lecturas. Hay tres topologías:\n\n- **Un solo líder** (Postgres, MySQL, MongoDB): todas las escrituras van al líder, que envía su log a los seguidores. Los seguidores **síncronos** confirman antes de que el commit regrese: no se pierden datos en un failover, pero hay más latencia y un seguidor caído puede bloquear escrituras. Los **asíncronos** son rápidos pero se atrasan, así que un failover puede perder los últimos segundos de escrituras. El punto medio habitual: un seguidor síncrono y el resto asíncronos.\n- **Multilíder**: un líder por región acepta escrituras locales y replica a los demás. Latencia de escritura baja en todas partes, pero dos regiones pueden editar la misma fila, así que necesitas **resolución de conflictos** (last-write-wins pierde datos; los CRDTs o las fusiones a nivel de aplicación no).\n- **Sin líder** (Dynamo, Cassandra): los clientes escriben en W de N réplicas y leen de R. El **read repair** corrige réplicas atrasadas durante las lecturas; un proceso anti-entropía en segundo plano corrige el resto.\n\nEl **failover** promueve a un seguidor cuando el líder muere. El peligro es el **split brain**: dos nodos aceptando escrituras a la vez. Usa elección basada en consenso (Patroni sobre etcd) más **fencing**, para que se rechacen las escrituras del líder viejo.\n\nLas **réplicas de lectura** escalan lecturas pero traen **anomalías de lag**: un usuario que no ve su propia actualización necesita ruteo read-your-writes, mira [[consistency-models]]."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  CW[Client writes] --> L[(Leader)]\n  L -->|\"sync: ack before commit\"| F1[(\"Follower A<br/>other AZ\")]\n  L -.->|\"async: lag ms to s\"| F2[(Follower B)]\n  L -.->|async| F3[(Follower C)]\n  CR[Client reads] --> F2\n  CR --> F3\n  H[\"Failover manager<br/>(Patroni + etcd)\"] -.->|health checks| L\n  H -.->|\"promote on failure\"| F1",
+    "caption": {
+      "en": "One sync follower means no committed write is lost on failover; async followers serve reads but can lag. The failover manager promotes the sync follower.",
+      "es": "Un seguidor síncrono garantiza que ninguna escritura confirmada se pierda en un failover; los asíncronos sirven lecturas pero pueden atrasarse. El gestor de failover promueve al síncrono."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "Semi-sync replication and lag checks in Postgres", "es": "Replicación semisíncrona y medición de lag en Postgres" },
+    "source": "-- Primary: commit waits for ANY 1 of 2 standbys to flush (RPO = 0 for one failure);\n-- a single slow standby no longer blocks every write.\nALTER SYSTEM SET synchronous_standby_names = 'ANY 1 (replica_a, replica_b)';\nALTER SYSTEM SET synchronous_commit = 'on';  -- 'remote_apply': also visible on the standby\nSELECT pg_reload_conf();\n\n-- Low-value writes can skip the wait, scoped to their own transaction\nBEGIN;\nSET LOCAL synchronous_commit = 'local';\nINSERT INTO usage_events (tenant_id, tokens) VALUES (42, 1830);\nCOMMIT;\n\n-- Primary: lag per standby (PostgreSQL 10+)\nSELECT application_name, sync_state, write_lag, flush_lag, replay_lag\nFROM pg_stat_replication;\n\n-- Replica: how stale am I? (overstates lag when the primary is idle)\nSELECT now() - pg_last_xact_replay_timestamp() AS replica_lag;"
+  },
+  "example": {
+    "en": "An AI support platform keeps chunks and embeddings in Postgres + pgvector: a primary plus two async read replicas that serve retrieval. A nightly re-embedding job rewrites 2M rows and replica lag climbs to **40 s**. A customer uploads a PDF and immediately asks about it; retrieval hits a replica and the bot says it can't find the document. Fixes: route that tenant's retrieval to the primary for ~60 s after an upload, throttle the batch job, and alert when `replay_lag` exceeds 5 s.",
+    "es": "Una plataforma de soporte con IA guarda chunks y embeddings en Postgres + pgvector: un primario y dos réplicas de lectura asíncronas que atienden la recuperación. Un job nocturno de re-embedding reescribe 2M de filas y el lag de las réplicas sube a **40 s**. Un cliente sube un PDF y pregunta por él de inmediato; la recuperación cae en una réplica y el bot dice que no encuentra el documento. Soluciones: mandar la recuperación de ese tenant al primario durante ~60 s después de una carga, limitar el ritmo del job batch y alertar cuando `replay_lag` supere 5 s."
+  },
+  "pros": [
+    { "en": "Survives node and zone loss; with a sync follower, without losing committed writes.", "es": "Sobrevive a la pérdida de un nodo o una zona; con un seguidor síncrono, sin perder escrituras confirmadas." },
+    { "en": "Read replicas scale read-heavy workloads such as retrieval and dashboards.", "es": "Las réplicas de lectura escalan cargas con muchas lecturas, como la recuperación y los dashboards." },
+    { "en": "Replicas in other regions cut read latency and give you a disaster-recovery copy.", "es": "Las réplicas en otras regiones bajan la latencia de lectura y te dan una copia para recuperación ante desastres." }
+  ],
+  "cons": [
+    { "en": "Async lag creates stale reads and can lose the last writes on failover.", "es": "El lag asíncrono provoca lecturas viejas y puede perder las últimas escrituras en un failover." },
+    { "en": "Sync replication adds a round trip to every commit and ties write availability to followers.", "es": "La replicación síncrona suma un round trip a cada commit y ata la disponibilidad de escritura a los seguidores." },
+    { "en": "Multi-leader and leaderless setups push conflict resolution into your design.", "es": "Las configuraciones multilíder y sin líder empujan la resolución de conflictos a tu diseño." }
+  ],
+  "whenToUse": {
+    "en": "For essentially all production data: at least one replica in another zone for failover, read replicas when reads dominate, and cross-region replicas for disaster recovery or local reads.",
+    "es": "Para prácticamente todos los datos de producción: al menos una réplica en otra zona para failover, réplicas de lectura cuando dominan las lecturas y réplicas en otras regiones para recuperación ante desastres o lecturas locales."
+  },
+  "whenNotToUse": {
+    "en": "As your backup strategy: replicas copy a bad `DELETE` within milliseconds, so keep point-in-time backups. Don't serve from replicas reads that must see the latest write.",
+    "es": "Como tu estrategia de backup: las réplicas copian un `DELETE` equivocado en milisegundos, así que mantén backups point-in-time. No sirvas desde réplicas lecturas que deban ver la última escritura."
+  },
+  "numbers": [
+    { "en": "Amazon Aurora: up to 15 read replicas, with lag typically under 100 ms (AWS docs).", "es": "Amazon Aurora: hasta 15 réplicas de lectura, con lag normalmente menor a 100 ms (docs de AWS)." },
+    { "en": "RDS Multi-AZ (one standby) failover typically completes in 1–2 minutes.", "es": "El failover de RDS Multi-AZ (un standby) suele completarse en 1–2 minutos." },
+    { "en": "Patroni's default leader-lock TTL is 30 s: the worst-case detection time before promotion.", "es": "El TTL por defecto del lock de líder en Patroni es 30 s: el peor tiempo de detección antes de promover." },
+    { "en": "RF=3 is the common choice: with quorum 2, it survives losing one replica.", "es": "RF=3 es la elección habitual: con quórum 2, sobrevive a la pérdida de una réplica." },
+    { "en": "GitHub, Oct 2018: a 43 s network partition led to a cross-region failover and ~24 h of degraded service.", "es": "GitHub, oct. 2018: una partición de red de 43 s llevó a un failover entre regiones y ~24 h de servicio degradado." }
+  ],
+  "pitfalls": [
+    { "en": "Reading from a replica right after a write and showing users, or the LLM, stale data.", "es": "Leer de una réplica justo después de escribir y mostrarle datos viejos al usuario, o al LLM." },
+    { "en": "Aggressive automatic failover: short timeouts promote on a GC pause or network blip, causing flapping or split brain.", "es": "Failover automático agresivo: timeouts cortos promueven ante una pausa de GC o un parpadeo de red y causan inestabilidad o split brain." },
+    { "en": "Failover without fencing: the old leader comes back and keeps accepting writes.", "es": "Failover sin fencing: el líder viejo vuelve y sigue aceptando escrituras." },
+    { "en": "Last-write-wins in multi-leader setups silently drops one of two concurrent edits.", "es": "Last-write-wins en configuraciones multilíder descarta sin avisar una de dos ediciones concurrentes." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Sync or async replication for the primary database?", "es": "¿Replicación síncrona o asíncrona para la base de datos principal?" },
+      "a": {
+        "en": "Neither alone: semi-sync. One synchronous standby in another availability zone, so a committed write survives losing the primary, giving zero RPO for a single failure at the cost of a ~1–2 ms cross-zone round trip per commit. With `ANY 1` over two standbys, one slow standby doesn't stall writes. Cross-region replicas stay async for disaster recovery, accepting a few seconds of RPO, because a synchronous cross-region commit would add ~70–150 ms to every write.",
+        "es": "Ninguna sola: semisíncrona. Un standby síncrono en otra zona de disponibilidad, para que una escritura confirmada sobreviva a la pérdida del primario: RPO cero ante una sola falla, a cambio de un round trip de ~1–2 ms entre zonas por commit. Con `ANY 1` sobre dos standbys, uno lento no frena las escrituras. Las réplicas en otras regiones quedan asíncronas para recuperación ante desastres, aceptando unos segundos de RPO, porque un commit síncrono entre regiones sumaría ~70–150 ms a cada escritura."
+      }
+    },
+    {
+      "q": { "en": "How do you prevent split brain during failover?", "es": "¿Cómo evitas el split brain durante un failover?" },
+      "a": {
+        "en": "Three layers. Leadership comes from a consensus store, like etcd behind Patroni, as a lease: a node that can't renew it must stop accepting writes. Then fencing: each leadership term gets an increasing epoch, and storage or downstream services reject writes from an old one. Finally, conservative automation across regions: GitHub's 2018 incident began with a 43-second partition and a cross-region promotion, and ended in about 24 hours of degraded service. For a short blip, waiting beats failing over.",
+        "es": "Tres capas. El liderazgo sale de un almacén de consenso, como etcd detrás de Patroni, en forma de lease: un nodo que no puede renovarlo debe dejar de aceptar escrituras. Luego, fencing: cada período de liderazgo recibe un epoch creciente, y el almacenamiento o los servicios downstream rechazan escrituras de uno viejo. Por último, automatización conservadora entre regiones: el incidente de GitHub en 2018 empezó con una partición de 43 segundos y una promoción entre regiones, y terminó en unas 24 horas de servicio degradado. Ante un parpadeo corto, esperar es mejor que hacer failover."
+      }
+    }
+  ],
+  "related": ["consistency-models", "cap-pacelc", "consensus", "sharding", "slos", "vector-databases"],
+  "sources": [
+    { "title": "PostgreSQL docs — High Availability, Load Balancing, and Replication", "url": "https://www.postgresql.org/docs/current/high-availability.html" },
+    { "title": "DeCandia et al. — Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)", "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf" },
+    { "title": "GitHub — October 21 post-incident analysis", "url": "https://github.blog/2018-10-30-oct21-post-incident-analysis/" },
+    { "title": "Martin Kleppmann — Designing Data-Intensive Applications", "url": "https://dataintensive.net/" }
+  ]
+}

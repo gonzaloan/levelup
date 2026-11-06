@@ -1,0 +1,96 @@
+{
+  "id": "consensus",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Consensus (Raft)", "es": "Consenso (Raft)" },
+  "aliases": ["Raft", "Paxos", "quorum", "leader election", "replicated log", "ZAB", "KRaft", "consenso"],
+  "tldr": {
+    "en": "A cluster agrees on one ordered log of commands despite crashes: a leader replicates each entry and commits it once a majority stores it, so 2f+1 nodes survive f failures.",
+    "es": "Un clúster se pone de acuerdo en un único log ordenado de comandos pese a las caídas: un líder replica cada entrada y la confirma cuando la guarda una mayoría, así que 2f+1 nodos toleran f fallas."
+  },
+  "analogy": {
+    "en": "A committee records a decision in the minutes only once more than half the members have signed it. Any two majorities share a member, so two contradictory decisions can never both pass.",
+    "es": "Un comité registra una decisión en el acta solo cuando más de la mitad de los miembros la firmó. Dos mayorías siempre comparten un miembro, así que nunca pueden aprobarse dos decisiones contradictorias."
+  },
+  "explain": {
+    "en": "**Consensus** lets a group of machines agree on one sequence of values — a **replicated log** — so every replica applies the same commands in the same order despite crashes and partitions. Apply that log to a state machine to get a fault-tolerant database, lock service or config store.\n\n**Raft** (2014) breaks it into three parts:\n\n1. **Leader election.** Time is split into numbered *terms*. A follower that hears no heartbeat within a randomized timeout (150–300 ms) becomes a candidate and asks for votes; a majority makes it leader. Each node votes once per term, and only for a candidate whose log is at least as up to date as its own.\n2. **Log replication.** Clients write to the leader, which appends the command and sends `AppendEntries` to followers. Once a **majority** has persisted it, the entry is *committed*, applied and acknowledged.\n3. **Safety.** Any two majorities overlap, so every new leader already holds all committed entries.\n\n**2f+1** nodes survive **f** failures: 3 tolerate 1, 5 tolerate 2; a 4th node adds cost, not tolerance. A minority partition cannot commit: Raft chooses consistency over availability ([[cap-pacelc]]).\n\n**Paxos** (Lamport) solves the same problem and underpins Chubby and Spanner. Raft runs **etcd** (Kubernetes' brain), **Consul**, CockroachDB and **Kafka KRaft**; ZooKeeper uses the similar **ZAB**. You consume consensus through these systems; you almost never write it.",
+    "es": "El **consenso** permite que un grupo de máquinas se ponga de acuerdo en una secuencia de valores (un **log replicado**) para que cada réplica aplique los mismos comandos en el mismo orden pese a caídas y particiones de red. Aplica ese log a una máquina de estados y obtienes una base de datos, un servicio de locks o un almacén de configuración tolerante a fallas.\n\n**Raft** (2014) lo divide en tres partes:\n\n1. **Elección de líder.** El tiempo se divide en *terms* numerados. Un follower que no recibe heartbeat dentro de un timeout aleatorio (150–300 ms) se vuelve candidato y pide votos; una mayoría lo convierte en líder. Cada nodo vota una vez por term, y solo por un candidato cuyo log esté al menos tan actualizado como el suyo.\n2. **Replicación del log.** Los clientes escriben al líder, que agrega el comando y envía `AppendEntries` a los followers. Cuando una **mayoría** lo persistió, la entrada queda *confirmada* (committed), se aplica y se responde.\n3. **Seguridad.** Dos mayorías siempre se cruzan, así que todo líder nuevo ya tiene todas las entradas confirmadas.\n\n**2f+1** nodos sobreviven a **f** fallas: 3 toleran 1 y 5 toleran 2; un 4.º nodo agrega costo, no tolerancia. Una partición minoritaria no puede confirmar nada: Raft elige consistencia sobre disponibilidad ([[cap-pacelc]]).\n\n**Paxos** (Lamport) resuelve el mismo problema y es la base de Chubby y Spanner. Raft mueve **etcd** (el cerebro de Kubernetes), **Consul**, CockroachDB y **Kafka KRaft**; ZooKeeper usa el similar **ZAB**. El consenso lo consumes a través de estos sistemas; casi nunca lo implementas."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant C as Client\n  participant L as Leader\n  participant F1 as Follower 1\n  participant F2 as Follower 2\n  C->>L: PUT x=1\n  L->>L: Append entry 42, fsync\n  L->>F1: AppendEntries(term 5, 42)\n  L->>F2: AppendEntries(term 5, 42)\n  F1-->>L: OK after fsync\n  Note over L,F1: 2 of 3 stored it, committed\n  L->>L: Apply to state machine\n  L-->>C: OK\n  F2-->>L: OK (late, harmless)",
+    "caption": {
+      "en": "A write costs one round trip to the fastest majority plus an fsync; the slow follower doesn't delay the commit.",
+      "es": "Una escritura cuesta un viaje de ida y vuelta a la mayoría más rápida más un fsync; el follower lento no retrasa la confirmación."
+    }
+  },
+  "code": {
+    "lang": "go",
+    "title": { "en": "Leader election on etcd with a fencing token", "es": "Elección de líder en etcd con fencing token" },
+    "source": "package main\n\nimport (\n\t\"context\"\n\t\"log\"\n\t\"os\"\n\n\tclientv3 \"go.etcd.io/etcd/client/v3\"\n\t\"go.etcd.io/etcd/client/v3/concurrency\"\n)\n\nfunc main() {\n\tcli, err := clientv3.New(clientv3.Config{Endpoints: []string{\"etcd-0:2379\", \"etcd-1:2379\", \"etcd-2:2379\"}})\n\tif err != nil {\n\t\tlog.Fatal(err)\n\t}\n\tdefer cli.Close()\n\n\t// Session = a lease kept alive by heartbeats: if this pod dies,\n\t// the lease expires after 10 s and leadership is released.\n\tsess, err := concurrency.NewSession(cli, concurrency.WithTTL(10))\n\tif err != nil {\n\t\tlog.Fatal(err)\n\t}\n\tdefer sess.Close()\n\n\te := concurrency.NewElection(sess, \"/index-builder/leader\")\n\thost, _ := os.Hostname()\n\tif err := e.Campaign(context.Background(), host); err != nil { // blocks until we win\n\t\tlog.Fatal(err)\n\t}\n\t// Fencing token: the revision only grows, so storage can reject a stale leader.\n\trunIndexBuilds(sess.Done(), e.Rev()) // stop as soon as the lease is lost\n}"
+  },
+  "example": {
+    "en": "Your RAG platform rebuilds the vector index nightly from a 3-pod scheduler; two concurrent builders would race and could publish a half-built index. Each pod campaigns on an etcd key with a 10 s lease. Pod A wins and starts the build, then freezes in a 15 s GC pause; the lease expires and pod B takes over with fencing token 845. Pod A wakes, still believing it is leader, and tries to swap the index alias with token 812. The alias service rejects it because 812 < 845. The election itself is a Raft write across 3 etcd members: a few milliseconds in one region.",
+    "es": "Tu plataforma de RAG reconstruye el índice vectorial cada noche desde un scheduler con 3 pods; dos builders simultáneos competirían y podrían publicar un índice a medio construir. Cada pod compite por una clave de etcd con un lease de 10 s. El pod A gana y empieza a construir, pero luego se congela en una pausa de GC de 15 s; el lease expira y el pod B toma el control con el fencing token 845. El pod A despierta creyéndose líder e intenta cambiar el alias del índice con el token 812. El servicio de alias lo rechaza porque 812 < 845. La elección en sí es una escritura Raft entre 3 miembros de etcd: unos pocos milisegundos dentro de una región."
+  },
+  "pros": [
+    { "en": "Linearizable writes with automatic failover: no human picks the new primary.", "es": "Escrituras linealizables con failover automático: ningún humano elige el nuevo primario." },
+    { "en": "Committed entries survive f failures out of 2f+1 nodes with no data loss.", "es": "Las entradas confirmadas sobreviven a f fallas de 2f+1 nodos sin pérdida de datos." },
+    { "en": "Mature, heavily tested implementations: etcd, ZooKeeper, Consul and embeddable Raft libraries.", "es": "Implementaciones maduras y muy probadas: etcd, ZooKeeper, Consul y librerías de Raft embebibles." }
+  ],
+  "cons": [
+    { "en": "Every write pays a majority round trip plus fsync; cross-region quorums cost tens to hundreds of ms.", "es": "Cada escritura paga un viaje a la mayoría más un fsync; los quórums entre regiones cuestan de decenas a cientos de ms." },
+    { "en": "One leader bottlenecks writes; adding members makes writes slower, not faster.", "es": "Un solo líder limita las escrituras; agregar miembros las hace más lentas, no más rápidas." },
+    { "en": "The minority side of a partition can't write, and failover leaves a gap of at least one election timeout.", "es": "El lado minoritario de una partición no puede escribir, y el failover deja un hueco de al menos un timeout de elección." }
+  ],
+  "whenToUse": {
+    "en": "Small, critical state where disagreement is a bug: leader election, locks, membership, configuration, metadata, ID allocation. Consume it via etcd, ZooKeeper, Consul or a database built on it.",
+    "es": "Estado pequeño y crítico donde un desacuerdo es un bug: elección de líder, locks, membresía, configuración, metadatos, asignación de IDs. Consúmelo a través de etcd, ZooKeeper, Consul o una base de datos construida sobre él."
+  },
+  "whenNotToUse": {
+    "en": "High-volume data paths or anything that tolerates eventual consistency (caches, metrics, logs, counters). Don't store large blobs in etcd, and don't implement Raft yourself to avoid a dependency.",
+    "es": "Rutas de datos de alto volumen o cualquier cosa que tolere consistencia eventual (cachés, métricas, logs, contadores). No guardes blobs grandes en etcd ni implementes Raft por tu cuenta para ahorrarte una dependencia."
+  },
+  "numbers": [
+    { "en": "2f+1 nodes tolerate f failures: 3→1, 5→2, 7→3. Even sizes add cost, not tolerance.", "es": "2f+1 nodos toleran f fallas: 3→1, 5→2, 7→3. Los tamaños pares agregan costo, no tolerancia." },
+    { "en": "Rule of thumb: a commit costs one round trip to a majority plus an fsync, ~1–5 ms in one region and 50–200 ms across continents.", "es": "Regla práctica: confirmar cuesta un viaje de ida y vuelta a una mayoría más un fsync, ~1–5 ms en una región y 50–200 ms entre continentes." },
+    { "en": "etcd defaults: 100 ms heartbeat, 1,000 ms election timeout, 2 GB storage quota.", "es": "Valores por defecto de etcd: heartbeat de 100 ms, timeout de elección de 1,000 ms y cuota de almacenamiento de 2 GB." },
+    { "en": "Raft paper: randomized election timeouts of 150–300 ms keep split votes rare.", "es": "Paper de Raft: los timeouts de elección aleatorios de 150–300 ms hacen raros los empates de votos." },
+    { "en": "Kafka 4.0 (2025) removed ZooKeeper; cluster metadata now lives in a KRaft (Raft) quorum.", "es": "Kafka 4.0 (2025) eliminó ZooKeeper; los metadatos del clúster ahora viven en un quórum KRaft (Raft)." }
+  ],
+  "pitfalls": [
+    { "en": "Running 2 or 4 members: an even count adds failure points without raising tolerance.", "es": "Correr 2 o 4 miembros: un número par agrega puntos de falla sin subir la tolerancia." },
+    { "en": "Placing a 3-node quorum in 2 zones: losing the zone with 2 nodes loses quorum. Use 3 zones.", "es": "Poner un quórum de 3 nodos en 2 zonas: perder la zona con 2 nodos hace perder el quórum. Usa 3 zonas." },
+    { "en": "Trusting a lock or lease without fencing tokens: a paused ex-leader wakes up and still writes.", "es": "Confiar en un lock o lease sin fencing tokens: un ex líder pausado despierta y sigue escribiendo." },
+    { "en": "Reading from a follower and assuming it's current; use linearizable reads (etcd's default) when it matters.", "es": "Leer de un follower y asumir que está al día; usa lecturas linealizables (el default de etcd) cuando importe." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why do consensus clusters have 3 or 5 nodes, not 4 or 9?", "es": "¿Por qué los clústeres de consenso tienen 3 o 5 nodos y no 4 o 9?" },
+      "a": {
+        "en": "Because commits need a majority, and majorities must overlap. With 2f+1 nodes I survive f failures: 3 tolerate 1, 5 tolerate 2. Four nodes still tolerate only 1, since the quorum becomes 3, so the extra node is pure cost. Going big hurts too: every write waits for more acknowledgments. I'd run 3 members across 3 zones for most control planes, and 5 when I must tolerate a failure while another member is down for maintenance.",
+        "es": "Porque confirmar requiere una mayoría, y las mayorías deben cruzarse. Con 2f+1 nodos sobrevivo a f fallas: 3 toleran 1 y 5 toleran 2. Cuatro nodos siguen tolerando solo 1, porque el quórum pasa a ser 3, así que el nodo extra es puro costo. Crecer mucho también duele: cada escritura espera más confirmaciones. Correría 3 miembros en 3 zonas para la mayoría de los control planes, y 5 cuando deba tolerar una falla mientras otro miembro está en mantenimiento."
+      }
+    },
+    {
+      "q": { "en": "Would you implement Raft to elect a leader for your job scheduler?", "es": "¿Implementarías Raft para elegir un líder en tu scheduler de jobs?" },
+      "a": {
+        "en": "No. The algorithm fits in a paper, but the production bugs live in membership changes, snapshots, fsync semantics and clock assumptions; Jepsen keeps finding them in mature systems. I'd use an etcd lease, a Kubernetes Lease object or a ZooKeeper ephemeral node. Two things I'd still design: fencing tokens, because a paused ex-leader can wake up and write; and the failover gap, because lease TTL plus election takes seconds, so the workload must tolerate a short period with no leader.",
+        "es": "No. El algoritmo cabe en un paper, pero los bugs de producción viven en los cambios de membresía, los snapshots, la semántica de fsync y los supuestos de reloj; Jepsen los sigue encontrando en sistemas maduros. Usaría un lease de etcd, un objeto Lease de Kubernetes o un nodo efímero de ZooKeeper. Dos cosas que igual diseñaría: fencing tokens, porque un ex líder pausado puede despertar y escribir; y el hueco del failover, porque el TTL del lease más la elección toman segundos, así que la carga debe tolerar un rato sin líder."
+      }
+    },
+    {
+      "q": { "en": "What happens to a 5-node Raft cluster when the network splits 3–2?", "es": "¿Qué le pasa a un clúster Raft de 5 nodos cuando la red se parte 3–2?" },
+      "a": {
+        "en": "The side with 3 keeps or elects a leader and keeps committing. If the old leader is on the side with 2, it may still accept writes, but it can never reach a majority, so nothing commits and clients time out. When the partition heals, it sees a higher term, steps down, and its uncommitted entries are overwritten by the majority's log. No committed write is lost; the cost is unavailability on the minority side.",
+        "es": "El lado con 3 conserva o elige un líder y sigue confirmando. Si el líder anterior quedó del lado con 2, puede seguir aceptando escrituras, pero nunca alcanza una mayoría, así que nada se confirma y los clientes reciben timeouts. Cuando la partición se cura, ve un term más alto, renuncia y sus entradas no confirmadas se sobrescriben con el log de la mayoría. No se pierde ninguna escritura confirmada; el costo es la indisponibilidad del lado minoritario."
+      }
+    }
+  ],
+  "related": ["replication", "cap-pacelc", "consistency-models", "sharding", "queues-streams"],
+  "sources": [
+    { "title": "Ongaro, Ousterhout — In Search of an Understandable Consensus Algorithm (Raft, 2014)", "url": "https://raft.github.io/raft.pdf" },
+    { "title": "The Raft Consensus Algorithm — visualization and implementations", "url": "https://raft.github.io/" },
+    { "title": "Lamport — Paxos Made Simple", "url": "https://lamport.azurewebsites.net/pubs/paxos-simple.pdf" },
+    { "title": "Martin Kleppmann — How to do distributed locking", "url": "https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html" }
+  ]
+}

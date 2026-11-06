@@ -1,0 +1,93 @@
+{
+  "id": "event-driven",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Event sourcing & CQRS", "es": "Event sourcing y CQRS" },
+  "aliases": ["event sourcing", "CQRS", "command query responsibility segregation", "event store", "projections", "read models", "append-only log"],
+  "tldr": {
+    "en": "Event sourcing stores every change as an immutable event and derives state by replaying them; CQRS splits the write model from query-shaped read models. Great for audit and replay, costly in complexity and eventual consistency.",
+    "es": "Event sourcing guarda cada cambio como un evento inmutable y obtiene el estado reproduciéndolos; CQRS separa el modelo de escritura de modelos de lectura hechos a la medida de cada consulta. Excelente para auditoría y replay, caro en complejidad y consistencia eventual."
+  },
+  "analogy": {
+    "en": "A bank statement versus a balance: the balance tells you what you have; the statement tells you how you got there, and you can always recompute the balance from it.",
+    "es": "Un estado de cuenta frente a un saldo: el saldo te dice cuánto tienes; el estado de cuenta te dice cómo llegaste ahí, y siempre puedes recalcular el saldo a partir de él."
+  },
+  "explain": {
+    "en": "**Event sourcing** stores *what happened* instead of *what is*: every change is an immutable event (`OrderPlaced`, `ToolCalled`) appended to a per-entity stream, and current state is a fold over those events. The log is the source of truth, so you get a full **audit trail**, **time travel** (state as of any moment) and **replay**: fix a bug in a projection and rebuild it from history. Snapshots every N events keep load time bounded. Concurrency is optimistic: append only if the stream is still at the version you read.\n\n**CQRS** (Command Query Responsibility Segregation) splits the **write model**, which validates commands and emits events, from one or more **read models** (projections) shaped for each query: a table for the UI, a search index, a cost dashboard. The two pair naturally, since events feed projections, but each works alone.\n\nThe cost is real:\n\n- Projections lag, so reads are **eventually consistent**; a user may not see their own write yet.\n- Events are a public schema you must version forever.\n- \"Delete this user\" fights an immutable log.\n\nMartin Fowler's warning holds: for most systems CQRS adds risky complexity. Use it in the few places where history *is* the product. For AI, that includes an agent's trajectory: an event log you can audit, replay and mine for evals.",
+    "es": "**Event sourcing** guarda *lo que pasó* en lugar de *lo que es*: cada cambio es un evento inmutable (`OrderPlaced`, `ToolCalled`) que se agrega al stream de su entidad, y el estado actual es un fold sobre esos eventos. El log es la fuente de verdad, así que obtienes una **auditoría completa**, **viaje en el tiempo** (el estado en cualquier momento) y **replay**: corriges un bug en una proyección y la reconstruyes desde la historia. Los snapshots cada N eventos acotan el tiempo de carga. La concurrencia es optimista: solo agregas si el stream sigue en la versión que leíste.\n\n**CQRS** (Command Query Responsibility Segregation) separa el **modelo de escritura**, que valida comandos y emite eventos, de uno o varios **modelos de lectura** (proyecciones) con la forma de cada consulta: una tabla para la UI, un índice de búsqueda, un dashboard de costos. Combinan de forma natural, porque los eventos alimentan las proyecciones, pero cada uno funciona solo.\n\nEl costo es real:\n\n- Las proyecciones van atrasadas, así que las lecturas son **eventualmente consistentes**; un usuario puede no ver todavía su propia escritura.\n- Los eventos son un esquema público que debes versionar para siempre.\n- \"Borra a este usuario\" choca con un log inmutable.\n\nLa advertencia de Martin Fowler sigue vigente: en la mayoría de los sistemas, CQRS agrega una complejidad riesgosa. Úsalo en los pocos lugares donde la historia *es* el producto. En IA eso incluye la trayectoria de un agente: un log de eventos que puedes auditar, reproducir y explotar para evals."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[Client] -->|command| CH[\"Command handler<br/>(write model)\"]\n  ES[(\"Append-only event store\")] -->|replay stream| CH\n  CH -->|append if version matches| ES\n  ES -->|subscribe| PJ[Projectors]\n  PJ --> R1[(\"Read model:<br/>chat view table\")]\n  PJ --> R2[(\"Read model:<br/>cost dashboard\")]\n  PJ --> R3[(\"Read model:<br/>eval dataset\")]\n  U -->|query| QH[Query handler]\n  QH --> R1\n  QH --> R2",
+    "caption": {
+      "en": "Writes append events after replaying the stream; projectors build query-shaped read models asynchronously, which is where eventual consistency comes from.",
+      "es": "Las escrituras agregan eventos tras reproducir el stream; los proyectores construyen modelos de lectura de forma asíncrona, y de ahí viene la consistencia eventual."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "An agent run as an event stream (Postgres)", "es": "Una ejecución de agente como stream de eventos (Postgres)" },
+    "source": "from dataclasses import dataclass, field\nimport psycopg\nfrom psycopg.types.json import Jsonb\n\n@dataclass\nclass AgentRun:                      # current state = fold(events)\n    messages: list = field(default_factory=list)\n    tool_calls: int = 0\n    status: str = \"running\"\n\ndef apply(s: AgentRun, type_: str, data: dict) -> AgentRun:\n    match type_:\n        case \"UserMessage\" | \"ModelResponded\" | \"ToolReturned\":\n            s.messages.append(data)    # recorded LLM output: replay never calls the model\n        case \"ToolCalled\":\n            s.tool_calls += 1\n        case \"RunFinished\":\n            s.status = \"done\"\n    return s\n\ndef load(conn: psycopg.Connection, run_id: str) -> tuple[AgentRun, int]:\n    rows = conn.execute(\"SELECT type, data FROM events WHERE stream_id = %s \"\n                        \"ORDER BY version\", (run_id,)).fetchall()\n    state = AgentRun()\n    for type_, data in rows:\n        state = apply(state, type_, data)\n    return state, len(rows)          # version = number of events\n\ndef append(conn, run_id: str, expected: int, events: list[tuple[str, dict]]) -> None:\n    # UNIQUE (stream_id, version): a concurrent writer gets a conflict, not a fork\n    with conn.transaction():\n        for v, (type_, data) in enumerate(events, start=expected + 1):\n            conn.execute(\"INSERT INTO events (stream_id, version, type, data) \"\n                         \"VALUES (%s, %s, %s, %s)\", (run_id, v, type_, Jsonb(data)))"
+  },
+  "example": {
+    "en": "A support agent's run is stored as events: `UserMessage`, `ModelResponded` (model id, prompt hash, output, 1,840 tokens), `ToolCalled(refund, $40)`, `HumanApproved`, `RunFinished`. Three weeks later a customer disputes the refund; you replay the stream and see exactly which retrieved chunk and which model output led to it. The same log feeds three projections: the live chat view, a tokens-per-tenant cost dashboard, and an eval set of failed runs. Replays read the recorded model outputs, so debugging is deterministic and costs zero tokens.",
+    "es": "La ejecución de un agente de soporte se guarda como eventos: `UserMessage`, `ModelResponded` (id del modelo, hash del prompt, salida, 1,840 tokens), `ToolCalled(refund, $40)`, `HumanApproved`, `RunFinished`. Tres semanas después un cliente disputa el reembolso; reproduces el stream y ves exactamente qué chunk recuperado y qué salida del modelo llevaron a él. El mismo log alimenta tres proyecciones: la vista del chat en vivo, un dashboard de costo en tokens por tenant y un set de evals con las ejecuciones fallidas. El replay lee las salidas del modelo ya grabadas, así que depurar es determinista y cuesta cero tokens."
+  },
+  "pros": [
+    { "en": "Full audit trail and time travel: you always know why state is what it is.", "es": "Auditoría completa y viaje en el tiempo: siempre sabes por qué el estado es el que es." },
+    { "en": "Read models are shaped per query and can be added or rebuilt later from history.", "es": "Los modelos de lectura tienen la forma de cada consulta y se pueden agregar o reconstruir después desde la historia." },
+    { "en": "Writes are appends: simple, fast and a natural feed for streams and downstream systems.", "es": "Las escrituras son appends: simples, rápidas y una fuente natural para streams y sistemas posteriores." }
+  ],
+  "cons": [
+    { "en": "Eventual consistency between write and read sides; read-your-writes needs extra work.", "es": "Consistencia eventual entre escritura y lectura; leer tus propias escrituras requiere trabajo extra." },
+    { "en": "Event schemas are forever: versioning, upcasting and replaying old shapes.", "es": "Los esquemas de eventos son para siempre: versionado, upcasting y replay de formatos viejos." },
+    { "en": "Many more moving parts, unfamiliar to most teams; projection bugs are hard to debug.", "es": "Muchas más piezas móviles, desconocidas para la mayoría de los equipos; los bugs de proyecciones cuestan de depurar." },
+    { "en": "Right to erasure conflicts with an immutable log; needs crypto-shredding.", "es": "El derecho al olvido choca con un log inmutable; requiere crypto-shredding." }
+  ],
+  "whenToUse": {
+    "en": "Where history is the product or legally required: ledgers, orders, compliance, agent action audit trails. Or when many differently shaped read models must be served from one stream of writes.",
+    "es": "Donde la historia es el producto o la exige la ley: ledgers, pedidos, cumplimiento, auditoría de acciones de agentes. O cuando muchos modelos de lectura distintos deben servirse desde un mismo flujo de escrituras."
+  },
+  "whenNotToUse": {
+    "en": "CRUD apps, most internal tools, or a whole system by default. If a table plus an audit-log table answers \"how did we get here\", use that.",
+    "es": "Apps CRUD, la mayoría de las herramientas internas o un sistema entero por defecto. Si una tabla más una tabla de auditoría responden \"cómo llegamos aquí\", usa eso."
+  },
+  "numbers": [
+    { "en": "Kafka's default retention is 7 days (`log.retention.hours=168`): an event store needs retention set to forever.", "es": "La retención por defecto de Kafka es de 7 días (`log.retention.hours=168`): un event store necesita retención infinita." },
+    { "en": "Rule of thumb: snapshot a stream every ~100–1,000 events so loading never replays thousands.", "es": "Regla práctica: haz snapshot de un stream cada ~100–1,000 eventos para que cargar nunca reproduzca miles." }
+  ],
+  "pitfalls": [
+    { "en": "A compacted Kafka topic as the event store: compaction keeps only the latest event per key and silently deletes history.", "es": "Usar un tópico compactado de Kafka como event store: la compactación conserva solo el último evento por clave y borra la historia en silencio." },
+    { "en": "CRUD-shaped events (`OrderUpdated` with the whole row): you lose intent; name business facts.", "es": "Eventos con forma de CRUD (`OrderUpdated` con la fila completa): pierdes la intención; nombra hechos de negocio." },
+    { "en": "Side effects in projections: a rebuild re-sends every email. Keep handlers idempotent and side effects out of replay.", "es": "Efectos secundarios en proyecciones: una reconstrucción reenvía todos los correos. Haz handlers idempotentes y deja los efectos fuera del replay." },
+    { "en": "Applying CQRS to the whole system instead of the one bounded context that needs it.", "es": "Aplicar CQRS a todo el sistema en lugar de al único bounded context que lo necesita." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you make an agent's actions auditable and replayable?", "es": "¿Cómo harías auditables y reproducibles las acciones de un agente?" },
+      "a": {
+        "en": "I model each run as an event stream: user input, every model call with model id, prompt hash and output, tool calls and results, approvals. Append-only, keyed by run id, versioned for optimistic concurrency. Audit comes for free, and replay is deterministic because it reads the recorded model outputs instead of calling the LLM again: non-determinism is captured as data. Durable-execution engines like Temporal rebuild workflow state from history the same way. PII is encrypted with a per-user key, so erasure means deleting the key.",
+        "es": "Modelo cada ejecución como un stream de eventos: la entrada del usuario, cada llamada al modelo con su id, hash del prompt y salida, las tool calls con sus resultados y las aprobaciones. Append-only, con el id de la ejecución como clave y versionado para concurrencia optimista. La auditoría sale gratis, y el replay es determinista porque lee las salidas grabadas en vez de volver a llamar al LLM: el no determinismo queda guardado como dato. Motores de ejecución durable como Temporal reconstruyen el estado del workflow desde su historia de la misma forma. La PII va cifrada con una clave por usuario, así que borrar es eliminar la clave."
+      }
+    },
+    {
+      "q": { "en": "When would you NOT use event sourcing and CQRS?", "es": "¿Cuándo NO usarías event sourcing y CQRS?" },
+      "a": {
+        "en": "Most of the time. If the domain is CRUD and nobody asks \"how did we get here\", the costs dominate: eventual consistency between writes and reads, permanent event schemas, rebuild tooling, and a team that has to learn all of it. I apply it to one bounded context where history is the product, like payments or an agent's action log, and keep the rest as plain tables plus an audit table or a CDC stream. CQRS alone is often enough: a read replica or materialized view is already a mild CQRS.",
+        "es": "La mayor parte del tiempo. Si el dominio es CRUD y nadie pregunta \"cómo llegamos aquí\", dominan los costos: consistencia eventual entre escrituras y lecturas, esquemas de eventos permanentes, herramientas de reconstrucción y un equipo que tiene que aprender todo eso. Lo aplico a un solo bounded context donde la historia es el producto, como pagos o el log de acciones de un agente, y dejo el resto en tablas normales más una tabla de auditoría o un stream de CDC. A menudo basta CQRS solo: una réplica de lectura o una vista materializada ya son un CQRS ligero."
+      }
+    },
+    {
+      "q": { "en": "How do you give users read-your-writes with an async read model?", "es": "¿Cómo les das read-your-writes a los usuarios con un modelo de lectura asíncrono?" },
+      "a": {
+        "en": "Three options, cheapest first. Return the new state in the command response so the UI renders it directly. Or return the event version, and have the query wait until the projection reaches it, with a timeout. Or serve the author's own view from the write model while everyone else reads the projection. I also expose projection lag as a metric with an alert, because a stuck projector looks exactly like data loss to users.",
+        "es": "Tres opciones, de la más barata a la más cara. Devolver el estado nuevo en la respuesta del comando para que la UI lo muestre directo. O devolver la versión del evento y hacer que la consulta espere hasta que la proyección la alcance, con un timeout. O servir la vista del propio autor desde el modelo de escritura mientras los demás leen la proyección. Además expongo el atraso de las proyecciones como métrica con alerta, porque un proyector atascado se ve igual que una pérdida de datos para el usuario."
+      }
+    }
+  ],
+  "related": ["sagas-outbox", "queues-streams", "consistency-models", "durable-agents", "idempotency", "llm-observability"],
+  "sources": [
+    { "title": "Martin Fowler — Event Sourcing", "url": "https://martinfowler.com/eaaDev/EventSourcing.html" },
+    { "title": "Martin Fowler — CQRS", "url": "https://martinfowler.com/bliki/CQRS.html" },
+    { "title": "Microsoft Azure Architecture Center — Event Sourcing pattern", "url": "https://learn.microsoft.com/en-us/azure/architecture/patterns/event-sourcing" }
+  ]
+}

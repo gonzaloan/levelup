@@ -1,0 +1,95 @@
+{
+  "id": "load-balancing",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Load balancing", "es": "Balanceo de carga (load balancing)" },
+  "aliases": ["load balancer", "L4 vs L7", "least connections", "power of two choices", "P2C", "outlier detection", "sticky sessions", "prefix-aware routing"],
+  "tldr": {
+    "en": "Spread requests across replicas so none overloads and dead ones get skipped; for LLM serving, pick by live load (queue depth, KV-cache use) and prefix affinity, because request costs differ by orders of magnitude.",
+    "es": "Reparte los requests entre réplicas para que ninguna se sature y las caídas se salteen; en serving de LLMs, elige por carga real (cola, uso de KV cache) y afinidad de prefijo, porque el costo de cada request varía en órdenes de magnitud."
+  },
+  "analogy": {
+    "en": "Supermarket checkouts: a greeter sending shoppers to each lane in turn (round robin) ignores that one cart holds 80 items. Glancing at two lanes and picking the shorter (power of two choices) works almost as well as checking them all.",
+    "es": "Las cajas del supermercado: alguien que manda clientes a cada caja por turno (round robin) ignora que un carrito trae 80 productos. Mirar dos filas y elegir la más corta (power of two choices) funciona casi tan bien como revisarlas todas."
+  },
+  "explain": {
+    "en": "A **load balancer** sits in front of N replicas and picks one per connection or request, skipping unhealthy ones.\n\n**L4 vs L7.** L4 (AWS NLB, Google Maglev, IPVS) balances *TCP connections*: fast and protocol-blind. L7 (Envoy, NGINX, HAProxy, AWS ALB) parses HTTP/gRPC, balances *requests*, routes by path or header and can retry. gRPC multiplexes many requests on one long-lived HTTP/2 connection, so behind L4 they all land on one replica.\n\n**Algorithms:**\n\n- **Round robin**: fine when requests cost the same.\n- **Least connections / outstanding requests**: adapts to slow requests.\n- **Power of two choices (P2C)**: sample two replicas, send to the less loaded. Nearly as good as checking all, no global state; Envoy's least-request default.\n- **[[consistent-hashing]]**: same key → same replica, for cache affinity.\n\n**Health:** active probes plus passive **outlier ejection** (pull a host after consecutive 5xx). **Sticky sessions** pin users to replicas; avoid them unless state truly lives there.\n\n**LLM serving breaks round robin.** A 100k-token RAG prompt costs hundreds of times a 200-token chat turn. Route on **queue depth and [[kv-cache]] usage** exported by each server, and add **prefix-aware routing**: requests sharing a system prompt or conversation go to the replica already caching that prefix, skipping most of the prefill. The Kubernetes Gateway API Inference Extension, llm-d and the SGLang router do this.",
+    "es": "Un **load balancer** se ubica delante de N réplicas y elige una por conexión o por request, salteando las que no están sanas.\n\n**L4 vs L7.** L4 (AWS NLB, Google Maglev, IPVS) balancea *conexiones TCP*: rápido y sin entender el protocolo. L7 (Envoy, NGINX, HAProxy, AWS ALB) interpreta HTTP/gRPC, balancea *requests*, enruta por path o header y puede reintentar. gRPC multiplexa muchos requests sobre una conexión HTTP/2 de larga vida, así que detrás de un L4 todos caen en una sola réplica.\n\n**Algoritmos:**\n\n- **Round robin**: sirve cuando todos los requests cuestan lo mismo.\n- **Menos conexiones / requests pendientes**: se adapta a los requests lentos.\n- **Power of two choices (P2C)**: toma dos réplicas al azar y manda a la menos cargada. Casi tan bueno como revisar todas, sin estado global; es el default del least-request de Envoy.\n- **[[consistent-hashing]]**: misma clave → misma réplica, para afinidad de caché.\n\n**Salud:** health checks activos más **outlier ejection** pasiva (sacar un host tras varios 5xx seguidos). Las **sticky sessions** atan usuarios a réplicas; evítalas salvo que el estado realmente viva ahí.\n\n**El serving de LLMs rompe el round robin.** Un prompt RAG de 100k tokens cuesta cientos de veces más que un turno de chat de 200 tokens. Enruta según **profundidad de cola y uso de [[kv-cache]]** que exporta cada servidor, y suma **ruteo por prefijo**: los requests que comparten system prompt o conversación van a la réplica que ya tiene ese prefijo en caché, y se saltan casi todo el prefill. Gateway API Inference Extension de Kubernetes, llm-d y el router de SGLang hacen esto."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  C[Chat and RAG requests] --> G[\"L7 router<br/>Envoy or gateway\"]\n  G --> H[\"Drop unhealthy<br/>outlier ejection\"]\n  H --> P[\"Hash prompt prefix<br/>find home replica\"]\n  P --> D{\"Home load<br/>within slack?\"}\n  D -->|yes| R1[\"Replica A<br/>prefix in KV cache\"]\n  D -->|no| T[\"Power of two<br/>least queued tokens\"]\n  T -->|or| R2[Replica B]\n  T -->|or| R3[Replica C]\n  R1 -.->|queue and KV use| G\n  R2 -.-> G\n  R3 -.-> G",
+    "caption": {
+      "en": "Prefix affinity buys cache hits; the load check and P2C fallback stop a hot prefix from melting its home replica.",
+      "es": "La afinidad de prefijo compra aciertos de caché; el chequeo de carga y el fallback P2C evitan que un prefijo popular sature su réplica."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "P2C picker with prefix affinity for LLM replicas", "es": "Selector P2C con afinidad de prefijo para réplicas de LLM" },
+    "source": "import hashlib, random\nfrom dataclasses import dataclass\n\n@dataclass\nclass Replica:\n    url: str\n    queued_tokens: int = 0   # prompt + expected output tokens waiting (scraped)\n    kv_usage: float = 0.0    # 0..1 KV-cache utilization (scraped)\n    healthy: bool = True     # active probe + outlier ejection\n\ndef load(r: Replica) -> float:\n    # Near-full KV cache means preemptions soon: penalize it hard\n    return r.queued_tokens * (1 + 10 * max(0.0, r.kv_usage - 0.9))\n\ndef home_for(prefix: str, live: list[Replica]) -> Replica:\n    # Rendezvous hashing: same prefix -> same replica; few keys move on churn\n    return max(live, key=lambda r: hashlib.sha1(f\"{r.url}|{prefix}\".encode()).digest())\n\ndef pick(replicas: list[Replica], prompt: str, slack: float = 1.5) -> Replica:\n    live = [r for r in replicas if r.healthy]\n    home = home_for(prompt[:4000], live)   # system prompt + early turns\n    a, b = random.sample(live, 2)          # power of two choices\n    best = min(a, b, key=load)\n    # Prefer the cache hit unless home is clearly busier than a random alternative\n    return home if load(home) <= slack * load(best) + 1000 else best"
+  },
+  "example": {
+    "en": "A team serves a 70B model on 8 vLLM replicas behind round robin. Traffic mixes 300-token chat turns with 60k-token document reviews. Round robin stacks three reviews on one replica: its queue hits 40 requests and TTFT p95 reaches 12 s while others idle. Switching to P2C on queued tokens flattens the queues; adding prefix affinity for the shared 4k-token system prompt and each conversation raises prefix-cache hits, and TTFT p95 drops to ~1.5 s on the same GPUs.",
+    "es": "Un equipo sirve un modelo de 70B en 8 réplicas de vLLM detrás de un round robin. El tráfico mezcla turnos de chat de 300 tokens con revisiones de documentos de 60k tokens. El round robin apila tres revisiones en una réplica: su cola llega a 40 requests y el TTFT p95 a 12 s mientras otras están ociosas. Pasar a P2C por tokens en cola empareja las colas; sumar afinidad por el system prompt compartido de 4k tokens y por conversación sube los aciertos de caché de prefijo, y el TTFT p95 baja a ~1.5 s con las mismas GPUs."
+  },
+  "pros": [
+    { "en": "Horizontal scale and zero-downtime deploys: drain, replace and re-add replicas.", "es": "Escala horizontal y deploys sin downtime: drenar, reemplazar y volver a sumar réplicas." },
+    { "en": "Health checks and outlier ejection route around failures automatically.", "es": "Los health checks y la outlier ejection esquivan las fallas automáticamente." },
+    { "en": "Load- and prefix-aware routing raises LLM throughput and cuts TTFT on the same GPUs.", "es": "El ruteo por carga y por prefijo sube el throughput de LLM y baja el TTFT con las mismas GPUs." }
+  ],
+  "cons": [
+    { "en": "The balancer must itself be redundant, or it becomes the single point of failure.", "es": "El balanceador también debe ser redundante, o se vuelve el punto único de falla." },
+    { "en": "L7 costs CPU and latency per request: TLS termination, parsing, routing logic.", "es": "L7 cuesta CPU y latencia por request: terminación TLS, parseo, lógica de ruteo." },
+    { "en": "Load signals are stale by the time you act on them, and affinity pulls against balance.", "es": "Las señales de carga ya están viejas cuando actúas sobre ellas, y la afinidad tira en contra del balance." }
+  ],
+  "whenToUse": {
+    "en": "Any service with more than one replica. L7 for HTTP/gRPC and per-request decisions; load- and prefix-aware routing for self-hosted LLM fleets with mixed prompt lengths.",
+    "es": "En cualquier servicio con más de una réplica. L7 para HTTP/gRPC y decisiones por request; ruteo por carga y prefijo para flotas de LLM propias con prompts de largos muy distintos."
+  },
+  "whenNotToUse": {
+    "en": "Plain round robin when request costs vary widely, as in LLM inference. Sticky sessions as a substitute for moving state into Redis or a database.",
+    "es": "Round robin simple cuando el costo de los requests varía mucho, como en inferencia de LLMs. Sticky sessions como sustituto de mover el estado a Redis o a una base de datos."
+  },
+  "numbers": [
+    { "en": "Placing n requests on n servers: one random pick gives a max load of ~log n / log log n; best of two random picks gives ~log log n.", "es": "Al ubicar n requests en n servidores: una elección al azar da una carga máxima de ~log n / log log n; la mejor de dos al azar da ~log log n." },
+    { "en": "Consistent hashing moves ~1/N of keys when one of N nodes leaves; hash mod N moves almost all of them.", "es": "El consistent hashing mueve ~1/N de las claves cuando sale uno de N nodos; hash mod N mueve casi todas." },
+    { "en": "Envoy outlier detection defaults: eject after 5 consecutive 5xx, 30 s base ejection, at most 10% of hosts.", "es": "Defaults de outlier detection en Envoy: expulsa tras 5 respuestas 5xx seguidas, 30 s de expulsión base, máximo 10% de los hosts." },
+    { "en": "LLM prefill cost spans ~500×: a 100k-token prompt vs a 200-token chat turn, before counting output.", "es": "El costo de prefill de un LLM varía ~500×: un prompt de 100k tokens contra un turno de chat de 200, sin contar la salida." }
+  ],
+  "pitfalls": [
+    { "en": "L4 balancing for gRPC/HTTP2: long-lived connections pin all traffic to a few replicas, and new ones get none.", "es": "Balanceo L4 para gRPC/HTTP2: las conexiones de larga vida atan todo el tráfico a pocas réplicas y las nuevas no reciben nada." },
+    { "en": "Health checks that only prove the process is up: a replica with a broken GPU or full KV cache still gets traffic.", "es": "Health checks que solo prueban que el proceso está vivo: una réplica con la GPU rota o el KV cache lleno sigue recibiendo tráfico." },
+    { "en": "Round robin across LLM replicas with mixed prompt lengths: some queues explode while GPUs elsewhere idle.", "es": "Round robin entre réplicas de LLM con prompts de largos variados: algunas colas explotan mientras otras GPUs están ociosas." },
+    { "en": "Prefix affinity without a load cap: one viral system prompt melts its home replica.", "es": "Afinidad de prefijo sin tope de carga: un system prompt muy popular satura su réplica asignada." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why is round robin a bad fit for an LLM serving fleet, and what do you use instead?", "es": "¿Por qué el round robin no sirve para una flota de serving de LLMs y qué usas en su lugar?" },
+      "a": {
+        "en": "Round robin assumes requests cost about the same, and LLM requests don't: prompt length varies 100× and output length is unknown upfront. Queues diverge, and one replica's TTFT explodes while others idle. I route on live signals each replica exports, queued tokens and KV-cache usage, with power of two choices so I don't need a global view. On top I add prefix affinity: requests sharing a system prompt or conversation go to the replica that already caches that prefix, with a load cap so a hot prefix can spill over.",
+        "es": "El round robin asume que los requests cuestan más o menos lo mismo, y los de un LLM no: el largo del prompt varía 100× y el de la salida no se conoce de antemano. Las colas divergen y el TTFT de una réplica explota mientras otras están ociosas. Enruto con señales en vivo que exporta cada réplica, tokens en cola y uso de KV cache, usando power of two choices para no necesitar una vista global. Encima agrego afinidad de prefijo: los requests que comparten system prompt o conversación van a la réplica que ya tiene ese prefijo en caché, con un tope de carga para que un prefijo popular pueda desbordarse a otra."
+      }
+    },
+    {
+      "q": { "en": "L4 or L7 load balancer for a gRPC microservice?", "es": "¿Balanceador L4 o L7 para un microservicio gRPC?" },
+      "a": {
+        "en": "L7. gRPC runs on HTTP/2, which multiplexes a client's requests over one long-lived connection. An L4 balancer picks a backend per connection, so each client stays pinned to one replica and new replicas get nothing after a scale-up. An L7 proxy like Envoy, or client-side balancing through a service mesh, balances each request. I'd still keep L4 at the very edge for raw TCP throughput and DDoS absorption, with L7 behind it.",
+        "es": "L7. gRPC corre sobre HTTP/2, que multiplexa los requests de un cliente en una sola conexión de larga vida. Un balanceador L4 elige backend por conexión, así que cada cliente queda atado a una réplica y las nuevas no reciben nada después de escalar. Un proxy L7 como Envoy, o el balanceo del lado del cliente con un service mesh, balancea cada request. Igual mantendría L4 en el borde para throughput TCP puro y para absorber DDoS, con L7 detrás."
+      }
+    },
+    {
+      "q": { "en": "A replica is up but returning errors. How does the balancer find out?", "es": "Una réplica está arriba pero devuelve errores. ¿Cómo se entera el balanceador?" },
+      "a": {
+        "en": "Active health checks catch dead processes, not sick ones, so I add passive outlier detection on real traffic: eject a host after consecutive 5xx or when its success rate is far below the fleet's, for a period that grows with each ejection, and cap the ejected percentage so a bad detector can't empty the pool. For LLM replicas, the readiness probe should exercise the model with a tiny generation, not just get a 200 from the web server.",
+        "es": "Los health checks activos detectan procesos muertos, no enfermos, así que sumo outlier detection pasiva sobre el tráfico real: expulso un host tras varios 5xx seguidos o cuando su tasa de éxito queda muy por debajo de la flota, por un tiempo que crece con cada expulsión, y pongo tope al porcentaje expulsado para que un detector defectuoso no vacíe el pool. En réplicas de LLM, el readiness probe debe ejercitar el modelo con una generación mínima, no solo recibir un 200 del servidor web."
+      }
+    }
+  ],
+  "related": ["consistent-hashing", "kv-cache", "serving-stack", "prompt-caching", "continuous-batching", "retries-backoff"],
+  "sources": [
+    { "title": "Envoy — Supported load balancers", "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/load_balancers" },
+    { "title": "Envoy — Outlier detection", "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/outlier" },
+    { "title": "Google SRE Book — Load Balancing in the Datacenter", "url": "https://sre.google/sre-book/load-balancing-datacenter/" },
+    { "title": "Kubernetes Gateway API Inference Extension", "url": "https://gateway-api-inference-extension.sigs.k8s.io/" }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "id": "rate-limiting",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Rate limiting", "es": "Rate limiting (límites de tasa)" },
+  "aliases": ["token bucket", "leaky bucket", "sliding window", "throttling", "TPM", "RPM", "quotas", "429 Too Many Requests"],
+  "tldr": {
+    "en": "Cap how much each client can consume per unit of time so one tenant can't starve the rest; for LLMs, meter tokens per minute, not just requests, and answer excess with 429 plus Retry-After.",
+    "es": "Limita cuánto puede consumir cada cliente por unidad de tiempo para que un tenant no deje sin capacidad al resto; con LLMs, mide tokens por minuto, no solo requests, y responde al exceso con 429 más Retry-After."
+  },
+  "analogy": {
+    "en": "An arcade card whose credits refill every minute: you can spend a burst at once, but once it's empty you wait for the refill. Big games cost more credits, like long prompts cost more tokens.",
+    "es": "Una tarjeta de arcade cuyos créditos se recargan cada minuto: puedes gastar varios de golpe, pero si se vacía esperas la recarga. Los juegos grandes cuestan más créditos, como los prompts largos cuestan más tokens."
+  },
+  "explain": {
+    "en": "A **rate limiter** decides, per request, whether a client is within its allowance, and rejects or queues the rest. It protects capacity, cost and fairness between tenants.\n\n**Algorithms:**\n\n- **Token bucket**: capacity *B*, refilled at *r* tokens/s; each request spends tokens. Bursts up to *B*, average *r*. The default choice; Anthropic documents using it for its API limits.\n- **Leaky bucket**: a queue drained at a fixed rate. Smooth output, no bursts.\n- **Fixed window**: one counter per minute. Cheap, but up to **2×** the limit passes around a boundary.\n- **Sliding window log**: every timestamp stored. Exact; memory grows with traffic.\n- **Sliding window counter**: weights the previous window's count by its overlap. Near-exact with two counters.\n\n**Where:** at the edge, in the API gateway or [[llm-gateway]], keyed by API key or tenant. With many gateway replicas, keep counters in **Redis** behind an atomic Lua script; otherwise each replica enforces its own copy and the real limit becomes N×.\n\n**LLM twist:** one 100k-token request costs as much as hundreds of short ones, so limit **tokens per minute (TPM)** as well as RPM, plus concurrent streams. Reserve estimated input + `max_tokens` on admission, then refund the unused part. Plans map to bucket sizes per tenant ([[multi-tenancy]]). Reject with **429 + Retry-After** so clients back off precisely.",
+    "es": "Un **rate limiter** decide, en cada request, si el cliente está dentro de su cuota, y rechaza o encola el resto. Protege capacidad, costo y equidad entre tenants.\n\n**Algoritmos:**\n\n- **Token bucket**: capacidad *B*, recargada a *r* tokens/s; cada request gasta tokens. Ráfagas de hasta *B*, promedio *r*. La opción por defecto; Anthropic documenta que lo usa para los límites de su API.\n- **Leaky bucket**: una cola que se vacía a ritmo fijo. Salida pareja, sin ráfagas.\n- **Ventana fija**: un contador por minuto. Barato, pero en el borde entre ventanas puede pasar hasta **2×** el límite.\n- **Ventana deslizante con log**: guarda cada timestamp. Exacto; la memoria crece con el tráfico.\n- **Ventana deslizante con contador**: pondera el conteo de la ventana anterior según cuánto se solapa. Casi exacto con dos contadores.\n\n**Dónde:** en el borde, en el API gateway o en el [[llm-gateway]], por API key o tenant. Con muchas réplicas del gateway, guarda los contadores en **Redis** con un script Lua atómico; si no, cada réplica aplica su propia copia y el límite real se vuelve N×.\n\n**El giro con LLMs:** un request de 100k tokens cuesta lo mismo que cientos de requests cortos, así que limita **tokens por minuto (TPM)** además de RPM, y también streams concurrentes. Reserva la entrada estimada + `max_tokens` al admitir y devuelve lo que no se usó. Cada plan se traduce en tamaños de bucket por tenant ([[multi-tenancy]]). Rechaza con **429 + Retry-After** para que los clientes esperen lo justo."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  C[Client request] --> G[\"Gateway<br/>identify tenant\"]\n  G --> E[\"Estimate cost<br/>input + max_tokens\"]\n  E --> B{\"Bucket has room?<br/>RPM and TPM\"}\n  R[(\"Redis buckets<br/>per tenant\")] -.-> B\n  B -->|no| X[\"429 + Retry-After\"]\n  B -->|yes| L[LLM provider]\n  L --> U[\"Reconcile real tokens<br/>refund the rest\"]\n  U -.-> R",
+    "caption": {
+      "en": "Admission charges the worst-case token cost against the tenant's shared bucket; the real usage is reconciled after the response.",
+      "es": "Al admitir se cobra el costo en tokens del peor caso contra el bucket compartido del tenant; el uso real se concilia después de la respuesta."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Distributed token bucket in Redis, charged in LLM tokens", "es": "Token bucket distribuido en Redis, cobrado en tokens de LLM" },
+    "source": "import redis\n\nr = redis.Redis()\n\n# Atomic inside Redis: refill by elapsed time, then try to spend `cost`.\n# Redis TIME (not the caller's clock) so skew between gateway replicas can't matter.\nTOKEN_BUCKET = r.register_script(\"\"\"\nlocal cap, rate, cost = tonumber(ARGV[1]), tonumber(ARGV[2]), tonumber(ARGV[3])\nlocal t = redis.call('TIME')\nlocal now = tonumber(t[1]) + tonumber(t[2]) / 1e6\nlocal b = redis.call('HMGET', KEYS[1], 'tokens', 'ts')\nlocal tokens = tonumber(b[1]) or cap\ntokens = math.min(cap, tokens + (now - (tonumber(b[2]) or now)) * rate)\nlocal ok = tokens >= cost\nif ok then tokens = tokens - cost end\nredis.call('HSET', KEYS[1], 'tokens', tokens, 'ts', now)\nredis.call('EXPIRE', KEYS[1], math.ceil(cap / rate) + 60)\nif ok then return 0 end\nreturn math.ceil((cost - tokens) / rate)  -- seconds until enough refill\n\"\"\")\n\ndef admit(tenant: str, input_tokens: int, max_tokens: int, tpm: int) -> None:\n    # Reserve the worst case now; refund unused output tokens after the call\n    cost = input_tokens + max_tokens\n    if cost > tpm:\n        raise RequestTooLarge()          # could never fit: 4xx, not a retryable 429\n    wait_s = TOKEN_BUCKET(keys=[f\"tpm:{tenant}\"], args=[tpm, tpm / 60, cost])\n    if wait_s:\n        raise TooManyRequests(retry_after=wait_s)   # -> HTTP 429 + Retry-After"
+  },
+  "example": {
+    "en": "A B2B assistant serves 400 tenants from a provider account with 2M TPM. One tenant's nightly script fires 300 requests of 50k tokens in a minute: 15M tokens, 7.5× the whole account's budget. Without per-tenant limits, every customer starts getting provider 429s. With a Redis token bucket per tenant (free 20k TPM, pro 200k, enterprise 1M), the script gets your gateway's 429 + Retry-After after its first few calls, and the other 399 tenants never notice.",
+    "es": "Un asistente B2B atiende a 400 tenants desde una cuenta de proveedor con 2M TPM. El script nocturno de un tenant lanza 300 requests de 50k tokens en un minuto: 15M tokens, 7.5× el presupuesto de toda la cuenta. Sin límites por tenant, todos los clientes empiezan a recibir 429 del proveedor. Con un token bucket en Redis por tenant (free 20k TPM, pro 200k, enterprise 1M), el script recibe el 429 + Retry-After de tu gateway después de sus primeras llamadas y los otros 399 tenants ni se enteran."
+  },
+  "pros": [
+    { "en": "Isolates tenants: one noisy client can't exhaust shared capacity or the provider quota.", "es": "Aísla tenants: un cliente ruidoso no puede agotar la capacidad compartida ni la cuota del proveedor." },
+    { "en": "Caps cost: a token budget bounds what a runaway agent loop can spend.", "es": "Pone tope al costo: un presupuesto de tokens limita lo que puede gastar un agente en un loop descontrolado." },
+    { "en": "Turns overload into a clear, retryable 429 instead of timeouts for everyone.", "es": "Convierte la sobrecarga en un 429 claro y reintentable en vez de timeouts para todos." }
+  ],
+  "cons": [
+    { "en": "A central counter adds a network round-trip and a dependency on the hot path.", "es": "Un contador central agrega un viaje de red y una dependencia en el camino crítico." },
+    { "en": "An LLM call's token cost is unknown until it finishes; you must estimate and reconcile.", "es": "El costo en tokens de una llamada a un LLM no se conoce hasta que termina; hay que estimarlo y conciliarlo." },
+    { "en": "Static limits waste capacity off-peak and still allow overload when many tenants peak together.", "es": "Los límites estáticos desperdician capacidad fuera del pico y aun así permiten sobrecarga cuando muchos tenants coinciden." }
+  ],
+  "whenToUse": {
+    "en": "Any public or multi-tenant API, every LLM gateway, and in front of expensive dependencies whose quota you share, such as provider TPM or a GPU pool.",
+    "es": "En toda API pública o multi-tenant, en todo LLM gateway y delante de dependencias caras cuya cuota compartes, como el TPM del proveedor o un pool de GPUs."
+  },
+  "whenNotToUse": {
+    "en": "As your only overload defense: it caps clients, not system load, so pair it with load shedding and autoscaling. For internal batch work, a queue smooths load better than rejections.",
+    "es": "Como única defensa contra sobrecarga: limita clientes, no la carga del sistema, así que combínalo con load shedding y autoscaling. Para trabajo batch interno, una cola suaviza mejor que los rechazos."
+  },
+  "numbers": [
+    { "en": "HTTP 429 Too Many Requests is defined in RFC 6585; send Retry-After so clients know when to return.", "es": "HTTP 429 Too Many Requests está definido en el RFC 6585; envía Retry-After para que el cliente sepa cuándo volver." },
+    { "en": "A fixed window can admit up to 2× the limit in a burst straddling the boundary.", "es": "Una ventana fija puede admitir hasta 2× el límite en una ráfaga que cruza el borde." },
+    { "en": "LLM providers limit RPM and TPM separately; Anthropic splits input (ITPM) and output (OTPM) tokens.", "es": "Los proveedores de LLM limitan RPM y TPM por separado; Anthropic separa tokens de entrada (ITPM) y de salida (OTPM)." },
+    { "en": "Token bucket sizing: refill r = limit / 60 per second; capacity B = the largest burst you accept.", "es": "Dimensionar un token bucket: recarga r = límite / 60 por segundo; capacidad B = la ráfaga más grande que aceptas." },
+    { "en": "N replicas each enforcing a local limit L give an effective limit of N × L.", "es": "N réplicas que aplican cada una un límite local L dan un límite efectivo de N × L." }
+  ],
+  "pitfalls": [
+    { "en": "Limiting only requests per minute: one 100k-token call uses more tokens than 500 typical chat turns.", "es": "Limitar solo requests por minuto: una llamada de 100k tokens usa más tokens que 500 turnos típicos de chat." },
+    { "en": "In-memory counters per instance behind a load balancer: the limit silently scales with the replica count.", "es": "Contadores en memoria por instancia detrás de un balanceador: el límite crece en silencio con el número de réplicas." },
+    { "en": "Failing closed when Redis is down: the limiter becomes the outage. Fail open to a conservative local limit.", "es": "Fallar cerrado cuando Redis se cae: el limitador se vuelve la caída. Falla abierto hacia un límite local conservador." },
+    { "en": "Rejecting without Retry-After or remaining-quota headers: clients guess and retry immediately.", "es": "Rechazar sin Retry-After ni headers de cuota restante: los clientes adivinan y reintentan de inmediato." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Design rate limiting for a multi-tenant LLM API.", "es": "Diseña el rate limiting de una API de LLM multi-tenant." },
+      "a": {
+        "en": "I enforce it at the gateway, keyed by tenant, with token buckets in Redis updated by an atomic Lua script. Each plan sets three limits: requests per minute, tokens per minute and concurrent streams. On admission I reserve estimated input plus max_tokens and refund the difference when the response ends. Over-limit requests get 429 with Retry-After and remaining-quota headers. A separate global bucket keeps the sum under our provider quota. If Redis fails, I fail open to a conservative local limit rather than block every customer.",
+        "es": "Lo aplico en el gateway, por tenant, con token buckets en Redis actualizados por un script Lua atómico. Cada plan define tres límites: requests por minuto, tokens por minuto y streams concurrentes. Al admitir reservo la entrada estimada más max_tokens y devuelvo la diferencia cuando termina la respuesta. Los requests que se pasan reciben 429 con Retry-After y headers de cuota restante. Un bucket global aparte mantiene la suma bajo la cuota del proveedor. Si Redis falla, fallo abierto hacia un límite local conservador en vez de bloquear a todos los clientes."
+      }
+    },
+    {
+      "q": { "en": "Token bucket or sliding window?", "es": "¿Token bucket o ventana deslizante?" },
+      "a": {
+        "en": "Token bucket by default: two numbers per key, O(1), and it models what I want, a sustained rate with a bounded burst. It also fits LLM limits naturally, because a request spends its token count. I'd use a sliding window counter if the contract is literally \"N per rolling minute\" and I need near-exact enforcement for billing or abuse. I avoid fixed windows for anything strict, since a client can double the limit across the boundary, and sliding logs at scale, since memory grows with traffic.",
+        "es": "Token bucket por defecto: dos números por clave, O(1), y modela justo lo que quiero, una tasa sostenida con ráfagas acotadas. Además encaja natural con los límites de LLM, porque cada request gasta su cantidad de tokens. Usaría una ventana deslizante con contador si el contrato es literalmente \"N por minuto móvil\" y necesito precisión casi exacta por facturación o abuso. Evito ventanas fijas para algo estricto, porque un cliente puede duplicar el límite en el borde, y logs deslizantes a escala, porque la memoria crece con el tráfico."
+      }
+    },
+    {
+      "q": { "en": "What's the difference between rate limiting and load shedding?", "es": "¿Qué diferencia hay entre rate limiting y load shedding?" },
+      "a": {
+        "en": "Rate limiting enforces a per-client allowance whether or not the system is busy; it's about fairness and contracts. Load shedding looks at the server's own state, queue depth or KV-cache use, and drops or defers the lowest-priority work when overloaded, even from clients within quota. I need both: limits stop one tenant from monopolizing, shedding protects the system when everyone is within quota but peaks at once. Stripe describes running both layers for exactly this reason.",
+        "es": "El rate limiting aplica una cuota por cliente, esté o no ocupado el sistema; trata de equidad y contratos. El load shedding mira el estado del propio servidor, profundidad de cola o uso de KV cache, y descarta o posterga el trabajo de menor prioridad cuando hay sobrecarga, incluso de clientes dentro de su cuota. Necesito ambos: los límites evitan que un tenant acapare y el shedding protege al sistema cuando todos están dentro de su cuota pero coinciden en el pico. Stripe describe que usa ambas capas justamente por eso."
+      }
+    }
+  ],
+  "related": ["llm-gateway", "retries-backoff", "multi-tenancy", "token-economics", "api-design", "load-balancing"],
+  "sources": [
+    { "title": "Stripe — Scaling your API with rate limiters", "url": "https://stripe.com/blog/rate-limiters" },
+    { "title": "OpenAI — Rate limits guide", "url": "https://platform.openai.com/docs/guides/rate-limits" },
+    { "title": "Anthropic — Rate limits", "url": "https://docs.anthropic.com/en/api/rate-limits" },
+    { "title": "RFC 6585 — Additional HTTP Status Codes (429)", "url": "https://www.rfc-editor.org/rfc/rfc6585" }
+  ]
+}

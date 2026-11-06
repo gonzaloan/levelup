@@ -1,0 +1,95 @@
+{
+  "id": "drift",
+  "domain": "mlops",
+  "level": "core",
+  "title": { "en": "Data drift & concept drift", "es": "Data drift y concept drift" },
+  "aliases": ["data drift", "concept drift", "covariate shift", "label drift", "prior shift", "PSI", "population stability index", "KS test"],
+  "tldr": {
+    "en": "Data drift is when inputs change, P(X); concept drift is when the input-to-outcome relationship changes, P(Y|X). Detect the first with PSI or KS on features, the second mainly by tracking outcomes.",
+    "es": "Data drift es cuando cambian las entradas, P(X); concept drift es cuando cambia la relación entre entrada y resultado, P(Y|X). El primero se detecta con PSI o KS sobre features; el segundo, sobre todo midiendo resultados."
+  },
+  "analogy": {
+    "en": "A spam filter starts seeing new senders and topics (data drift). Then scammers copy the exact tone of real banks, so emails that used to look safe are now scams (concept drift).",
+    "es": "Un filtro de spam empieza a ver remitentes y temas nuevos (data drift). Después los estafadores copian el tono exacto de los bancos reales, y correos que antes parecían seguros ahora son estafas (concept drift)."
+  },
+  "explain": {
+    "en": "Models assume the future looks like the training data. **Drift** is when it doesn't.\n\n- **Data drift (covariate shift)**: P(X) changes: a new user mix, market or sensor calibration. The learned rule may still hold.\n- **Concept drift**: P(Y|X) changes. Same inputs, different right answer: fraudsters adapt, demand shifts (COVID in 2020).\n- **Label drift (prior shift)**: P(Y) changes: the fraud rate doubles.\n\n**Detecting it**: compare live data with a reference (usually training data), per feature.\n\n- **PSI** bins the reference (often deciles) and sums (a−e)·ln(a/e). Rule of thumb: <0.1 stable, 0.1–0.25 moderate, >0.25 significant.\n- **KS test**: the max gap between two CDFs; at large n every p-value is tiny, so threshold the statistic.\n- **KL / JS divergence**: JS is symmetric and bounded, easier to alert on.\n- **Text**: compare embedding centroids, or train a reference-vs-live classifier; AUC near 0.5 means no drift.\n\nInput drift is a cheap early warning, not proof of harm. Concept drift only shows in **outcomes**, which arrive late, so watch the prediction distribution meanwhile ([[ml-monitoring]]). Retrain on schedule, on sustained drift in key features, or on a measured metric drop.\n\n**LLMs**: queries drift in topic and bring product names your index has never seen; cluster them weekly and track the share outside known clusters.",
+    "es": "Los modelos asumen que el futuro se parece a los datos de entrenamiento. Hay **drift** cuando no es así.\n\n- **Data drift (covariate shift)**: cambia P(X): otra mezcla de usuarios, otro mercado u otra calibración de un sensor. La regla aprendida puede seguir valiendo.\n- **Concept drift**: cambia P(Y|X). Mismas entradas, otra respuesta correcta: los estafadores se adaptan, la demanda cambia (COVID en 2020).\n- **Label drift (prior shift)**: cambia P(Y): la tasa de fraude se duplica.\n\n**Cómo detectarlo**: compara una ventana en vivo con una referencia (por lo general, los datos de entrenamiento), feature por feature.\n\n- **PSI** divide la referencia en bins (a menudo deciles) y suma (a−e)·ln(a/e). Regla práctica: <0.1 estable, 0.1–0.25 moderado, >0.25 significativo.\n- **Test KS**: la distancia máxima entre dos CDFs; con n grande todo p-value es diminuto, así que pon el umbral sobre el estadístico.\n- **Divergencia KL / JS**: JS es simétrica y acotada, así que es más fácil alertar con ella.\n- **Texto**: compara centroides de embeddings, o entrena un clasificador que distinga referencia y datos en vivo; un AUC cercano a 0.5 indica que no hay drift.\n\nEl drift de entradas es una alerta temprana barata, no una prueba de daño. El concept drift solo se ve en los **resultados**, que llegan tarde, así que mientras tanto vigila la distribución de predicciones ([[ml-monitoring]]). Reentrena por calendario, ante drift sostenido en features clave o ante una caída medida de la métrica.\n\n**LLMs**: las consultas cambian de tema y traen nombres de productos que tu índice nunca vio; agrúpalas cada semana y sigue la proporción que cae fuera de los clusters conocidos."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  R[(\"Reference window<br/>training data\")] --> B[\"Bin by reference<br/>deciles\"]\n  L[\"Live window<br/>last 7 days\"] --> B\n  B --> S[\"PSI or KS<br/>per feature\"]\n  S --> D{\"PSI above 0.25<br/>on key feature?\"}\n  D -->|no| W[Keep watching]\n  D -->|yes| O{\"Outcome metric<br/>dropped?\"}\n  Y[Delayed labels] --> O\n  O -->|yes| T[Retrain or fix]\n  O -->|no| I[\"Investigate, log it\"]",
+    "caption": {
+      "en": "Input drift is the cheap, early alarm; delayed outcomes decide whether it matters and are the only way to see concept drift.",
+      "es": "El drift de entradas es la alarma barata y temprana; los resultados, que llegan tarde, deciden si importa y son la única forma de ver el concept drift."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Population Stability Index (PSI) with reference deciles", "es": "Population Stability Index (PSI) con deciles de referencia" },
+    "source": "import numpy as np\n\ndef psi(expected: np.ndarray, actual: np.ndarray, bins: int = 10) -> float:\n    # Bin edges come from the REFERENCE (deciles) and are applied to both\n    edges = np.quantile(expected, np.linspace(0, 1, bins + 1))\n    edges[0], edges[-1] = -np.inf, np.inf\n    e = np.histogram(expected, edges)[0] / len(expected)\n    a = np.histogram(actual, edges)[0] / len(actual)\n    e, a = np.clip(e, 1e-6, None), np.clip(a, 1e-6, None)  # empty bins: avoid log(0)\n    return float(np.sum((a - e) * np.log(a / e)))\n\nrng = np.random.default_rng(0)\ntrain_income = rng.lognormal(10.0, 0.5, 50_000)\nlive_income = rng.lognormal(10.2, 0.5, 5_000)  # median up ~22%\n\nscore = psi(train_income, live_income)  # ~0.17\nstatus = \"stable\" if score < 0.1 else \"moderate\" if score < 0.25 else \"significant\"\nprint(f\"PSI={score:.3f} -> {status}\")"
+  },
+  "example": {
+    "en": "A credit-limit model trained on 2023 applications monitors `income` and `requested_amount`. After a partner channel launches, weekly PSI on `requested_amount` jumps to 0.31 while `income` stays at 0.04: data drift from a new applicant mix. Approval rates move, but 60-day default rates, available two months later, hold steady, so the team adds the channel as a feature and retrains on schedule. A year later PSI is flat, yet defaults rise from 2.1% to 3.4% as interest rates climb: concept drift, invisible to every input monitor and caught only because outcomes were tracked.",
+    "es": "Un modelo de límites de crédito entrenado con solicitudes de 2023 monitorea `income` y `requested_amount`. Al lanzarse un canal de un socio, el PSI semanal de `requested_amount` salta a 0.31 mientras `income` queda en 0.04: data drift por una nueva mezcla de solicitantes. Las tasas de aprobación se mueven, pero la morosidad a 60 días, disponible dos meses después, se mantiene, así que el equipo agrega el canal como feature y reentrena según el calendario. Un año después el PSI está plano, pero la morosidad sube de 2.1% a 3.4% porque suben las tasas de interés: concept drift, invisible para todo monitor de entradas y detectado solo porque se medían los resultados."
+  },
+  "pros": [
+    { "en": "Input drift is visible immediately, weeks before labels arrive.", "es": "El drift de entradas se ve de inmediato, semanas antes de que lleguen las etiquetas." },
+    { "en": "Cheap: PSI and KS per feature run in a SQL job or a few lines of numpy.", "es": "Es barato: PSI y KS por feature corren en un job de SQL o en pocas líneas de numpy." },
+    { "en": "Turns retraining from a calendar habit into a decision backed by evidence.", "es": "Convierte el reentrenamiento de un hábito de calendario en una decisión respaldada por evidencia." }
+  ],
+  "cons": [
+    { "en": "Noisy: with hundreds of features something always drifts, and most of it doesn't hurt the model.", "es": "Es ruidoso: con cientos de features siempre algo deriva, y casi nunca le hace daño al modelo." },
+    { "en": "Blind to pure concept drift: inputs can look identical while the right answers change.", "es": "No ve el concept drift puro: las entradas pueden verse idénticas mientras cambian las respuestas correctas." },
+    { "en": "Thresholds like PSI 0.25 are conventions, not guarantees; they depend on binning and sample size.", "es": "Umbrales como PSI 0.25 son convenciones, no garantías; dependen de los bins y del tamaño de muestra." }
+  ],
+  "whenToUse": {
+    "en": "Every production model from day one: monitor the top features by importance, the prediction distribution and, when labels arrive, the real metric.",
+    "es": "Todo modelo en producción desde el primer día: monitorea las features más importantes, la distribución de predicciones y, cuando llegan las etiquetas, la métrica real."
+  },
+  "whenNotToUse": {
+    "en": "Don't retrain on every drift alert; confirm impact on outcomes or important features first. And don't run raw p-value tests on millions of rows: everything comes out significant.",
+    "es": "No reentrenes con cada alerta de drift; primero confirma el impacto en resultados o en features importantes. Y no uses p-values crudos sobre millones de filas: todo sale significativo."
+  },
+  "numbers": [
+    { "en": "PSI rule of thumb: <0.1 stable, 0.1–0.25 moderate shift, >0.25 significant shift worth acting on.", "es": "Regla práctica del PSI: <0.1 estable, 0.1–0.25 cambio moderado, >0.25 cambio significativo que merece acción." },
+    { "en": "PSI is usually computed on 10 reference bins (deciles); empty bins need a small floor to avoid log(0).", "es": "El PSI suele calcularse con 10 bins de la referencia (deciles); los bins vacíos necesitan un piso chico para evitar log(0)." },
+    { "en": "Two-sample KS at n = m = 100k: D above ~0.006 is already significant at p < 0.05.", "es": "KS de dos muestras con n = m = 100k: un D mayor a ~0.006 ya es significativo con p < 0.05." },
+    { "en": "JS divergence is bounded in [0, 1] with log base 2; KL is asymmetric and infinite on empty bins.", "es": "La divergencia JS está acotada en [0, 1] con logaritmo en base 2; KL es asimétrica e infinita con bins vacíos." },
+    { "en": "Domain-classifier check: AUC ≈ 0.5 means reference and live data are indistinguishable.", "es": "Chequeo con clasificador de dominio: un AUC ≈ 0.5 significa que la referencia y los datos en vivo son indistinguibles." }
+  ],
+  "pitfalls": [
+    { "en": "Taking PSI bins from the live data or changing them between runs, so the score tracks the binning, not the data.", "es": "Tomar los bins del PSI de los datos en vivo o cambiarlos entre corridas, así el puntaje sigue a los bins y no a los datos." },
+    { "en": "Alerting on every feature equally instead of weighting by feature importance.", "es": "Alertar igual por cada feature en lugar de ponderar según su importancia." },
+    { "en": "Treating stable inputs as a healthy model: concept drift doesn't show in P(X).", "es": "Tomar entradas estables como señal de un modelo sano: el concept drift no aparece en P(X)." },
+    { "en": "Using last week as the reference, so slow drift creeps in and the baseline drifts with it.", "es": "Usar la semana pasada como referencia, de modo que el drift lento se cuela y la línea base deriva con él." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Data drift vs concept drift: what's the difference and how do you detect each?", "es": "Data drift vs concept drift: ¿cuál es la diferencia y cómo detectas cada uno?" },
+      "a": {
+        "en": "Data drift is P(X) changing: the inputs look different, like a new customer segment. Concept drift is P(Y|X) changing: same inputs, different correct answer, like fraudsters adapting. I detect data drift directly on features, with PSI or KS per important feature against the training reference, plus the prediction distribution. Concept drift I can only confirm with outcomes, which are delayed, so I track the real metric as labels arrive and use proxies like score distributions and manual override rates meanwhile. Input drift is my early warning; outcomes decide whether I retrain.",
+        "es": "El data drift es que cambie P(X): las entradas se ven distintas, como un segmento nuevo de clientes. El concept drift es que cambie P(Y|X): mismas entradas, otra respuesta correcta, como estafadores que se adaptan. El data drift lo detecto directo sobre las features, con PSI o KS por cada feature importante contra la referencia de entrenamiento, más la distribución de predicciones. El concept drift solo lo puedo confirmar con resultados, que llegan con retraso, así que sigo la métrica real a medida que llegan las etiquetas y mientras tanto uso proxies como la distribución de scores y la tasa de correcciones manuales. El drift de entradas es mi alerta temprana; los resultados deciden si reentreno."
+      }
+    },
+    {
+      "q": { "en": "PSI on a feature jumped to 0.3. What do you do?", "es": "El PSI de una feature saltó a 0.3. ¿Qué haces?" },
+      "a": {
+        "en": "First I check it's real: a pipeline bug, a unit change or a spike in missing values explains a lot of 'drift'. Then I check impact: how important is the feature, did the prediction distribution move, and do the labels we have show a metric drop? If it's a pipeline bug, I fix the pipeline, not the model. If it's a genuine population shift with measurable harm, I retrain on recent data, sometimes upweighting the new segment, and validate per slice. If the metric holds, I log it, possibly refresh the reference, and keep watching.",
+        "es": "Primero verifico que sea real: un bug en el pipeline, un cambio de unidades o un pico de valores faltantes explican mucho 'drift'. Después reviso el impacto: qué tan importante es la feature, si se movió la distribución de predicciones y si las etiquetas que tenemos muestran una caída de la métrica. Si es un bug del pipeline, arreglo el pipeline, no el modelo. Si es un cambio real de población con daño medible, reentreno con datos recientes, a veces dándole más peso al segmento nuevo, y valido por segmento. Si la métrica se sostiene, lo registro, quizás actualizo la referencia y sigo vigilando."
+      }
+    },
+    {
+      "q": { "en": "How do you detect drift in an LLM app with free-text inputs?", "es": "¿Cómo detectas drift en una app con LLM cuyas entradas son texto libre?" },
+      "a": {
+        "en": "There are no tabular features, so I monitor in embedding space and in behavior. Weekly, I embed a sample of queries, cluster them and track the share far from known clusters; that's how new product names and intents show up. A classifier that separates last month's queries from this week's gives one drift score: AUC near 0.5 means no drift. I pair it with behavioral signals: falling retrieval scores, more 'I don't know' answers, more thumbs-down. New clusters become eval cases and, often, new documents in the index.",
+        "es": "No hay features tabulares, así que monitoreo en el espacio de embeddings y en el comportamiento. Cada semana genero embeddings de una muestra de consultas, las agrupo y sigo la proporción que queda lejos de los clusters conocidos; así aparecen nombres de productos e intenciones nuevas. Un clasificador que separa las consultas del mes pasado de las de esta semana da un solo puntaje de drift: un AUC cercano a 0.5 significa que no hay drift. Lo combino con señales de comportamiento: puntajes de recuperación que bajan, más respuestas de 'no sé', más pulgares abajo. Los clusters nuevos se vuelven casos de evaluación y, muchas veces, documentos nuevos en el índice."
+      }
+    }
+  ],
+  "related": ["ml-monitoring", "training-serving-skew", "ml-lifecycle", "llm-observability", "index-lifecycle", "embeddings"],
+  "sources": [
+    { "title": "Gama et al. — A Survey on Concept Drift Adaptation (ACM Computing Surveys, 2014)", "url": "https://dl.acm.org/doi/10.1145/2523813" },
+    { "title": "Chip Huyen — Data Distribution Shifts and Monitoring", "url": "https://huyenchip.com/2022/02/07/data-distribution-shifts-and-monitoring.html" },
+    { "title": "SciPy — scipy.stats.ks_2samp", "url": "https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.ks_2samp.html" }
+  ]
+}

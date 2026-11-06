@@ -1,0 +1,95 @@
+{
+  "id": "indexes",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Database indexes: B-tree vs LSM", "es": "Índices de bases de datos: B-tree vs LSM" },
+  "aliases": ["B-tree", "B+tree", "LSM tree", "SSTable", "compaction", "write amplification", "covering index", "composite index"],
+  "tldr": {
+    "en": "A B-tree keeps keys sorted in pages updated in place: great for reads and ranges. An LSM tree buffers writes in memory and merges sorted files later: great for ingest. Every index taxes writes.",
+    "es": "Un B-tree mantiene las claves ordenadas en páginas que se actualizan en su lugar: ideal para lecturas y rangos. Un LSM tree acumula escrituras en memoria y luego fusiona archivos ordenados: ideal para ingesta. Todo índice cobra un impuesto a las escrituras."
+  },
+  "analogy": {
+    "en": "A B-tree is a dictionary kept in order: finding a word is fast, but adding one means making room on the right page. An LSM tree is a notebook you only append to, recopied neatly every night.",
+    "es": "Un B-tree es un diccionario siempre ordenado: encontrar una palabra es rápido, pero agregar una exige hacerle espacio en la página correcta. Un LSM tree es una libreta donde solo agregas al final y que pasas en limpio cada noche."
+  },
+  "explain": {
+    "en": "An **index** is a second, sorted structure that lets the database find rows without scanning the table. Two designs dominate:\n\n- **B-tree** (Postgres, MySQL InnoDB): a shallow balanced tree of fixed-size pages (8 KB in Postgres, 16 KB in InnoDB). With hundreds of keys per page, 3–4 levels cover billions of rows and the top levels stay in RAM, so a lookup costs ~1 disk read. Keys stay sorted, so **range scans and ORDER BY … LIMIT** are cheap. Writes modify pages **in place** (plus the WAL).\n- **LSM tree** (RocksDB, Cassandra, ScyllaDB, Bigtable): writes go to a WAL and an in-memory **memtable**; when it fills, it is flushed as an immutable sorted **SSTable**. Background **compaction** merges SSTables and drops overwritten and deleted (tombstoned) keys. Writes are sequential and fast; a read may check several files, so per-file **Bloom filters** skip the ones that can't hold the key.\n\nThe trade-off is the **RUM conjecture**: you can minimize two of read, write (update) and space amplification, never all three. B-trees favor reads; LSMs favor writes and pay with compaction I/O and read amplification.\n\nTwo rules hold for any index: **column order matters** (equality columns first, then the range or sort column), and **every index slows writes**, because each insert must update it.",
+    "es": "Un **índice** es una segunda estructura ordenada que le permite a la base encontrar filas sin recorrer toda la tabla. Dominan dos diseños:\n\n- **B-tree** (Postgres, MySQL InnoDB): un árbol balanceado y poco profundo de páginas de tamaño fijo (8 KB en Postgres, 16 KB en InnoDB). Con cientos de claves por página, 3–4 niveles cubren miles de millones de filas y los niveles superiores viven en RAM, así que una búsqueda cuesta ~1 lectura de disco. Las claves están ordenadas, por eso los **rangos y el ORDER BY … LIMIT** son baratos. Las escrituras modifican páginas **en su lugar** (más el WAL).\n- **LSM tree** (RocksDB, Cassandra, ScyllaDB, Bigtable): las escrituras van a un WAL y a una **memtable** en memoria; cuando se llena, se vuelca como un **SSTable** ordenado e inmutable. La **compactación** en segundo plano fusiona SSTables y descarta claves sobrescritas o borradas (tombstones). Escribir es secuencial y rápido; una lectura puede revisar varios archivos, así que un **Bloom filter** por archivo descarta los que no pueden tener la clave.\n\nEl trade-off es la **conjetura RUM**: puedes minimizar dos de la amplificación de lectura, de escritura y de espacio, nunca las tres. Los B-trees favorecen la lectura; los LSM favorecen la escritura y lo pagan con I/O de compactación y amplificación de lectura.\n\nDos reglas valen para cualquier índice: **el orden de las columnas importa** (primero las de igualdad, luego la de rango u orden) y **todo índice frena las escrituras**, porque cada insert tiene que actualizarlo."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  subgraph BT[\"B-tree: read-optimized\"]\n    BW[Read or write] --> RT[\"Root page<br/>(cached in RAM)\"]\n    RT --> BR[Branch page]\n    BR --> LF[\"Leaf page<br/>updated in place\"]\n  end\n  subgraph LSM[\"LSM tree: write-optimized\"]\n    W[Write] --> LOG[(WAL)]\n    W --> MT[\"Memtable<br/>sorted, in RAM\"]\n    MT -->|flush when full| SS[\"SSTables<br/>immutable, sorted\"]\n    SS -->|background compaction| SS\n    R[Read] -->|1. check first| MT\n    R -->|2. newest file first| BF{\"Bloom filter<br/>per SSTable\"}\n    BF -->|maybe present| SS\n  end",
+    "caption": {
+      "en": "B-trees pay at write time to keep one sorted copy; LSM trees write sequentially and pay later in compaction and multi-file reads.",
+      "es": "Los B-trees pagan al escribir para mantener una sola copia ordenada; los LSM escriben en secuencia y pagan después con compactación y lecturas en varios archivos."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "From seq scan to index-only scan (Postgres)", "es": "De seq scan a index-only scan (Postgres)" },
+    "source": "-- Hot query: one tenant's LLM token usage in the last 24h\nEXPLAIN (ANALYZE, BUFFERS)\nSELECT created_at, total_tokens\nFROM llm_calls\nWHERE tenant_id = 42\n  AND created_at > now() - interval '24 hours';\n\n-- Before (no index), 20M rows:\n--   Seq Scan on llm_calls (actual time=0.021..1843.512 rows=3100 loops=1)\n--     Filter: ((tenant_id = 42) AND (created_at > ...))\n--     Rows Removed by Filter: 19996900\n\n-- Equality column first, range column second; INCLUDE makes it covering.\n-- CONCURRENTLY: build without blocking writes on a live table.\nCREATE INDEX CONCURRENTLY llm_calls_tenant_time_idx\n  ON llm_calls (tenant_id, created_at)\n  INCLUDE (total_tokens);\n\n-- After (table recently vacuumed):\n--   Index Only Scan using llm_calls_tenant_time_idx on llm_calls\n--     (actual time=0.034..1.912 rows=3100 loops=1)\n--     Index Cond: ((tenant_id = 42) AND (created_at > ...))\n--     Heap Fetches: 0\n\n-- Reversed order (created_at, tenant_id) would walk every tenant's\n-- last 24h and filter: a range on the leading column ends the prefix.\n\n-- Every index is a write tax: find the ones nobody uses.\nSELECT indexrelname, idx_scan FROM pg_stat_user_indexes\nWHERE relname = 'llm_calls' ORDER BY idx_scan;"
+  },
+  "example": {
+    "en": "An LLM call log takes ~2,000 inserts/s into Postgres. The billing dashboard's *\"tenant X, last 24 h\"* query sequentially scans 20M rows: ~1.8 s. A composite index on `(tenant_id, created_at) INCLUDE (total_tokens)` turns it into an index-only scan of ~3,000 entries: ~2 ms. Months later the table carries 9 indexes added \"just in case\"; every insert updates 9 B-trees and write latency climbs. `pg_stat_user_indexes` shows 5 with `idx_scan = 0`, so they go. When agent traces reach ~100k writes/s, they move to an LSM store (Cassandra/ScyllaDB) keyed by `(tenant_id, day)`.",
+    "es": "Un log de llamadas al LLM recibe ~2,000 inserts/s en Postgres. La consulta *\"tenant X, últimas 24 h\"* del dashboard de facturación recorre 20M de filas: ~1.8 s. Un índice compuesto `(tenant_id, created_at) INCLUDE (total_tokens)` la convierte en un index-only scan de ~3,000 entradas: ~2 ms. Meses después la tabla carga 9 índices agregados \"por si acaso\"; cada insert actualiza 9 B-trees y la latencia de escritura sube. `pg_stat_user_indexes` muestra 5 con `idx_scan = 0`, así que se eliminan. Cuando las trazas de agentes llegan a ~100k escrituras/s, pasan a un almacén LSM (Cassandra/ScyllaDB) con clave `(tenant_id, day)`."
+  },
+  "pros": [
+    { "en": "A good index turns an O(n) scan into an O(log n) lookup: seconds become milliseconds.", "es": "Un buen índice convierte un recorrido O(n) en una búsqueda O(log n): los segundos se vuelven milisegundos." },
+    { "en": "B-tree: sorted order makes range queries, ORDER BY … LIMIT and uniqueness checks cheap.", "es": "B-tree: el orden hace baratos los rangos, el ORDER BY … LIMIT y la verificación de unicidad." },
+    { "en": "LSM: sequential writes sustain far higher ingest on the same disks, and immutable files compress well.", "es": "LSM: las escrituras secuenciales sostienen mucha más ingesta con los mismos discos, y los archivos inmutables comprimen bien." }
+  ],
+  "cons": [
+    { "en": "Every index adds write cost, WAL volume, disk and cache pressure.", "es": "Cada índice suma costo de escritura, volumen de WAL, disco y presión sobre la caché." },
+    { "en": "LSM: reads may touch several SSTables, and compaction steals I/O and causes latency spikes.", "es": "LSM: una lectura puede tocar varios SSTables, y la compactación roba I/O y provoca picos de latencia." },
+    { "en": "B-tree: random-key inserts cause page splits and scattered writes that hurt at high ingest.", "es": "B-tree: insertar claves aleatorias provoca divisiones de página y escrituras dispersas que duelen con mucha ingesta." }
+  ],
+  "whenToUse": {
+    "en": "Index the columns of your hottest WHERE, JOIN and ORDER BY clauses, proven with EXPLAIN. Pick an LSM engine for write-heavy, append-mostly data (events, traces, time series); a B-tree for read-heavy OLTP with range queries.",
+    "es": "Indexa las columnas de tus WHERE, JOIN y ORDER BY más calientes, comprobándolo con EXPLAIN. Elige un motor LSM para datos con mucha escritura y casi solo inserciones (eventos, trazas, series de tiempo); un B-tree para OLTP con muchas lecturas y rangos."
+  },
+  "whenNotToUse": {
+    "en": "Small tables (a seq scan wins), low-selectivity columns like a boolean, or write-heavy tables queried rarely. Never add an index you can't name the query for.",
+    "es": "Tablas pequeñas (gana el seq scan), columnas poco selectivas como un booleano, o tablas con muchas escrituras que casi no se consultan. Nunca agregues un índice sin poder nombrar la consulta que lo usa."
+  },
+  "numbers": [
+    { "en": "Page size: 8 KB in Postgres, 16 KB in InnoDB; with hundreds of keys per page, B-trees stay ~3–4 levels deep.", "es": "Tamaño de página: 8 KB en Postgres, 16 KB en InnoDB; con cientos de claves por página, los B-trees se quedan en ~3–4 niveles." },
+    { "en": "Bloom filter: ~10 bits per key gives ~1% false positives (RocksDB's classic setting).", "es": "Bloom filter: ~10 bits por clave dan ~1% de falsos positivos (la configuración clásica de RocksDB)." },
+    { "en": "Postgres covering indexes (`INCLUDE`) exist since v11; index-only scans need a vacuumed visibility map.", "es": "Los índices covering de Postgres (`INCLUDE`) existen desde la v11; los index-only scans requieren un visibility map al día por el vacuum." },
+    { "en": "Size-tiered compaction can need up to ~2× a table's size in free disk during a major compaction.", "es": "La compactación size-tiered puede necesitar hasta ~2× el tamaño de la tabla en disco libre durante una compactación mayor." }
+  ],
+  "pitfalls": [
+    { "en": "Wrong column order: `(created_at, tenant_id)` for `tenant_id = ? AND created_at > ?` scans every tenant's range.", "es": "Orden de columnas equivocado: `(created_at, tenant_id)` para `tenant_id = ? AND created_at > ?` recorre el rango de todos los tenants." },
+    { "en": "Random UUIDv4 primary keys: inserts land on random B-tree pages; prefer UUIDv7 or bigint.", "es": "Claves primarias UUIDv4 aleatorias: los inserts caen en páginas aleatorias del B-tree; prefiere UUIDv7 o bigint." },
+    { "en": "`CREATE INDEX` without `CONCURRENTLY` on a live Postgres table blocks writes for the whole build.", "es": "`CREATE INDEX` sin `CONCURRENTLY` sobre una tabla viva de Postgres bloquea las escrituras durante toda la construcción." },
+    { "en": "Mass deletes on an LSM store: tombstones pile up and slow reads until compaction purges them.", "es": "Borrados masivos en un almacén LSM: los tombstones se acumulan y frenan las lecturas hasta que la compactación los purga." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "B-tree or LSM for storing agent traces at 100k events/s?", "es": "¿B-tree o LSM para guardar trazas de agentes a 100k eventos/s?" },
+      "a": {
+        "en": "LSM. Traces are append-mostly, written far more often than read, and read by key range (tenant, session, time). An LSM turns random writes into sequential flushes, so the same disks sustain much higher ingest, and immutable SSTables compress well. I pay with read amplification and compaction I/O: leveled compaction if reads by session matter, size-tiered if it's mostly ingest, and compaction backlog as a first-class alert. Read-heavy metadata like tenants and configs stays in a B-tree store such as Postgres.",
+        "es": "LSM. Las trazas son casi solo inserciones, se escriben mucho más de lo que se leen y se leen por rango de clave (tenant, sesión, tiempo). Un LSM convierte escrituras aleatorias en volcados secuenciales, así que los mismos discos sostienen mucha más ingesta, y los SSTables inmutables comprimen bien. Lo pago con amplificación de lectura e I/O de compactación: leveled si importan las lecturas por sesión, size-tiered si es casi pura ingesta, y el backlog de compactación como alerta de primera clase. Los metadatos con muchas lecturas, como tenants y configuraciones, se quedan en un B-tree como Postgres."
+      }
+    },
+    {
+      "q": { "en": "A query is slow. Walk me through fixing it with an index.", "es": "Una consulta está lenta. Explícame cómo la arreglas con un índice." },
+      "a": {
+        "en": "I run EXPLAIN (ANALYZE, BUFFERS) with real parameters and look for a Seq Scan with a large \"Rows Removed by Filter\" or an explicit Sort. Then I design the index from the query: equality columns first, then the range or ORDER BY column, and INCLUDE the selected columns if an index-only scan is cheap. I build it CONCURRENTLY, re-run EXPLAIN, and watch write latency, because every index taxes inserts. Finally I drop indexes with zero scans in pg_stat_user_indexes.",
+        "es": "Corro EXPLAIN (ANALYZE, BUFFERS) con parámetros reales y busco un Seq Scan con un \"Rows Removed by Filter\" grande o un Sort explícito. Luego diseño el índice desde la consulta: primero las columnas de igualdad, después la de rango u ORDER BY, e INCLUDE de las columnas seleccionadas si un index-only scan sale barato. Lo construyo CONCURRENTLY, vuelvo a correr EXPLAIN y vigilo la latencia de escritura, porque cada índice cobra en los inserts. Al final elimino los índices con cero scans en pg_stat_user_indexes."
+      }
+    },
+    {
+      "q": { "en": "Why do extra indexes hurt UPDATE-heavy Postgres tables so much?", "es": "¿Por qué los índices extra afectan tanto a tablas de Postgres con muchos UPDATE?" },
+      "a": {
+        "en": "Postgres MVCC writes a new row version on every UPDATE. Unless it's a HOT update — no indexed column changed and the new version fits on the same page — it must insert a new entry into every index on the table. Eight indexes means nine writes plus WAL for each. So I keep indexes few, avoid indexing columns that change constantly like `updated_at`, and leave fillfactor headroom on hot tables so HOT updates can apply.",
+        "es": "El MVCC de Postgres escribe una versión nueva de la fila en cada UPDATE. Salvo que sea un HOT update (no cambió ninguna columna indexada y la versión nueva cabe en la misma página), debe insertar una entrada nueva en cada índice de la tabla. Ocho índices significan nueve escrituras más su WAL. Por eso mantengo pocos índices, evito indexar columnas que cambian todo el tiempo como `updated_at` y dejo margen de fillfactor en tablas calientes para que apliquen los HOT updates."
+      }
+    }
+  ],
+  "related": ["sql-vs-nosql", "ann-indexes", "sharding", "back-of-envelope", "llm-observability"],
+  "sources": [
+    { "title": "PostgreSQL docs — Multicolumn Indexes", "url": "https://www.postgresql.org/docs/current/indexes-multicolumn.html" },
+    { "title": "PostgreSQL docs — Index-Only Scans and Covering Indexes", "url": "https://www.postgresql.org/docs/current/indexes-index-only-scans.html" },
+    { "title": "RocksDB wiki — Leveled Compaction", "url": "https://github.com/facebook/rocksdb/wiki/Leveled-Compaction" },
+    { "title": "Use The Index, Luke — SQL indexing and tuning", "url": "https://use-the-index-luke.com/" }
+  ]
+}

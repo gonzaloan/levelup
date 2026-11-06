@@ -1,0 +1,95 @@
+{
+  "id": "observability",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Observability: logs, metrics, traces", "es": "Observabilidad: logs, métricas y trazas" },
+  "aliases": ["o11y", "OpenTelemetry", "OTel", "distributed tracing", "RED method", "USE method", "structured logging", "metric cardinality"],
+  "tldr": {
+    "en": "Metrics tell you *that* something is wrong, traces *where*, logs *why*. Instrument with OpenTelemetry, alert on RED and USE, and keep high-cardinality detail on spans, not metric labels.",
+    "es": "Las métricas te dicen *que* algo anda mal, las trazas *dónde* y los logs *por qué*. Instrumenta con OpenTelemetry, alerta con RED y USE, y deja el detalle de alta cardinalidad en los spans, no en las etiquetas de métricas."
+  },
+  "analogy": {
+    "en": "Metrics are the car's dashboard gauges, a trace is the GPS log of one specific trip, and logs are the driver's notes about what happened at each stop.",
+    "es": "Las métricas son los indicadores del tablero del auto, una traza es el registro GPS de un viaje concreto y los logs son las notas del conductor sobre lo que pasó en cada parada."
+  },
+  "explain": {
+    "en": "**Observability** is being able to answer new questions about production from the telemetry it already emits, without shipping new code.\n\n- **Metrics**: cheap, aggregated time series (counters, gauges, histograms) for dashboards and alerts. Prometheus, Datadog.\n- **Logs**: discrete events. Make them **structured** (JSON with `trace_id`, `tenant_id`, `level`) so you query them instead of grepping.\n- **Traces**: one request's path across services. Each unit of work is a **span** (name, start, duration, parent, attributes); all spans share a `trace_id`. **Context propagation** carries the ids between services in the W3C `traceparent` header, and through queue messages.\n- **Profiles**: continuous CPU and memory profiling, being added to OpenTelemetry as a fourth signal.\n\nWhat to measure:\n\n- **RED** per service: **R**ate, **E**rrors, **D**uration (as p50/p95/p99).\n- **USE** per resource (CPU, GPU, disk, pool): **U**tilization, **S**aturation, **E**rrors.\n\n**OpenTelemetry (OTel)** is the vendor-neutral standard: one SDK plus the OTel Collector, exporting to any backend (Jaeger, Grafana Tempo, Honeycomb, Datadog).\n\n**Cardinality** is the cost trap: every unique label combination is a separate time series. Put `user_id` or a prompt on a metric and storage explodes; keep that detail on spans and logs.\n\n**LLM apps** need a span per step (retrieval, rerank, each model and tool call) carrying model, input/output tokens, cost and latency. See [[llm-observability]].",
+    "es": "La **observabilidad** es poder responder preguntas nuevas sobre producción a partir de la telemetría que ya emite, sin desplegar código nuevo.\n\n- **Métricas**: series de tiempo agregadas y baratas (contadores, gauges, histogramas) para dashboards y alertas. Prometheus, Datadog.\n- **Logs**: eventos discretos. Hazlos **estructurados** (JSON con `trace_id`, `tenant_id`, `level`) para consultarlos en vez de hacer grep.\n- **Trazas**: el recorrido de una petición entre servicios. Cada unidad de trabajo es un **span** (nombre, inicio, duración, padre, atributos) y todos comparten un `trace_id`. La **propagación de contexto** lleva los ids entre servicios en el header W3C `traceparent`, y también dentro de los mensajes de las colas.\n- **Perfiles**: profiling continuo de CPU y memoria, que OpenTelemetry está sumando como cuarta señal.\n\nQué medir:\n\n- **RED** por servicio: **R**ate (tasa), **E**rrors (errores), **D**uration (duración, como p50/p95/p99).\n- **USE** por recurso (CPU, GPU, disco, pool): **U**tilization (uso), **S**aturation (saturación), **E**rrors.\n\n**OpenTelemetry (OTel)** es el estándar neutral respecto al proveedor: un SDK más el OTel Collector, que exporta a cualquier backend (Jaeger, Grafana Tempo, Honeycomb, Datadog).\n\nLa **cardinalidad** es la trampa de costos: cada combinación única de etiquetas es una serie de tiempo distinta. Pon `user_id` o un prompt en una métrica y el almacenamiento explota; deja ese detalle en spans y logs.\n\nLas **apps con LLMs** necesitan un span por paso (recuperación, rerank, cada llamada al modelo y a cada tool) con modelo, tokens de entrada y salida, costo y latencia. Revisa [[llm-observability]]."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[User request] --> A[\"API service<br/>root span\"]\n  A -->|traceparent header| R[\"Retrieval service<br/>child span\"]\n  R --> V[(Vector DB)]\n  A -->|\"child span: tokens, cost\"| L[LLM provider]\n  A -.->|OTLP| C[OTel Collector]\n  R -.->|OTLP| C\n  C --> T[(Traces backend)]\n  C --> M[(Metrics backend)]\n  C --> G[(Logs backend)]",
+    "caption": {
+      "en": "One trace_id travels in the traceparent header; every service exports spans, metrics and logs over OTLP to a Collector that fans out to backends.",
+      "es": "Un mismo trace_id viaja en el header traceparent; cada servicio exporta spans, métricas y logs por OTLP a un Collector que los reparte a los backends."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Per-step spans with token and cost attributes", "es": "Spans por paso con atributos de tokens y costo" },
+    "source": "from opentelemetry import trace\nfrom openai import OpenAI\n\n# Assumes a TracerProvider + OTLP exporter configured at startup.\nMODEL = \"gpt-4.1-mini\"                       # any chat model\nPRICE_IN, PRICE_OUT = 0.40e-6, 1.60e-6       # $/token, check your price sheet\ntracer = trace.get_tracer(\"support-bot\")\nclient = OpenAI()\n\ndef answer(question: str) -> str:\n    with tracer.start_as_current_span(\"answer\"):              # root span\n        with tracer.start_as_current_span(\"retrieve\") as s:\n            docs = retrieve(question, k=20)\n            s.set_attribute(\"retrieval.hits\", len(docs))\n        with tracer.start_as_current_span(f\"chat {MODEL}\") as s:\n            r = client.chat.completions.create(\n                model=MODEL, messages=build_prompt(question, docs))\n            u = r.usage\n            # OTel GenAI semantic conventions; per-request detail lives on spans,\n            # never as metric labels (cardinality)\n            s.set_attribute(\"gen_ai.request.model\", MODEL)\n            s.set_attribute(\"gen_ai.usage.input_tokens\", u.prompt_tokens)\n            s.set_attribute(\"gen_ai.usage.output_tokens\", u.completion_tokens)\n            s.set_attribute(\"app.cost_usd\",\n                u.prompt_tokens * PRICE_IN + u.completion_tokens * PRICE_OUT)\n        return r.choices[0].message.content"
+  },
+  "example": {
+    "en": "A RAG assistant's p95 latency jumps from 3 s to 9 s overnight. The RED dashboard shows rate and errors flat, duration up: something is slow, not broken. A slow trace shows the `retrieve` span unchanged at ~200 ms, but the `chat` span now carries ~28k input tokens instead of ~6k: a config change raised top-k from 5 to 25 chunks. Cost per request rose ~4× too. Without per-step spans carrying token counts, the team would have blamed the model provider.",
+    "es": "La latencia p95 de un asistente RAG salta de 3 s a 9 s de un día para otro. El dashboard RED muestra la tasa y los errores planos y la duración arriba: algo está lento, no roto. Una traza lenta muestra el span `retrieve` igual que siempre, en ~200 ms, pero el span `chat` ahora lleva ~28k tokens de entrada en vez de ~6k: un cambio de configuración subió el top-k de 5 a 25 chunks. El costo por petición también subió ~4×. Sin spans por paso con conteo de tokens, el equipo le habría echado la culpa al proveedor del modelo."
+  },
+  "pros": [
+    { "en": "Traces turn \"it's slow\" into the exact span and service in minutes.", "es": "Las trazas convierten un \"está lento\" en el span y el servicio exactos en minutos." },
+    { "en": "OpenTelemetry avoids lock-in: switch backends without re-instrumenting code.", "es": "OpenTelemetry evita el lock-in: cambias de backend sin volver a instrumentar el código." },
+    { "en": "RED and USE give every team the same small, alertable dashboard.", "es": "RED y USE le dan a todos los equipos el mismo dashboard pequeño y con alertas." }
+  ],
+  "cons": [
+    { "en": "Telemetry costs real money: ingest and retention can rival compute for chatty services.", "es": "La telemetría cuesta dinero de verdad: la ingesta y la retención pueden competir con el cómputo en servicios muy verbosos." },
+    { "en": "One high-cardinality label can blow up a metrics backend and its bill.", "es": "Una sola etiqueta de alta cardinalidad puede reventar un backend de métricas y su factura." },
+    { "en": "Tracing everything is expensive at scale, so you sample and may miss rare requests.", "es": "Trazar todo es caro a escala, así que muestreas y puedes perderte peticiones raras." }
+  ],
+  "whenToUse": {
+    "en": "Any system with more than one service, and every LLM app in production: you can't debug or price a multi-step chain you can't see.",
+    "es": "Cualquier sistema con más de un servicio y toda app con LLMs en producción: no puedes depurar ni costear una cadena de varios pasos que no ves."
+  },
+  "whenNotToUse": {
+    "en": "Skip heavy custom instrumentation on a single-process prototype. Never log raw prompts or PII at 100% without redaction, sampling and retention limits.",
+    "es": "Evita la instrumentación pesada a la medida en un prototipo de un solo proceso. Nunca registres prompts crudos ni PII al 100% sin redacción, muestreo y límites de retención."
+  },
+  "numbers": [
+    { "en": "Series count = product of label values: 50 routes × 5 status codes × 20 pods = 5,000 series; add `user_id` with 1M users and it's 5 billion.", "es": "Número de series = producto de los valores de las etiquetas: 50 rutas × 5 códigos de estado × 20 pods = 5,000 series; agrega `user_id` con 1M de usuarios y son 5 mil millones." },
+    { "en": "W3C `traceparent` carries a 16-byte trace-id and an 8-byte parent span-id.", "es": "El `traceparent` de W3C lleva un trace-id de 16 bytes y un span-id padre de 8 bytes." },
+    { "en": "Google SRE's four golden signals: latency, traffic, errors, saturation.", "es": "Las cuatro señales doradas del SRE de Google: latencia, tráfico, errores y saturación." },
+    { "en": "Rule of thumb: head-sample ~1–10% of traces at high volume, but tail-sample to keep 100% of errors and slow requests.", "es": "Regla práctica: con alto volumen, muestrea ~1–10% de las trazas al inicio, pero usa tail sampling para conservar el 100% de los errores y las peticiones lentas." }
+  ],
+  "pitfalls": [
+    { "en": "Unstructured log lines without `trace_id`: you can't join a log to the request that produced it.", "es": "Líneas de log sin estructura y sin `trace_id`: no puedes unir un log con la petición que lo generó." },
+    { "en": "User ids, prompts or raw URLs as metric labels: cardinality explosion and a surprise bill.", "es": "Ids de usuario, prompts o URLs crudas como etiquetas de métricas: explosión de cardinalidad y una factura sorpresa." },
+    { "en": "Alerting on averages: a mean hides the tail; use p95/p99 from histograms.", "es": "Alertar sobre promedios: la media esconde la cola; usa p95/p99 a partir de histogramas." },
+    { "en": "Context not propagated through queues and async workers, so traces stop at the first hop.", "es": "No propagar el contexto a través de colas y workers asíncronos, así las trazas se cortan en el primer salto." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you instrument an LLM agent in production?", "es": "¿Cómo instrumentarías un agente con LLM en producción?" },
+      "a": {
+        "en": "Every request becomes a trace with one span per step: retrieval, rerank, each model call, each tool call, using OpenTelemetry so I can switch backends. Model spans carry model id, input and output tokens, cost, latency and finish reason, following the GenAI semantic conventions. From those I derive low-cardinality metrics: RED per endpoint, cost per tenant and per feature. Prompts and outputs go to sampled, redacted logs linked by trace_id, because error analysis needs them and that's exactly where the PII risk lives.",
+        "es": "Cada petición se vuelve una traza con un span por paso: recuperación, rerank, cada llamada al modelo y cada tool call, con OpenTelemetry para poder cambiar de backend. Los spans del modelo llevan el id del modelo, tokens de entrada y salida, costo, latencia y finish reason, siguiendo las convenciones semánticas de GenAI. A partir de eso derivo métricas de baja cardinalidad: RED por endpoint y costo por tenant y por feature. Los prompts y las salidas van a logs muestreados y redactados, unidos por trace_id, porque el análisis de errores los necesita y ahí es justo donde vive el riesgo de PII."
+      }
+    },
+    {
+      "q": { "en": "Metrics, logs or traces: if you could keep only one?", "es": "Métricas, logs o trazas: ¿si solo pudieras quedarte con una?" },
+      "a": {
+        "en": "For one service, metrics: cheap, and they tell me something is wrong. For distributed or LLM systems, traces, because a span with rich attributes can be aggregated into metrics and carries the context a log line would; that's the \"wide events\" view. The trade-off is cost: tracing 100% gets expensive, so I tail-sample, keeping all errors and slow requests plus a small share of the rest. In practice I want all three, correlated by trace_id.",
+        "es": "Para un solo servicio, métricas: son baratas y me dicen que algo anda mal. Para sistemas distribuidos o con LLMs, trazas, porque un span con atributos ricos se puede agregar en métricas y lleva el contexto que tendría una línea de log; es la visión de \"wide events\". El trade-off es el costo: trazar el 100% sale caro, así que uso tail sampling y conservo todos los errores y las peticiones lentas más una fracción pequeña del resto. En la práctica quiero las tres, correlacionadas por trace_id."
+      }
+    },
+    {
+      "q": { "en": "Your metrics bill tripled overnight. What happened?", "es": "La factura de métricas se triplicó de un día para otro. ¿Qué pasó?" },
+      "a": {
+        "en": "Almost certainly a cardinality explosion: someone added a high-cardinality label such as user_id, a URL path with ids in it, or a model name that varies per request, and every unique value created a new time series. I'd find it by querying series count per metric and label, drop or rewrite that label at the Collector, and move the detail to spans or logs, where per-event fields are cheap. Then I'd add a guard that caps distinct label values per metric.",
+        "es": "Casi seguro es una explosión de cardinalidad: alguien agregó una etiqueta de alta cardinalidad, como user_id, una ruta de URL con ids o un nombre de modelo que varía por petición, y cada valor único creó una serie de tiempo nueva. La encuentro consultando el número de series por métrica y por etiqueta, elimino o reescribo esa etiqueta en el Collector y muevo el detalle a spans o logs, donde los campos por evento son baratos. Después agrego una protección que limite los valores distintos por etiqueta en cada métrica."
+      }
+    }
+  ],
+  "related": ["llm-observability", "slos", "ml-monitoring", "inference-metrics", "error-analysis", "microservices"],
+  "sources": [
+    { "title": "OpenTelemetry — Traces", "url": "https://opentelemetry.io/docs/concepts/signals/traces/" },
+    { "title": "OpenTelemetry — Semantic conventions for generative AI", "url": "https://opentelemetry.io/docs/specs/semconv/gen-ai/" },
+    { "title": "Brendan Gregg — The USE Method", "url": "https://www.brendangregg.com/usemethod.html" },
+    { "title": "Google SRE Book — Monitoring Distributed Systems", "url": "https://sre.google/sre-book/monitoring-distributed-systems/" }
+  ]
+}
