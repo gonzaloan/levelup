@@ -1,0 +1,95 @@
+{
+  "id": "streaming",
+  "domain": "inference",
+  "level": "core",
+  "title": { "en": "Streaming responses (SSE)", "es": "Respuestas en streaming (SSE)" },
+  "aliases": ["SSE", "server-sent events", "token streaming", "stream=true", "text/event-stream", "TTFT"],
+  "tldr": {
+    "en": "Send tokens to the user as they are generated, over Server-Sent Events, so they start reading at time-to-first-token instead of waiting for the whole answer; total time is unchanged.",
+    "es": "Envía los tokens al usuario a medida que se generan, por Server-Sent Events, para que empiece a leer en el tiempo al primer token en vez de esperar la respuesta completa; el tiempo total no cambia."
+  },
+  "analogy": {
+    "en": "A waiter bringing each dish as it leaves the kitchen instead of holding the whole order until dessert is ready.",
+    "es": "Un mesero que trae cada plato en cuanto sale de la cocina en vez de esperar a que esté listo el postre para servir todo junto."
+  },
+  "explain": {
+    "en": "**Streaming** returns the answer token by token while the model decodes, instead of one JSON body at the end. LLM APIs (OpenAI, Anthropic, vLLM's OpenAI-compatible server) use **Server-Sent Events (SSE)**: one long-lived HTTP response with `Content-Type: text/event-stream`, where each chunk is a `data: {...}` line followed by a blank line.\n\nWhy it matters: decode is slow and sequential. At ~50–100 tokens/s, a 500-token answer takes 5–10 s. Users judge speed by **time to first token (TTFT)**, usually a few hundred ms, and they read slower than the model writes, so after the first token they rarely wait again. See [[prefill-decode]] and [[inference-metrics]].\n\nWhat gets harder:\n\n- **Partial structure**: JSON and tool-call arguments arrive as fragments. Accumulate deltas and parse when the block ends.\n- **Cancellation**: when the client disconnects, abort the upstream call or you keep paying for tokens nobody reads.\n- **Buffering**: nginx, CDNs, load balancers and gzip middleware may hold chunks. Disable it (`proxy_buffering off`, `X-Accel-Buffering: no`).\n- **Errors mid-stream**: the 200 status is already sent, so errors travel as in-band events.\n- **Moderation**: text is shown before you can check it. Buffer by sentence, or don't stream high-risk output.\n\nSSE is one-way and plain HTTP; use WebSockets only when the client must also talk mid-stream, as in voice.",
+    "es": "El **streaming** devuelve la respuesta token por token mientras el modelo decodifica, en lugar de un solo cuerpo JSON al final. Las APIs de LLMs (OpenAI, Anthropic, el servidor compatible con OpenAI de vLLM) usan **Server-Sent Events (SSE)**: una respuesta HTTP de larga duración con `Content-Type: text/event-stream`, donde cada chunk es una línea `data: {...}` seguida de una línea en blanco.\n\nPor qué importa: el decode es lento y secuencial. A ~50–100 tokens/s, una respuesta de 500 tokens tarda 5–10 s. Los usuarios juzgan la velocidad por el **tiempo al primer token (TTFT)**, normalmente unos cientos de ms, y leen más lento de lo que el modelo escribe, así que después del primer token casi nunca vuelven a esperar. Revisa [[prefill-decode]] e [[inference-metrics]].\n\nQué se complica:\n\n- **Estructura parcial**: el JSON y los argumentos de tool calls llegan en fragmentos. Acumula los deltas y parsea cuando termina el bloque.\n- **Cancelación**: si el cliente se desconecta, aborta la llamada al proveedor o seguirás pagando tokens que nadie lee.\n- **Buffering**: nginx, CDNs, balanceadores y middleware de gzip pueden retener los chunks. Desactívalo (`proxy_buffering off`, `X-Accel-Buffering: no`).\n- **Errores a mitad del stream**: el status 200 ya se envió, así que los errores viajan como eventos dentro del stream.\n- **Moderación**: el texto se muestra antes de que puedas revisarlo. Acumula por oración o no hagas streaming de salidas de alto riesgo.\n\nSSE es unidireccional y HTTP simple; usa WebSockets solo cuando el cliente también necesita hablar a mitad del stream, como en voz."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant B as Browser\n  participant A as API server\n  participant M as LLM provider\n  B->>A: POST /chat\n  A->>M: request with stream=true\n  M-->>A: first delta at TTFT\n  A-->>B: data: first tokens\n  M-->>A: more deltas\n  A-->>B: data: more tokens\n  alt model finishes\n    M-->>A: finish_reason stop\n    A-->>B: data: [DONE]\n  else user clicks Stop\n    B--xA: client disconnects\n    A--xM: abort upstream call\n  end",
+    "caption": {
+      "en": "The server relays each delta as an SSE event; when the client leaves, it must cancel the upstream call or keep paying for tokens.",
+      "es": "El servidor reenvía cada delta como evento SSE; si el cliente se va, debe cancelar la llamada al proveedor o seguirá pagando tokens."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "FastAPI SSE relay with cancellation", "es": "Relay SSE en FastAPI con cancelación" },
+    "source": "import json\nfrom fastapi import FastAPI, Request\nfrom fastapi.responses import StreamingResponse\nfrom openai import AsyncOpenAI\n\nMODEL = \"gpt-4.1-mini\"  # any chat model\nclient = AsyncOpenAI()\napp = FastAPI()\n\ndef sse(obj: dict, event: str = \"message\") -> str:\n    return f\"event: {event}\\ndata: {json.dumps(obj)}\\n\\n\"\n\n@app.post(\"/chat\")\nasync def chat(req: Request):\n    body = await req.json()\n    async def events():\n        stream = None\n        try:\n            stream = await client.chat.completions.create(\n                model=MODEL, messages=body[\"messages\"], stream=True)\n            async for chunk in stream:\n                if await req.is_disconnected():  # user hit Stop\n                    break                          # stop paying for tokens\n                delta = chunk.choices[0].delta.content if chunk.choices else None\n                if delta:\n                    yield sse({\"text\": delta})\n            yield sse({}, \"done\")\n        except Exception:\n            yield sse({\"msg\": \"upstream failed\"}, \"error\")  # 200 already sent\n        finally:\n            if stream:\n                await stream.close()  # closes the upstream HTTP connection\n\n    return StreamingResponse(events(), media_type=\"text/event-stream\",\n        headers={\"Cache-Control\": \"no-cache\", \"X-Accel-Buffering\": \"no\"})"
+  },
+  "example": {
+    "en": "A support assistant returns ~400-token answers at ~60 tokens/s: ~7 s of blank screen, and users retry or leave. With SSE, the first words appear at ~400 ms TTFT and the answer fills in faster than people read. After deploy behind nginx, though, the whole answer still arrives at once at the 7 s mark: `proxy_buffering` was on. One header (`X-Accel-Buffering: no`) fixes it. Wiring the Stop button to abort the upstream call also stops billing for answers users already abandoned.",
+    "es": "Un asistente de soporte devuelve respuestas de ~400 tokens a ~60 tokens/s: ~7 s de pantalla en blanco, y los usuarios reintentan o se van. Con SSE, las primeras palabras aparecen a ~400 ms de TTFT y la respuesta se completa más rápido de lo que la gente lee. Pero después del deploy detrás de nginx, la respuesta completa sigue llegando de golpe a los 7 s: `proxy_buffering` estaba activo. Un header (`X-Accel-Buffering: no`) lo arregla. Conectar el botón de Detener para abortar la llamada al proveedor también deja de cobrar respuestas que el usuario ya abandonó."
+  },
+  "pros": [
+    { "en": "Perceived latency drops from total generation time to TTFT.", "es": "La latencia percibida baja del tiempo total de generación al TTFT." },
+    { "en": "Users can stop a wrong answer early, which saves output tokens.", "es": "El usuario puede detener una respuesta equivocada a tiempo, lo que ahorra tokens de salida." },
+    { "en": "SSE is plain HTTP: works through standard proxies and auth once buffering is off.", "es": "SSE es HTTP simple: funciona con proxies y autenticación estándar una vez que desactivas el buffering." }
+  ],
+  "cons": [
+    { "en": "Partial JSON and tool-call fragments complicate parsing and validation.", "es": "El JSON parcial y los fragmentos de tool calls complican el parseo y la validación." },
+    { "en": "Output is visible before it can be moderated or validated.", "es": "La salida se ve antes de que puedas moderarla o validarla." },
+    { "en": "Long-lived connections hit idle timeouts, buffering proxies and per-origin connection limits.", "es": "Las conexiones largas chocan con timeouts por inactividad, proxies con buffer y límites de conexiones por origen." }
+  ],
+  "whenToUse": {
+    "en": "Any human-facing generation longer than a sentence or two: chat, assistants, summaries, code generation.",
+    "es": "Cualquier generación que lee una persona y que pase de una o dos oraciones: chat, asistentes, resúmenes, generación de código."
+  },
+  "whenNotToUse": {
+    "en": "Machine-to-machine calls that need a complete, validated object, short classifications, batch jobs, or high-risk output that must be checked before anyone sees it.",
+    "es": "Llamadas entre sistemas que necesitan un objeto completo y validado, clasificaciones cortas, jobs batch, o salidas de alto riesgo que deben revisarse antes de que alguien las vea."
+  },
+  "numbers": [
+    { "en": "Nielsen's response-time limits: ~0.1 s feels instant, ~1 s keeps the flow of thought, ~10 s loses attention. Aim for TTFT under ~1 s.", "es": "Límites de tiempo de respuesta de Nielsen: ~0.1 s se siente instantáneo, ~1 s mantiene el hilo, ~10 s pierde la atención. Apunta a un TTFT menor a ~1 s." },
+    { "en": "Rule of thumb: hosted models decode ~50–100 output tokens/s per stream, so a 500-token answer is 5–10 s unstreamed.", "es": "Regla práctica: los modelos hospedados generan ~50–100 tokens de salida/s por stream, así que una respuesta de 500 tokens tarda 5–10 s sin streaming." },
+    { "en": "Browsers allow ~6 HTTP/1.1 connections per origin; open SSE streams count against it, so serve them over HTTP/2.", "es": "Los navegadores permiten ~6 conexiones HTTP/1.1 por origen; los streams SSE abiertos cuentan, así que sírvelos por HTTP/2." },
+    { "en": "AWS ALB's default idle timeout is 60 s: send heartbeat comments during long pauses such as reasoning.", "es": "El idle timeout por defecto de un ALB de AWS es de 60 s: envía comentarios de heartbeat durante pausas largas, como el razonamiento." }
+  ],
+  "pitfalls": [
+    { "en": "A buffering proxy, CDN or gzip middleware delivers the whole stream at the end, and it works fine locally.", "es": "Un proxy, CDN o middleware de gzip con buffer entrega todo el stream al final, y en local funciona perfecto." },
+    { "en": "Not aborting upstream on client disconnect: you pay for every abandoned generation.", "es": "No abortar la llamada al proveedor cuando el cliente se desconecta: pagas cada generación abandonada." },
+    { "en": "Calling json.loads on each chunk, or running a tool on partial arguments. Accumulate per tool-call index, act at the end.", "es": "Hacer json.loads de cada chunk o ejecutar una herramienta con argumentos parciales. Acumula por índice de tool call y actúa al final." },
+    { "en": "Using EventSource for chat: it only does GET without custom headers. Use fetch with a ReadableStream for POST bodies and auth.", "es": "Usar EventSource para el chat: solo hace GET y sin headers personalizados. Usa fetch con un ReadableStream para enviar POST y autenticación." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Streaming doesn't make the model any faster. Why bother?", "es": "El streaming no hace más rápido al modelo. ¿Para qué molestarse?" },
+      "a": {
+        "en": "Right, total latency is the same or slightly worse. What changes is perceived latency: users start reading at TTFT, a few hundred ms, instead of staring at a spinner for 5 to 10 seconds, and since they read slower than the model decodes they rarely wait again. It also lets them cancel early, which saves tokens. The costs are partial JSON, errors after a 200, moderating text already shown, and infra that buffers. For machine-to-machine calls that need a full object, I don't stream.",
+        "es": "Cierto, la latencia total es igual o un poco peor. Lo que cambia es la latencia percibida: el usuario empieza a leer en el TTFT, unos cientos de ms, en lugar de mirar un spinner durante 5 a 10 segundos, y como lee más lento de lo que el modelo genera, casi nunca vuelve a esperar. También le permite cancelar a tiempo, lo que ahorra tokens. Los costos son JSON parcial, errores después de un 200, moderar texto ya mostrado e infraestructura que hace buffer. En llamadas entre sistemas que necesitan un objeto completo, no hago streaming."
+      }
+    },
+    {
+      "q": { "en": "How do you moderate output that you're streaming?", "es": "¿Cómo moderas una salida que estás enviando en streaming?" },
+      "a": {
+        "en": "I pick by risk. Low risk: stream raw, run an async check on the full text and retract the message if it fails. Medium risk: buffer by sentence, release each sentence once a fast classifier passes it, which costs about one sentence of delay. High risk, like regulated advice or minors: don't stream the visible answer; generate, check, then show, with a progress indicator meanwhile. Input guardrails run before generation in every case, so output checks only handle what slips through.",
+        "es": "Elijo según el riesgo. Riesgo bajo: hago streaming directo, corro una revisión asíncrona sobre el texto completo y retiro el mensaje si falla. Riesgo medio: acumulo por oración y libero cada una cuando un clasificador rápido la aprueba, lo que cuesta como una oración de demora. Riesgo alto, como asesoría regulada o menores: no hago streaming de la respuesta visible; genero, reviso y luego muestro, con un indicador de progreso mientras tanto. Los guardrails de entrada corren antes de generar en todos los casos, así que la revisión de salida solo atrapa lo que se escapa."
+      }
+    },
+    {
+      "q": { "en": "How do you handle tool calls in a streamed response?", "es": "¿Cómo manejas los tool calls en una respuesta en streaming?" },
+      "a": {
+        "en": "They arrive as deltas. OpenAI sends the function name first and the arguments as string fragments keyed by tool-call index; Anthropic sends input_json_delta events per content block. I accumulate per index and only parse and execute when the block or message finishes: finish_reason tool_calls, or content_block_stop. Executing on partial arguments is a correctness bug. For the UI, I show 'searching...' as soon as the tool name arrives, which keeps the perceived-latency win.",
+        "es": "Llegan como deltas. OpenAI manda primero el nombre de la función y los argumentos como fragmentos de texto identificados por el índice del tool call; Anthropic manda eventos input_json_delta por bloque de contenido. Acumulo por índice y solo parseo y ejecuto cuando termina el bloque o el mensaje: finish_reason tool_calls, o content_block_stop. Ejecutar con argumentos parciales es un bug de correctitud. En la UI muestro 'buscando...' en cuanto llega el nombre de la herramienta, y así conservo la ganancia de latencia percibida."
+      }
+    }
+  ],
+  "related": ["inference-metrics", "prefill-decode", "llm-gateway", "guardrails", "structured-outputs", "tool-calling"],
+  "sources": [
+    { "title": "MDN — Using server-sent events", "url": "https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events" },
+    { "title": "OpenAI — Streaming API responses", "url": "https://platform.openai.com/docs/guides/streaming-responses" },
+    { "title": "Anthropic — Streaming Messages", "url": "https://docs.anthropic.com/en/docs/build-with-claude/streaming" },
+    { "title": "nginx — proxy_buffering directive", "url": "https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering" }
+  ]
+}

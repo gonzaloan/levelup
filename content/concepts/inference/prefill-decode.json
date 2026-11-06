@@ -1,0 +1,88 @@
+{
+  "id": "prefill-decode",
+  "domain": "inference",
+  "level": "core",
+  "title": { "en": "Prefill vs decode", "es": "Prefill vs. decode" },
+  "aliases": ["prefill", "decode", "prompt processing", "token generation", "chunked prefill", "disaggregated serving", "PD disaggregation", "Sarathi-Serve"],
+  "tldr": {
+    "en": "Prefill reads the whole prompt in one parallel, compute-bound pass and sets TTFT; decode then emits one token per step, bound by memory bandwidth, and sets TPOT. Most serving optimizations target one phase.",
+    "es": "El prefill lee todo el prompt en una pasada paralela, limitada por cómputo, y define el TTFT; luego el decode emite un token por paso, limitado por el ancho de banda de memoria, y define el TPOT. Casi toda optimización de serving ataca una de las dos fases."
+  },
+  "analogy": {
+    "en": "A kitchen preps every ingredient at once with all burners on (prefill, limited by burners), then serves a tasting menu one course at a time, with a walk to the pantry before each course (decode, limited by the walk).",
+    "es": "Una cocina prepara todos los ingredientes a la vez con todos los quemadores encendidos (prefill, limitado por los quemadores) y luego sirve un menú de pasos un plato a la vez, caminando a la despensa antes de cada uno (decode, limitado por la caminata)."
+  },
+  "explain": {
+    "en": "Every generation request runs in two phases with opposite bottlenecks.\n\n**Prefill** pushes all prompt tokens through the model in one parallel forward pass. That's matrix–matrix work, thousands of FLOPs per byte of weights read, so it's **compute-bound**. It writes the prompt's [[kv-cache]] and yields the first token, so it sets **TTFT**. Cost grows with prompt length: a 32k-token prompt on an 8B model takes roughly a second of H100 time.\n\n**Decode** then emits one token per step per sequence. Each step streams every weight, plus the sequence's KV cache, from HBM to do very little math: ~1 FLOP per byte at batch 1, while an H100 needs ~300 to keep its tensor cores busy. So decode is **memory-bandwidth-bound** and sets **TPOT**. Batching many sequences into each step recovers the idle compute.\n\nThat's why APIs price output ~4–8× above input: each output token is a sequential step holding a batch slot and KV memory, while thousands of input tokens share one efficient pass.\n\nMixing the phases causes interference: a long prefill entering the batch stalls everyone's decode. Two fixes:\n\n- **Chunked prefill**: split long prompts into chunks (e.g., 512–2,048 tokens) that ride along with decode steps (Sarathi-Serve; on by default in vLLM V1).\n- **Disaggregated serving**: separate GPU pools for prefill and decode, shipping the KV cache between them (DistServe, Splitwise, Mooncake; NVIDIA Dynamo, llm-d), so each scales for its own SLO.",
+    "es": "Cada request de generación corre en dos fases con cuellos de botella opuestos.\n\nEl **prefill** pasa todos los tokens del prompt por el modelo en una sola pasada paralela. Es trabajo de matriz por matriz, miles de FLOPs por cada byte de pesos leído, así que está **limitado por cómputo**. Escribe el [[kv-cache]] del prompt y produce el primer token, por lo que define el **TTFT**. Su costo crece con la longitud del prompt: un prompt de 32k tokens en un modelo de 8B toma alrededor de un segundo de H100.\n\nLuego el **decode** emite un token por paso y por secuencia. Cada paso lee desde la HBM todos los pesos, más el KV cache de la secuencia, para hacer muy pocas operaciones: ~1 FLOP por byte con batch 1, cuando una H100 necesita ~300 para mantener ocupados sus tensor cores. Así que el decode está **limitado por el ancho de banda de memoria** y define el **TPOT**. Meter muchas secuencias en cada paso es como recuperas el cómputo ocioso.\n\nPor eso las APIs cobran el output ~4–8× más caro que el input: cada token de salida es un paso secuencial que ocupa un lugar en el batch y memoria de KV, mientras que miles de tokens de entrada comparten una sola pasada eficiente.\n\nMezclar las fases genera interferencia: un prefill largo que entra al batch frena el decode de todos. Hay dos soluciones:\n\n- **Chunked prefill**: divide los prompts largos en chunks (por ejemplo, de 512–2,048 tokens) que viajan junto con los pasos de decode (Sarathi-Serve; activado por defecto en vLLM V1).\n- **Serving desagregado**: pools de GPUs separados para prefill y decode, que se pasan el KV cache de uno a otro (DistServe, Splitwise, Mooncake; NVIDIA Dynamo, llm-d), para que cada uno escale según su propio SLO."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[\"Prompt<br/>N tokens\"] --> PF[\"Prefill, all tokens<br/>compute-bound\"]\n  PF -->|write K and V| KV[(KV cache)]\n  PF --> T1[\"First token<br/>sets TTFT\"]\n  T1 --> DS[\"Decode, one token<br/>bandwidth-bound\"]\n  KV -->|read all| DS\n  W[(Weights in HBM)] -->|read all| DS\n  DS -->|append K and V| KV\n  DS -->|loop until EOS| DS\n  DS --> O[\"Token stream<br/>sets TPOT\"]",
+    "caption": {
+      "en": "Prefill is one wide pass that sets TTFT; each decode step rereads all weights and the KV cache to emit a single token, so bandwidth sets TPOT.",
+      "es": "El prefill es una pasada ancha que define el TTFT; cada paso de decode vuelve a leer todos los pesos y el KV cache para emitir un solo token, así que el ancho de banda define el TPOT."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Roofline check: why prefill and decode differ", "es": "Chequeo de roofline: por qué difieren prefill y decode" },
+    "source": "# Which resource limits a forward pass: compute or memory bandwidth?\nPEAK_FLOPS = 989e12          # H100 SXM, dense BF16\nHBM_BW = 3.35e12             # H100 SXM HBM3, bytes/s\nRIDGE = PEAK_FLOPS / HBM_BW  # ~295 FLOPs per byte needed to saturate compute\n\ndef forward_pass(params_b: float, tokens: int, bytes_per_param: int = 2) -> str:\n    flops = 2 * params_b * 1e9 * tokens            # ~2 FLOPs per param per token\n    bytes_read = params_b * 1e9 * bytes_per_param  # weights read once per pass\n    intensity = flops / bytes_read\n    ms = max(flops / PEAK_FLOPS, bytes_read / HBM_BW) * 1e3  # slower roof wins\n    bound = \"compute\" if intensity > RIDGE else \"bandwidth\"\n    return f\"{tokens:>5} tokens: {intensity:>5.0f} FLOP/B, >= {ms:.1f} ms, {bound}-bound\"\n\n# 8B model in BF16; ignores attention and KV reads (they make decode worse)\nprint(forward_pass(8, 2000))  # prefill, 2k prompt: 2000 FLOP/B, >= 32.4 ms, compute\nprint(forward_pass(8, 1))     # decode, batch 1:       1 FLOP/B, >= 4.8 ms, bandwidth\nprint(forward_pass(8, 64))    # decode, batch 64:     64 FLOP/B, >= 4.8 ms, bandwidth\n# Batch 64 costs the same ~4.8 ms as batch 1 but yields 64 tokens:\n# batching is the whole economics of decode. Prefill is already compute-bound."
+  },
+  "example": {
+    "en": "A support app runs Llama-3-8B on vLLM, decoding ~60 chat streams at ~25 ms per token. A user pastes a 32k-token contract. Its prefill needs ~1 s of H100 compute; done in one step, it freezes all 60 streams and p99 inter-token latency jumps from ~40 ms to over 1 s. With chunked prefill at 2,048 tokens per step, the contract spreads over 16 steps that also carry decode tokens: streams slow slightly instead of stalling, and the contract's TTFT grows only modestly. At hundreds of GPUs with many such prompts, a separate prefill pool starts to pay.",
+    "es": "Una app de soporte corre Llama-3-8B en vLLM y decodifica ~60 streams de chat a ~25 ms por token. Un usuario pega un contrato de 32k tokens. Su prefill necesita ~1 s de cómputo de H100; hecho en un solo paso, congela los 60 streams y el ITL p99 salta de ~40 ms a más de 1 s. Con chunked prefill de 2,048 tokens por paso, el contrato se reparte en 16 pasos que también llevan tokens de decode: los streams se frenan un poco en vez de detenerse, y el TTFT del contrato crece apenas. Con cientos de GPUs y muchos prompts así, un pool de prefill separado empieza a convenir."
+  },
+  "pros": [
+    { "en": "Tells you which knob fixes which metric: TTFT → prompt length, prefix caching, compute; TPOT → bandwidth, quantization, speculative decoding.", "es": "Te dice qué perilla arregla qué métrica: TTFT → longitud del prompt, prefix caching, cómputo; TPOT → ancho de banda, cuantización, speculative decoding." },
+    { "en": "Explains the price sheet: cheap input, expensive output, and cheapest cached input whose prefill is skipped.", "es": "Explica la lista de precios: input barato, output caro y el input en cache, cuyo prefill se omite, como el más barato." },
+    { "en": "Separating the phases (chunked or disaggregated) removes interference and lets each use its own batch size and parallelism.", "es": "Separar las fases (con chunks o desagregando) elimina la interferencia y permite que cada una use su propio tamaño de batch y paralelismo." }
+  ],
+  "cons": [
+    { "en": "On a shared pool, long prefills stall everyone's decode unless prefill is chunked.", "es": "En un pool compartido, los prefills largos frenan el decode de todos salvo que el prefill vaya en chunks." },
+    { "en": "Disaggregation must move the KV cache between GPUs: an extra hop that needs NVLink or RDMA-class networking.", "es": "Desagregar obliga a mover el KV cache entre GPUs: un salto extra que requiere NVLink o una red tipo RDMA." },
+    { "en": "Two pools to size and autoscale, and the right prefill:decode ratio shifts with the prompt/output mix.", "es": "Son dos pools que dimensionar y autoescalar, y la proporción correcta entre prefill y decode cambia con la mezcla de prompts y salidas." }
+  ],
+  "whenToUse": {
+    "en": "Reason in these terms for any latency, cost or capacity question. Keep chunked prefill on by default; consider disaggregation at large scale with long prompts and strict, separate TTFT and TPOT SLOs.",
+    "es": "Piensa en estos términos ante cualquier pregunta de latencia, costo o capacidad. Deja el chunked prefill activado por defecto; considera desagregar a gran escala, con prompts largos y SLOs estrictos y separados de TTFT y TPOT."
+  },
+  "whenNotToUse": {
+    "en": "Don't disaggregate a few-GPU deployment or short-prompt chat: the KV transfer and second pool cost more than the interference they remove. Chunked prefill on one pool is enough.",
+    "es": "No desagregues un despliegue de pocas GPUs ni un chat de prompts cortos: la transferencia de KV y el segundo pool cuestan más que la interferencia que eliminan. Con chunked prefill en un solo pool alcanza."
+  },
+  "numbers": [
+    { "en": "Forward pass ≈ 2 FLOPs per parameter per token: an 8B model prefilling 2k tokens ≈ 32 TFLOPs.", "es": "Una pasada ≈ 2 FLOPs por parámetro por token: un modelo de 8B que hace prefill de 2k tokens ≈ 32 TFLOPs." },
+    { "en": "Batch-1 decode ≈ 1 FLOP per byte of FP16 weights; an H100 needs ~300 (989 TFLOPS ÷ 3.35 TB/s) to be compute-bound.", "es": "Decode con batch 1 ≈ 1 FLOP por byte de pesos en FP16; una H100 necesita ~300 (989 TFLOPS ÷ 3.35 TB/s) para quedar limitada por cómputo." },
+    { "en": "Output lists at ~4–8× input: GPT-4o $2.50 vs $10, Claude Sonnet $3 vs $15 per million tokens.", "es": "El output cuesta ~4–8× el input en lista: GPT-4o $2.50 vs. $10, Claude Sonnet $3 vs. $15 por millón de tokens." },
+    { "en": "DistServe: up to 7.4× more requests or 12.6× tighter SLOs than co-located serving, keeping >90% of requests within SLO.", "es": "DistServe: hasta 7.4× más requests o SLOs 12.6× más estrictos que el serving con fases juntas, con >90% de los requests dentro del SLO." }
+  ],
+  "pitfalls": [
+    { "en": "Blaming the model for slow TTFT when the cause is a 20k-token prompt; prefill scales with prompt length. Trim it or cache the prefix.", "es": "Culpar al modelo por un TTFT lento cuando la causa es un prompt de 20k tokens; el prefill escala con la longitud del prompt. Recórtalo o cachea el prefijo." },
+    { "en": "Trying to fix TPOT with more FLOPs: decode wants bandwidth, smaller weights (quantization) or fewer steps (speculative decoding).", "es": "Intentar arreglar el TPOT con más FLOPs: el decode necesita ancho de banda, pesos más chicos (cuantización) o menos pasos (speculative decoding)." },
+    { "en": "Estimating cost from output tokens alone: in RAG and agents, input usually dominates the bill despite its lower unit price.", "es": "Estimar el costo solo con los tokens de salida: en RAG y agentes el input suele dominar la factura pese a su menor precio unitario." },
+    { "en": "Picking a prefill chunk size blindly: too large brings the stalls back; too small adds overhead and raises TTFT for long prompts.", "es": "Elegir el tamaño de chunk del prefill a ciegas: muy grande trae de vuelta las pausas; muy chico agrega overhead y sube el TTFT de los prompts largos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why are output tokens priced higher than input tokens?", "es": "¿Por qué los tokens de salida cuestan más que los de entrada?" },
+      "a": {
+        "en": "Because they cost more GPU time. Input goes through one parallel prefill pass that keeps the tensor cores busy, so thousands of prompt tokens share each read of the weights. Every output token is a sequential decode step that rereads the weights and KV cache from HBM, and the sequence holds a batch slot and KV memory for its whole generation. Providers pass that on at ~4–8×. The design consequence: cache stable prompt prefixes, and treat output length as a cost and latency budget.",
+        "es": "Porque cuestan más tiempo de GPU. El input pasa por un solo prefill paralelo que mantiene ocupados los tensor cores, así que miles de tokens del prompt comparten cada lectura de los pesos. Cada token de salida es un paso de decode secuencial que vuelve a leer pesos y KV cache desde la HBM, y la secuencia ocupa un lugar en el batch y memoria de KV durante toda la generación. Los proveedores lo trasladan a ~4–8×. La consecuencia de diseño: cachear los prefijos estables del prompt y tratar la longitud de la salida como un presupuesto de costo y latencia."
+      }
+    },
+    {
+      "q": { "en": "When would you disaggregate prefill and decode?", "es": "¿Cuándo separarías prefill y decode en pools distintos?" },
+      "a": {
+        "en": "When the two SLOs fight and scale justifies it. On a shared pool a long prefill stalls decode, so I either over-provision or miss TPOT. First I'd enable chunked prefill, which fixes most of it on one pool. I'd disaggregate when prompts are long (RAG, agents, code), TTFT and TPOT targets are both tight, and we run enough GPUs to keep two pools busy, with NVLink or RDMA for the KV transfer. The price is a second pool to autoscale and a KV-aware router, e.g., NVIDIA Dynamo or llm-d.",
+        "es": "Cuando los dos SLOs chocan y la escala lo justifica. En un pool compartido, un prefill largo frena el decode, así que o sobredimensiono o incumplo el TPOT. Primero activaría chunked prefill, que resuelve casi todo en un solo pool. Desagregaría cuando los prompts son largos (RAG, agentes, código), los objetivos de TTFT y TPOT son estrictos y tenemos suficientes GPUs para mantener ocupados dos pools, con NVLink o RDMA para mover el KV. El precio es un segundo pool que autoescalar y un router consciente del KV, como NVIDIA Dynamo o llm-d."
+      }
+    }
+  ],
+  "related": ["kv-cache", "inference-metrics", "continuous-batching", "gpu-memory-math", "prompt-caching", "speculative-decoding"],
+  "sources": [
+    { "title": "Zhong et al. — DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving", "url": "https://arxiv.org/abs/2401.09670" },
+    { "title": "Agrawal et al. — Taming Throughput-Latency Tradeoff in LLM Inference with Sarathi-Serve", "url": "https://arxiv.org/abs/2403.02310" },
+    { "title": "Patel et al. — Splitwise: Efficient Generative LLM Inference Using Phase Splitting", "url": "https://arxiv.org/abs/2311.18677" },
+    { "title": "NVIDIA Dynamo (GitHub)", "url": "https://github.com/ai-dynamo/dynamo" }
+  ]
+}

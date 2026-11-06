@@ -1,0 +1,95 @@
+{
+  "id": "ab-testing",
+  "domain": "evals",
+  "level": "advanced",
+  "title": { "en": "A/B testing LLM features", "es": "A/B testing de funcionalidades con LLM" },
+  "aliases": ["A/B test", "online experiment", "controlled experiment", "power analysis", "sequential testing", "CUPED", "interleaving", "guardrail metrics"],
+  "tldr": {
+    "en": "Randomly split users between old and new model or prompt, compare one pre-chosen primary metric, and let guardrails (latency, cost, safety) veto. Size it with a power analysis; never stop at the first significant peek.",
+    "es": "Divide a los usuarios al azar entre el modelo o prompt actual y el nuevo, compara una métrica principal elegida de antemano y deja que los guardrails (latencia, costo, seguridad) tengan veto. Dimensiona con un análisis de potencia; nunca te detengas en el primer vistazo significativo."
+  },
+  "analogy": {
+    "en": "A clinical trial for a prompt: random assignment, an endpoint fixed before the trial starts, safety monitoring that can halt it, and no unblinding halfway because the results look good.",
+    "es": "Un ensayo clínico para un prompt: asignación aleatoria, un objetivo fijado antes de empezar, monitoreo de seguridad que puede detenerlo y nada de abrir los resultados a la mitad porque se ven bien."
+  },
+  "explain": {
+    "en": "An **A/B test** randomly assigns *users* to the current system (control) or a change (treatment): a new model, prompt or retrieval setup. Randomization makes it the only method that measures **causal** impact on real outcomes; offline evals only predict it.\n\n**Write the plan before launch:**\n\n- **One primary metric** tied to value: task success, resolution without escalation, conversion. Choosing it after seeing results manufactures winners.\n- **Guardrails** that veto a launch: p95 latency, cost per session, safety flags, error rate.\n- **Sample size** from a power analysis on the smallest effect worth shipping. It sets the duration; run at least 1–2 full weeks.\n- **Unit**: randomize by user with sticky assignment and analyze per user, so nobody sees both models.\n\n**Traps that hit LLM features:**\n\n- **Peeking**: stopping at the first p < 0.05 inflates false positives. Fix the horizon, or use a **sequential test** (mSPRT, always-valid p-values) built for continuous monitoring.\n- **Novelty**: a new assistant gets curiosity usage in week one. Watch the trend, not just the total.\n- **Extra variance**: stochastic outputs add noise on top of user-to-user variance. **CUPED** (adjusting with pre-experiment behavior) wins power back.\n- **Ranking changes** (retrieval, search, recommendations): **interleaving** merges both rankers' results into one list and credits each click to its ranker, detecting preferences with far fewer users.",
+    "es": "Un **A/B test** asigna *usuarios* al azar al sistema actual (control) o a un cambio (tratamiento): un modelo, un prompt o una configuración de recuperación nuevos. La aleatorización lo vuelve el único método que mide el impacto **causal** sobre resultados reales; las evaluaciones offline solo lo predicen.\n\n**Escribe el plan antes de lanzar:**\n\n- **Una métrica principal** ligada al valor: éxito de la tarea, resolución sin escalar, conversión. Elegirla después de ver los resultados fabrica ganadores.\n- **Guardrails** con poder de veto: latencia p95, costo por sesión, alertas de seguridad, tasa de errores.\n- **Tamaño de muestra** según un análisis de potencia sobre el efecto mínimo que valga la pena lanzar. Eso fija la duración: al menos 1–2 semanas completas.\n- **Unidad**: aleatoriza por usuario con asignación fija y analiza por usuario, para que nadie vea ambos modelos.\n\n**Trampas típicas con LLMs:**\n\n- **Peeking**: detenerte en el primer p < 0,05 infla los falsos positivos. Fija el horizonte o usa una **prueba secuencial** (mSPRT, p-valores siempre válidos) pensada para monitoreo continuo.\n- **Novedad**: un asistente nuevo recibe uso por curiosidad la primera semana. Mira la tendencia, no solo el total.\n- **Varianza extra**: las salidas estocásticas suman ruido a la variación entre usuarios. **CUPED** (ajustar con el comportamiento previo al experimento) recupera potencia.\n- **Cambios de ranking** (recuperación, búsqueda, recomendaciones): el **interleaving** mezcla los resultados de ambos rankers en una sola lista y acredita cada clic a su ranker, así detecta preferencias con muchos menos usuarios."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  U[Users] --> H{\"Hash user id<br/>sticky 50/50\"}\n  H -->|control| A[\"Model A<br/>current prompt\"]\n  H -->|treatment| B[\"Model B<br/>new prompt\"]\n  A --> L[(Event logs)]\n  B --> L\n  L --> SRM{\"Split really<br/>50/50?\"}\n  SRM -->|no| X[Fix assignment]\n  SRM -->|yes| G{\"Guardrails hold?<br/>latency, cost, safety\"}\n  G -->|no| N[\"Don't ship\"]\n  G -->|yes| P{\"Primary metric<br/>lift at horizon?\"}\n  P -->|significant| S[Ship]\n  P -->|not significant| N",
+    "caption": {
+      "en": "Assignment, a sanity check on the split, the guardrail veto, then the primary metric, read once at the planned horizon.",
+      "es": "Asignación, chequeo de sanidad del reparto, veto de los guardrails y luego la métrica principal, leída una sola vez en el horizonte planeado."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Power analysis, SRM check and a guardrail-first decision", "es": "Análisis de potencia, chequeo de SRM y decisión con guardrails primero" },
+    "source": "from scipy.stats import chisquare\nfrom statsmodels.stats.power import NormalIndPower\nfrom statsmodels.stats.proportion import proportion_effectsize, proportions_ztest\n\n# 1) Before launch: users per arm to detect +2 pts on a 50% task-success rate\nh = proportion_effectsize(0.52, 0.50)\nn = NormalIndPower().solve_power(effect_size=h, alpha=0.05, power=0.8)\nprint(f\"{n:,.0f} users per arm\")  # ~9,800: this, not impatience, sets the duration\n\n# 2) Read once, at the pre-registered horizon\ndef decide(users: dict, wins: dict, guardrails: dict) -> str:\n    # Sample-ratio mismatch: a broken 50/50 split invalidates every metric\n    if chisquare([users[\"A\"], users[\"B\"]]).pvalue < 0.001:\n        return \"STOP: SRM, fix assignment first\"\n    # Guardrails veto whatever the primary metric says\n    for name, (ctrl, treat, max_rel) in guardrails.items():\n        if treat > ctrl * (1 + max_rel):\n            return f\"NO SHIP: {name} {ctrl} -> {treat}\"\n    _, p = proportions_ztest([wins[\"B\"], wins[\"A\"]], [users[\"B\"], users[\"A\"]])\n    lift = wins[\"B\"] / users[\"B\"] - wins[\"A\"] / users[\"A\"]\n    return f\"SHIP: {lift:+.1%} (p={p:.3f})\" if p < 0.05 and lift > 0 else \"NO SHIP: no proven lift\"\n\nprint(decide(\n    users={\"A\": 10_120, \"B\": 10_045},\n    wins={\"A\": 5_060, \"B\": 5_290},  # +2.7 pts on the primary metric...\n    guardrails={\"p95_latency_s\": (2.1, 2.4, 0.10), \"cost_usd\": (0.031, 0.033, 0.15)},\n))  # -> NO SHIP: p95_latency_s 2.1 -> 2.4 (+14% breaks the 10% budget)"
+  },
+  "example": {
+    "en": "You want to swap a support assistant's model for one ~50% cheaper; offline correctness is within 1 point. The plan: 50/50 by user, primary metric = resolved without human escalation (baseline 62%), non-inferiority margin of 2 points, guardrails on p95 latency, CSAT and safety flags. Power analysis says ~9,400 users per arm: 3 weeks. On day 4 the dashboard shows +3 points at p=0.03 and the PM wants to ship; you hold the horizon. At 3 weeks: −0.4 points, 95% CI [−1.8, +1.0], guardrails flat. The worst case sits inside the margin, so you ship and halve the bill.",
+    "es": "Quieres cambiar el modelo de un asistente de soporte por uno ~50% más barato; offline, la corrección queda a menos de 1 punto. El plan: 50/50 por usuario, métrica principal = resuelto sin escalar a una persona (línea base 62%), margen de no inferioridad de 2 puntos, guardrails de latencia p95, CSAT y alertas de seguridad. El análisis de potencia pide ~9.400 usuarios por grupo: 3 semanas. El día 4 el dashboard muestra +3 puntos con p=0,03 y el PM quiere lanzar; tú mantienes el horizonte. A las 3 semanas: −0,4 puntos, IC 95% [−1,8; +1,0], guardrails estables. El peor caso cae dentro del margen, así que lanzas y reduces la factura a la mitad."
+  },
+  "pros": [
+    { "en": "Measures causal impact on business outcomes, not proxies.", "es": "Mide el impacto causal sobre resultados de negocio, no sobre proxies." },
+    { "en": "Captures what no offline set anticipates: user adaptation, latency sensitivity, real cost.", "es": "Captura lo que ningún set offline anticipa: adaptación de los usuarios, sensibilidad a la latencia, costo real." },
+    { "en": "Guardrails turn \"better quality, worse latency\" into an explicit, pre-agreed decision.", "es": "Los guardrails convierten \"mejor calidad, peor latencia\" en una decisión explícita y acordada de antemano." }
+  ],
+  "cons": [
+    { "en": "Needs real traffic: a few-point effect takes ~10,000 users per arm.", "es": "Necesita tráfico real: un efecto de pocos puntos exige ~10.000 usuarios por grupo." },
+    { "en": "Slow: weeks per decision, longer for delayed outcomes like retention.", "es": "Es lento: semanas por decisión, y más para resultados tardíos como la retención." },
+    { "en": "Easy to fool yourself with peeking, metric fishing, broken splits and novelty.", "es": "Es fácil engañarte con peeking, pesca de métricas, repartos rotos y efecto novedad." }
+  ],
+  "whenToUse": {
+    "en": "User-facing changes judged by behavior (task success, conversion, retention) when you have the traffic: a few-point effect needs ~10,000 users per arm.",
+    "es": "Cambios de cara al usuario que se juzgan por comportamiento (éxito de la tarea, conversión, retención) cuando tienes el tráfico: un efecto de pocos puntos necesita ~10.000 usuarios por grupo."
+  },
+  "whenNotToUse": {
+    "en": "Low traffic, effects too small to power, or safety regressions you must block offline. Then rely on offline evals, shadow mode, canaries and qualitative review.",
+    "es": "Con poco tráfico, efectos demasiado pequeños para tener potencia o regresiones de seguridad que debes frenar offline. Ahí apóyate en evaluaciones offline, shadow mode, canaries y revisión cualitativa."
+  },
+  "numbers": [
+    { "en": "Lehr's rule: n per arm ≈ 16·p(1−p)/δ² (80% power, α=0.05). Baseline 50%: +2 pts → ~10,000 per arm; +1 pt → ~40,000.", "es": "Regla de Lehr: n por grupo ≈ 16·p(1−p)/δ² (potencia 80%, α=0,05). Base 50%: +2 pts → ~10.000 por grupo; +1 pt → ~40.000." },
+    { "en": "Peeking: 10 interim looks at p < 0.05 push the real false-positive rate to ~19% (Armitage et al.).", "es": "Peeking: 10 revisiones intermedias con p < 0,05 llevan la tasa real de falsos positivos a ~19% (Armitage et al.)." },
+    { "en": "20 metrics at α=0.05 → ~64% chance at least one shows a false \"win\" (1 − 0.95²⁰).", "es": "20 métricas con α=0,05 → ~64% de probabilidad de que al menos una muestre una falsa \"mejora\" (1 − 0,95²⁰)." },
+    { "en": "CUPED at Microsoft (Deng et al., 2013): ~50% variance reduction on some Bing metrics, the same power with ~half the traffic.", "es": "CUPED en Microsoft (Deng et al., 2013): ~50% menos varianza en algunas métricas de Bing, la misma potencia con ~la mitad del tráfico." },
+    { "en": "Rule of thumb: run at least 1–2 full weeks to cover weekly cycles and let novelty fade.", "es": "Regla práctica: corre al menos 1–2 semanas completas para cubrir los ciclos semanales y dejar que pase la novedad." }
+  ],
+  "pitfalls": [
+    { "en": "Stopping the test the day it first turns significant.", "es": "Detener la prueba el día en que por primera vez sale significativa." },
+    { "en": "Randomizing per request: the same user sees both models and their sessions contaminate each other.", "es": "Aleatorizar por solicitud: el mismo usuario ve ambos modelos y sus sesiones se contaminan entre sí." },
+    { "en": "Ignoring sample-ratio mismatch: 52/48 instead of 50/50 usually means a bug, e.g. the slower arm loses logged sessions to timeouts.", "es": "Ignorar el sample-ratio mismatch: 52/48 en vez de 50/50 suele indicar un bug, p. ej. el grupo más lento pierde sesiones registradas por timeouts." },
+    { "en": "Choosing or switching the primary metric after looking at the results.", "es": "Elegir o cambiar la métrica principal después de ver los resultados." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you A/B test a new model for a chat product?", "es": "¿Cómo harías un A/B test de un modelo nuevo para un producto de chat?" },
+      "a": {
+        "en": "I'd write the plan before launch. Randomize by user with sticky assignment. One primary metric tied to value, say task success or resolution without escalation, and guardrails that veto: p95 latency, cost per session, safety-flag rate, errors. A power analysis on the smallest effect worth shipping sets the sample and duration, at least one or two full weeks for novelty and weekly cycles. At read time I check sample-ratio mismatch first, then guardrails, then the primary metric at the fixed horizon, and I segment by key cohorts so an average gain can't hide a regression.",
+        "es": "Escribiría el plan antes de lanzar. Aleatorizo por usuario con asignación fija. Una métrica principal ligada al valor, por ejemplo éxito de la tarea o resolución sin escalar, y guardrails con veto: latencia p95, costo por sesión, tasa de alertas de seguridad, errores. Un análisis de potencia sobre el efecto mínimo que valga la pena lanzar fija la muestra y la duración, al menos una o dos semanas completas por la novedad y los ciclos semanales. Al leer, reviso primero el sample-ratio mismatch, después los guardrails y luego la métrica principal en el horizonte fijado, y segmento por cohortes clave para que una mejora promedio no esconda una regresión."
+      }
+    },
+    {
+      "q": { "en": "The PM sees p=0.03 on day three and wants to ship. What do you say?", "es": "El PM ve p=0,03 el tercer día y quiere lanzar. ¿Qué le dices?" },
+      "a": {
+        "en": "That this p-value isn't valid yet. With daily peeking at 0.05, the real false-positive rate climbs fast, to about 19% after ten looks. Early days also over-represent heavy users and novelty clicks. So either we wait for the planned horizon or, if we truly need continuous monitoring, we switch to a sequential test like mSPRT with always-valid p-values, which most experimentation platforms support. If the effect is real, it will still be there in two weeks; if speed matters more, I'd rather lower the bar openly than pretend we have proof.",
+        "es": "Que ese p-valor todavía no es válido. Revisando a diario con 0,05, la tasa real de falsos positivos sube rápido, a cerca de 19% tras diez revisiones. Además, los primeros días sobrerrepresentan a los usuarios intensivos y los clics por novedad. Así que o esperamos el horizonte planeado o, si de verdad necesitamos monitoreo continuo, pasamos a una prueba secuencial como mSPRT con p-valores siempre válidos, que la mayoría de las plataformas de experimentación soportan. Si el efecto es real, seguirá ahí en dos semanas; si la velocidad importa más, prefiero bajar la vara de forma explícita que fingir que tenemos una prueba."
+      }
+    },
+    {
+      "q": { "en": "Your team changed the retrieval ranker. Why might you use interleaving instead of an A/B test?", "es": "Tu equipo cambió el ranker de recuperación. ¿Por qué usarías interleaving en vez de un A/B test?" },
+      "a": {
+        "en": "Because ranking differences are small effects, and an A/B test on downstream metrics needs a huge sample to see them. Interleaving shows each user one merged list, drafting results alternately from rankers A and B, and credits each click to the ranker that contributed it. Every user compares both, which removes between-user variance; it is often reported to need ~10–100× less traffic. The catch: it tells me which ranking users prefer, not the business impact. So I use it to pick a winner fast, then confirm that winner with a normal A/B test on the primary metric.",
+        "es": "Porque las diferencias de ranking son efectos pequeños, y un A/B test sobre métricas posteriores necesita una muestra enorme para verlos. El interleaving le muestra a cada usuario una sola lista mezclada, tomando resultados de forma alternada de los rankers A y B, y acredita cada clic al ranker que lo aportó. Cada usuario compara ambos, lo que elimina la varianza entre usuarios; suele reportarse que necesita ~10–100× menos tráfico. La limitación: me dice qué ranking prefieren los usuarios, no el impacto en el negocio. Por eso lo uso para elegir un ganador rápido y después lo confirmo con un A/B normal sobre la métrica principal."
+      }
+    }
+  ],
+  "related": ["offline-online-evals", "nondeterminism", "eval-ci", "recsys", "llm-observability", "slos"],
+  "sources": [
+    { "title": "Evan Miller — How Not To Run an A/B Test", "url": "https://www.evanmiller.org/how-not-to-run-an-ab-test.html" },
+    { "title": "Johari et al. — Always Valid Inference: Bringing Sequential Analysis to A/B Testing", "url": "https://arxiv.org/abs/1512.04922" },
+    { "title": "Kohavi, Tang, Xu — Trustworthy Online Controlled Experiments", "url": "https://experimentguide.com/" }
+  ]
+}

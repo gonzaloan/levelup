@@ -1,0 +1,86 @@
+{
+  "id": "classification-metrics",
+  "domain": "evals",
+  "level": "core",
+  "title": { "en": "Precision, recall, F1, ROC-AUC", "es": "Precisión, recall, F1 y ROC-AUC" },
+  "aliases": ["confusion matrix", "precision", "recall", "F1 score", "ROC-AUC", "PR-AUC", "average precision", "TPR/FPR"],
+  "tldr": {
+    "en": "Every guardrail, router or judge is a classifier: read its confusion matrix, set the threshold by what each error costs, and prefer precision, recall and PR-AUC over accuracy when positives are rare.",
+    "es": "Todo guardrail, router o juez es un clasificador: lee su matriz de confusión, fija el umbral según lo que cuesta cada error y prefiere precisión, recall y PR-AUC antes que accuracy cuando los positivos son raros."
+  },
+  "analogy": {
+    "en": "A smoke detector: too sensitive and it shrieks at toast (low precision), too lax and it sleeps through a fire (low recall). The threshold knob trades one for the other.",
+    "es": "Un detector de humo: si es muy sensible, suena con el pan tostado (baja precisión); si es muy laxo, no se entera de un incendio (bajo recall). La perilla del umbral cambia uno por el otro."
+  },
+  "explain": {
+    "en": "A binary classifier's errors live in the **confusion matrix**: true positives (TP), false positives (FP), false negatives (FN), true negatives (TN). Every metric is a ratio of these four.\n\n- **Precision** = TP / (TP + FP) — of what I flagged, how much was right? Low precision = good users blocked.\n- **Recall** (TPR) = TP / (TP + FN) — of the real positives, how many did I catch? Low recall = attacks missed.\n- **F1** — harmonic mean of the two; collapses if either is low. Use **F-beta** when one error costs more.\n- **Accuracy** misleads on imbalanced data: at 1% positives, \"always negative\" scores 99%.\n\nMost models emit a score, and a **threshold** turns it into a decision: raise it and precision rises while recall falls. Choose it by what each error costs, on validation data. Threshold-free summaries:\n\n- **ROC-AUC** — TPR vs FPR across all thresholds; the chance a random positive outscores a random negative. Insensitive to class balance, so it flatters tasks where positives are rare.\n- **PR-AUC** (average precision) — precision vs recall; its random baseline equals the positive rate. **Prefer it when positives are rare.**\n\nIn AI systems, use them for [[guardrails]] and moderation (recall on harm vs false-block rate), [[model-routing]] (escalate to the big model or not), intent classifiers, and an [[llm-as-judge]] against human labels.",
+    "es": "Los errores de un clasificador binario viven en la **matriz de confusión**: verdaderos positivos (TP), falsos positivos (FP), falsos negativos (FN) y verdaderos negativos (TN). Toda métrica es un cociente entre estos cuatro.\n\n- **Precisión** = TP / (TP + FP): de lo que marqué, ¿cuánto estaba bien? Baja precisión = usuarios legítimos bloqueados.\n- **Recall** (TPR) = TP / (TP + FN): de los positivos reales, ¿cuántos atrapé? Bajo recall = ataques que se escapan.\n- **F1**: media armónica de ambos; se desploma si cualquiera es bajo. Usa **F-beta** cuando un error cuesta más que el otro.\n- **Accuracy** engaña con datos desbalanceados: con 1% de positivos, \"siempre negativo\" saca 99%.\n\nLa mayoría de los modelos emite un puntaje, y un **umbral** lo convierte en decisión: si lo subes, la precisión sube y el recall baja. Elígelo según lo que cuesta cada error, con datos de validación. Resúmenes independientes del umbral:\n\n- **ROC-AUC**: TPR vs FPR en todos los umbrales; la probabilidad de que un positivo al azar tenga mayor puntaje que un negativo al azar. No le afecta el balance de clases, así que luce engañosamente bien cuando los positivos son raros.\n- **PR-AUC** (average precision): precisión vs recall; su línea base aleatoria es la tasa de positivos. **Prefiérela cuando los positivos son raros.**\n\nEn sistemas de IA así se evalúan los [[guardrails]] y la moderación (recall sobre contenido dañino vs tasa de bloqueos falsos), el [[model-routing]] (escalar o no al modelo grande), los clasificadores de intención y un [[llm-as-judge]] contra etiquetas humanas."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  X[Input] --> M[\"Classifier score<br/>0 to 1\"]\n  M --> T{Score above threshold?}\n  T -->|yes| P[Flag as positive]\n  T -->|no| N[Let through]\n  P --> CM[\"Confusion matrix<br/>vs labels\"]\n  N --> CM\n  L[(Labeled eval set)] --> CM\n  CM --> PR[\"Precision, recall<br/>at threshold\"]\n  M -.->|sweep all thresholds| AUC[ROC-AUC and PR-AUC]",
+    "caption": {
+      "en": "Precision and recall describe one threshold; the AUCs summarize all of them. You ship a threshold, not an AUC.",
+      "es": "La precisión y el recall describen un umbral; las AUC resumen todos. Lo que despliegas es un umbral, no una AUC."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Pick a threshold from a recall target", "es": "Elegir el umbral a partir de un objetivo de recall" },
+    "source": "import numpy as np\nfrom sklearn.metrics import (average_precision_score, classification_report,\n                             precision_recall_curve, roc_auc_score)\n\n# Labels: 1 = prompt injection (~2% of prompts); s_*: detector probabilities\n(y_val, s_val), (y_test, s_test) = load_splits()   # numpy arrays\n\nprint(f\"ROC-AUC: {roc_auc_score(y_val, s_val):.3f}\")            # flattering on imbalance\nprint(f\"PR-AUC : {average_precision_score(y_val, s_val):.3f}\")  # read it against...\nprint(f\"PR-AUC random baseline: {y_val.mean():.3f}\")           # ...the positive rate\n\n# Threshold comes from a product requirement, not 0.5:\n# \"catch >= 95% of injections\" -> highest threshold that keeps recall >= 0.95\nprec, rec, thr = precision_recall_curve(y_val, s_val)\ni = np.where(rec[:-1] >= 0.95)[0][-1]   # recall only falls as the threshold rises\nt = thr[i]\nprint(f\"threshold={t:.3f}  precision={prec[i]:.2f}  recall={rec[i]:.2f}\")\n\n# Report on held-out data, never on the split you tuned the threshold on\ny_pred = (s_test >= t).astype(int)\nprint(classification_report(y_test, y_pred, target_names=[\"benign\", \"injection\"], digits=3))"
+  },
+  "example": {
+    "en": "A prompt-injection detector is evaluated on 10,000 real prompts, 100 of them attacks. At threshold 0.5 it catches 90 (recall 0.90) and flags 400 benign prompts, so precision is 90/490 ≈ 0.18 — yet accuracy is ~96%, which hid the problem. ROC-AUC is 0.97; PR-AUC is 0.41 against a 0.01 baseline. The team keeps recall ≥ 0.9 but sends flagged prompts to a stricter, tool-less mode instead of blocking them, so a false positive costs a weaker answer, not an angry user.",
+    "es": "Un detector de prompt injection se evalúa sobre 10,000 prompts reales, 100 de ellos ataques. Con umbral 0.5 atrapa 90 (recall 0.90) y marca 400 prompts benignos, así que la precisión es 90/490 ≈ 0.18; aun así el accuracy es ~96%, lo que escondía el problema. El ROC-AUC es 0.97; el PR-AUC es 0.41 contra una línea base de 0.01. El equipo mantiene recall ≥ 0.9, pero manda los prompts marcados a un modo más estricto y sin herramientas en lugar de bloquearlos: un falso positivo cuesta una respuesta más limitada, no un usuario enojado."
+  },
+  "pros": [
+    { "en": "A shared language for any yes/no decision: guardrails, routers, judges, moderation.", "es": "Un lenguaje común para cualquier decisión sí/no: guardrails, routers, jueces, moderación." },
+    { "en": "Precision and recall map directly to product costs: false blocks vs missed harm.", "es": "La precisión y el recall se traducen directo a costos de producto: bloqueos falsos vs daño que se escapa." },
+    { "en": "Threshold-free AUCs compare models before you commit to an operating point.", "es": "Las AUC, independientes del umbral, comparan modelos antes de que elijas un punto de operación." }
+  ],
+  "cons": [
+    { "en": "Needs labeled data with enough positives: rare classes need large eval sets.", "es": "Requiere datos etiquetados con suficientes positivos: las clases raras exigen sets de evaluación grandes." },
+    { "en": "A single number (F1, AUC) hides the operating point you actually ship.", "es": "Un solo número (F1, AUC) esconde el punto de operación que realmente despliegas." },
+    { "en": "Multi-class needs a macro vs micro choice, and each tells a different story.", "es": "En multiclase hay que elegir entre macro y micro, y cada uno cuenta una historia distinta." }
+  ],
+  "whenToUse": {
+    "en": "Any component that makes a discrete decision — guardrail, moderation, router, intent or PII detector, an LLM judge vs human labels — and whenever you must choose a threshold.",
+    "es": "Cualquier componente que toma una decisión discreta (guardrail, moderación, router, detector de intención o de PII, un LLM juez contra etiquetas humanas) y siempre que debas elegir un umbral."
+  },
+  "whenNotToUse": {
+    "en": "Open-ended generation quality (use rubric judges or human eval) or ranking quality where position matters (use recall@k, MRR, nDCG).",
+    "es": "Calidad de generación abierta (usa jueces con rúbrica o evaluación humana) o calidad de ranking donde importa la posición (usa recall@k, MRR, nDCG)."
+  },
+  "numbers": [
+    { "en": "F1 = 2PR / (P + R): precision 0.9 with recall 0.5 gives F1 ≈ 0.64, not the 0.7 average.", "es": "F1 = 2PR / (P + R): precisión 0.9 con recall 0.5 da F1 ≈ 0.64, no el promedio de 0.7." },
+    { "en": "Base rate: at 1% prevalence, 99% recall with a 1% false-positive rate still gives only ~50% precision.", "es": "Tasa base: con 1% de prevalencia, 99% de recall y 1% de falsos positivos dan apenas ~50% de precisión." },
+    { "en": "Random baselines: ROC-AUC = 0.5 at any class balance; PR-AUC = the positive rate (e.g. 0.01).", "es": "Líneas base aleatorias: ROC-AUC = 0.5 con cualquier balance de clases; PR-AUC = la tasa de positivos (p. ej. 0.01)." },
+    { "en": "At 1% positives, an always-negative model scores 99% accuracy and 0 recall.", "es": "Con 1% de positivos, un modelo que siempre dice negativo saca 99% de accuracy y 0 de recall." }
+  ],
+  "pitfalls": [
+    { "en": "Shipping the default 0.5 threshold instead of choosing it from the cost of each error.", "es": "Desplegar el umbral por defecto de 0.5 en vez de elegirlo según el costo de cada error." },
+    { "en": "Tuning the threshold on the test set: the reported precision and recall become optimistic.", "es": "Ajustar el umbral sobre el set de test: la precisión y el recall reportados salen optimistas." },
+    { "en": "Comparing PR-AUC across datasets with different positive rates: its baseline moves with prevalence.", "es": "Comparar PR-AUC entre datasets con distinta tasa de positivos: su línea base se mueve con la prevalencia." },
+    { "en": "One global number when recall differs by language, user segment or attack type.", "es": "Un solo número global cuando el recall cambia según idioma, segmento de usuarios o tipo de ataque." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your moderation model has 0.98 ROC-AUC. Is it good?", "es": "Tu modelo de moderación tiene 0.98 de ROC-AUC. ¿Es bueno?" },
+      "a": {
+        "en": "Not necessarily. ROC-AUC barely reacts to imbalance: if 0.5% of content is harmful, catching 90% of it with a 2% false-positive rate means only ~18% of flagged items are actually harmful. I'd look at the PR curve and PR-AUC against the 0.005 baseline, then at precision and recall at the threshold we'd actually ship, sliced by language and content type. The threshold is a cost decision: for severe harm, recall comes first and human review absorbs the false positives.",
+        "es": "No necesariamente. El ROC-AUC casi no reacciona al desbalance: si el 0.5% del contenido es dañino, atrapar el 90% con un 2% de falsos positivos significa que solo ~18% de lo marcado es realmente dañino. Miraría la curva PR y el PR-AUC contra la línea base de 0.005, y luego la precisión y el recall en el umbral que de verdad desplegaríamos, segmentados por idioma y tipo de contenido. El umbral es una decisión de costos: para daño grave, el recall va primero y la revisión humana absorbe los falsos positivos."
+      }
+    },
+    {
+      "q": { "en": "How would you evaluate a router that sends queries to a small or a large model?", "es": "¿Cómo evaluarías un router que manda consultas a un modelo chico o a uno grande?" },
+      "a": {
+        "en": "It's a classifier where \"needs the large model\" is the positive class. A false negative sends a hard query to the small model, which is a quality failure; a false positive just costs money. I'd label a few hundred real queries by whether the small model's answer passes, plot the precision-recall curve of the router's score, and pick the threshold that keeps recall on hard queries around 0.95 while saving the most traffic. Then I'd confirm quality and cost online with an A/B test.",
+        "es": "Es un clasificador donde \"necesita el modelo grande\" es la clase positiva. Un falso negativo manda una consulta difícil al modelo chico, y eso es una falla de calidad; un falso positivo solo cuesta dinero. Etiquetaría unos cientos de consultas reales según si la respuesta del modelo chico pasa, graficaría la curva precisión-recall del puntaje del router y elegiría el umbral que mantiene el recall sobre consultas difíciles cerca de 0.95 ahorrando la mayor cantidad de tráfico. Después confirmaría calidad y costo online con un A/B test."
+      }
+    }
+  ],
+  "related": ["llm-as-judge", "guardrails", "model-routing", "golden-datasets", "case-content-moderation", "rag-evaluation"],
+  "sources": [
+    { "title": "scikit-learn — Metrics and scoring: quantifying the quality of predictions", "url": "https://scikit-learn.org/stable/modules/model_evaluation.html" },
+    { "title": "Saito & Rehmsmeier — The Precision-Recall Plot Is More Informative than the ROC Plot When Evaluating Binary Classifiers on Imbalanced Datasets (PLOS ONE, 2015)", "url": "https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0118432" }
+  ]
+}

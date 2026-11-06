@@ -1,0 +1,87 @@
+{
+  "id": "routing",
+  "domain": "agents",
+  "level": "core",
+  "title": { "en": "Pattern: routing", "es": "Patrón: routing" },
+  "aliases": ["router", "intent routing", "query routing", "LLM router", "semantic router", "classify-then-dispatch"],
+  "tldr": {
+    "en": "Classify each input first, then send it to the prompt, model or pipeline built for that class: each path stays simple, and easy queries stop paying for the expensive model.",
+    "es": "Primero clasifica cada entrada y luego envíala al prompt, modelo o pipeline diseñado para esa clase: cada camino se mantiene simple y las consultas fáciles dejan de pagar el modelo caro."
+  },
+  "analogy": {
+    "en": "A hospital triage nurse: a two-minute assessment decides whether you go to the ER, a GP or the pharmacy, so specialists only see the cases that need them.",
+    "es": "La enfermera de triaje en un hospital: una evaluación de dos minutos decide si vas a urgencias, al médico general o a la farmacia, así los especialistas solo ven los casos que los necesitan."
+  },
+  "explain": {
+    "en": "**Routing** puts a classifier in front of several specialized handlers. Step one decides *what kind* of input this is; step two runs the handler built for that kind: its own prompt, tools, model or whole pipeline.\n\nTwo reasons to do it:\n\n- **Separation of concerns.** A refund prompt and a tech-support prompt are tuned and evaluated in isolation. One prompt covering every case drifts: fixing refunds breaks tech support.\n- **Cost and latency.** Easy, common queries go to a small, fast model; only hard ones reach the frontier model (see [[model-routing]]).\n\nThe classifier can be an LLM call with [[structured-outputs]] (flexible, adds a few hundred ms), a small fine-tuned or embedding classifier (milliseconds, needs labelled data), or plain rules for the obvious cases. Always include a **fallback route**: *other / unsure* goes to a general handler or a human, and a confidence threshold decides when to take it.\n\nThe signature failure is the **misroute**: a perfectly good handler answering the wrong question. Evaluate the router on its own with a confusion matrix ([[classification-metrics]]), and log the chosen route in every trace so you can tell a routing bug from a handler bug.",
+    "es": "El **routing** pone un clasificador delante de varios manejadores especializados. El primer paso decide *qué tipo* de entrada es; el segundo ejecuta el manejador hecho para ese tipo: su propio prompt, herramientas, modelo o pipeline completo.\n\nHay dos razones para hacerlo:\n\n- **Separación de responsabilidades.** Un prompt de reembolsos y uno de soporte técnico se ajustan y evalúan por separado. Un solo prompt que cubre todos los casos se degrada: arreglas reembolsos y rompes soporte técnico.\n- **Costo y latencia.** Las consultas fáciles y frecuentes van a un modelo chico y rápido; solo las difíciles llegan al modelo de frontera (ver [[model-routing]]).\n\nEl clasificador puede ser una llamada al LLM con [[structured-outputs]] (flexible, suma unos cientos de ms), un clasificador chico afinado o basado en embeddings (milisegundos, requiere datos etiquetados) o reglas simples para los casos obvios. Incluye siempre una **ruta de respaldo**: *otro / no sé* va a un manejador general o a una persona, y un umbral de confianza decide cuándo tomarla.\n\nLa falla típica es el **ruteo equivocado** (*misroute*): un manejador perfectamente bueno respondiendo la pregunta equivocada. Evalúa el router por separado con una matriz de confusión ([[classification-metrics]]) y registra la ruta elegida en cada traza para distinguir un bug de routing de uno del manejador."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[Support ticket] --> C{\"Router<br/>LLM or classifier\"}\n  C -->|refund| R[\"Refund prompt<br/>+ billing tools\"]\n  C -->|technical| T[\"Docs RAG<br/>+ larger model\"]\n  C -->|faq| F[\"Small model<br/>FAQ prompt\"]\n  C -->|low confidence| H[\"Fallback:<br/>general or human\"]\n  R --> O[Reply]\n  T --> O\n  F --> O\n  H --> O",
+    "caption": {
+      "en": "One cheap decision up front; each branch is tuned and evaluated alone, and low confidence takes the fallback.",
+      "es": "Una decisión barata al inicio; cada rama se ajusta y evalúa por separado, y la baja confianza va a la ruta de respaldo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "LLM router with a confidence fallback", "es": "Router con LLM y ruta de respaldo por confianza" },
+    "source": "from typing import Literal\nfrom openai import OpenAI\nfrom pydantic import BaseModel\n\nclient = OpenAI()\nROUTER_MODEL = \"gpt-4.1-nano\"  # a small model is usually enough to classify\n\nclass Route(BaseModel):\n    category: Literal[\"refund\", \"technical\", \"faq\", \"other\"]  # exclusive classes + catch-all\n    confidence: float  # self-reported: calibrate the threshold on labelled data\n\nHANDLERS = {\n    \"refund\": refund_pipeline,       # strict policy prompt + billing tools\n    \"technical\": tech_rag_pipeline,  # docs RAG + larger model\n    \"faq\": faq_small_model,          # cheap model, curated answers\n    \"other\": general_assistant,      # fallback; may hand off to a human\n}\n\ndef handle(ticket: str) -> str:\n    r = client.chat.completions.parse(\n        model=ROUTER_MODEL,\n        messages=[{\"role\": \"system\", \"content\": ROUTER_PROMPT},  # class definitions + examples\n                  {\"role\": \"user\", \"content\": ticket}],\n        response_format=Route,\n    ).choices[0].message.parsed\n    route = r.category if r.confidence >= 0.7 else \"other\"  # unsure -> fallback\n    log_route(ticket, r.category, r.confidence)  # needed later to measure misroutes\n    return HANDLERS[route](ticket)"
+  },
+  "example": {
+    "en": "A fintech's support assistant answers ~20k tickets a day with one large-model prompt. Analysis shows ~60% are FAQ-style (*\"where's my card?\"*). They add a router: a small model classifies into `faq`, `refund`, `fraud`, `technical` or `other`. FAQ goes to a small model with curated answers; `fraud` skips the LLM answer entirely and pages a human queue. Cost per ticket drops ~3×. A weekly labelled sample of 300 tickets shows 4% misroutes, mostly `refund`↔`technical` on failed payments, fixed by merging both into a `payments` class with its own prompt.",
+    "es": "El asistente de soporte de una fintech responde ~20k tickets al día con un solo prompt sobre un modelo grande. El análisis muestra que ~60% son preguntas frecuentes (*\"¿dónde está mi tarjeta?\"*). Agregan un router: un modelo chico clasifica en `faq`, `refund`, `fraud`, `technical` u `other`. Las FAQ van a un modelo chico con respuestas curadas; `fraud` se salta la respuesta del LLM y avisa a una cola humana. El costo por ticket baja ~3×. Una muestra semanal etiquetada de 300 tickets muestra 4% de ruteos equivocados, casi todos `refund`↔`technical` en pagos fallidos; lo resuelven fusionando ambos en una clase `payments` con su propio prompt."
+  },
+  "pros": [
+    { "en": "Each handler is small and specialized, tuned and evaluated without breaking the others.", "es": "Cada manejador es chico y especializado; se ajusta y evalúa sin romper a los demás." },
+    { "en": "Big cost and latency savings when most traffic is easy enough for a small model.", "es": "Gran ahorro de costo y latencia cuando la mayor parte del tráfico es lo bastante fácil para un modelo chico." },
+    { "en": "Natural place for policy: risky classes (fraud, legal) can skip the LLM and go to humans.", "es": "Es el lugar natural para aplicar políticas: las clases riesgosas (fraude, legal) pueden saltarse el LLM e ir a personas." }
+  ],
+  "cons": [
+    { "en": "Misroutes are silent: a good handler confidently answers the wrong question.", "es": "Los ruteos equivocados son silenciosos: un buen manejador responde con seguridad la pregunta equivocada." },
+    { "en": "Adds a step: one more call or model to host, monitor and keep in sync with the classes.", "es": "Suma un paso: una llamada o un modelo más que hospedar, monitorear y mantener alineado con las clases." },
+    { "en": "Class boundaries drift as the product and traffic change, so the router needs re-labelling.", "es": "Los límites entre clases se mueven cuando cambian el producto y el tráfico, así que el router necesita reetiquetado." }
+  ],
+  "whenToUse": {
+    "en": "Inputs fall into distinct categories that each deserve their own prompt, tools or model and can be classified accurately, or a large share of traffic is easy enough for a cheaper model.",
+    "es": "Las entradas caen en categorías distintas que merecen su propio prompt, herramientas o modelo y se pueden clasificar con precisión, o buena parte del tráfico es lo bastante fácil para un modelo más barato."
+  },
+  "whenNotToUse": {
+    "en": "Categories overlap, one prompt already handles everything at acceptable cost, or an input needs several handlers at once (use parallelization or orchestrator–workers).",
+    "es": "Las categorías se solapan, un solo prompt ya resuelve todo a un costo aceptable o una entrada necesita varios manejadores a la vez (usa paralelización u orquestador–workers)."
+  },
+  "numbers": [
+    { "en": "Price gap between model tiers is often 10–20× per token: GPT-4.1 nano launched at $0.10 vs GPT-4.1 at $2.00 per 1M input tokens.", "es": "La brecha de precio entre niveles de modelo suele ser de 10–20× por token: GPT-4.1 nano salió a $0.10 contra $2.00 de GPT-4.1 por 1M de tokens de entrada." },
+    { "en": "RouteLLM (2024): learned routers cut cost by over 2× on some benchmarks without losing response quality.", "es": "RouteLLM (2024): los routers aprendidos redujeron el costo más de 2× en algunos benchmarks sin perder calidad de respuesta." },
+    { "en": "FrugalGPT (2023): an LLM cascade matched GPT-4's accuracy with up to 98% lower cost on its benchmarks.", "es": "FrugalGPT (2023): una cascada de LLMs igualó la precisión de GPT-4 con hasta 98% menos costo en sus benchmarks." },
+    { "en": "Rule of thumb for router overhead: a small-LLM call adds a few hundred ms; a local embedding or fine-tuned classifier, ~1–20 ms.", "es": "Regla práctica para el sobrecosto del router: una llamada a un LLM chico suma unos cientos de ms; un clasificador local con embeddings o afinado, ~1–20 ms." }
+  ],
+  "pitfalls": [
+    { "en": "Overlapping classes (*billing* vs *refund*): the router flips between them. Make classes mutually exclusive and define each with examples.", "es": "Clases que se solapan (*billing* vs *refund*): el router salta entre ellas. Haz clases mutuamente excluyentes y define cada una con ejemplos." },
+    { "en": "No fallback: out-of-scope and adversarial inputs get forced into some class and answered confidently.", "es": "Sin ruta de respaldo: las entradas fuera de alcance o maliciosas caen a la fuerza en alguna clase y reciben respuestas muy seguras." },
+    { "en": "Trusting the LLM's self-reported confidence as-is; calibrate the threshold on labelled data or use logprobs.", "es": "Confiar tal cual en la confianza que reporta el LLM; calibra el umbral con datos etiquetados o usa logprobs." },
+    { "en": "Measuring only end-to-end quality: you can't tell a misroute from a bad handler. Eval the router alone and log the route.", "es": "Medir solo la calidad de punta a punta: no distingues un ruteo equivocado de un manejador malo. Evalúa el router por separado y registra la ruta." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you build and evaluate the router for a support assistant?", "es": "¿Cómo construirías y evaluarías el router de un asistente de soporte?" },
+      "a": {
+        "en": "I start from real traffic: label a few hundred tickets into mutually exclusive classes plus *other*. I baseline an LLM classifier with structured output, then check whether a small fine-tuned or embedding classifier matches it at a fraction of the latency. I evaluate the router alone with a confusion matrix, because errors are asymmetric: a fraud report routed to FAQ is far worse than an FAQ routed to a human. I set the fallback threshold from that matrix and keep sampling production routes to catch drift.",
+        "es": "Parto del tráfico real: etiqueto unos cientos de tickets en clases mutuamente excluyentes más *otro*. Hago una línea base con un clasificador LLM con salida estructurada y luego reviso si un clasificador chico afinado o basado en embeddings lo iguala con una fracción de la latencia. Evalúo el router por separado con una matriz de confusión, porque los errores son asimétricos: un reporte de fraude que cae en FAQ es mucho peor que una FAQ que llega a una persona. Fijo el umbral de respaldo a partir de esa matriz y sigo muestreando rutas de producción para detectar drift."
+      }
+    },
+    {
+      "q": { "en": "When is routing the wrong pattern?", "es": "¿Cuándo el routing es el patrón equivocado?" },
+      "a": {
+        "en": "When the categories aren't really distinct, or one good prompt already handles every class at acceptable cost: then the router is just an extra call and an extra failure point. It's also wrong when one input needs several handlers at once; that's parallelization or orchestrator–workers. And if the goal is only cost, I first try prompt caching or a cheaper default model with a quality check, because those save money without introducing misroutes.",
+        "es": "Cuando las categorías no son realmente distintas, o cuando un buen prompt ya resuelve todas las clases a un costo aceptable: ahí el router es solo una llamada extra y un punto de falla más. También es incorrecto cuando una entrada necesita varios manejadores a la vez; eso es paralelización u orquestador–workers. Y si el objetivo es solo el costo, primero pruebo prompt caching o un modelo por defecto más barato con un control de calidad, porque ahorran dinero sin introducir ruteos equivocados."
+      }
+    }
+  ],
+  "related": ["model-routing", "agents-vs-workflows", "structured-outputs", "classification-metrics", "prompt-chaining", "case-support-agent"],
+  "sources": [
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "Ong et al. — RouteLLM: Learning to Route LLMs with Preference Data (2024)", "url": "https://arxiv.org/abs/2406.18665" },
+    { "title": "Chen, Zaharia, Zou — FrugalGPT: How to Use Large Language Models While Reducing Cost and Improving Performance (2023)", "url": "https://arxiv.org/abs/2305.05176" }
+  ]
+}

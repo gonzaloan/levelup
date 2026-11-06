@@ -1,0 +1,95 @@
+{
+  "id": "catastrophic-forgetting",
+  "domain": "training",
+  "level": "advanced",
+  "title": { "en": "Catastrophic forgetting", "es": "Olvido catastrófico (catastrophic forgetting)" },
+  "aliases": ["catastrophic interference", "forgetting", "capability regression", "alignment erosion", "replay", "EWC", "continual learning"],
+  "tldr": {
+    "en": "Fine-tuning on narrow data overwrites what the model already knew, degrading general skills, instruction following and even safety. Mitigate with LoRA, general-data replay, lower learning rates and fewer epochs, and gate on general evals.",
+    "es": "Hacer fine-tuning con datos muy acotados sobrescribe lo que el modelo ya sabía: empeoran las habilidades generales, el seguimiento de instrucciones y hasta la seguridad. Se mitiga con LoRA, replay de datos generales, learning rate más bajo, menos épocas y evals generales antes de liberar."
+  },
+  "analogy": {
+    "en": "A pianist who drills one jazz piece eight hours a day for a month: that piece becomes brilliant, but the classical repertoire gets rusty unless they keep practicing it too.",
+    "es": "Un pianista que ensaya una sola pieza de jazz ocho horas al día durante un mes: esa pieza le queda brillante, pero el repertorio clásico se oxida si no lo sigue practicando."
+  },
+  "explain": {
+    "en": "**Catastrophic forgetting** is when training a model on new data degrades what it learned before. Fine-tuning updates the same shared weights that store general knowledge, and nothing in a narrow dataset's loss rewards keeping those abilities, so gradient descent trades them away.\n\nIn LLMs it shows up as:\n\n- **Lost general skills**: reasoning, other languages, code or world knowledge regress.\n- **Lost instruction following**: the model only answers in your training format, ignores the system prompt, or always emits the same JSON.\n- **Eroded safety**: [Qi et al. 2023](https://arxiv.org/abs/2310.03693) showed fine-tuning even on *benign* datasets weakens refusals (less than adversarial data does), and 10 adversarial examples jailbroke GPT-3.5 Turbo through the fine-tuning API.\n\nForgetting grows with learning rate, epochs, and the distance between your data and the original distribution. Mitigations, cheapest first:\n\n1. **Fewer epochs, lower learning rate** (1–3 epochs is typical for [[sft]]).\n2. **Replay**: mix ~5–20% general instruction or pretraining data into your set.\n3. **[[lora]]**: Biderman et al. 2024, *LoRA Learns Less and Forgets Less*, found it keeps more base ability than full fine-tuning, but learns less of the target domain.\n4. **Regularize toward the base**: EWC, or interpolating fine-tuned and base weights.\n\nAbove all, **evaluate what you didn't train on**: run general, format and safety suites before and after, not just the task metric.",
+    "es": "El **olvido catastrófico** ocurre cuando entrenar un modelo con datos nuevos degrada lo que ya había aprendido. El fine-tuning actualiza los mismos pesos compartidos que guardan el conocimiento general, y nada en la pérdida de un dataset acotado premia conservar esas habilidades, así que el descenso de gradiente las sacrifica.\n\nEn los LLMs aparece como:\n\n- **Pérdida de habilidades generales**: retroceden el razonamiento, otros idiomas, el código o el conocimiento del mundo.\n- **Pérdida del seguimiento de instrucciones**: el modelo solo responde en tu formato de entrenamiento, ignora el system prompt o siempre devuelve el mismo JSON.\n- **Seguridad erosionada**: [Qi et al. 2023](https://arxiv.org/abs/2310.03693) mostraron que el fine-tuning incluso con datasets *benignos* debilita las negativas (menos que con datos adversariales), y que 10 ejemplos adversariales bastaron para hacerle jailbreak a GPT-3.5 Turbo mediante la API de fine-tuning.\n\nEl olvido crece con el learning rate, las épocas y la distancia entre tus datos y la distribución original. Mitigaciones, de la más barata en adelante:\n\n1. **Menos épocas y un learning rate más bajo** (1–3 épocas es lo típico en [[sft]]).\n2. **Replay**: mezcla ~5–20% de datos generales de instrucciones o de pretraining en tu set.\n3. **[[lora]]**: Biderman et al. 2024, *LoRA Learns Less and Forgets Less*, encontraron que conserva más capacidad del modelo base que el fine-tuning completo, pero aprende menos del dominio objetivo.\n4. **Regularizar hacia el modelo base**: EWC, o interpolar los pesos ajustados con los originales.\n\nSobre todo, **evalúa lo que no entrenaste**: corre suites generales, de formato y de seguridad antes y después, no solo la métrica de la tarea."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  B[Base model] --> FT[\"Fine-tune<br/>narrow data\"]\n  D[(Task data)] --> FT\n  G[(\"General replay<br/>~5-20%\")] -.-> FT\n  FT --> M[Candidate model]\n  M --> T[Task eval]\n  M --> R[\"General, format,<br/>safety evals\"]\n  T --> C{\"Task up,<br/>rest held?\"}\n  R --> C\n  C -->|yes| S[Ship]\n  C -->|regression| A[\"Lower LR, LoRA,<br/>more replay\"]\n  A -.-> FT",
+    "caption": {
+      "en": "The task metric alone can't see forgetting; a regression gate on what you didn't train on can.",
+      "es": "La métrica de la tarea por sí sola no ve el olvido; un control de regresión sobre lo que no entrenaste sí."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "LoRA + replay + a regression gate", "es": "LoRA + replay + control de regresión" },
+    "source": "from datasets import load_dataset, interleave_datasets\nfrom peft import LoraConfig\nfrom trl import SFTConfig, SFTTrainer\n\nBASE = \"meta-llama/Llama-3.1-8B-Instruct\"  # any open chat model\nGUARD = [\"mmlu\", \"ifeval\", \"refusals\"]      # skills you did NOT train on\n\ntask = load_dataset(\"json\", data_files=\"claims_sft.jsonl\", split=\"train\")\ngeneral = load_dataset(\"HuggingFaceH4/ultrachat_200k\", split=\"train_sft\")\n# Replay ~10% general chat so old skills keep receiving gradient signal\nmix = interleave_datasets(\n    [task.select_columns([\"messages\"]), general.select_columns([\"messages\"])],\n    probabilities=[0.9, 0.1], seed=0, stopping_strategy=\"first_exhausted\")\n\ntrainer = SFTTrainer(\n    model=BASE,\n    train_dataset=mix,\n    # LoRA + modest LR + few epochs: learn less, forget less\n    peft_config=LoraConfig(r=16, lora_alpha=32, target_modules=\"all-linear\"),\n    args=SFTConfig(output_dir=\"ft\", learning_rate=1e-4, num_train_epochs=2),\n)\ntrainer.train()\ntrainer.save_model(\"ft\")\n\n# Release gate: the task must improve AND nothing else may regress\nbefore = run_evals(BASE, [\"task\"] + GUARD)\nafter = run_evals(\"ft\", [\"task\"] + GUARD)\nassert after[\"task\"] > before[\"task\"]\nfor suite in GUARD:\n    assert after[suite] >= before[suite] - 0.01, f\"forgot: {suite}\""
+  },
+  "example": {
+    "en": "An insurer fully fine-tunes an 8B chat model on 30k claim summaries for 5 epochs. Summary quality jumps from 6.1 to 8.3 (LLM judge), so it ships. A week later, system prompts asking for Spanish replies are ignored, the JSON extraction endpoint sharing the model returns prose summaries, and the red team finds it answers requests the base refused. The rerun uses LoRA r=16, 2 epochs and 10% general-chat replay: summary score 8.0, with MMLU, IFEval and refusal rate back within 1 point of the base.",
+    "es": "Una aseguradora hace fine-tuning completo de un modelo de chat de 8B con 30k resúmenes de siniestros durante 5 épocas. La calidad de los resúmenes sube de 6.1 a 8.3 (LLM como juez), así que lo despliegan. Una semana después, los system prompts que piden respuestas en español se ignoran, el endpoint de extracción a JSON que comparte el modelo devuelve resúmenes en prosa, y el red team descubre que responde pedidos que el modelo base rechazaba. La segunda corrida usa LoRA r=16, 2 épocas y 10% de replay de chat general: puntaje de resumen 8.0, con MMLU, IFEval y tasa de negativas de vuelta a menos de 1 punto del modelo base."
+  },
+  "pros": [
+    { "en": "Replay and LoRA are cheap: a data-mix ratio and a config flag, no new infrastructure.", "es": "Replay y LoRA son baratos: una proporción en la mezcla de datos y un flag de configuración, sin infraestructura nueva." },
+    { "en": "A general-eval regression gate catches forgetting before users do.", "es": "Un control de regresión con evals generales detecta el olvido antes que tus usuarios." },
+    { "en": "LoRA adapters leave base weights untouched: rollback is instant and base and adapter can be served side by side.", "es": "Los adapters LoRA no tocan los pesos base: el rollback es inmediato y puedes servir el modelo base y el adapter lado a lado." }
+  ],
+  "cons": [
+    { "en": "Every mitigation trades target-task gain for retention; LoRA learns less of a new domain than full fine-tuning.", "es": "Toda mitigación cambia ganancia en la tarea por retención; LoRA aprende menos de un dominio nuevo que el fine-tuning completo." },
+    { "en": "Replay needs licensed general data close to the original distribution, which you often lack for closed base models.", "es": "El replay necesita datos generales con licencia y cercanos a la distribución original, que muchas veces no tienes para modelos base cerrados." },
+    { "en": "Broad regression evals (general, format, safety) cost time and compute on every training run.", "es": "Las evals de regresión amplias (generales, de formato, de seguridad) cuestan tiempo y cómputo en cada entrenamiento." }
+  ],
+  "whenToUse": {
+    "en": "Guard against it in any fine-tune whose model serves more than one task, talks to end users or must stay safe; always for full fine-tuning, continued pretraining or multi-epoch runs.",
+    "es": "Protégete en cualquier fine-tuning cuyo modelo atienda más de una tarea, hable con usuarios finales o deba seguir siendo seguro; siempre en fine-tuning completo, continued pretraining o corridas de varias épocas."
+  },
+  "whenNotToUse": {
+    "en": "Single-purpose classifiers or extractors where only the task metric matters and the model never sees open-ended prompts; there, specializing on the task is the whole point.",
+    "es": "Clasificadores o extractores de un solo propósito donde solo importa la métrica de la tarea y el modelo nunca ve prompts abiertos; ahí, especializarse en la tarea es justamente el objetivo."
+  },
+  "numbers": [
+    { "en": "Qi et al. 2023: 10 adversarial examples and under $0.20 of API fine-tuning jailbroke GPT-3.5 Turbo's safety guardrails.", "es": "Qi et al. 2023: 10 ejemplos adversariales y menos de USD 0.20 de fine-tuning por API rompieron las salvaguardas de seguridad de GPT-3.5 Turbo." },
+    { "en": "Biderman et al. 2024: full fine-tuning learns weight changes of 10–100× higher rank than typical LoRA configs.", "es": "Biderman et al. 2024: el fine-tuning completo aprende cambios de pesos de rango 10–100× mayor que las configuraciones típicas de LoRA." },
+    { "en": "Rule of thumb: 1–3 epochs for SFT; more epochs, more forgetting.", "es": "Regla práctica: 1–3 épocas en SFT; más épocas, más olvido." },
+    { "en": "Rule of thumb: replay ~5–20% general data in the training mix.", "es": "Regla práctica: replay de ~5–20% de datos generales en la mezcla de entrenamiento." },
+    { "en": "Typical learning rates: ~1e-5–2e-5 for full fine-tuning, ~1e-4–2e-4 for LoRA.", "es": "Learning rates típicos: ~1e-5–2e-5 para fine-tuning completo, ~1e-4–2e-4 para LoRA." }
+  ],
+  "pitfalls": [
+    { "en": "Measuring only the target task: forgetting is invisible in the metric you optimized.", "es": "Medir solo la tarea objetivo: el olvido es invisible en la métrica que optimizaste." },
+    { "en": "Full fine-tuning an instruct model at a high LR for many epochs \"because the data is small\": that is the forgetting recipe.", "es": "Hacer fine-tuning completo de un modelo instruct con learning rate alto y muchas épocas \"porque son pocos datos\": esa es justo la receta del olvido." },
+    { "en": "Assuming safety survives: re-run refusal and red-team suites after every fine-tune, even on benign data.", "es": "Suponer que la seguridad sobrevive: vuelve a correr las suites de negativas y de red teaming tras cada fine-tuning, incluso con datos benignos." },
+    { "en": "Training on a single output format, then reusing the model for other tasks.", "es": "Entrenar con un solo formato de salida y luego reutilizar el modelo para otras tareas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your fine-tuned model aces the task, but users say it got dumber. What happened and what do you do?", "es": "Tu modelo con fine-tuning resuelve perfecto la tarea, pero los usuarios dicen que se volvió más tonto. ¿Qué pasó y qué haces?" },
+      "a": {
+        "en": "That's catastrophic forgetting: the fine-tune moved shared weights toward a narrow distribution and nothing in the loss protected general skills. First I confirm it with before/after runs on general, instruction-following and safety suites, not anecdotes. Then I retrain cheapest-first: fewer epochs and a lower learning rate, 5–20% general data mixed back in, and LoRA if we did full fine-tuning. LoRA trades some task gain for retention, so I check the task metric still clears the bar. Finally, those regression suites become a permanent release gate.",
+        "es": "Es olvido catastrófico: el fine-tuning movió pesos compartidos hacia una distribución estrecha y nada en la pérdida protegía las habilidades generales. Primero lo confirmo con corridas antes y después en suites generales, de seguimiento de instrucciones y de seguridad, no con anécdotas. Luego reentreno de lo más barato a lo más caro: menos épocas y un learning rate más bajo, 5–20% de datos generales de vuelta en la mezcla, y LoRA si hicimos fine-tuning completo. LoRA cambia algo de ganancia en la tarea por retención, así que verifico que la métrica de la tarea siga pasando el umbral. Al final, esas suites de regresión quedan como compuerta permanente de release."
+      }
+    },
+    {
+      "q": { "en": "A customer fine-tunes your hosted model on harmless data. Why should your safety team care?", "es": "Un cliente hace fine-tuning de tu modelo hospedado con datos inofensivos. ¿Por qué debería importarle a tu equipo de seguridad?" },
+      "a": {
+        "en": "Because alignment is a thin layer of behaviour on top of the base, and fine-tuning erodes it. Qi et al. showed benign datasets like Alpaca degraded refusals, and 10 adversarial examples costing under 20 cents jailbroke GPT-3.5 Turbo through the API. So I treat fine-tuning as a safety-relevant change: moderate the training data, run a refusal and red-team suite on every resulting model before it serves traffic, and keep input/output guardrails outside the model, where fine-tuning can't touch them.",
+        "es": "Porque el alineamiento es una capa delgada de comportamiento sobre el modelo base, y el fine-tuning la erosiona. Qi et al. mostraron que datasets benignos como Alpaca degradaron las negativas, y que 10 ejemplos adversariales que costaron menos de 20 centavos le hicieron jailbreak a GPT-3.5 Turbo a través de la API. Por eso trato el fine-tuning como un cambio relevante para la seguridad: modero los datos de entrenamiento, corro una suite de negativas y red teaming sobre cada modelo resultante antes de que reciba tráfico, y mantengo los guardrails de entrada y salida fuera del modelo, donde el fine-tuning no los puede tocar."
+      }
+    },
+    {
+      "q": { "en": "Doesn't LoRA solve forgetting?", "es": "¿LoRA no resuelve el olvido?" },
+      "a": {
+        "en": "It reduces it; it doesn't solve it. Biderman et al. found LoRA forgets less than full fine-tuning but also learns less, especially on big domain shifts like continued pretraining on code or math; full fine-tuning finds weight changes of 10–100× higher rank. So it's a dial, not a fix. For style, format or a narrow task, LoRA plus replay is my default. For genuinely new domain knowledge I accept full fine-tuning and pay with replay and stronger regression evals, or I use RAG and leave the weights alone.",
+        "es": "Lo reduce, no lo resuelve. Biderman et al. encontraron que LoRA olvida menos que el fine-tuning completo pero también aprende menos, sobre todo en cambios grandes de dominio como continued pretraining en código o matemáticas; el fine-tuning completo encuentra cambios de pesos de rango 10–100× mayor. Así que es una perilla, no una solución. Para estilo, formato o una tarea acotada, LoRA con replay es mi opción por defecto. Para conocimiento de dominio realmente nuevo, acepto el fine-tuning completo y lo pago con replay y evals de regresión más estrictas, o uso RAG y no toco los pesos."
+      }
+    }
+  ],
+  "related": ["sft", "lora", "continued-pretraining", "alignment", "eval-ci", "adaptation-ladder"],
+  "sources": [
+    { "title": "Kirkpatrick et al. — Overcoming catastrophic forgetting in neural networks (EWC)", "url": "https://arxiv.org/abs/1612.00796" },
+    { "title": "Biderman et al. — LoRA Learns Less and Forgets Less", "url": "https://arxiv.org/abs/2405.09673" },
+    { "title": "Qi et al. — Fine-tuning Aligned Language Models Compromises Safety, Even When Users Do Not Intend To!", "url": "https://arxiv.org/abs/2310.03693" }
+  ]
+}

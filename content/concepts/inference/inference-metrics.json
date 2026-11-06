@@ -1,0 +1,88 @@
+{
+  "id": "inference-metrics",
+  "domain": "inference",
+  "level": "core",
+  "title": { "en": "Latency metrics: TTFT, TPOT, throughput", "es": "Métricas de latencia: TTFT, TPOT, throughput" },
+  "aliases": ["TTFT", "TPOT", "ITL", "time to first token", "inter-token latency", "goodput", "tokens per second", "E2E latency"],
+  "tldr": {
+    "en": "Split LLM latency into TTFT (wait for the first token: queueing + prefill) and TPOT (gap between later tokens: decode), track p95/p99, and size capacity by goodput, the throughput that still meets both SLOs.",
+    "es": "Divide la latencia de un LLM en TTFT (espera hasta el primer token: cola + prefill) y TPOT (pausa entre los tokens siguientes: decode), mide p95/p99 y dimensiona la capacidad por goodput, el throughput que aún cumple ambos SLOs."
+  },
+  "analogy": {
+    "en": "A restaurant: TTFT is how long until the first dish arrives, TPOT is the gap between courses, and goodput is how many tables per hour get their whole meal on time, not how many plates leave the kitchen.",
+    "es": "Un restaurante: el TTFT es cuánto tarda en llegar el primer plato, el TPOT es la pausa entre platos y el goodput es cuántas mesas por hora reciben toda su comida a tiempo, no cuántos platos salen de la cocina."
+  },
+  "explain": {
+    "en": "An LLM response streams, so one latency number hides what users feel. Track four:\n\n- **TTFT** (time to first token): request sent → first token received. Queueing + network + **prefill** of the whole prompt ([[prefill-decode]]). Grows with prompt length and load.\n- **TPOT** / **ITL** (time per output token / inter-token latency): the gap between later tokens, set by decode. Per-user speed is 1/TPOT: 25 ms ≈ 40 tokens/s.\n- **E2E latency** ≈ TTFT + TPOT × (output tokens − 1). Output length usually dominates: 500 tokens at 30 ms is 15 s, whatever the TTFT.\n- **Throughput**: total output tokens/s (or requests/s) across all users.\n\nReport **p50/p95/p99**, never means: a mean hides the 1-in-20 user waiting 8 s.\n\nThe core trade-off is **batch size**. Bigger batches share each weight read across more sequences, so tokens/s per GPU rise; but each sequence's TPOT grows and new prompts queue, so TTFT rises too. Raw throughput flatters you. What you sell is **goodput**: the highest load at which, say, 90% of requests still meet *both* the TTFT and TPOT targets.\n\nThe product decides which metric matters. People read ~4–7 tokens/s, so ~10+ tokens/s already outpaces reading: in chat, TTFT dominates perceived speed. In agent steps and batch jobs nobody watches the stream, so E2E and throughput matter.",
+    "es": "La respuesta de un LLM llega en streaming, así que un solo número de latencia esconde lo que siente el usuario. Mide cuatro:\n\n- **TTFT** (time to first token): desde que envías el request hasta que llega el primer token. Suma cola + red + el **prefill** de todo el prompt ([[prefill-decode]]). Crece con la longitud del prompt y con la carga.\n- **TPOT** / **ITL** (time per output token / inter-token latency): la pausa entre los tokens siguientes, que depende del decode. La velocidad por usuario es 1/TPOT: 25 ms ≈ 40 tokens/s.\n- **Latencia E2E** ≈ TTFT + TPOT × (tokens de salida − 1). Casi siempre domina la longitud de la salida: 500 tokens a 30 ms son 15 s, sin importar el TTFT.\n- **Throughput**: tokens de salida por segundo (o requests por segundo) sumando a todos los usuarios.\n\nReporta **p50/p95/p99**, nunca promedios: el promedio esconde al usuario de cada 20 que espera 8 s.\n\nEl trade-off central es el **tamaño de batch**. Con batches más grandes cada lectura de pesos se reparte entre más secuencias, así que suben los tokens/s por GPU; pero el TPOT de cada secuencia crece y los prompts nuevos hacen cola, así que también sube el TTFT. El throughput bruto engaña. Lo que vendes es **goodput**: la carga más alta a la que, por ejemplo, el 90% de los requests todavía cumple *a la vez* el objetivo de TTFT y el de TPOT.\n\nEl producto define qué métrica importa. Una persona lee ~4–7 tokens/s, así que ~10+ tokens/s ya superan la lectura: en un chat, el TTFT domina la velocidad percibida. En los pasos de un agente y en los jobs batch nadie mira el stream; ahí importan el E2E y el throughput."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant C as Client\n  participant S as Inference server\n  C->>S: Request with prompt\n  Note over S: Queue wait\n  Note over S: Prefill whole prompt\n  S-->>C: Token 1 (TTFT stops here)\n  S-->>C: Token 2 (one TPOT later)\n  S-->>C: Token 3 (one TPOT later)\n  S-->>C: Last token (E2E stops here)",
+    "caption": {
+      "en": "TTFT covers queueing and prefill; every later token adds one TPOT, so long outputs dominate end-to-end time.",
+      "es": "El TTFT cubre la cola y el prefill; cada token posterior suma un TPOT, así que las salidas largas dominan el tiempo total."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Measure TTFT, TPOT and E2E from a stream", "es": "Medir TTFT, TPOT y E2E desde un stream" },
+    "source": "import time\nimport numpy as np\nfrom openai import OpenAI\n\nclient = OpenAI()  # or base_url=... for vLLM, SGLang, TGI (OpenAI-compatible)\nMODEL = \"gpt-4.1-mini\"  # any chat model\n\ndef measure(prompt: str) -> dict:\n    t0 = time.perf_counter()\n    first = last = usage = None\n    chunks = 0\n    stream = client.chat.completions.create(\n        model=MODEL, messages=[{\"role\": \"user\", \"content\": prompt}], stream=True,\n        stream_options={\"include_usage\": True},  # last chunk carries token counts\n    )\n    for chunk in stream:\n        if chunk.usage:\n            usage = chunk.usage\n        if chunk.choices and chunk.choices[0].delta.content:\n            last = time.perf_counter()\n            first = first or last  # first visible token = what the user feels\n            chunks += 1\n    n_out = usage.completion_tokens if usage else chunks  # a chunk can hold >1 token\n    ttft, e2e = first - t0, last - t0\n    tpot = (e2e - ttft) / max(n_out - 1, 1)\n    return {\"ttft_s\": ttft, \"tpot_ms\": tpot * 1e3, \"e2e_s\": e2e}\n\n# Sequential = concurrency 1. For real load use vllm bench serve or GenAI-Perf.\nruns = [measure(p) for p in sample_prompts]  # sample from production traffic\nfor key in (\"ttft_s\", \"tpot_ms\", \"e2e_s\"):\n    vals = [r[key] for r in runs]\n    print(key, {f\"p{q}\": round(float(np.percentile(vals, q)), 3) for q in (50, 95, 99)})"
+  },
+  "example": {
+    "en": "Your chat SLO is p95 TTFT < 1 s and p95 TPOT < 50 ms. You load-test an 8B model on one GPU with vLLM. At 32 concurrent users: ~1,600 output tokens/s, p95 TTFT 0.4 s, TPOT 20 ms, every request within SLO. At 128 users: ~3,800 tokens/s, but long prompts queue, p95 TTFT climbs to 2.5 s and only ~70% of requests meet both targets. Throughput rose 2.4×, yet that load is past your goodput point (90% attainment, here ~64 users). You cap each replica at 64 and scale out.",
+    "es": "Tu SLO de chat es TTFT p95 < 1 s y TPOT p95 < 50 ms. Haces una prueba de carga de un modelo de 8B en una GPU con vLLM. Con 32 usuarios concurrentes: ~1,600 tokens de salida/s, TTFT p95 de 0.4 s, TPOT de 20 ms y todos los requests dentro del SLO. Con 128 usuarios: ~3,800 tokens/s, pero los prompts largos hacen cola, el TTFT p95 sube a 2.5 s y solo ~70% de los requests cumple ambos objetivos. El throughput subió 2.4×, pero esa carga ya pasó tu punto de goodput (90% de cumplimiento, aquí ~64 usuarios). Limitas cada réplica a 64 y escalas horizontalmente."
+  },
+  "pros": [
+    { "en": "Splits latency by cause: TTFT points at queueing and prefill, TPOT at decode, so you know which knob to turn.", "es": "Separa la latencia por causa: el TTFT apunta a la cola y al prefill, el TPOT al decode, así sabes qué perilla girar." },
+    { "en": "Goodput ties GPU count to the user-facing SLO, which makes capacity plans and cost per request honest.", "es": "El goodput conecta la cantidad de GPUs con el SLO que ve el usuario, lo que vuelve honestos el capacity planning y el costo por request." },
+    { "en": "Standard across engines and tools (vllm bench serve, NVIDIA GenAI-Perf, LLMPerf), so you can compare vendors on equal terms.", "es": "Es estándar entre motores y herramientas (vllm bench serve, NVIDIA GenAI-Perf, LLMPerf), así puedes comparar proveedores en igualdad de condiciones." }
+  ],
+  "cons": [
+    { "en": "Meaningless without the workload: the prompt/output length mix and concurrency change every number.", "es": "No significan nada sin la carga de trabajo: la mezcla de longitudes de prompt y salida y la concurrencia cambian cada número." },
+    { "en": "Tokens differ by tokenizer, so tokens/s doesn't compare across model families; also track requests/s.", "es": "Los tokens dependen del tokenizer, así que los tokens/s no se comparan entre familias de modelos; mide también requests/s." },
+    { "en": "Client-side numbers include network, gateway and guardrails; server-side ones miss them. You need both.", "es": "Los números del cliente incluyen red, gateway y guardrails; los del servidor no. Necesitas ambos." }
+  ],
+  "whenToUse": {
+    "en": "Any LLM feature where a user waits: set TTFT and TPOT SLOs at p95/p99 before picking a model, engine or GPU, then load-test for goodput with realistic prompt and output lengths.",
+    "es": "Cualquier funcionalidad con LLM donde un usuario espera: define SLOs de TTFT y TPOT en p95/p99 antes de elegir modelo, motor o GPU, y luego mide el goodput con longitudes realistas de prompt y salida."
+  },
+  "whenNotToUse": {
+    "en": "Offline batch jobs don't care about TTFT or TPOT: optimize total throughput and cost per million tokens. Never quote single-request latency on an idle server as production performance.",
+    "es": "A los jobs batch offline no les importan el TTFT ni el TPOT: optimiza el throughput total y el costo por millón de tokens. Nunca presentes la latencia de un solo request en un servidor ocioso como rendimiento de producción."
+  },
+  "numbers": [
+    { "en": "E2E ≈ TTFT + TPOT × (output tokens − 1); per-user speed = 1/TPOT (20 ms → 50 tokens/s).", "es": "E2E ≈ TTFT + TPOT × (tokens de salida − 1); velocidad por usuario = 1/TPOT (20 ms → 50 tokens/s)." },
+    { "en": "People read ~200–300 words/min ≈ ~4–7 tokens/s; streaming at ~10+ tokens/s outpaces them.", "es": "Una persona lee ~200–300 palabras/min ≈ ~4–7 tokens/s; un stream de ~10+ tokens/s ya la supera." },
+    { "en": "MLPerf Inference Llama-2-70B server limits (p99): TTFT ≤ 2 s, TPOT ≤ 200 ms; the v5.0 interactive scenario tightens them to 450 ms and 40 ms.", "es": "Límites de MLPerf Inference para Llama-2-70B en modo server (p99): TTFT ≤ 2 s y TPOT ≤ 200 ms; el escenario interactivo de v5.0 los baja a 450 ms y 40 ms." },
+    { "en": "Rule of thumb for chat: p95 TTFT under ~1 s and TPOT under ~50 ms (20+ tokens/s).", "es": "Regla práctica para chat: TTFT p95 por debajo de ~1 s y TPOT por debajo de ~50 ms (20+ tokens/s)." }
+  ],
+  "pitfalls": [
+    { "en": "Benchmarking one request on an idle server: under real load, TTFT is mostly queueing.", "es": "Medir un solo request en un servidor ocioso: con carga real, el TTFT es sobre todo tiempo en cola." },
+    { "en": "Counting stream chunks as tokens; servers may pack several tokens per chunk. Use the usage counts.", "es": "Contar chunks del stream como tokens; el servidor puede meter varios tokens por chunk. Usa los conteos de usage." },
+    { "en": "Watching only average TPOT: a long prefill entering the batch can freeze streams for hundreds of ms. Check ITL p99.", "es": "Mirar solo el TPOT promedio: un prefill largo que entra al batch puede congelar los streams cientos de ms. Revisa el ITL p99." },
+    { "en": "Load-testing with fixed short prompts and outputs that don't match the production length distribution.", "es": "Hacer pruebas de carga con prompts y salidas cortos y fijos que no se parecen a la distribución de longitudes de producción." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Users say the assistant feels slow. How do you diagnose it?", "es": "Los usuarios dicen que el asistente se siente lento. ¿Cómo lo diagnosticas?" },
+      "a": {
+        "en": "First I split the latency, client-side and server-side, into TTFT, TPOT and output length at p95. High TTFT on an idle GPU means long prompts: trim context or add prefix caching. High TTFT only under load means queueing: scale out or add admission control. High TPOT means decode is the bottleneck: batch too large or model too big, so I'd look at quantization, speculative decoding or a smaller model. If both are fine but E2E is long, the outputs are too long: cap max_tokens and prompt for brevity.",
+        "es": "Primero separo la latencia, del lado del cliente y del servidor, en TTFT, TPOT y longitud de salida en p95. TTFT alto con la GPU ociosa significa prompts largos: recorto contexto o agrego prefix caching. TTFT alto solo bajo carga es cola: escalo horizontalmente o agrego control de admisión. TPOT alto significa que el cuello de botella es el decode: batch muy grande o modelo muy pesado, así que miro cuantización, speculative decoding o un modelo más chico. Si ambos están bien pero el E2E es largo, las salidas son demasiado largas: limito max_tokens y pido respuestas breves en el prompt."
+      }
+    },
+    {
+      "q": { "en": "Why not just maximize tokens per second per GPU?", "es": "¿Por qué no simplemente maximizar los tokens por segundo por GPU?" },
+      "a": {
+        "en": "Because throughput and latency pull against each other through batch size. Doubling concurrency can nearly double tokens/s per GPU while TPOT and queueing push p95 TTFT past the SLO, and those extra tokens go to users who already gave up. So I set SLOs first, sweep concurrency with a realistic prompt mix, and pick the highest load where ~90% of requests still meet both targets: that's goodput. I compute cost per request at that point, not at peak throughput.",
+        "es": "Porque throughput y latencia se oponen a través del tamaño de batch. Duplicar la concurrencia puede casi duplicar los tokens/s por GPU mientras el TPOT y la cola empujan el TTFT p95 por encima del SLO, y esos tokens extra van a usuarios que ya se rindieron. Así que primero fijo los SLOs, recorro distintos niveles de concurrencia con una mezcla realista de prompts y elijo la carga más alta donde ~90% de los requests todavía cumple ambos objetivos: eso es goodput. Calculo el costo por request en ese punto, no en el throughput máximo."
+      }
+    }
+  ],
+  "related": ["prefill-decode", "continuous-batching", "streaming", "slos", "llm-observability", "speculative-decoding"],
+  "sources": [
+    { "title": "Databricks — LLM Inference Performance Engineering: Best Practices", "url": "https://www.databricks.com/blog/llm-inference-performance-engineering-best-practices" },
+    { "title": "Zhong et al. — DistServe: Disaggregating Prefill and Decoding for Goodput-optimized LLM Serving", "url": "https://arxiv.org/abs/2401.09670" },
+    { "title": "MLCommons — MLPerf Inference: Datacenter", "url": "https://mlcommons.org/benchmarks/inference-datacenter/" },
+    { "title": "Ray Project — LLMPerf", "url": "https://github.com/ray-project/llmperf" }
+  ]
+}

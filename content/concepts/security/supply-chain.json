@@ -1,0 +1,96 @@
+{
+  "id": "supply-chain",
+  "domain": "security",
+  "level": "advanced",
+  "title": { "en": "Model & data supply chain", "es": "Cadena de suministro de modelos y datos" },
+  "aliases": ["AI supply chain", "pickle", "safetensors", "data poisoning", "sleeper agents", "AI-BOM", "slopsquatting", "ModelScan"],
+  "tldr": {
+    "en": "Every model file, dataset, package and MCP server you pull is code or influence you didn't write: load weights as safetensors, pin hashes, scan and sign artifacts, serve only from a vetted internal registry.",
+    "es": "Cada archivo de modelo, dataset, paquete o servidor MCP que descargas es código o influencia que no escribiste: carga pesos en safetensors, fija hashes, escanea y firma artefactos y sirve solo desde un registro interno revisado."
+  },
+  "analogy": {
+    "en": "A hospital pharmacy only stocks sealed drugs from approved suppliers, with lot numbers it can recall. It never accepts an unlabelled vial just because the contents look right.",
+    "es": "La farmacia de un hospital solo almacena medicamentos sellados de proveedores aprobados, con números de lote que puede retirar. Nunca acepta un frasco sin etiqueta solo porque el contenido parece correcto."
+  },
+  "explain": {
+    "en": "Your AI system runs on artifacts you didn't build: weights, datasets, Python and npm packages, and now MCP servers and tools. Each is an attack path:\n\n- **Malicious model files.** PyTorch `.bin`/`.pt` checkpoints are **pickle**, and unpickling can execute arbitrary code: loading a model can mean running the attacker's script. **safetensors** stores only a JSON header plus raw tensors, so loading runs no code. JFrog found ~100 malicious models on Hugging Face in 2024.\n- **Poisoned data.** A few hundred crafted documents in pretraining or fine-tuning data can plant a trigger; scraped datasets point at URLs whose expired domains anyone can buy.\n- **Backdoored \"sleeper\" models.** Weights that behave normally until a trigger appears. Anthropic's Sleeper Agents paper showed such backdoors surviving SFT, RLHF and adversarial training.\n- **Compromised or fake dependencies.** Typosquats, dependency confusion (PyTorch's `torchtriton`, 2022), hijacked releases (Ultralytics, 2024) and **slopsquatting**: registering package names that LLMs hallucinate.\n- **Malicious MCP servers and tools.** A tool runs with your agent's credentials and its description lands in the prompt ([[prompt-injection]]); a \"rug pull\" changes it after approval.\n\nThe fix is classic supply-chain hygiene: **provenance**, **hash pinning**, **scanning** (ModelScan, picklescan), **signing** (Sigstore-based OpenSSF model signing), an **AI-BOM** listing every model, dataset and tool version, and a **vetted internal registry** as the only source production can pull from.",
+    "es": "Tu sistema de IA corre sobre artefactos que no construiste: pesos, datasets, paquetes de Python y npm y, ahora, servidores MCP y herramientas. Cada uno es una vía de ataque:\n\n- **Archivos de modelo maliciosos.** Los checkpoints `.bin`/`.pt` de PyTorch son **pickle**, y deserializar un pickle puede ejecutar código arbitrario: cargar un modelo puede significar correr el script del atacante. **safetensors** guarda solo un encabezado JSON y tensores crudos, así que cargarlo no ejecuta código. JFrog encontró ~100 modelos maliciosos en Hugging Face en 2024.\n- **Datos envenenados.** Unos cientos de documentos fabricados en los datos de preentrenamiento o fine-tuning pueden plantar un disparador; los datasets extraídos de la web apuntan a URLs cuyos dominios vencidos cualquiera puede comprar.\n- **Modelos \"durmientes\" con puerta trasera.** Pesos que se comportan normal hasta que aparece un disparador. El paper Sleeper Agents de Anthropic mostró que esas puertas traseras sobreviven a SFT, RLHF y entrenamiento adversarial.\n- **Dependencias comprometidas o falsas.** Typosquatting, confusión de dependencias (`torchtriton` de PyTorch, 2022), releases secuestrados (Ultralytics, 2024) y **slopsquatting**: registrar nombres de paquetes que los LLM alucinan.\n- **Servidores MCP y herramientas maliciosas.** Una herramienta corre con las credenciales de tu agente y su descripción termina en el prompt ([[prompt-injection]]); en un \"rug pull\" la cambian después de aprobarla.\n\nLa solución es la higiene clásica de cadena de suministro: **procedencia**, **hashes fijados**, **escaneo** (ModelScan, picklescan), **firma** (OpenSSF model signing, basado en Sigstore), un **AI-BOM** con cada versión de modelo, dataset y herramienta, y un **registro interno revisado** como única fuente desde la que producción puede descargar."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[\"Public sources<br/>(HF, PyPI, npm, MCP)\"] --> Q[Quarantine]\n  Q --> S[\"Scan<br/>(ModelScan, SCA)\"]\n  S --> R{\"Review provenance<br/>and license\"}\n  R -->|reject| X[Blocked]\n  R -->|approve| G[\"Sign + record hash<br/>in AI-BOM\"]\n  G --> REG[(Internal registry)]\n  REG --> V[\"Verify signature<br/>at deploy\"]\n  V --> E[\"Evals + red team<br/>before traffic\"]\n  E --> PROD[Production]",
+    "caption": {
+      "en": "Production pulls only from the internal registry; scanning catches malicious code, while evals are the only check on malicious behavior.",
+      "es": "Producción descarga solo del registro interno; el escaneo atrapa código malicioso, y solo las evals revisan comportamiento malicioso."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Load pinned, verified weights without running pickle", "es": "Cargar pesos fijados y verificados sin ejecutar pickle" },
+    "source": "import hashlib\nimport torch\nfrom huggingface_hub import hf_hub_download\nfrom safetensors.torch import load_file\n\n# HF_ENDPOINT points at the internal registry (e.g. an Artifactory mirror)\nREPO = \"acme/support-llm-ft\"\nREVISION = \"9f2c1e7b4a...\"      # a commit SHA, never a branch like \"main\"\nEXPECTED_SHA256 = \"3b1d...\"      # recorded in the AI-BOM at approval time\n\ndef sha256_file(path: str) -> str:\n    h = hashlib.sha256()\n    with open(path, \"rb\") as f:\n        for block in iter(lambda: f.read(1 << 20), b\"\"):  # stream multi-GB files\n            h.update(block)\n    return h.hexdigest()\n\npath = hf_hub_download(REPO, \"model.safetensors\", revision=REVISION)\nif sha256_file(path) != EXPECTED_SHA256:\n    raise RuntimeError(\"weights differ from the reviewed artifact\")\n\n# JSON header + raw tensors: parsing it executes no code\nstate_dict = load_file(path)\n\n# Legacy pickle checkpoint? Allow plain tensors only, no arbitrary objects\nlegacy = torch.load(\"old.pt\", weights_only=True)\n\n# transformers: refuse repo-supplied Python and pickle weights\n# AutoModel.from_pretrained(REPO, revision=REVISION,\n#                           use_safetensors=True, trust_remote_code=False)"
+  },
+  "example": {
+    "en": "A data scientist downloads a sentiment model from an unknown Hugging Face account and loads its pickled `.bin` with `weights_only=False` to silence an error. The pickle's `__reduce__` opens a reverse shell from a laptop holding cloud credentials. With controls in place, the request goes through the internal registry instead: ModelScan flags an `os.system` call in the pickle, the import is rejected, and the team uses the official safetensors release, pinned by commit SHA and recorded in the AI-BOM. Months later a CVE hits a tokenizer library, and one AI-BOM query lists the 4 affected services.",
+    "es": "Una científica de datos descarga un modelo de sentimiento de una cuenta desconocida de Hugging Face y carga su `.bin` en pickle con `weights_only=False` para silenciar un error. El `__reduce__` del pickle abre una reverse shell desde una laptop con credenciales de la nube. Con los controles activos, la descarga pasa por el registro interno: ModelScan detecta una llamada a `os.system` dentro del pickle, se rechaza la importación y el equipo usa la versión oficial en safetensors, fijada por commit SHA y registrada en el AI-BOM. Meses después sale un CVE en una librería de tokenización y una sola consulta al AI-BOM lista los 4 servicios afectados."
+  },
+  "pros": [
+    { "en": "Blocks the cheapest attacks (code execution on load, typosquats) at almost no cost.", "es": "Bloquea los ataques más baratos (ejecución de código al cargar, typosquatting) casi sin costo." },
+    { "en": "An AI-BOM turns \"are we affected?\" from a week of archaeology into one query.", "es": "Un AI-BOM convierte \"¿estamos afectados?\" de una semana de arqueología en una sola consulta." },
+    { "en": "Pinned hashes make builds reproducible, which also makes evals and audits trustworthy.", "es": "Los hashes fijados hacen reproducibles los builds, y eso también vuelve confiables las evals y las auditorías." }
+  ],
+  "cons": [
+    { "en": "Scanners catch malicious code, not malicious behavior: a backdoor lives in the weights.", "es": "Los escáneres detectan código malicioso, no comportamiento malicioso: una puerta trasera vive en los pesos." },
+    { "en": "A vetted registry slows teams who want the model released this morning.", "es": "Un registro revisado frena a los equipos que quieren el modelo que salió esta mañana." },
+    { "en": "Provenance for third-party datasets and API models is often unavailable; you rely on vendor attestations.", "es": "La procedencia de datasets de terceros y de modelos por API muchas veces no existe; dependes de lo que declare el proveedor." }
+  ],
+  "whenToUse": {
+    "en": "Always, scaled to risk: any team that downloads open weights, fine-tunes on external data, installs AI packages or lets agents connect to third-party MCP servers.",
+    "es": "Siempre, en proporción al riesgo: cualquier equipo que descarga pesos abiertos, hace fine-tuning con datos externos, instala paquetes de IA o deja que sus agentes se conecten a servidores MCP de terceros."
+  },
+  "whenNotToUse": {
+    "en": "There is no opt-out, only proportionality: a hackathon prototype on a closed API needs pinned dependencies, not a signed internal model registry.",
+    "es": "No hay forma de saltárselo, solo proporcionalidad: un prototipo de hackathon sobre una API cerrada necesita dependencias fijadas, no un registro interno de modelos firmados."
+  },
+  "numbers": [
+    { "en": "~250 poisoned documents were enough to backdoor models from 600M to 13B parameters, regardless of size (Anthropic, UK AISI, Turing Institute, 2025).", "es": "~250 documentos envenenados bastaron para plantar una puerta trasera en modelos de 600M a 13B parámetros, sin importar el tamaño (Anthropic, UK AISI, Instituto Turing, 2025)." },
+    { "en": "Poisoning 0.01% of LAION-400M via expired domains would have cost ~$60 (Carlini et al., 2023).", "es": "Envenenar el 0.01% de LAION-400M comprando dominios vencidos habría costado ~60 USD (Carlini et al., 2023)." },
+    { "en": "A 2024 study found ~20% of packages suggested in LLM-generated code did not exist: names an attacker can register.", "es": "Un estudio de 2024 encontró que ~20% de los paquetes sugeridos en código generado por LLM no existían: nombres que un atacante puede registrar." },
+    { "en": "PyTorch 2.6 (Jan 2025) made `torch.load(weights_only=True)` the default.", "es": "PyTorch 2.6 (enero de 2025) hizo que `torch.load(weights_only=True)` fuera el valor por defecto." },
+    { "en": "OWASP LLM Top 10 (2025): LLM03 Supply Chain, LLM04 Data and Model Poisoning.", "es": "En el OWASP LLM Top 10 de 2025, LLM03 es la cadena de suministro y LLM04, el envenenamiento de datos y del modelo." }
+  ],
+  "pitfalls": [
+    { "en": "`trust_remote_code=True` on an unreviewed Hugging Face repo: it runs the repo's Python on your machine.", "es": "`trust_remote_code=True` sobre un repo de Hugging Face sin revisar: ejecuta el Python del repo en tu máquina." },
+    { "en": "Pinning to a branch or tag like `main` instead of a commit SHA, so the weights change under you.", "es": "Fijar una rama o tag como `main` en lugar de un commit SHA, así los pesos cambian sin que te enteres." },
+    { "en": "Treating a clean ModelScan report as proof the model is safe; behavior needs evals and red-teaming.", "es": "Tomar un reporte limpio de ModelScan como prueba de que el modelo es seguro; el comportamiento necesita evals y red teaming." },
+    { "en": "Letting agents install any MCP server from a public list, running with production credentials.", "es": "Dejar que los agentes instalen cualquier servidor MCP de una lista pública, corriendo con credenciales de producción." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "A team wants to fine-tune a popular open model from Hugging Face. What controls do you require?", "es": "Un equipo quiere hacer fine-tuning de un modelo abierto popular de Hugging Face. ¿Qué controles exiges?" },
+      "a": {
+        "en": "I treat it like any third-party binary. First provenance: official org, license, known training data. Then it goes into quarantine: safetensors only, `trust_remote_code` off, a ModelScan pass, the commit SHA pinned and the hash recorded in our AI-BOM. It's signed and published to the internal registry, the only place training and serving can pull from. Because no scan can see a backdoor in the weights, it also runs our eval suite and red-team prompts before any traffic.",
+        "es": "Lo trato como cualquier binario de terceros. Primero la procedencia: organización oficial, licencia, datos de entrenamiento conocidos. Luego entra a cuarentena: solo safetensors, `trust_remote_code` apagado, un escaneo con ModelScan, el commit SHA fijado y el hash registrado en nuestro AI-BOM. Se firma y se publica en el registro interno, el único lugar del que pueden descargar el entrenamiento y el serving. Como ningún escaneo ve una puerta trasera en los pesos, también pasa por nuestra suite de evals y prompts de red team antes de recibir tráfico."
+      }
+    },
+    {
+      "q": { "en": "How do you defend an agent platform against malicious MCP servers?", "es": "¿Cómo defiendes una plataforma de agentes contra servidores MCP maliciosos?" },
+      "a": {
+        "en": "An MCP server is code plus prompt text running with my agent's permissions, so it's both a dependency and an injection vector. I allow only servers from an internal allowlist, pinned by version and hash, so a rug pull that edits tool descriptions breaks the pin. They run sandboxed with least-privilege, per-user credentials, never a shared admin token. Tool descriptions are reviewed like code, and high-impact actions need human approval. The trade-off is slower onboarding of new tools, which I accept.",
+        "es": "Un servidor MCP es código más texto de prompt que corre con los permisos de mi agente, así que es a la vez una dependencia y un vector de inyección. Solo permito servidores de una allowlist interna, fijados por versión y hash, para que un rug pull que edite las descripciones de las herramientas rompa la verificación. Corren aislados, con credenciales por usuario de mínimo privilegio, nunca con un token de administrador compartido. Las descripciones se revisan como código y las acciones de alto impacto requieren aprobación humana. El trade-off es que sumar herramientas nuevas es más lento, y lo acepto."
+      }
+    },
+    {
+      "q": { "en": "Can you detect a backdoored model?", "es": "¿Puedes detectar un modelo con puerta trasera?" },
+      "a": {
+        "en": "Not reliably, and I say that upfront. Sleeper Agents showed backdoors surviving safety training, and the trigger can be any string. So I rely on provenance, meaning who trained it and on what data, and on limiting blast radius: the model never holds authority, its outputs pass deterministic checks, and agents run with least privilege. Detection techniques like trigger search or activation probes exist, but I treat them as research, not as a control I'd sign off on.",
+        "es": "No de forma confiable, y lo digo de entrada. Sleeper Agents mostró puertas traseras que sobreviven al entrenamiento de seguridad, y el disparador puede ser cualquier texto. Por eso me apoyo en la procedencia, es decir quién lo entrenó y con qué datos, y en limitar el radio de impacto: el modelo nunca tiene autoridad, sus salidas pasan por validaciones deterministas y los agentes corren con mínimo privilegio. Existen técnicas de detección como buscar disparadores o sondas sobre activaciones, pero las trato como investigación, no como un control que yo aprobaría."
+      }
+    }
+  ],
+  "related": ["owasp-llm-top10", "mcp", "model-registry", "data-curation", "red-teaming", "prompt-injection"],
+  "sources": [
+    { "title": "Hubinger et al. — Sleeper Agents: Training Deceptive LLMs that Persist Through Safety Training", "url": "https://arxiv.org/abs/2401.05566" },
+    { "title": "Carlini et al. — Poisoning Web-Scale Training Datasets is Practical", "url": "https://arxiv.org/abs/2302.10149" },
+    { "title": "Hugging Face — safetensors documentation", "url": "https://huggingface.co/docs/safetensors/index" },
+    { "title": "Protect AI — ModelScan", "url": "https://github.com/protectai/modelscan" }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "id": "pii-privacy",
+  "domain": "security",
+  "level": "core",
+  "title": { "en": "PII & data privacy", "es": "PII y privacidad de datos" },
+  "aliases": ["PII", "PII redaction", "data masking", "pseudonymization", "Presidio", "GDPR", "zero data retention", "ZDR"],
+  "tldr": {
+    "en": "Detect and redact or pseudonymize personal data before it reaches the model, logs or indexes; pick providers with no training and short or zero retention; and make deletion reach every copy, vectors and caches included.",
+    "es": "Detecta y enmascara o seudonimiza los datos personales antes de que lleguen al modelo, los logs o los índices; elige proveedores sin entrenamiento y con retención corta o nula; y haz que el borrado llegue a cada copia, incluidos vectores y caches."
+  },
+  "analogy": {
+    "en": "A coat check: you hand over your coat and get ticket 42. Staff move ticket 42 around all night without knowing whose coat it is; only you can swap it back.",
+    "es": "Un guardarropa: entregas tu abrigo y recibes el ticket 42. El personal mueve el ticket 42 toda la noche sin saber de quién es el abrigo; solo tú puedes cambiarlo de vuelta."
+  },
+  "explain": {
+    "en": "**PII** (personally identifiable information) is any data that identifies a person: names, emails, phone numbers, government ids, card numbers, health data. The rule for AI systems is **minimize what reaches the model, the logs and the indexes**, because every copy is another place to leak or to have to delete.\n\n- **Detect** at the boundary: regex plus checksums for structured ids (cards, IBANs), NER for names and addresses. **Microsoft Presidio** combines both.\n- **Pseudonymize reversibly** when the answer needs the value: replace `Maria Lopez` with `[PERSON_0]`, keep the map in a vault, re-insert at the edge. The model reasons over placeholders; the provider never sees the name.\n- **Redact one-way** in logs, traces and eval sets; they outlive the request.\n\nThen the contract side: the provider's **retention** (e.g. OpenAI keeps API abuse-monitoring logs up to 30 days), **zero-data-retention** agreements for sensitive workloads, and whether your data **trains** their models (usually off by default on paid API tiers; free tiers and consumer apps differ).\n\nUnder **GDPR**, each purpose needs a **lawful basis** (consent, contract, legitimate interest…); the **right to erasure** must reach the vector index, semantic cache, logs and any fine-tuning set, not just the database; and transfers outside the EU need a legal mechanism, which is why customers ask for **data residency** (in-region endpoints).",
+    "es": "**PII** (información de identificación personal) es cualquier dato que identifica a una persona: nombres, correos, teléfonos, documentos de identidad, números de tarjeta, datos de salud. La regla en sistemas de IA es **minimizar lo que llega al modelo, a los logs y a los índices**, porque cada copia es otro lugar por donde se puede filtrar o que vas a tener que borrar.\n\n- **Detecta** en la frontera: regex con checksums para identificadores estructurados (tarjetas, IBAN) y NER para nombres y direcciones. **Microsoft Presidio** combina ambos.\n- **Seudonimiza de forma reversible** cuando la respuesta necesita el valor: reemplaza `Maria Lopez` por `[PERSON_0]`, guarda el mapa en un vault y reinserta el valor en el borde. El modelo razona sobre marcadores; el proveedor nunca ve el nombre.\n- **Enmascara sin vuelta atrás** en logs, trazas y sets de evaluación: viven más que el request.\n\nLuego viene el lado contractual: la **retención** del proveedor (por ejemplo, OpenAI guarda los logs de monitoreo de abuso de la API hasta 30 días), los acuerdos de **zero data retention** para cargas sensibles y si tus datos **entrenan** sus modelos (normalmente desactivado por defecto en los planes pagos de API; los planes gratuitos y las apps de consumo son distintos).\n\nCon el **GDPR (RGPD)**, cada finalidad necesita una **base legal** (consentimiento, contrato, interés legítimo…); el **derecho de supresión** debe llegar al índice vectorial, la cache semántica, los logs y cualquier set de fine-tuning, no solo a la base de datos; y las transferencias fuera de la UE requieren un mecanismo legal, por eso los clientes piden **residencia de datos** (endpoints en la región)."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  U[User message] --> D[\"Detect PII<br/>regex + NER\"]\n  D -->|values| V[(Token vault)]\n  D -->|pseudonymized| M[LLM provider]\n  D -->|redacted| L[(Logs and traces)]\n  M --> R[Re-identify at edge]\n  V -.-> R\n  R --> A[Answer to user]\n  E[Erasure request] -.-> V\n  E -.-> X[(\"Vector index + cache\")]\n  E -.-> L",
+    "caption": {
+      "en": "Raw values stay in your vault; the provider and the logs only see placeholders; an erasure request must reach every store.",
+      "es": "Los valores reales quedan en tu vault; el proveedor y los logs solo ven marcadores; una solicitud de supresión debe llegar a cada almacén."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Reversible pseudonymization with Presidio", "es": "Seudonimización reversible con Presidio" },
+    "source": "from presidio_analyzer import AnalyzerEngine\nfrom presidio_anonymizer import AnonymizerEngine\n\nanalyzer = AnalyzerEngine()      # regex + checksums + spaCy NER, boosted by context words\nanonymizer = AnonymizerEngine()\nENTITIES = [\"PERSON\", \"EMAIL_ADDRESS\", \"PHONE_NUMBER\", \"CREDIT_CARD\", \"IBAN_CODE\"]\n\ndef pseudonymize(text: str) -> tuple[str, dict[str, str]]:\n    found = analyzer.analyze(text=text, language=\"en\", entities=ENTITIES)\n    vault, out = {}, text\n    for r in sorted(found, key=lambda r: r.start, reverse=True):  # right-to-left keeps offsets valid\n        value = text[r.start:r.end]\n        token = next((t for t, v in vault.items() if v == value),   # same value -> same token\n                     f\"[{r.entity_type}_{len(vault)}]\")\n        vault[token] = value\n        out = out[:r.start] + token + out[r.end:]\n    return out, vault\n\ndef restore(text: str, vault: dict[str, str]) -> str:\n    for token, value in vault.items():\n        text = text.replace(token, value)\n    return text\n\nmsg = \"Refund John Smith, john@acme.com, card 4111 1111 1111 1111\"\nsafe, vault = pseudonymize(msg)  # e.g. \"Refund [PERSON_2], [EMAIL_ADDRESS_1], card [CREDIT_CARD_0]\"\nreply = call_llm(safe)           # the provider never sees the raw values\nprint(restore(reply, vault))     # re-identify only at the edge, for this user\n\n# One-way redaction for logs: default operator replaces each span with <ENTITY_TYPE>\nlog_line = anonymizer.anonymize(text=msg, analyzer_results=analyzer.analyze(text=msg, language=\"en\")).text"
+  },
+  "example": {
+    "en": "An EU clinic's scheduling assistant handles 50k chats a day. Before each call, Presidio swaps names, phone numbers and insurance ids for tokens; the LLM drafts *\"Confirm `[PERSON_0]`'s appointment and text `[PHONE_NUMBER_1]`\"* and the app re-inserts the values only inside that patient's session. Logs keep the redacted version with 30-day retention. When a patient requests erasure, a job deletes their rows, their chunks from the vector index by `patient_id` metadata, their semantic-cache entries and their traces. The audit finds one more copy: an eval set built from raw production chats, which is regenerated from the redacted logs.",
+    "es": "El asistente de citas de una clínica en la UE atiende 50k chats al día. Antes de cada llamada, Presidio cambia nombres, teléfonos y números de afiliado por tokens; el LLM redacta *\"Confirma la cita de `[PERSON_0]` y envía un SMS a `[PHONE_NUMBER_1]`\"* y la app reinserta los valores solo dentro de la sesión de ese paciente. Los logs guardan la versión enmascarada con retención de 30 días. Cuando un paciente pide la supresión de sus datos, un job borra sus filas, sus chunks del índice vectorial filtrando por el metadato `patient_id`, sus entradas de la cache semántica y sus trazas. La auditoría encuentra una copia más: un set de evaluación armado con chats de producción sin enmascarar, que se regenera a partir de los logs enmascarados."
+  },
+  "pros": [
+    { "en": "Shrinks breach and compliance scope: data the provider never saw can't leak from it.", "es": "Reduce el alcance de brechas y de cumplimiento: lo que el proveedor nunca vio no se puede filtrar desde ahí." },
+    { "en": "Reversible tokens keep answers useful while the model only sees placeholders.", "es": "Los tokens reversibles mantienen útiles las respuestas mientras el modelo solo ve marcadores." },
+    { "en": "Redacted logs and traces can be shared with engineers and vendors far more freely.", "es": "Los logs y trazas enmascarados se pueden compartir con ingenieros y proveedores con mucha más libertad." }
+  ],
+  "cons": [
+    { "en": "Detection is probabilistic: NER misses names in odd formats, other languages and free text.", "es": "La detección es probabilística: el NER no detecta nombres con formatos raros, en otros idiomas o en texto libre." },
+    { "en": "Placeholders can hurt quality when the value matters (spelling a name, gender agreement in Spanish).", "es": "Los marcadores pueden bajar la calidad cuando el valor importa (deletrear un nombre, la concordancia de género en español)." },
+    { "en": "Erasure across indexes, caches, backups and fine-tuned weights is real engineering work.", "es": "Borrar en índices, caches, backups y pesos con fine-tuning es trabajo de ingeniería real." }
+  ],
+  "whenToUse": {
+    "en": "Whenever messages or documents may contain personal data and flow to a third-party model, logs, embeddings or training sets, which is nearly every production assistant.",
+    "es": "Siempre que los mensajes o documentos puedan contener datos personales y fluyan hacia un modelo de terceros, logs, embeddings o sets de entrenamiento, es decir, casi cualquier asistente en producción."
+  },
+  "whenNotToUse": {
+    "en": "Don't mask values the task needs verbatim inside the model (extracting the name from an ID scan); use a zero-retention, in-region deployment and strict access controls instead.",
+    "es": "No enmascares valores que la tarea necesita textuales dentro del modelo (extraer el nombre de un documento escaneado); ahí usa un deployment en la región, con zero retention y controles de acceso estrictos."
+  },
+  "numbers": [
+    { "en": "GDPR fines: up to €20M or 4% of global annual turnover, whichever is higher.", "es": "Multas del GDPR: hasta €20M o el 4% de la facturación anual global, lo que sea mayor." },
+    { "en": "GDPR: answer an erasure or access request within 1 month; notify the authority of a breach within 72 h.", "es": "GDPR: responde una solicitud de supresión o de acceso en 1 mes; notifica una brecha a la autoridad en 72 h." },
+    { "en": "OpenAI API data isn't used for training by default (since March 2023); abuse-monitoring logs are kept up to 30 days unless you have ZDR.", "es": "Los datos de la API de OpenAI no se usan para entrenar por defecto (desde marzo de 2023); los logs de monitoreo de abuso se guardan hasta 30 días salvo que tengas ZDR." },
+    { "en": "vec2text recovered 92% of 32-token inputs exactly from their embeddings: treat embeddings as personal data.", "es": "vec2text recuperó exactamente el 92% de textos de 32 tokens a partir de sus embeddings: trata los embeddings como datos personales." }
+  ],
+  "pitfalls": [
+    { "en": "Masking the prompt but logging the raw request in the gateway, APM traces or error reports.", "es": "Enmascarar el prompt pero loguear el request crudo en el gateway, las trazas de APM o los reportes de errores." },
+    { "en": "Deleting from the database but not from the vector index, semantic cache or eval datasets.", "es": "Borrar de la base de datos pero no del índice vectorial, la cache semántica ni los datasets de evaluación." },
+    { "en": "Fine-tuning on raw customer chats: you can't remove one person from the weights without retraining.", "es": "Hacer fine-tuning con chats crudos de clientes: no puedes sacar a una persona de los pesos sin reentrenar." },
+    { "en": "Relying on regex alone for names and addresses, or on English-only NER for Spanish text.", "es": "Confiar solo en regex para nombres y direcciones, o usar un NER solo en inglés sobre texto en español." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "A user invokes the right to erasure. What has to happen in your RAG app?", "es": "Un usuario ejerce su derecho de supresión. ¿Qué tiene que pasar en tu app de RAG?" },
+      "a": {
+        "en": "Erasure is a data-lineage problem, so I need every place their data landed. That's the primary database; the vector index, which is why every chunk carries `user_id` and `doc_id` metadata so I can delete by filter; the semantic cache; agent memory; logs and traces; eval sets; and backups on their expiry cycle. If personal data went into a fine-tuning set, the honest answer is retraining, so I design not to train on raw PII at all. I run it as an auditable job and answer within GDPR's one-month deadline.",
+        "es": "La supresión es un problema de linaje de datos: necesito cada lugar donde terminaron sus datos. Eso es la base principal; el índice vectorial, por eso cada chunk lleva metadatos `user_id` y `doc_id` para borrar por filtro; la cache semántica; la memoria del agente; logs y trazas; sets de evaluación; y los backups según su ciclo de expiración. Si hubo datos personales en un set de fine-tuning, la respuesta honesta es reentrenar, así que diseño para no entrenar con PII cruda. Lo corro como un job auditable y respondo dentro del plazo de un mes del GDPR."
+      }
+    },
+    {
+      "q": { "en": "How do you use a third-party LLM on sensitive customer data?", "es": "¿Cómo usas un LLM de terceros con datos sensibles de clientes?" },
+      "a": {
+        "en": "Three layers. Minimize: detect and pseudonymize PII before the call, Presidio-style, with a token vault and re-identification only at the edge. Contract: a paid API tier with no training on our data, a DPA, zero data retention where available, and an in-region endpoint if residency is required. Hygiene: redacted logs and traces by default, short retention, access controls on the vault. The trade-off is quality on tasks that need the literal value, so I run the eval suite with and without masking before deciding per field.",
+        "es": "Tres capas. Minimizar: detectar y seudonimizar la PII antes de la llamada, al estilo Presidio, con un vault de tokens y reidentificación solo en el borde. Contrato: un plan pago de API sin entrenamiento con nuestros datos, un DPA, zero data retention donde esté disponible y un endpoint en la región si se exige residencia. Higiene: logs y trazas enmascarados por defecto, retención corta y control de acceso al vault. El trade-off es la calidad en tareas que necesitan el valor literal, así que corro la suite de evals con y sin enmascarado antes de decidir campo por campo."
+      }
+    }
+  ],
+  "related": ["guardrails", "tenant-isolation", "permission-aware-retrieval", "semantic-caching", "llm-observability", "index-lifecycle"],
+  "sources": [
+    { "title": "Microsoft Presidio — documentation", "url": "https://microsoft.github.io/presidio/" },
+    { "title": "Regulation (EU) 2016/679 — General Data Protection Regulation", "url": "https://eur-lex.europa.eu/eli/reg/2016/679/oj" },
+    { "title": "Morris et al. — Text Embeddings Reveal (Almost) As Much As Text", "url": "https://arxiv.org/abs/2310.06816" },
+    { "title": "OpenAI — Enterprise privacy", "url": "https://openai.com/enterprise-privacy/" }
+  ]
+}

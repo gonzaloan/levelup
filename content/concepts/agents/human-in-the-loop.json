@@ -1,0 +1,88 @@
+{
+  "id": "human-in-the-loop",
+  "domain": "agents",
+  "level": "core",
+  "title": { "en": "Human-in-the-loop & approvals", "es": "Human-in-the-loop y aprobaciones" },
+  "aliases": ["HITL", "human approval", "approval gates", "human oversight", "escalation", "review queue", "edit before send", "interrupt"],
+  "tldr": {
+    "en": "Put a human approval gate in front of consequential or irreversible agent actions, tiered by risk, and escalate low-confidence cases — while keeping prompts rare enough that reviewers still read them.",
+    "es": "Pon una aprobación humana antes de las acciones del agente que tienen consecuencias o no se pueden deshacer, por niveles de riesgo, y escala los casos de baja confianza, con pocas solicitudes para que los revisores sí las lean."
+  },
+  "analogy": {
+    "en": "A bank lets a teller hand out $200 alone, needs a supervisor's signature above $10,000, and requires two keys for the vault. Same staff, different gates by risk.",
+    "es": "Un banco deja que un cajero entregue $200 solo, exige la firma de un supervisor arriba de $10,000 y pide dos llaves para la bóveda. Mismo personal, distintos controles según el riesgo."
+  },
+  "explain": {
+    "en": "**Human-in-the-loop (HITL)** means the agent proposes and a person approves, edits or rejects before certain actions execute. Which actions need approval is a policy in **code**, never the model's call.\n\nA practical **risk-tier** policy:\n- **Tier 0 — read-only or reversible** (search, draft, compute): auto-execute and log.\n- **Tier 1 — external writes** (send an email, update a record): approval, ideally **edit-before-send** so the reviewer fixes instead of rejecting.\n- **Tier 2 — money, deletes, permissions, irreversible**: explicit confirmation showing the exact effect (amount, recipient, diff), sometimes two people.\n\nOther triggers: **confidence-based escalation** (low classifier score, policy edge cases, the user asks for a human) and **sampling** a few percent of auto-executed actions for QA.\n\nMechanically the agent **pauses**: state is checkpointed, the request lands in a **review queue** (Slack, ticketing, an admin UI) with context and the model's rationale, and the run resumes when the decision arrives, possibly days later ([[durable-agents]]). LangGraph's `interrupt()` and Step Functions task tokens do exactly this.\n\nThe failure mode is **approval fatigue**: if reviewers approve 99% of prompts unread, the gate is theater. Gate fewer things, show diffs instead of JSON, track approve-unchanged rate and time-to-decision, and keep an **audit trail** of who approved what — the EU AI Act (Art. 14) requires human oversight for high-risk systems.",
+    "es": "**Human-in-the-loop (HITL)** significa que el agente propone y una persona aprueba, edita o rechaza antes de que ciertas acciones se ejecuten. Qué acciones necesitan aprobación es una política en **código**, nunca una decisión del modelo.\n\nUna política práctica por **niveles de riesgo**:\n- **Nivel 0, solo lectura o reversible** (buscar, redactar, calcular): se ejecuta solo y se registra.\n- **Nivel 1, escrituras externas** (mandar un correo, actualizar un registro): requiere aprobación, idealmente con **edición antes de enviar** para que el revisor corrija en vez de rechazar.\n- **Nivel 2, dinero, borrados, permisos, irreversible**: confirmación explícita que muestre el efecto exacto (monto, destinatario, diff), a veces de dos personas.\n\nOtros disparadores: **escalamiento por confianza** (puntaje bajo de un clasificador, casos límite de la política, el usuario pide hablar con una persona) y **muestreo** de un pequeño porcentaje de las acciones automáticas para control de calidad.\n\nEn la práctica el agente **se pausa**: el estado queda en un checkpoint, la solicitud llega a una **cola de revisión** (Slack, un sistema de tickets, una UI de administración) con contexto y el razonamiento del modelo, y la corrida continúa cuando llega la decisión, quizá días después ([[durable-agents]]). El `interrupt()` de LangGraph y los task tokens de Step Functions hacen justo eso.\n\nEl modo de falla es la **fatiga de aprobación**: si los revisores aprueban el 99% sin leer, el control es puro teatro. Pide aprobación para menos cosas, muestra diffs en vez de JSON, mide la tasa de aprobación sin cambios y el tiempo de decisión, y guarda un **registro de auditoría** de quién aprobó qué: la Ley de IA de la UE (art. 14) exige supervisión humana en sistemas de alto riesgo."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  A[Agent proposes action] --> P{Risk tier}\n  P -->|tier 0 read-only| X[Execute]\n  P -->|tier 1 write| Q[Review queue]\n  P -->|tier 2 money or delete| C[\"Explicit confirm<br/>show exact effect\"]\n  Q --> D{Human decision}\n  C --> D\n  D -->|approve| X\n  D -->|edit args| X\n  D -->|reject with reason| A\n  X --> L[(Audit log)]",
+    "caption": {
+      "en": "Engineers assign the tier in code; a rejection reason goes back to the agent as feedback, and every decision is logged.",
+      "es": "Los ingenieros asignan el nivel en código; el motivo de un rechazo vuelve al agente como feedback y cada decisión queda registrada."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Risk-tiered approval gate with LangGraph interrupt()", "es": "Control de aprobación por riesgo con interrupt() de LangGraph" },
+    "source": "from langgraph.types import Command, interrupt\nfrom langgraph.checkpoint.postgres import PostgresSaver\n\n# Tier per tool is decided by engineers in code, never by the model\nTIER = {\"search_orders\": 0, \"draft_reply\": 0,    # read-only / reversible: auto\n        \"send_reply\": 1, \"update_address\": 1,    # external writes: approve\n        \"issue_refund\": 2, \"close_account\": 2}   # money / irreversible: confirm\n\ndef act(state: dict) -> dict:\n    call, decision = state[\"proposed_call\"], None  # proposed by the LLM\n    tier = TIER.get(call[\"name\"], 2)               # unknown tool => strictest tier\n    if tier >= 1:\n        # Checkpoints and pauses the graph. On resume the node re-runs from the\n        # top, so nothing with side effects may happen before this line.\n        decision = interrupt({\"call\": call, \"tier\": tier, \"why\": state[\"rationale\"],\n                              \"preview\": render_effect(call)})  # amount, recipient, diff\n        if decision[\"action\"] == \"reject\":           # reason goes back to the agent\n            return {\"messages\": [tool_result(call, \"Rejected: \" + decision[\"note\"])]}\n        if decision[\"action\"] == \"edit\":             # edit-before-send\n            call = {**call, \"args\": decision[\"args\"]}\n    audit.write(call=call, tier=tier, decision=decision, user=state[\"user_id\"])\n    return {\"messages\": [tool_result(call, TOOLS[call[\"name\"]](**call[\"args\"]))]}\n\ngraph = builder.compile(checkpointer=PostgresSaver(conn))  # pauses survive restarts\ncfg = {\"configurable\": {\"thread_id\": \"ticket-4812\"}}\ngraph.invoke({\"messages\": [user_msg]}, cfg)                # runs until interrupt()\n# ...hours or days later, from the review UI:\ngraph.invoke(Command(resume={\"action\": \"approve\"}), cfg)"
+  },
+  "example": {
+    "en": "A support agent handles 2,000 tickets a day. Lookups and drafted replies run automatically. Refunds under $50 auto-execute with 5% sampled for review; larger refunds and any account closure go to a queue that shows the order, the amount and the agent's rationale, where reviewers can edit the amount before approving. Only ~60 items a day reach humans, decided in a median 4 minutes. In month one, reviewers approved 97% unchanged — so the team raised the auto threshold to $100 and spent the saved attention on closures.",
+    "es": "Un agente de soporte atiende 2,000 tickets al día. Las consultas y los borradores de respuesta corren solos. Los reembolsos menores a $50 se ejecutan automáticamente con 5% muestreado para revisión; los reembolsos mayores y cualquier cierre de cuenta van a una cola que muestra el pedido, el monto y el razonamiento del agente, donde los revisores pueden editar el monto antes de aprobar. Solo ~60 casos al día llegan a personas, con una mediana de 4 minutos por decisión. En el primer mes los revisores aprobaron el 97% sin cambios, así que el equipo subió el umbral automático a $100 y dedicó esa atención a los cierres de cuenta."
+  },
+  "pros": [
+    { "en": "Stops the costly, irreversible mistakes an agent will eventually make.", "es": "Frena los errores caros e irreversibles que un agente tarde o temprano va a cometer." },
+    { "en": "Edit-before-send turns rejections into corrections and yields labelled eval data.", "es": "Editar antes de enviar convierte rechazos en correcciones y genera datos etiquetados para evals." },
+    { "en": "Named approvers and an audit trail satisfy compliance (EU AI Act Art. 14, SOX-style controls).", "es": "Aprobadores con nombre y un registro de auditoría cumplen con regulación (art. 14 de la Ley de IA de la UE, controles tipo SOX)." }
+  ],
+  "cons": [
+    { "en": "Adds minutes to days of latency; the agent stops being real-time.", "es": "Agrega de minutos a días de latencia; el agente deja de ser en tiempo real." },
+    { "en": "Approval fatigue: frequent prompts get rubber-stamped and protect nothing.", "es": "Fatiga de aprobación: las solicitudes frecuentes se aprueban en automático y no protegen nada." },
+    { "en": "Reviewer time becomes the new cost and bottleneck; queues need staffing and SLAs.", "es": "El tiempo de los revisores pasa a ser el nuevo costo y cuello de botella; las colas necesitan personal y SLAs." }
+  ],
+  "whenToUse": {
+    "en": "Any action that moves money, deletes data, changes permissions, contacts customers or is otherwise hard to undo — and early in a rollout, before data shows the agent is reliable.",
+    "es": "Cualquier acción que mueva dinero, borre datos, cambie permisos, contacte clientes o sea difícil de deshacer, y al inicio de un rollout, antes de tener datos que muestren que el agente es confiable."
+  },
+  "whenNotToUse": {
+    "en": "Read-only or easily reversible actions, or high-volume steps where reviewers would see hundreds a day: use guardrails, sampling and monitoring instead of a gate.",
+    "es": "Acciones de solo lectura o fáciles de revertir, o pasos de alto volumen donde los revisores verían cientos al día: usa guardrails, muestreo y monitoreo en vez de un control."
+  },
+  "numbers": [
+    { "en": "Rule of thumb: tier by blast radius — read-only auto, writes approve, money/deletes/permissions explicit confirm.", "es": "Regla práctica: nivel según el radio de impacto; solo lectura en automático, escrituras con aprobación, dinero/borrados/permisos con confirmación explícita." },
+    { "en": "Alert-fatigue precedent: clinicians override 49–96% of drug-safety alerts (van der Sijs et al., 2006).", "es": "Precedente de fatiga de alertas: los médicos ignoran entre 49% y 96% de las alertas de seguridad de medicamentos (van der Sijs et al., 2006)." },
+    { "en": "Anthropic: sandboxing cut Claude Code permission prompts by 84% internally — fewer prompts, more attention per prompt.", "es": "Anthropic: el sandboxing redujo 84% las solicitudes de permiso de Claude Code en uso interno; menos solicitudes, más atención en cada una." },
+    { "en": "Rule of thumb: if >95% of an action's approvals pass unchanged, auto-approve it with sampling.", "es": "Regla práctica: si más del 95% de las aprobaciones de una acción pasan sin cambios, apruébala en automático con muestreo." }
+  ],
+  "pitfalls": [
+    { "en": "Letting the model decide whether an action needs approval: a confused or injected model will say no.", "es": "Dejar que el modelo decida si una acción necesita aprobación: un modelo confundido o inyectado dirá que no." },
+    { "en": "Showing reviewers raw JSON tool arguments: they can't judge it, so they click approve.", "es": "Mostrar a los revisores los argumentos de la herramienta en JSON crudo: no pueden juzgarlos, así que aprueban." },
+    { "en": "Approving a plan, then executing different arguments: bind the approval to the exact call.", "es": "Aprobar un plan y luego ejecutar otros argumentos: ata la aprobación a la llamada exacta." },
+    { "en": "Holding a thread open while waiting: a deploy kills every pending approval. Checkpoint and resume.", "es": "Mantener un hilo abierto mientras esperas: un deploy mata todas las aprobaciones pendientes. Haz checkpoint y retoma." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you decide which agent actions need human approval?", "es": "¿Cómo decides qué acciones de un agente necesitan aprobación humana?" },
+      "a": {
+        "en": "By blast radius and reversibility, decided in code, never by the model. Read-only and reversible actions run automatically with logging. External writes like sending an email need approval, ideally edit-before-send. Money, deletes and permission changes need explicit confirmation that shows the exact effect. Unknown tools default to the strictest tier. Then I tune with data: if an action is approved unchanged 98% of the time, I auto-approve it below a threshold and sample, so reviewer attention goes where it actually catches things.",
+        "es": "Por radio de impacto y reversibilidad, decidido en código, nunca por el modelo. Las acciones de solo lectura y reversibles corren solas y se registran. Las escrituras externas, como mandar un correo, requieren aprobación, idealmente con edición antes de enviar. Dinero, borrados y cambios de permisos requieren confirmación explícita que muestre el efecto exacto. Las herramientas desconocidas caen en el nivel más estricto. Después ajusto con datos: si una acción se aprueba sin cambios el 98% de las veces, la apruebo en automático bajo un umbral y muestreo, para que la atención de los revisores vaya donde de verdad atrapa errores."
+      }
+    },
+    {
+      "q": { "en": "Reviewers approve everything in two seconds. What do you do?", "es": "Los revisores aprueban todo en dos segundos. ¿Qué haces?" },
+      "a": {
+        "en": "That's approval fatigue, and the gate is now theater. First I measure: approve-unchanged rate, time-to-decision and which actions dominate the queue. Then I cut volume: auto-approve low-risk actions with sampling, batch similar ones, and add guardrails so fewer items need a human. For what remains, I make each prompt decidable — the diff, amount, recipient and the agent's reason, not JSON. I may also seed known-bad items to check reviewers catch them. Fewer, better prompts beat more prompts.",
+        "es": "Eso es fatiga de aprobación, y el control ya es puro teatro. Primero mido: tasa de aprobación sin cambios, tiempo de decisión y qué acciones dominan la cola. Luego bajo el volumen: apruebo en automático las acciones de bajo riesgo con muestreo, agrupo las parecidas y agrego guardrails para que menos casos necesiten a una persona. Para lo que queda, hago que cada solicitud se pueda decidir: el diff, el monto, el destinatario y la razón del agente, no JSON. También puedo sembrar casos malos conocidos para ver si los revisores los atrapan. Menos solicitudes y mejores le ganan a más solicitudes."
+      }
+    }
+  ],
+  "related": ["durable-agents", "guardrails", "agent-reliability", "tool-design", "eu-ai-act", "prompt-injection"],
+  "sources": [
+    { "title": "LangGraph — Human-in-the-loop", "url": "https://langchain-ai.github.io/langgraph/concepts/human_in_the_loop/" },
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "Anthropic — Making Claude Code more secure and autonomous with sandboxing", "url": "https://www.anthropic.com/engineering/claude-code-sandboxing" },
+    { "title": "EU AI Act — Article 14: Human Oversight", "url": "https://artificialintelligenceact.eu/article/14/" }
+  ]
+}

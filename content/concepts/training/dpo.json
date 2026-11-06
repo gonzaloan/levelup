@@ -1,0 +1,97 @@
+{
+  "id": "dpo",
+  "domain": "training",
+  "level": "advanced",
+  "title": { "en": "DPO & preference optimization", "es": "DPO y optimización por preferencias" },
+  "aliases": ["DPO", "Direct Preference Optimization", "preference tuning", "IPO", "KTO", "ORPO", "SimPO", "DPOTrainer"],
+  "tldr": {
+    "en": "Tune a model directly on (prompt, chosen, rejected) pairs with a simple classification-style loss: the RLHF objective without a reward model or an RL loop, so it is cheaper and far more stable than PPO.",
+    "es": "Ajusta un modelo directamente con tripletas (prompt, elegida, rechazada) usando una pérdida simple tipo clasificación: el mismo objetivo de RLHF sin reward model ni ciclo de RL, así que es más barato y mucho más estable que PPO."
+  },
+  "analogy": {
+    "en": "Instead of training a critic to grade essays and then coaching the writer against that critic, you show the writer two drafts at a time and say: \"more like this one, less like that one.\"",
+    "es": "En vez de entrenar a un crítico para calificar ensayos y luego entrenar al escritor contra ese crítico, le muestras al escritor dos borradores a la vez y le dices: \"más como este, menos como aquel\"."
+  },
+  "explain": {
+    "en": "**DPO** (Direct Preference Optimization) fine-tunes a model on preference data, triples of (prompt, chosen, rejected), with a plain supervised loss. No reward model, no RL loop, no sampling during training.\n\nClassic [[rlhf]] first trains a reward model on those pairs, then runs PPO against it: four models in memory (policy, reference, reward, value) and a famously touchy loop. Rafailov et al. (2023) showed the RLHF objective has a closed-form optimum, so the policy can act as its own reward model.\n\nThe loss raises the log-probability of *chosen* relative to *rejected*, each measured against a frozen **reference** copy of the SFT model. **β** (typically 0.1) sets how far the policy may drift from it: a lower β allows a more aggressive update.\n\nVariants to know:\n- **IPO**: a bounded loss that overfits less when preferences are near-deterministic.\n- **KTO**: learns from *unpaired* thumbs-up/down, the signal your product already logs.\n- **ORPO**: merges SFT and preference into one stage, no reference model.\n- **SimPO**: reference-free, length-normalized reward; less memory and less length bias.\n\n**Data**: start from an [[sft]] model and use a few thousand to tens of thousands of pairs, ideally sampled from that same model (*on-policy*).",
+    "es": "**DPO** (Direct Preference Optimization) hace fine-tuning de un modelo con datos de preferencia, tripletas (prompt, elegida, rechazada), usando una pérdida supervisada común. Sin reward model, sin ciclo de RL y sin generar muestras durante el entrenamiento.\n\nEl [[rlhf]] clásico primero entrena un reward model con esos pares y luego corre PPO contra él: cuatro modelos en memoria (política, referencia, recompensa y valor) y un ciclo famoso por lo delicado. Rafailov et al. (2023) demostraron que el objetivo de RLHF tiene un óptimo en forma cerrada, así que la propia política puede hacer de reward model.\n\nLa pérdida sube la log-probabilidad de la respuesta *elegida* frente a la *rechazada*, ambas medidas contra una copia **de referencia** congelada del modelo SFT. **β** (típicamente 0.1) define cuánto se puede alejar la política de ella: un β más bajo permite cambios más agresivos.\n\nVariantes que debes conocer:\n- **IPO**: una pérdida acotada que se sobreajusta menos cuando las preferencias son casi deterministas.\n- **KTO**: aprende de pulgares arriba/abajo *sin emparejar*, la señal que tu producto ya registra.\n- **ORPO**: une SFT y preferencias en una sola etapa, sin modelo de referencia.\n- **SimPO**: sin referencia y con recompensa normalizada por longitud; menos memoria y menos sesgo hacia respuestas largas.\n\n**Datos**: parte de un modelo [[sft]] y usa desde unos miles hasta decenas de miles de pares, idealmente generados por ese mismo modelo (*on-policy*)."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[Real prompts] --> S[\"SFT model<br/>samples 2 answers\"]\n  S --> J{\"Human or judge<br/>picks better\"}\n  J --> D[(\"Pairs<br/>chosen / rejected\")]\n  D --> L[\"DPO loss<br/>one supervised pass\"]\n  R[\"Frozen reference<br/>SFT copy\"] --> L\n  L --> M[Tuned policy]\n  M -.->|iterative DPO| S",
+    "caption": {
+      "en": "No reward model and no RL loop: preference pairs plus a frozen reference go straight into a supervised loss.",
+      "es": "Sin reward model ni ciclo de RL: los pares de preferencia y una referencia congelada entran directo a una pérdida supervisada."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "DPO on preference pairs with TRL", "es": "DPO sobre pares de preferencia con TRL" },
+    "source": "from datasets import load_dataset\nfrom transformers import AutoModelForCausalLM, AutoTokenizer\nfrom trl import DPOConfig, DPOTrainer\n\nMODEL = \"Qwen/Qwen2.5-1.5B-Instruct\"  # use your own SFT checkpoint\n\nmodel = AutoModelForCausalLM.from_pretrained(MODEL)\ntokenizer = AutoTokenizer.from_pretrained(MODEL)\n\n# Columns: \"prompt\", \"chosen\", \"rejected\" (strings or chat messages)\npairs = load_dataset(\"trl-lib/ultrafeedback_binarized\", split=\"train\")\n\nargs = DPOConfig(\n    output_dir=\"model-dpo\",\n    beta=0.1,                 # pull toward the reference: higher = more conservative\n    learning_rate=5e-7,       # far below SFT; DPO overfits fast\n    num_train_epochs=1,\n    per_device_train_batch_size=4,\n    gradient_accumulation_steps=8,\n    # loss_type=\"ipo\",        # same trainer covers several variants\n)\n\ntrainer = DPOTrainer(\n    model=model,              # ref_model=None -> TRL makes a frozen copy\n    args=args,\n    train_dataset=pairs,\n    processing_class=tokenizer,\n)\ntrainer.train()\n# Watch rewards/margins (should rise) and rewards/chosen (should not crash)"
+  },
+  "example": {
+    "en": "An insurer's 8B claims assistant, already SFT'd, is accurate but hedges and writes 400-word answers. The team samples two answers from that model for each of 6,000 real prompts, an [[llm-as-judge]] with a rubric picks the better one, and claims adjusters audit 300 pairs (88% agreement). They drop ties and low-confidence pairs, keep 4,800, and run one epoch of DPO with LoRA at β = 0.1. On 400 held-out prompts, human raters prefer the DPO model over the SFT model 66% of the time; median length falls from 410 to 230 words with no loss in factual accuracy.",
+    "es": "El asistente de siniestros de una aseguradora, un modelo de 8B ya con SFT, es preciso pero da demasiados rodeos y escribe respuestas de 400 palabras. El equipo genera con ese modelo dos respuestas para cada uno de 6000 prompts reales, un [[llm-as-judge]] con rúbrica elige la mejor y los ajustadores auditan 300 pares (88% de acuerdo). Descartan empates y pares de baja confianza, se quedan con 4800 y corren una época de DPO con LoRA y β = 0.1. En 400 prompts reservados, los evaluadores humanos prefieren el modelo DPO sobre el SFT el 66% de las veces; la longitud mediana baja de 410 a 230 palabras sin perder exactitud factual."
+  },
+  "pros": [
+    { "en": "Supervised-style training: one loss, no sampling, no reward model; runs on standard fine-tuning infra.", "es": "Entrenamiento estilo supervisado: una pérdida, sin muestreo ni reward model; corre en la infraestructura normal de fine-tuning." },
+    { "en": "Far more stable and cheaper than PPO: 2 models in memory instead of 4, and few hyperparameters.", "es": "Mucho más estable y barato que PPO: 2 modelos en memoria en lugar de 4 y pocos hiperparámetros." },
+    { "en": "With LoRA the reference is just the base with adapters off, so 7–8B models fit on one GPU.", "es": "Con LoRA la referencia es solo el modelo base con los adaptadores apagados, así que modelos de 7–8B caben en una GPU." },
+    { "en": "KTO lets you use the thumbs-up/down you already collect, no pairs needed.", "es": "KTO te deja usar los pulgares arriba/abajo que ya recolectas, sin necesidad de pares." }
+  ],
+  "cons": [
+    { "en": "Offline: it only learns from the pairs it is given and cannot explore beyond them like online RL.", "es": "Es offline: solo aprende de los pares que le das y no puede explorar más allá como el RL online." },
+    { "en": "Sensitive to data: off-policy or length-biased pairs teach the wrong lesson (\"longer is better\").", "es": "Sensible a los datos: pares off-policy o sesgados por longitud enseñan la lección equivocada (\"más largo es mejor\")." },
+    { "en": "Overfits fast and can lower the likelihood of chosen answers too; needs a low learning rate and monitoring.", "es": "Se sobreajusta rápido y puede bajar también la probabilidad de las respuestas elegidas; requiere learning rate bajo y monitoreo." }
+  ],
+  "whenToUse": {
+    "en": "After SFT, to shape tone, verbosity, refusals or format preferences when you can collect pairwise judgments (humans or a calibrated judge) or thumbs up/down (KTO).",
+    "es": "Después del SFT, para moldear tono, verbosidad, negativas o preferencias de formato cuando puedes juntar comparaciones por pares (personas o un juez calibrado) o pulgares arriba/abajo (KTO)."
+  },
+  "whenNotToUse": {
+    "en": "When the model lacks knowledge or skill (fix with retrieval or SFT), when answers are programmatically checkable (prefer [[rlvr]]), or with fewer than a few hundred reliable pairs.",
+    "es": "Cuando al modelo le falta conocimiento o habilidad (resuélvelo con recuperación o SFT), cuando las respuestas se pueden verificar por programa (mejor [[rlvr]]) o con menos de unos cientos de pares confiables."
+  },
+  "numbers": [
+    { "en": "β ≈ 0.1 is the usual default (TRL's); sweeps commonly span ~0.01–0.5.", "es": "β ≈ 0.1 es el valor por defecto habitual (el de TRL); los barridos suelen ir de ~0.01 a 0.5." },
+    { "en": "Memory: PPO-based RLHF holds 4 models (policy, reference, reward, value); DPO holds 2; ORPO and SimPO hold 1.", "es": "Memoria: el RLHF con PPO carga 4 modelos (política, referencia, recompensa y valor); DPO carga 2; ORPO y SimPO, 1." },
+    { "en": "Zephyr-7B: SFT + DPO on ~60k GPT-4-ranked UltraFeedback pairs beat Llama-2-70B-chat on MT-Bench.", "es": "Zephyr-7B: SFT + DPO con ~60 mil pares de UltraFeedback ordenados por GPT-4 superó a Llama-2-70B-chat en MT-Bench." },
+    { "en": "Llama 3 post-training chose DPO over PPO, citing less compute at scale and better instruction following.", "es": "El post-training de Llama 3 eligió DPO en vez de PPO por requerir menos cómputo a gran escala y seguir mejor las instrucciones." },
+    { "en": "Rule of thumb: learning rate ~5e-7 to 1e-6 for full fine-tuning, far below SFT's ~1e-5.", "es": "Regla práctica: learning rate de ~5e-7 a 1e-6 en fine-tuning completo, muy por debajo del ~1e-5 del SFT." }
+  ],
+  "pitfalls": [
+    { "en": "Off-policy pairs: chosen written by GPT-4, rejected by a weak model. The model learns to tell the two apart, not to improve its own outputs.", "es": "Pares off-policy: la elegida la escribió GPT-4 y la rechazada un modelo débil. El modelo aprende a distinguirlos, no a mejorar sus propias respuestas." },
+    { "en": "Length bias: if chosen answers are usually longer, DPO learns verbosity. Compare length stats per side; consider SimPO or length-matched pairs.", "es": "Sesgo de longitud: si las elegidas suelen ser más largas, DPO aprende a ser verboso. Compara la longitud de cada lado; considera SimPO o pares de longitud similar." },
+    { "en": "Over-training at SFT-like learning rates or for many epochs. If `rewards/chosen` drops fast, the model is unlearning good answers too.", "es": "Sobreentrenar con learning rates de SFT o por muchas épocas. Si `rewards/chosen` cae rápido, el modelo también está desaprendiendo las buenas respuestas." },
+    { "en": "Keeping noisy pairs: ties and low-agreement labels are coin flips. Drop them instead of training on noise.", "es": "Conservar pares ruidosos: los empates y las etiquetas con poco acuerdo son volados. Descártalos en vez de entrenar con ruido." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "DPO or PPO-based RLHF: how do you choose?", "es": "¿DPO o RLHF con PPO? ¿Cómo eliges?" },
+      "a": {
+        "en": "DPO is my default for preference tuning. It's offline and supervised: two models in memory, one loss, few hyperparameters, and it runs on the same infra as SFT. Llama 3 made the same call. I reach for online RL when the model must explore beyond the dataset and I have a reward I can query during training: a verifier (then GRPO) or a strong reward model. The middle ground is iterative DPO: regenerate pairs from the current policy each round, which recovers much of the on-policy benefit.",
+        "es": "DPO es mi opción por defecto para ajuste por preferencias. Es offline y supervisado: dos modelos en memoria, una pérdida, pocos hiperparámetros, y corre sobre la misma infraestructura del SFT. Llama 3 tomó la misma decisión. Paso a RL online cuando el modelo necesita explorar más allá del dataset y tengo una recompensa que puedo consultar durante el entrenamiento: un verificador (entonces GRPO) o un reward model sólido. El punto medio es DPO iterativo: regenerar los pares con la política actual en cada ronda, lo que recupera buena parte del beneficio on-policy."
+      }
+    },
+    {
+      "q": { "en": "Your product logs thumbs up/down but no pairwise comparisons. Can you still do preference tuning?", "es": "Tu producto registra pulgares arriba/abajo pero no comparaciones por pares. ¿Igual puedes hacer ajuste por preferencias?" },
+      "a": {
+        "en": "Yes, with KTO, which trains on unpaired desirable/undesirable labels. But I clean the signal first: thumbs come from a biased slice of users, a thumbs-down often means the product failed rather than the text, and the up/down ratio is rarely balanced, so I rebalance or set KTO's class weights. The alternative is to build pairs: sample two answers per logged prompt and let a calibrated judge pick, audited against humans. Either way I hold out real prompts and compare win rate against the SFT model before shipping.",
+        "es": "Sí, con KTO, que entrena con etiquetas sueltas de deseable/indeseable. Pero primero limpio la señal: los pulgares vienen de un grupo sesgado de usuarios, un pulgar abajo muchas veces significa que falló el producto y no el texto, y la proporción arriba/abajo casi nunca está balanceada, así que rebalanceo o ajusto los pesos de clase de KTO. La alternativa es construir pares: genero dos respuestas por cada prompt registrado y dejo que elija un juez calibrado, auditado contra humanos. En ambos casos reservo prompts reales y comparo el win rate contra el modelo SFT antes de desplegar."
+      }
+    },
+    {
+      "q": { "en": "What does the reference model do in DPO, and what is β?", "es": "¿Qué hace el modelo de referencia en DPO y qué es β?" },
+      "a": {
+        "en": "DPO's implicit reward is how much more likely the policy makes an answer than the frozen SFT reference does, so the reference anchors the update: the loss rewards the *change* in preference, not raw likelihood. β scales that reward and plays the role of RLHF's KL penalty. Too high and the model barely moves; too low and it drifts, overfits the pairs and can lose fluency. I start at 0.1 and sweep, watching held-out win rate, not training loss. ORPO and SimPO drop the reference to save memory and give up that anchor.",
+        "es": "La recompensa implícita de DPO es cuánto más probable hace la política una respuesta comparada con la referencia SFT congelada, así que la referencia ancla la actualización: la pérdida premia el *cambio* de preferencia, no la probabilidad bruta. β escala esa recompensa y cumple el papel de la penalización KL de RLHF. Si es muy alto, el modelo casi no se mueve; si es muy bajo, se aleja, se sobreajusta a los pares y puede perder fluidez. Empiezo en 0.1 y hago un barrido mirando el win rate en datos reservados, no la pérdida de entrenamiento. ORPO y SimPO eliminan la referencia para ahorrar memoria y renuncian a esa ancla."
+      }
+    }
+  ],
+  "related": ["rlhf", "sft", "rlvr", "lora", "llm-as-judge", "alignment"],
+  "sources": [
+    { "title": "Rafailov et al. — Direct Preference Optimization: Your Language Model is Secretly a Reward Model", "url": "https://arxiv.org/abs/2305.18290" },
+    { "title": "Ethayarajh et al. — KTO: Model Alignment as Prospect Theoretic Optimization", "url": "https://arxiv.org/abs/2402.01306" },
+    { "title": "Meng et al. — SimPO: Simple Preference Optimization with a Reference-Free Reward", "url": "https://arxiv.org/abs/2405.14734" },
+    { "title": "Hugging Face TRL — DPO Trainer", "url": "https://huggingface.co/docs/trl/dpo_trainer" }
+  ]
+}

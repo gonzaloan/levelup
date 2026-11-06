@@ -1,0 +1,88 @@
+{
+  "id": "speculative-decoding",
+  "domain": "inference",
+  "level": "advanced",
+  "title": { "en": "Speculative decoding", "es": "Speculative decoding" },
+  "aliases": ["speculative sampling", "assisted generation", "draft model", "Medusa", "EAGLE", "prompt lookup decoding", "n-gram speculation", "multi-token prediction"],
+  "tldr": {
+    "en": "A cheap draft guesses the next few tokens and the big model verifies them all in one forward pass, keeping those it agrees with: ~2–3× lower latency with exactly the target's output distribution.",
+    "es": "Un borrador barato adivina los siguientes tokens y el modelo grande los verifica todos en una sola pasada, quedándose con los que acepta: ~2–3× menos latencia con exactamente la misma distribución de salida del modelo grande."
+  },
+  "analogy": {
+    "en": "A junior drafts the next few words; the senior reads them at a glance, keeps the part they would have written anyway and corrects the first wrong word. Reviewing is much faster than writing.",
+    "es": "Un junior escribe las siguientes palabras; el senior las lee de un vistazo, conserva lo que igual habría escrito y corrige la primera palabra equivocada. Revisar es mucho más rápido que escribir."
+  },
+  "explain": {
+    "en": "**Speculative decoding** lets a big model emit several tokens per forward pass without changing what it would have produced.\n\nAt small batch sizes, decode is memory-bound: producing one token reads all of the target's weights while the GPU's math units mostly idle (see [[prefill-decode]]). Scoring 5 tokens in one pass costs about the same as scoring 1. Speculative decoding exploits that:\n\n1. A cheap **draft** proposes *k* tokens (typically 3–8) one by one.\n2. The **target** runs *one* forward pass over all *k*, getting its own probabilities at every position.\n3. Each draft token is accepted with probability min(1, p_target / p_draft). At the first rejection, a replacement is sampled from the corrected leftover distribution and the rest is discarded. If all *k* pass, the target adds one bonus token.\n\nThis rejection rule makes the output distribution **identical** to the target's (Leviathan et al.; Chen et al.): lossless, not an approximation. Speed depends on the **acceptance rate**: at 80% with k=4, each target pass yields ~3.4 tokens, typically **2–3×** lower latency.\n\nDraft options: a small model from the same family and tokenizer; **Medusa** heads or **EAGLE**, light heads trained on the target's own hidden states; or **n-gram / prompt lookup**, which copies spans from the prompt for free and shines on edits, summaries and RAG answers that quote sources.",
+    "es": "El **speculative decoding** permite que un modelo grande emita varios tokens por pasada sin cambiar lo que habría generado.\n\nCon batches chicos, el decode está limitado por memoria: producir un token lee todos los pesos del modelo objetivo mientras las unidades de cómputo de la GPU están casi ociosas (ver [[prefill-decode]]). Evaluar 5 tokens en una pasada cuesta más o menos lo mismo que evaluar 1. El speculative decoding aprovecha eso:\n\n1. Un **borrador** barato propone *k* tokens (típicamente 3–8) uno por uno.\n2. El **modelo objetivo** hace *una* pasada sobre los *k* y obtiene sus propias probabilidades en cada posición.\n3. Cada token del borrador se acepta con probabilidad min(1, p_objetivo / p_borrador). En el primer rechazo, se muestrea un reemplazo de la distribución residual corregida y se descarta el resto. Si los *k* pasan, el objetivo agrega un token extra.\n\nEsta regla de rechazo hace que la distribución de salida sea **idéntica** a la del objetivo (Leviathan et al.; Chen et al.): sin pérdida, no es una aproximación. La velocidad depende de la **tasa de aceptación**: con 80% y k=4, cada pasada del objetivo rinde ~3.4 tokens, típicamente **2–3×** menos latencia.\n\nOpciones de borrador: un modelo chico de la misma familia y con el mismo tokenizer; cabezas **Medusa** o **EAGLE**, livianas y entrenadas sobre los estados ocultos del propio objetivo; o **n-gramas / prompt lookup**, que copia fragmentos del prompt gratis y brilla en ediciones, resúmenes y respuestas RAG que citan fuentes."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant D as Draft model\n  participant T as Target model\n  participant O as Output\n  D->>D: Propose k=4 tokens one by one\n  D->>T: the cat sat on\n  T->>T: One forward pass scores all 4\n  T->>O: Accept the cat sat\n  T->>O: Reject on, sample down instead\n  Note over D,T: Next round continues after down",
+    "caption": {
+      "en": "One round: the draft guesses 4 tokens, the target checks them in a single pass, keeps the agreed prefix and fixes the first miss.",
+      "es": "Una ronda: el borrador adivina 4 tokens, el objetivo los revisa en una sola pasada, conserva el prefijo aceptado y corrige el primer error."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Draft-model and prompt-lookup speculation", "es": "Speculation con modelo borrador y prompt lookup" },
+    "source": "from transformers import AutoModelForCausalLM, AutoTokenizer\n\nTARGET = \"meta-llama/Llama-3.1-8B-Instruct\"  # the model whose output you want\nDRAFT = \"meta-llama/Llama-3.2-1B-Instruct\"   # same tokenizer, ~6x fewer params\n\ntok = AutoTokenizer.from_pretrained(TARGET)\ntarget = AutoModelForCausalLM.from_pretrained(TARGET, dtype=\"auto\", device_map=\"auto\")\ndraft = AutoModelForCausalLM.from_pretrained(DRAFT, dtype=\"auto\", device_map=\"auto\")\ninputs = tok(\"Explain TCP slow start in two sentences.\", return_tensors=\"pt\").to(target.device)\n\n# Draft proposes, target verifies in one pass; greedy output matches target alone\nout = target.generate(**inputs, assistant_model=draft, do_sample=False, max_new_tokens=200)\n\n# No draft model: propose n-grams copied from the prompt (edits, RAG quotes)\nout = target.generate(**inputs, prompt_lookup_num_tokens=10, max_new_tokens=200)\n\n# Serving: vLLM speculates per request inside continuous batching\nfrom vllm import LLM\n\nllm = LLM(model=TARGET, speculative_config={\n    \"model\": DRAFT,               # or {\"method\": \"ngram\", \"prompt_lookup_max\": 4}, or an EAGLE head\n    \"num_speculative_tokens\": 5,  # k: higher only pays while acceptance stays high\n})\n# Track acceptance rate in production: low acceptance = wasted draft + verify work"
+  },
+  "example": {
+    "en": "A coding assistant runs a 70B model at ~30 tokens/s per stream. Adding a 1B draft from the same family with k=5, acceptance on code is ~70%, so each target pass yields ~2.9 tokens; after draft overhead, streams reach ~70 tokens/s. On \"apply this change to the file\" requests, prompt lookup alone accepts most tokens because the output copies the input. At peak load (batch 64), the gain falls to ~1.1×, so they disable speculation above batch 32.",
+    "es": "Un asistente de código corre un modelo de 70B a ~30 tokens/s por stream. Al agregar un borrador de 1B de la misma familia con k=5, la aceptación en código es ~70%, así que cada pasada del objetivo rinde ~2.9 tokens; descontando el costo del borrador, los streams llegan a ~70 tokens/s. En requests de \"aplica este cambio al archivo\", solo con prompt lookup se acepta la mayoría de los tokens porque la salida copia la entrada. En el pico de carga (batch 64) la ganancia cae a ~1.1×, así que desactivan la speculation por encima de batch 32."
+  },
+  "pros": [
+    { "en": "Lossless: same output distribution as the target, so no quality trade-off to negotiate.", "es": "Sin pérdida: misma distribución de salida que el objetivo, así que no hay trade-off de calidad que negociar." },
+    { "en": "~2–3× lower per-token latency at low batch on chat and coding workloads.", "es": "~2–3× menos latencia por token con batch chico en cargas de chat y código." },
+    { "en": "No retraining of the target for draft-model or n-gram variants; prompt lookup is free.", "es": "No requiere reentrenar el objetivo en las variantes con modelo borrador o n-gramas; prompt lookup es gratis." }
+  ],
+  "cons": [
+    { "en": "Gains shrink, and can turn negative, at high batch sizes where the GPU is already compute-bound.", "es": "Las ganancias se achican, y pueden volverse negativas, con batches grandes donde la GPU ya está limitada por cómputo." },
+    { "en": "Extra memory and moving parts: draft weights plus their own KV cache, or trained heads, and k to tune.", "es": "Más memoria y más piezas: pesos del borrador con su propio KV cache, o cabezas entrenadas, y un k que ajustar." },
+    { "en": "Speedup depends on acceptance, which drops on creative, high-temperature or out-of-domain text.", "es": "La aceleración depende de la aceptación, que baja con texto creativo, temperatura alta o fuera de dominio." }
+  ],
+  "whenToUse": {
+    "en": "Latency-sensitive, low-to-moderate concurrency on self-hosted models (interactive chat, coding assistants, voice), especially when outputs echo the input: edits, extraction, RAG with quotes.",
+    "es": "Serving propio sensible a la latencia y con concurrencia baja o media (chat interactivo, asistentes de código, voz), sobre todo cuando la salida repite la entrada: ediciones, extracción, RAG con citas."
+  },
+  "whenNotToUse": {
+    "en": "Throughput-maximizing batch jobs or GPUs already saturated at large batch sizes, when no well-aligned draft exists, or when you consume a hosted API and can't control decoding.",
+    "es": "Jobs por lotes que maximizan throughput o GPUs ya saturadas con batches grandes, cuando no hay un borrador bien alineado, o si consumes una API hospedada y no controlas el decoding."
+  },
+  "numbers": [
+    { "en": "Leviathan et al.: 2–3× on T5-XXL with identical outputs; Chen et al.: 2–2.5× on Chinchilla 70B.", "es": "Leviathan et al.: 2–3× en T5-XXL con salidas idénticas; Chen et al.: 2–2.5× en Chinchilla 70B." },
+    { "en": "Expected tokens per target pass = (1 − α^(k+1)) / (1 − α); acceptance α = 0.8, k = 4 → ~3.4.", "es": "Tokens esperados por pasada del objetivo = (1 − α^(k+1)) / (1 − α); aceptación α = 0.8, k = 4 → ~3.4." },
+    { "en": "Medusa-2: 2.3–3.6×; EAGLE: 2.7–3.5× on LLaMA2-Chat 70B (papers).", "es": "Medusa-2: 2.3–3.6×; EAGLE: 2.7–3.5× en LLaMA2-Chat 70B (papers)." },
+    { "en": "DeepSeek-V3's multi-token prediction: 85–90% acceptance of the second token, ~1.8× tokens/s.", "es": "Multi-token prediction de DeepSeek-V3: 85–90% de aceptación del segundo token, ~1.8× tokens/s." }
+  ],
+  "pitfalls": [
+    { "en": "Benchmarking at batch 1 and promising the same speedup for production traffic at batch 64.", "es": "Medir con batch 1 y prometer la misma aceleración para el tráfico de producción con batch 64." },
+    { "en": "A mismatched draft (base model for a chat-tuned target, other family): low acceptance makes it slower than no speculation.", "es": "Un borrador desalineado (modelo base para un objetivo de chat, otra familia): la baja aceptación lo vuelve más lento que no especular." },
+    { "en": "Setting k too high: every rejected token is wasted draft and verify compute. Tune k from measured acceptance.", "es": "Poner un k demasiado alto: cada token rechazado es cómputo desperdiciado en borrador y verificación. Ajusta k según la aceptación medida." },
+    { "en": "Reading \"lossless\" as bit-identical: batched verification changes numerics, so exact-string tests can flake.", "es": "Entender \"sin pérdida\" como idéntico bit a bit: la verificación en batch cambia la numérica, así que los tests de string exacto pueden fallar a veces." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How can speculative decoding be faster if the big model still checks every token?", "es": "¿Cómo puede ser más rápido el speculative decoding si el modelo grande igual revisa cada token?" },
+      "a": {
+        "en": "Because checking is parallel and generating is sequential. At small batch, decode is memory-bound: one step reads all the weights to produce one token while the math units idle. Verifying five draft tokens in one pass costs about the same as generating one. If the draft is right 80% of the time with k=4, each expensive pass yields ~3.4 tokens instead of one. And the rejection-sampling rule keeps the output distribution equal to the target's, so it's a pure latency win, not a quality trade.",
+        "es": "Porque revisar es paralelo y generar es secuencial. Con batch chico, el decode está limitado por memoria: un paso lee todos los pesos para producir un token mientras las unidades de cómputo esperan. Verificar cinco tokens del borrador en una pasada cuesta más o menos lo mismo que generar uno. Si el borrador acierta el 80% de las veces con k=4, cada pasada cara rinde ~3.4 tokens en vez de uno. Y la regla de muestreo por rechazo mantiene la distribución de salida igual a la del objetivo, así que es pura ganancia de latencia, no un trade-off de calidad."
+      }
+    },
+    {
+      "q": { "en": "When would you turn speculative decoding off?", "es": "¿Cuándo apagarías el speculative decoding?" },
+      "a": {
+        "en": "When the GPU is compute-bound. At high batch sizes the verify pass is no longer free: every rejected token burns FLOPs another request could have used, so throughput can drop. Also when acceptance is low, for example high-temperature creative text or a poorly matched draft. In practice I enable it for latency-critical interactive traffic, disable it above a batch-size threshold, and decide with two metrics: acceptance rate and tokens per second per stream at real load.",
+        "es": "Cuando la GPU está limitada por cómputo. Con batches grandes la pasada de verificación ya no es gratis: cada token rechazado quema FLOPs que otra request podría haber usado, así que el throughput puede bajar. También cuando la aceptación es baja, por ejemplo con texto creativo a temperatura alta o un borrador mal alineado. En la práctica lo activo para tráfico interactivo crítico en latencia, lo desactivo por encima de cierto tamaño de batch y decido con dos métricas: tasa de aceptación y tokens por segundo por stream con carga real."
+      }
+    }
+  ],
+  "related": ["prefill-decode", "inference-metrics", "continuous-batching", "distillation", "serving-stack", "sampling"],
+  "sources": [
+    { "title": "Leviathan et al. — Fast Inference from Transformers via Speculative Decoding", "url": "https://arxiv.org/abs/2211.17192" },
+    { "title": "Chen et al. — Accelerating Large Language Model Decoding with Speculative Sampling", "url": "https://arxiv.org/abs/2302.01318" },
+    { "title": "Cai et al. — Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads", "url": "https://arxiv.org/abs/2401.10774" },
+    { "title": "Li et al. — EAGLE: Speculative Sampling Requires Rethinking Feature Uncertainty", "url": "https://arxiv.org/abs/2401.15077" }
+  ]
+}

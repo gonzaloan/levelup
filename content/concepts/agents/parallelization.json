@@ -1,0 +1,89 @@
+{
+  "id": "parallelization",
+  "domain": "agents",
+  "level": "core",
+  "title": { "en": "Pattern: parallelization", "es": "Patrón: paralelización" },
+  "aliases": ["sectioning", "voting", "fan-out / fan-in", "scatter-gather", "map-reduce", "parallel LLM calls", "ensemble"],
+  "tldr": {
+    "en": "Run several LLM calls at once and merge them in code: sectioning splits a task into independent parts, voting runs the same task N times. You trade extra tokens for lower latency or higher confidence.",
+    "es": "Ejecuta varias llamadas al LLM a la vez y combínalas en código: el seccionamiento divide la tarea en partes independientes y la votación repite la misma tarea N veces. Cambias tokens extra por menos latencia o más confianza."
+  },
+  "analogy": {
+    "en": "Sectioning is a kitchen where the grill, salad and dessert stations cook one order at the same time; voting is asking three doctors for a diagnosis and acting on their agreement.",
+    "es": "El seccionamiento es una cocina donde la parrilla, las ensaladas y los postres preparan el mismo pedido a la vez; la votación es pedir el diagnóstico a tres médicos y actuar según su acuerdo."
+  },
+  "explain": {
+    "en": "**Parallelization** runs several LLM calls concurrently and merges their outputs in code. It has two variants:\n\n- **Sectioning**: split the work into *independent* subtasks that you define in advance and run them side by side. One call answers the user while another screens the input for policy violations; one call per contract section; separate graders for tone, accuracy and safety. Each focused call usually beats one call juggling every aspect.\n- **Voting**: run the *same* task N times (different prompts, temperatures or models) and aggregate: majority, *flag if any reviewer flags*, or a threshold. This buys confidence, as in [[self-consistency]].\n\nWall-clock latency becomes the **slowest** branch instead of the sum, while tokens and cost multiply by the fan-out. The real design work is the **aggregator**: how to merge sections, which vote rule to use (any-of maximizes recall, majority favors precision), and what to do when a branch fails or times out.\n\nThe constraint: subtasks must be fixed and independent. If a step needs another's output, it's [[prompt-chaining]]; if the subtasks depend on the input, it's [[orchestrator-workers]].",
+    "es": "La **paralelización** ejecuta varias llamadas al LLM de forma concurrente y combina sus salidas en código. Tiene dos variantes:\n\n- **Seccionamiento** (*sectioning*): divide el trabajo en subtareas *independientes* que defines de antemano y córrelas en paralelo. Una llamada responde al usuario mientras otra revisa si la entrada viola alguna política; una llamada por sección de un contrato; evaluadores separados para tono, exactitud y seguridad. Cada llamada enfocada suele superar a una sola que atiende todos los aspectos.\n- **Votación** (*voting*): ejecuta la *misma* tarea N veces (con distintos prompts, temperaturas o modelos) y agrega: mayoría, *marcar si cualquier revisor marca* o un umbral. Esto compra confianza, como en [[self-consistency]].\n\nLa latencia de reloj pasa a ser la de la rama **más lenta** en vez de la suma, mientras que los tokens y el costo se multiplican por el número de ramas. El verdadero trabajo de diseño está en el **agregador**: cómo unir las secciones, qué regla de votación usar (cualquiera-de maximiza el recall, la mayoría favorece la precisión) y qué hacer cuando una rama falla o se pasa del timeout.\n\nLa condición: las subtareas deben ser fijas e independientes. Si un paso necesita la salida de otro, es [[prompt-chaining]]; si las subtareas dependen de la entrada, es [[orchestrator-workers]]."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  subgraph SEC[\"Sectioning\"]\n    U[User message] --> A[Answer call]\n    U --> G[Guardrail call]\n    A --> M{\"Merge in code\"}\n    G --> M\n    M --> O[\"Reply or block\"]\n  end\n  subgraph VOTE[\"Voting\"]\n    D[Code diff] --> R1[Reviewer 1]\n    D --> R2[Reviewer 2]\n    D --> R3[Reviewer 3]\n    R1 --> T{\"Flag if any flags\"}\n    R2 --> T\n    R3 --> T\n    T -->|flagged| H[Human review]\n  end",
+    "caption": {
+      "en": "Sectioning runs different jobs at once; voting repeats one job and aggregates. Latency is the slowest branch, cost is the sum.",
+      "es": "El seccionamiento corre trabajos distintos a la vez; la votación repite uno y agrega. La latencia es la de la rama más lenta; el costo, la suma."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Sectioning and voting with asyncio.gather", "es": "Seccionamiento y votación con asyncio.gather" },
+    "source": "import asyncio\nfrom anthropic import AsyncAnthropic\n\nclient = AsyncAnthropic()\nMODEL = \"claude-haiku-4-5\"  # focused calls rarely need the biggest model\n\nasync def llm(system: str, user: str) -> str:\n    msg = await client.messages.create(model=MODEL, max_tokens=1024, system=system,\n                                       messages=[{\"role\": \"user\", \"content\": user}])\n    return msg.content[0].text\n\n# Sectioning: different jobs on the same input, run concurrently\nasync def answer_with_guardrail(question: str) -> str:\n    answer, verdict = await asyncio.gather(\n        llm(\"You are a helpful support agent.\", question),\n        llm(\"Does this request violate our usage policy? Reply SAFE or UNSAFE.\", question),\n    )  # latency = slower of the two, not the sum\n    if verdict.strip().upper().startswith(\"SAFE\"):\n        return answer\n    return \"Sorry, I can't help with that.\"  # we still paid for the answer tokens\n\n# Voting: same job (find vulnerabilities), N diverse prompts, aggregate with a rule\nLENSES = [\"injection (SQL, shell, templates)\", \"authn/authz bypass\", \"secrets and crypto misuse\"]\n\nasync def flag_diff(diff: str, min_votes: int = 1) -> bool:\n    votes = await asyncio.gather(*[\n        llm(f\"Review this diff for {lens}. Reply VULNERABLE or OK.\", diff) for lens in LENSES])\n    flags = sum(v.strip().upper().startswith(\"VULNERABLE\") for v in votes)\n    return flags >= min_votes  # 1 = any-of: max recall, more false positives to triage"
+  },
+  "example": {
+    "en": "A code-review bot scans every pull request for security issues. One generic prompt caught ~60% of the seeded vulnerabilities in the team's test set. They switched to three parallel reviewers, each prompted for one class (injection, authz, secrets), flagging the PR if *any* reviewer flags. Recall rose to ~85% at the cost of more false positives, which a human triages. Because the calls run concurrently, review time stayed ~6 s instead of ~18 s sequentially, while token cost roughly tripled.",
+    "es": "Un bot de revisión de código analiza cada pull request en busca de problemas de seguridad. Un prompt genérico detectaba ~60% de las vulnerabilidades sembradas en el set de prueba del equipo. Lo cambiaron por tres revisores en paralelo, cada uno enfocado en una clase (inyección, autorización, secretos), y marcan el PR si *cualquier* revisor lo marca. El recall subió a ~85% a cambio de más falsos positivos, que revisa una persona. Como las llamadas corren de forma concurrente, la revisión siguió tardando ~6 s en vez de ~18 s en secuencia, aunque el costo en tokens casi se triplicó."
+  },
+  "pros": [
+    { "en": "Latency of the slowest branch instead of the sum of all steps.", "es": "La latencia es la de la rama más lenta, no la suma de todos los pasos." },
+    { "en": "Focused prompts per aspect usually beat one prompt checking everything.", "es": "Los prompts enfocados por aspecto suelen superar a un solo prompt que revisa todo." },
+    { "en": "Voting gives a confidence signal: disagreement flags the cases worth a human look.", "es": "La votación da una señal de confianza: el desacuerdo marca los casos que conviene que revise una persona." },
+    { "en": "Branches are fixed, so cost and behaviour stay predictable and testable.", "es": "Las ramas son fijas, así que el costo y el comportamiento siguen siendo predecibles y fáciles de probar." }
+  ],
+  "cons": [
+    { "en": "Cost multiplies by the fan-out: voting with 5 samples is ~5× the tokens.", "es": "El costo se multiplica por el número de ramas: votar con 5 muestras cuesta ~5× los tokens." },
+    { "en": "Fan-out multiplies requests per minute, so rate limits bite under load.", "es": "Abrir ramas multiplica las solicitudes por minuto, así que los rate limits golpean con carga." },
+    { "en": "Aggregating free-form text is hard: there's no majority between two essays.", "es": "Agregar texto libre es difícil: no hay mayoría entre dos ensayos." },
+    { "en": "Correlated voters (same model, same prompt) add cost, not confidence.", "es": "Los votantes correlacionados (mismo modelo, mismo prompt) suman costo, no confianza." }
+  ],
+  "whenToUse": {
+    "en": "Subtasks are independent and known in advance (sectioning), or a single call is too noisy for a decision you can aggregate, like a label or a flag (voting).",
+    "es": "Las subtareas son independientes y se conocen de antemano (seccionamiento), o una sola llamada es demasiado ruidosa para una decisión que se puede agregar, como una etiqueta o una alerta (votación)."
+  },
+  "whenNotToUse": {
+    "en": "Steps depend on each other (chain them), the subtasks depend on the input (orchestrator–workers), or outputs are free-form text with no sensible way to merge or vote.",
+    "es": "Los pasos dependen entre sí (encadénalos), las subtareas dependen de la entrada (orquestador–workers) o las salidas son texto libre sin una forma sensata de unir o votar."
+  },
+  "numbers": [
+    { "en": "Rule of thumb: wall-clock ≈ max(branch latencies); cost ≈ sum of all branches.", "es": "Regla práctica: tiempo de reloj ≈ máx(latencias de las ramas); costo ≈ suma de todas las ramas." },
+    { "en": "Self-consistency (Wang et al., 2022): majority vote over ~40 sampled reasoning paths added +17.9 points on GSM8K over single-path chain-of-thought.", "es": "Self-consistency (Wang et al., 2022): votar por mayoría sobre ~40 caminos de razonamiento muestreados sumó +17.9 puntos en GSM8K frente a un solo chain-of-thought." },
+    { "en": "Independence math: 3 voters each catching 70% of bugs → any-of ~97%, majority ~78%. Only if their errors were independent, which they rarely are.", "es": "Cuentas con independencia: 3 votantes que detectan cada uno el 70% de los bugs → cualquiera-de ~97%, mayoría ~78%. Solo si sus errores fueran independientes, cosa que rara vez pasa." },
+    { "en": "Rule of thumb: 3–5 voters is a common starting point; add more only if the eval curve still rises.", "es": "Regla práctica: 3–5 votantes es un punto de partida habitual; agrega más solo si la curva del eval sigue subiendo." }
+  ],
+  "pitfalls": [
+    { "en": "Voting with the same prompt at temperature 0: N near-identical answers, N× the cost, no new information.", "es": "Votar con el mismo prompt a temperatura 0: N respuestas casi idénticas, N× el costo y ninguna información nueva." },
+    { "en": "Assuming voters are independent: same model, same blind spots. Diversify prompts, models or inputs.", "es": "Suponer que los votantes son independientes: mismo modelo, mismos puntos ciegos. Diversifica prompts, modelos o entradas." },
+    { "en": "No timeout or partial-failure policy: one slow branch sets your p99, one failed branch crashes the request.", "es": "Sin timeout ni política para fallas parciales: una rama lenta define tu p99 y una rama caída tumba la solicitud." },
+    { "en": "Streaming the answer before the parallel guardrail returns: you show content you may have to retract.", "es": "Hacer streaming de la respuesta antes de que vuelva el guardrail paralelo: muestras contenido que quizás tengas que retirar." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "You need a safety check on every chat response without adding latency. How?", "es": "Necesitas un control de seguridad en cada respuesta del chat sin sumar latencia. ¿Cómo lo haces?" },
+      "a": {
+        "en": "I run the guardrail as a parallel section: the screening call on the input starts at the same moment as the main answer, so its latency hides behind generation. A separate, small, focused prompt also screens better than asking the main call to answer and police itself. The trade-offs: I pay for answer tokens even on requests I end up blocking, and I hold the stream until the screen returns, which often happens before the first sentence. Output-side checks run on streamed chunks.",
+        "es": "Corro el guardrail como una sección en paralelo: la llamada que revisa la entrada arranca al mismo tiempo que la respuesta principal, así que su latencia queda oculta detrás de la generación. Además, un prompt separado, chico y enfocado revisa mejor que pedirle a la llamada principal que responda y se vigile a sí misma. Los trade-offs: pago los tokens de la respuesta incluso en las solicitudes que termino bloqueando, y retengo el stream hasta que vuelve la revisión, que muchas veces llega antes de la primera oración. Los controles sobre la salida corren sobre los fragmentos del stream."
+      }
+    },
+    {
+      "q": { "en": "When does voting actually help, and how do you pick the aggregation rule?", "es": "¿Cuándo ayuda de verdad la votación y cómo eliges la regla de agregación?" },
+      "a": {
+        "en": "Voting helps when one call is noisy and the output is discrete or checkable (a label, a yes/no flag, a number), so outputs can be compared. It doesn't help free-form prose without a judge. The rule follows the cost of errors: in a vulnerability scan a miss is expensive, so I flag if any reviewer flags and accept more false positives; to auto-approve content I'd require a majority or unanimity. And I make voters diverse, because correlated voters just repeat the same mistake N times.",
+        "es": "La votación ayuda cuando una llamada es ruidosa y la salida es discreta o verificable (una etiqueta, un sí/no, un número), de modo que las salidas se pueden comparar. No ayuda con prosa libre si no hay un juez. La regla depende del costo de los errores: en un escaneo de vulnerabilidades un falso negativo es caro, así que marco si cualquier revisor marca y acepto más falsos positivos; para aprobar contenido automáticamente exigiría mayoría o unanimidad. Y diversifico los votantes, porque votantes correlacionados solo repiten el mismo error N veces."
+      }
+    }
+  ],
+  "related": ["self-consistency", "prompt-chaining", "orchestrator-workers", "guardrails", "rate-limiting", "llm-as-judge"],
+  "sources": [
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "Wang et al. — Self-Consistency Improves Chain of Thought Reasoning in Language Models (2022)", "url": "https://arxiv.org/abs/2203.11171" },
+    { "title": "Li et al. — More Agents Is All You Need (2024)", "url": "https://arxiv.org/abs/2402.05120" }
+  ]
+}

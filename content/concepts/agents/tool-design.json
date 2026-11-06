@@ -1,0 +1,88 @@
+{
+  "id": "tool-design",
+  "domain": "agents",
+  "level": "advanced",
+  "title": { "en": "Designing tools for agents (ACI)", "es": "Diseño de herramientas para agentes (ACI)" },
+  "aliases": ["ACI", "agent-computer interface", "tool descriptions", "tool consolidation", "poka-yoke tools", "tool namespacing", "MCP tool design"],
+  "tldr": {
+    "en": "Tool names, descriptions, parameters, outputs and errors are prompts the agent reads every call. Expose a few task-shaped tools, return concise results and actionable errors, and tune them on real-task evals.",
+    "es": "Los nombres, descripciones, parámetros, salidas y errores de una herramienta son prompts que el agente lee en cada llamada. Expón pocas herramientas orientadas a tareas, devuelve resultados concisos y errores accionables, y ajústalas con evals de tareas reales."
+  },
+  "analogy": {
+    "en": "Designing a cockpit, not an API: one clearly labelled control per job, gauges that show only what matters, and levers shaped so the wrong one is hard to grab.",
+    "es": "Diseñar una cabina de avión, no una API: un control bien rotulado por tarea, indicadores que muestran solo lo importante y palancas con formas que hacen difícil tomar la equivocada."
+  },
+  "explain": {
+    "en": "The **agent-computer interface (ACI)**, a term from SWE-agent (2024), is everything the model sees of a tool: name, description, parameter schema, outputs and errors. The agent can't read your code or ask a colleague, so each of these is a **prompt**. For its SWE-bench agent, Anthropic spent more time optimizing tools than the main prompt.\n\nPrinciples that hold up in evals:\n\n- **Few, task-shaped tools.** Don't mirror your REST API 1:1: replace `list_users` + `list_events` + `create_event` with `schedule_event`, and `read_logs` with `search_logs`. Overlapping tools make the model guess.\n- **Descriptions as onboarding docs**: what it does, when to use it *instead of* its neighbour, formats, an example. `user_email` beats `user`.\n- **Namespacing**: `jira_search_issues` and `slack_search_messages`, so three MCP servers' `search` don't collide.\n- **Poka-yoke parameters**: make mistakes hard. Enums over free strings, ISO dates with timezone, absolute file paths (Anthropic's fix for an agent that broke after changing directory).\n- **Concise, high-signal outputs**: names over UUIDs, only the needed fields, pagination and truncation with sane defaults, maybe a `response_format: concise|detailed` switch.\n- **Actionable errors**: `Unknown service 'paymnts'. Valid: payments, ledger` beats a `500` or a stack trace.\n- **Formats the model writes easily**: avoid requiring escaped code inside JSON or exact line counts in diffs.\n\nThen **evaluate**: run realistic multi-step tasks, read transcripts, track success, calls, tokens and errors, and fix the tools, not just the prompt.",
+    "es": "La **interfaz agente-computadora (ACI)**, término de SWE-agent (2024), es todo lo que el modelo ve de una herramienta: nombre, descripción, esquema de parámetros, salidas y errores. El agente no puede leer tu código ni preguntarle a un colega, así que cada una de esas piezas es un **prompt**. Para su agente de SWE-bench, Anthropic dedicó más tiempo a optimizar las herramientas que el prompt principal.\n\nPrincipios que se sostienen en los evals:\n\n- **Pocas herramientas, orientadas a tareas.** No copies tu API REST 1:1: reemplaza `list_users` + `list_events` + `create_event` por `schedule_event`, y `read_logs` por `search_logs`. Las herramientas que se solapan obligan al modelo a adivinar.\n- **Descripciones como documentación de onboarding**: qué hace, cuándo usarla *en lugar de* su vecina, formatos, un ejemplo. `user_email` es mejor que `user`.\n- **Namespaces**: `jira_search_issues` y `slack_search_messages`, para que el `search` de tres servidores MCP no choque.\n- **Parámetros a prueba de errores (poka-yoke)**: haz difícil equivocarse. Enums en vez de texto libre, fechas ISO con zona horaria, rutas de archivo absolutas (la corrección de Anthropic para un agente que fallaba después de cambiar de directorio).\n- **Salidas concisas y con señal**: nombres en vez de UUIDs, solo los campos necesarios, paginación y truncado con valores por defecto razonables, quizá un parámetro `response_format: concise|detailed`.\n- **Errores accionables**: `Unknown service 'paymnts'. Valid: payments, ledger` es mejor que un `500` o un stack trace.\n- **Formatos fáciles de escribir para el modelo**: evita exigir código escapado dentro de JSON o conteos exactos de líneas en diffs.\n\nDespués **evalúa**: corre tareas realistas de varios pasos, lee las transcripciones, mide éxito, llamadas, tokens y errores, y corrige las herramientas, no solo el prompt."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[\"Prototype tools<br/>(names, schemas)\"] --> T[Realistic eval tasks]\n  T --> R[Run agent]\n  R --> M[\"Metrics: success,<br/>calls, tokens, errors\"]\n  R --> X[Read transcripts]\n  M --> F[\"Rename, merge,<br/>trim outputs\"]\n  X --> F\n  F --> P\n  F --> H[(Held-out task set)]\n  H -.->|guards overfitting| M",
+    "caption": {
+      "en": "Tools are tuned like prompts: against real tasks, with transcripts and a held-out set, not by intuition.",
+      "es": "Las herramientas se ajustan como los prompts: contra tareas reales, con transcripciones y un set reservado, no por intuición."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A task-shaped tool and an agent-friendly output", "es": "Una herramienta orientada a tareas y una salida pensada para agentes" },
+    "source": "# One tool per agent TASK (not per endpoint): namespaced, documented, hard to misuse\nSCHEDULE = {\n    \"name\": \"calendar_schedule_meeting\",\n    \"description\": (\n        \"Find the first slot when ALL attendees are free and book it. \"\n        \"Use this instead of reading calendars one by one. \"\n        \"Returns the booked slot, or the 3 nearest alternatives if none fits.\"\n    ),\n    \"input_schema\": {\n        \"type\": \"object\",\n        \"properties\": {\n            \"attendee_emails\": {\"type\": \"array\", \"items\": {\"type\": \"string\"},\n                                \"description\": \"Work emails like ana@acme.com, not names\"},\n            \"duration_min\": {\"type\": \"integer\", \"enum\": [15, 30, 45, 60]},\n            \"not_before\": {\"type\": \"string\",\n                           \"description\": \"ISO 8601 with offset, e.g. 2026-11-10T09:00-05:00\"},\n        },\n        \"required\": [\"attendee_emails\", \"duration_min\", \"not_before\"],\n    },\n}\n\ndef search_logs(service: str, query: str, limit: int = 20) -> str:\n    if service not in SERVICES:  # actionable error, not a stack trace\n        return f\"Unknown service '{service}'. Valid: {', '.join(sorted(SERVICES))}.\"\n    hits = log_index.search(service, query)\n    lines = [f\"{h.ts} {h.level} {h.msg[:200]}\" for h in hits[:limit]]  # few fields, clipped\n    if len(hits) > limit:  # truncate, then tell the agent how to narrow down\n        lines.append(f\"[{len(hits) - limit} more matches: add a time range or a stricter query]\")\n    return \"\\n\".join(lines) or \"No matches. Try a broader query or check the service name.\""
+  },
+  "example": {
+    "en": "An SRE agent shipped with 34 tools mirroring the internal REST API (`get_user`, `list_tickets`, `get_ticket_comments`…). On 120 replayed incidents it succeeded 58% of the time, averaging 14 calls and ~45K tokens. Transcripts showed it paging through `list_tickets` 500 rows at a time and passing names where UUIDs were expected. The team merged everything into 7 task-shaped tools (`search_tickets(query, status, limit=20)`, `get_incident_context(id)`), returned names instead of UUIDs and wrote actionable errors. Same model, same prompt: 79% success, ~5 calls, ~12K tokens.",
+    "es": "Un agente de SRE salió con 34 herramientas que copiaban la API REST interna (`get_user`, `list_tickets`, `get_ticket_comments`…). En 120 incidentes reproducidos acertó el 58% de las veces, con 14 llamadas y ~45K tokens en promedio. Las transcripciones mostraban que paginaba `list_tickets` de 500 filas en 500 y pasaba nombres donde se esperaban UUIDs. El equipo lo fusionó todo en 7 herramientas orientadas a tareas (`search_tickets(query, status, limit=20)`, `get_incident_context(id)`), devolvió nombres en lugar de UUIDs y escribió errores accionables. Mismo modelo, mismo prompt: 79% de éxito, ~5 llamadas, ~12K tokens."
+  },
+  "pros": [
+    { "en": "Often the cheapest quality win in an agent: no model change, no fine-tuning.", "es": "Suele ser la mejora de calidad más barata en un agente: sin cambiar de modelo ni hacer fine-tuning." },
+    { "en": "Fewer calls and smaller outputs cut tokens, latency and context rot together.", "es": "Menos llamadas y salidas más chicas reducen a la vez tokens, latencia y context rot." },
+    { "en": "Good tools transfer: every agent and model that calls them, e.g. via [[mcp]], benefits.", "es": "Las buenas herramientas se reutilizan: todo agente y modelo que las llame, por ejemplo vía [[mcp]], se beneficia." }
+  ],
+  "cons": [
+    { "en": "Task-shaped tools are real engineering: each hides a small workflow you must build and test.", "es": "Las herramientas orientadas a tareas son ingeniería real: cada una esconde un pequeño workflow que debes construir y testear." },
+    { "en": "Descriptions tuned for one model can regress on another: re-run the eval per model.", "es": "Las descripciones ajustadas para un modelo pueden empeorar en otro: vuelve a correr el eval por modelo." },
+    { "en": "Consolidation trades flexibility: an unforeseen task may need an operation you merged away.", "es": "Consolidar sacrifica flexibilidad: una tarea imprevista puede necesitar una operación que fusionaste." }
+  ],
+  "whenToUse": {
+    "en": "Any time you expose capabilities to a model: building an agent, writing an MCP server, wrapping an internal API. Revisit whenever traces show wrong tool picks, malformed arguments, retries or bloated outputs.",
+    "es": "Siempre que expongas capacidades a un modelo: al construir un agente, escribir un servidor MCP o envolver una API interna. Revísalo cuando las trazas muestren herramientas mal elegidas, argumentos mal formados, reintentos o salidas infladas."
+  },
+  "whenNotToUse": {
+    "en": "Don't polish descriptions before you have an eval set of real tasks: without measurements you're tuning by feel. And don't make a tool for a step your code can do deterministically.",
+    "es": "No pulas descripciones antes de tener un set de eval con tareas reales: sin mediciones ajustas a ojo. Y no crees una herramienta para un paso que tu código puede hacer de forma determinista."
+  },
+  "numbers": [
+    { "en": "Claude Code caps tool responses at 25,000 tokens by default (Anthropic, 2025).", "es": "Claude Code limita las respuestas de herramientas a 25,000 tokens por defecto (Anthropic, 2025)." },
+    { "en": "OpenAI guidance: aim for fewer than ~20 functions available at once, a soft limit for accuracy.", "es": "Guía de OpenAI: apunta a menos de ~20 funciones disponibles a la vez, un límite blando por precisión." },
+    { "en": "SWE-agent (2024): with a purpose-built ACI, GPT-4 Turbo reached 12.5% pass@1 on SWE-bench; ablations showed interface details alone (edit linting, a windowed file viewer) changed the solve rate.", "es": "SWE-agent (2024): con una ACI hecha a medida, GPT-4 Turbo llegó a 12.5% pass@1 en SWE-bench; las ablaciones mostraron que solo detalles de interfaz (linting de ediciones, un visor de archivos por ventanas) cambiaban la tasa de resolución." },
+    { "en": "Rule of thumb: keep typical tool outputs in the hundreds of tokens, with a default page `limit` of ~10–50 items.", "es": "Regla práctica: mantén las salidas típicas en cientos de tokens, con un `limit` de página por defecto de ~10–50 elementos." }
+  ],
+  "pitfalls": [
+    { "en": "Mirroring every API endpoint as a tool: the agent chains 3–5 calls and reads raw payloads for one task.", "es": "Exponer cada endpoint de la API como herramienta: el agente encadena 3–5 llamadas y lee payloads crudos para una sola tarea." },
+    { "en": "Near-duplicate tools (`search`, `find`, `lookup`) with vague descriptions: the model guesses.", "es": "Herramientas casi duplicadas (`search`, `find`, `lookup`) con descripciones vagas: el modelo adivina." },
+    { "en": "Returning UUIDs and full JSON blobs: they waste tokens and invite hallucinated ids.", "es": "Devolver UUIDs y blobs de JSON completos: desperdician tokens e invitan a ids alucinados." },
+    { "en": "Opaque errors (`400`, a traceback): the agent retries the same call unchanged.", "es": "Errores opacos (`400`, un traceback): el agente reintenta la misma llamada sin cambios." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "You're handed an internal REST API with 80 endpoints. How do you expose it to an agent?", "es": "Te dan una API REST interna con 80 endpoints. ¿Cómo se la expones a un agente?" },
+      "a": {
+        "en": "Not 1:1. I collect the 20–30 real tasks users want done, then design tools around those tasks: maybe 8–12, each consolidating several endpoints, namespaced by system. Each gets a description written like onboarding docs, constrained parameters such as enums, ids and ISO dates, concise paginated outputs and actionable errors. Read-only and destructive tools are separate so destructive ones can require confirmation. Then I run the task set as an eval and iterate on the tools from the transcripts.",
+        "es": "No 1:1. Junto las 20–30 tareas reales que los usuarios quieren resolver y diseño las herramientas alrededor de esas tareas: quizá 8–12, cada una consolidando varios endpoints, con namespace por sistema. Cada una lleva una descripción escrita como documentación de onboarding, parámetros acotados como enums, ids y fechas ISO, salidas concisas y paginadas, y errores accionables. Separo las de solo lectura de las destructivas para que estas pidan confirmación. Después corro el set de tareas como eval e itero sobre las herramientas a partir de las transcripciones."
+      }
+    },
+    {
+      "q": { "en": "Your agent picks the wrong tool 20% of the time. How do you debug it?", "es": "Tu agente elige la herramienta equivocada el 20% de las veces. ¿Cómo lo depuras?" },
+      "a": {
+        "en": "I read the failing transcripts and the model's reasoning right before the bad call. Usually two tools overlap, or a description never says when *not* to use it. Fixes: merge or rename the overlapping pair, add 'use X instead when…' lines, namespace by system, and drop tools this agent doesn't need. I measure selection accuracy per tool on a held-out set so I don't overfit descriptions to the few traces I read, and I re-run it whenever the model version changes.",
+        "es": "Leo las transcripciones que fallan y el razonamiento del modelo justo antes de la llamada equivocada. Casi siempre hay dos herramientas que se solapan, o una descripción nunca dice cuándo *no* usarla. Correcciones: fusionar o renombrar el par que se solapa, agregar líneas tipo 'usa X en su lugar cuando…', poner namespace por sistema y quitar las herramientas que este agente no necesita. Mido la precisión de selección por herramienta en un set reservado para no sobreajustar las descripciones a las pocas trazas que leí, y lo vuelvo a correr cada vez que cambia la versión del modelo."
+      }
+    }
+  ],
+  "related": ["tool-calling", "mcp", "agent-evals", "context-engineering", "agent-reliability", "react"],
+  "sources": [
+    { "title": "Anthropic — Writing effective tools for agents, with agents (2025)", "url": "https://www.anthropic.com/engineering/writing-tools-for-agents" },
+    { "title": "Yang et al. — SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering (2024)", "url": "https://arxiv.org/abs/2405.15793" },
+    { "title": "Anthropic — Building effective agents (Appendix 2: prompt-engineering your tools)", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "OpenAI — Function calling best practices (docs)", "url": "https://platform.openai.com/docs/guides/function-calling" }
+  ]
+}

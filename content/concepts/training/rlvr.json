@@ -1,0 +1,97 @@
+{
+  "id": "rlvr",
+  "domain": "training",
+  "level": "advanced",
+  "title": { "en": "RL with verifiable rewards (GRPO)", "es": "RL con recompensas verificables (GRPO)" },
+  "aliases": ["RLVR", "GRPO", "Group Relative Policy Optimization", "reinforcement fine-tuning", "RFT", "R1-Zero", "DAPO", "verifier rewards"],
+  "tldr": {
+    "en": "Reinforcement learning where a program, not a person, scores each answer (tests pass, result matches). GRPO makes it cheap: sample a group of answers per prompt and reinforce those that beat the group average.",
+    "es": "Aprendizaje por refuerzo donde un programa, no una persona, califica cada respuesta (pasan los tests, coincide el resultado). GRPO lo abarata: genera un grupo de respuestas por prompt y refuerza las que superan el promedio del grupo."
+  },
+  "analogy": {
+    "en": "A student who tries each exercise eight times and checks every attempt against the answer key: no tutor explains anything, but the approaches that beat their own average stick.",
+    "es": "Un estudiante que intenta cada ejercicio ocho veces y compara cada intento con la hoja de respuestas: ningún tutor le explica nada, pero los enfoques que superan su propio promedio se le quedan."
+  },
+  "explain": {
+    "en": "**RLVR** trains a model with reinforcement learning where the reward comes from a *program*: unit tests pass, the math answer matches, the JSON validates, the SQL returns the expected rows. The check is objective and nearly free, so you can grade millions of attempts with no labelers and no learned reward model to fool.\n\nThe loop: sample several answers per prompt, score each with the verifier, and raise the probability of the tokens in the high-scoring ones.\n\n**GRPO** (Group Relative Policy Optimization, from DeepSeekMath, 2024) is the default algorithm. PPO needs a **critic**, a value model usually as large as the policy, to judge whether an answer was better than expected. GRPO drops it: it samples a **group** of G answers (commonly 8–64) and uses each one's reward minus the group mean, divided by the group's standard deviation, as its advantage. Answers that beat their siblings get reinforced. A KL term (optional in newer recipes) keeps the policy near the reference.\n\n**DeepSeek-R1-Zero** applied GRPO straight to a base model with only accuracy and format rewards, no SFT, and long chains of thought, self-checking and backtracking emerged on their own.\n\nIt isn't only for math: extraction with gold fields, text-to-SQL, code and tool calls all qualify if a program can check the output.",
+    "es": "**RLVR** entrena un modelo con aprendizaje por refuerzo donde la recompensa viene de un *programa*: pasan los tests, coincide la respuesta matemática, el JSON valida, el SQL devuelve las filas esperadas. La verificación es objetiva y casi gratis, así que puedes calificar millones de intentos sin anotadores y sin un reward model aprendido al que engañar.\n\nEl ciclo: generar varias respuestas por prompt, calificar cada una con el verificador y subir la probabilidad de los tokens de las que puntúan alto.\n\n**GRPO** (Group Relative Policy Optimization, de DeepSeekMath, 2024) es el algoritmo por defecto. PPO necesita un **crítico**, un modelo de valor normalmente tan grande como la política, para juzgar si una respuesta fue mejor de lo esperado. GRPO lo elimina: genera un **grupo** de G respuestas (por lo común 8–64) y usa como ventaja la recompensa de cada una menos la media del grupo, dividida por su desviación estándar. Las respuestas que superan a sus hermanas se refuerzan. Un término KL (opcional en recetas recientes) mantiene la política cerca de la referencia.\n\n**DeepSeek-R1-Zero** aplicó GRPO directo sobre un modelo base, solo con recompensas de exactitud y formato, sin SFT, y aparecieron por sí solas cadenas de razonamiento largas, autoverificación y vuelta atrás.\n\nNo es solo para matemáticas: extracción con campos de referencia, text-to-SQL, código y llamadas a herramientas califican si un programa puede verificar la salida."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[Prompt batch] --> G[\"Policy samples<br/>G answers each\"]\n  G --> V{\"Verifier<br/>tests or exact match\"}\n  V --> R[\"Rewards<br/>1, 0, 1, 1, 0\"]\n  R --> A[\"Group-relative<br/>advantage\"]\n  A --> U[\"Policy update<br/>clip + KL\"]\n  F[Frozen reference] -.-> U\n  U -.->|next step| G",
+    "caption": {
+      "en": "No critic and no reward model: the group's own average is the baseline, and a program supplies the reward.",
+      "es": "Sin crítico ni reward model: el promedio del propio grupo es la línea base y un programa pone la recompensa."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "GRPO on GSM8K with a rule-based reward (TRL)", "es": "GRPO sobre GSM8K con recompensa basada en reglas (TRL)" },
+    "source": "import re\nfrom datasets import load_dataset\nfrom trl import GRPOConfig, GRPOTrainer\n\nMODEL = \"Qwen/Qwen2.5-1.5B-Instruct\"  # any small instruct model\n\nds = load_dataset(\"openai/gsm8k\", \"main\", split=\"train\")\nds = ds.map(lambda r: {\n    \"prompt\": r[\"question\"] + \"\\nThink step by step, then end with 'Answer: <number>'.\",\n    \"answer\": r[\"answer\"].split(\"####\")[-1].strip(),   # gold number only\n})\n\ndef final_number(text: str) -> str | None:\n    m = re.search(r\"Answer:\\s*(-?[\\d,.]+)\", text)\n    return m.group(1).replace(\",\", \"\").rstrip(\".\") if m else None\n\n# Extra dataset columns (\"answer\") reach reward functions as kwargs\ndef correctness(completions, answer, **kwargs):\n    return [1.0 if final_number(c) == a.replace(\",\", \"\") else 0.0\n            for c, a in zip(completions, answer)]\n\ndef format_ok(completions, **kwargs):\n    return [0.1 if \"Answer:\" in c else 0.0 for c in completions]\n\nargs = GRPOConfig(\n    output_dir=\"grpo-gsm8k\",\n    num_generations=8,            # group size G: advantage = reward vs group mean\n    max_completion_length=512,\n    learning_rate=1e-6,\n    beta=0.0,                     # KL weight; recent recipes often drop it\n)\ntrainer = GRPOTrainer(model=MODEL, reward_funcs=[correctness, format_ok],\n                      args=args, train_dataset=ds)\ntrainer.train()"
+  },
+  "example": {
+    "en": "A data team has 6,000 (question, gold SQL) pairs over its warehouse. Reward: 1 if the generated query returns the same rows as the gold query on a snapshot DB, else 0. Their SFT'd 7B model scores 52% execution accuracy. They drop questions it solves 8/8 or 0/8 times (zero advantage, wasted compute), keep 3,900, and run GRPO with G = 8. Held-out accuracy reaches 68%, until someone reads samples: 9% of the \"wins\" were `WHERE 1=0` on questions whose gold answer was an empty set. They remove those questions, add a non-empty check and retrain: 66%, and real.",
+    "es": "Un equipo de datos tiene 6000 pares (pregunta, SQL de referencia) sobre su warehouse. Recompensa: 1 si la consulta generada devuelve las mismas filas que la de referencia en un snapshot de la base, si no 0. Su modelo de 7B con SFT logra 52% de exactitud de ejecución. Descartan las preguntas que resuelve 8 de 8 o 0 de 8 veces (ventaja cero, cómputo perdido), se quedan con 3900 y corren GRPO con G = 8. La exactitud en datos reservados llega a 68%, hasta que alguien lee muestras: el 9% de los \"aciertos\" eran `WHERE 1=0` en preguntas cuya respuesta correcta era un conjunto vacío. Quitan esas preguntas, agregan un chequeo de resultado no vacío y reentrenan: 66%, y esta vez real."
+  },
+  "pros": [
+    { "en": "No human labels: quality scales with compute wherever an answer can be checked.", "es": "Sin etiquetas humanas: la calidad escala con cómputo donde la respuesta se pueda verificar." },
+    { "en": "A rule-based reward is much harder to game than a learned reward model; DeepSeek avoided neural rewards for R1's reasoning for that reason.", "es": "Una recompensa basada en reglas es mucho más difícil de engañar que un reward model aprendido; DeepSeek evitó recompensas neuronales para el razonamiento de R1 por eso." },
+    { "en": "GRPO is lighter than PPO: no policy-sized critic, and with rule rewards no reward model either.", "es": "GRPO es más liviano que PPO: sin un crítico del tamaño de la política y, con recompensas por reglas, tampoco reward model." },
+    { "en": "Optimizes the metric you ship on: tests passed, execution accuracy, schema validity.", "es": "Optimiza la métrica que de verdad te importa en producción: tests que pasan, exactitud de ejecución, validez del esquema." }
+  ],
+  "cons": [
+    { "en": "Only works where outputs are checkable; open-ended quality still needs preferences or judges.", "es": "Solo funciona donde las salidas son verificables; la calidad en tareas abiertas sigue necesitando preferencias o jueces." },
+    { "en": "Rollouts dominate cost: G long generations per prompt, plus sandboxes to run code safely.", "es": "Los rollouts dominan el costo: G generaciones largas por prompt, más sandboxes para ejecutar código de forma segura." },
+    { "en": "Mostly sharpens what the model can already do: if it never solves a task, there is no signal.", "es": "Sobre todo afina lo que el modelo ya sabe hacer: si nunca resuelve una tarea, no hay señal." },
+    { "en": "Policies exploit any gap in the verifier (reward hacking), and responses tend to keep growing.", "es": "Las políticas explotan cualquier hueco del verificador (reward hacking) y las respuestas tienden a crecer sin parar." }
+  ],
+  "whenToUse": {
+    "en": "You have thousands of tasks with programmatically checkable outputs, an open model that solves some but not all of them, and prompting plus SFT have plateaued on the metric you care about.",
+    "es": "Tienes miles de tareas con salidas verificables por programa, un modelo abierto que resuelve algunas pero no todas, y el prompting más el SFT ya se estancaron en la métrica que te importa."
+  },
+  "whenNotToUse": {
+    "en": "Open-ended quality with no verifier (use [[dpo]] or a judge), tasks the model solves ~0% of the time (no signal), or before trying SFT on good examples, which is cheaper.",
+    "es": "Calidad abierta sin verificador (usa [[dpo]] o un juez), tareas que el modelo resuelve ~0% de las veces (no hay señal), o antes de probar SFT con buenos ejemplos, que es más barato."
+  },
+  "numbers": [
+    { "en": "DeepSeek-R1-Zero: AIME 2024 pass@1 rose from 15.6% to 71.0% with pure RL (86.7% with majority voting).", "es": "DeepSeek-R1-Zero: el pass@1 en AIME 2024 subió de 15.6% a 71.0% con RL puro (86.7% con voto por mayoría)." },
+    { "en": "GRPO group size: commonly 8–64 samples per prompt; TRL's default is 8.", "es": "Tamaño de grupo en GRPO: por lo común 8–64 muestras por prompt; el valor por defecto de TRL es 8." },
+    { "en": "Rule of thumb: keep prompts the model solves ~10–90% of the time; all-pass or all-fail groups give zero advantage.", "es": "Regla práctica: conserva los prompts que el modelo resuelve ~10–90% de las veces; los grupos que aciertan o fallan todos dan ventaja cero." },
+    { "en": "GRPO was introduced in DeepSeekMath (Feb 2024); the term RLVR was coined in AI2's Tülu 3 (Nov 2024).", "es": "GRPO se presentó en DeepSeekMath (feb. 2024); el término RLVR lo acuñó Tülu 3 de AI2 (nov. 2024)." }
+  ],
+  "pitfalls": [
+    { "en": "Trusting the reward curve: policies learn to special-case tests, print expected output or exploit lenient parsers. Read samples often and keep a held-out check the policy never trains on.", "es": "Confiar en la curva de recompensa: las políticas aprenden a tratar los tests como casos especiales, imprimir la salida esperada o explotar parsers permisivos. Lee muestras seguido y guarda un chequeo reservado que nunca se use para entrenar." },
+    { "en": "Training on prompts that are always or never solved: zero advantage, pure wasted rollouts. Filter by measured pass rate first.", "es": "Entrenar con prompts que siempre o nunca se resuelven: ventaja cero, rollouts desperdiciados. Filtra primero por tasa de acierto medida." },
+    { "en": "Ignoring length: responses grow until truncated, and truncated answers score 0. Track length, raise the limit or penalize overlong outputs.", "es": "Ignorar la longitud: las respuestas crecen hasta truncarse, y una respuesta truncada puntúa 0. Mide la longitud, sube el límite o penaliza las salidas demasiado largas." },
+    { "en": "Rewarding guessable outputs: on yes/no or multiple choice a lucky guess earns full reward, so the model learns to guess. Prefer free-form answers.", "es": "Premiar salidas adivinables: en sí/no u opción múltiple, un acierto por suerte recibe la recompensa completa y el modelo aprende a adivinar. Prefiere respuestas abiertas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How does GRPO differ from PPO, and why does it matter?", "es": "¿En qué se diferencia GRPO de PPO y por qué importa?" },
+      "a": {
+        "en": "Both are policy-gradient methods with a clipped update and a KL anchor; the difference is the baseline. PPO trains a value model, usually as big as the policy, to estimate expected reward: double the trainable memory and a second network that can destabilize training. GRPO samples a group of answers per prompt and uses the group's mean and standard deviation instead. It's simpler and cheaper, and with a verifier as the reward the only large models are the policy and the reference. The cost is G rollouts per prompt, and no signal when the whole group agrees.",
+        "es": "Ambos son métodos de policy gradient con actualización recortada y un ancla KL; la diferencia es la línea base. PPO entrena un modelo de valor, normalmente tan grande como la política, para estimar la recompensa esperada: el doble de memoria entrenable y una segunda red que puede desestabilizar el entrenamiento. GRPO genera un grupo de respuestas por prompt y usa la media y la desviación estándar del grupo. Es más simple y barato, y con un verificador como recompensa los únicos modelos grandes son la política y la referencia. El costo son G rollouts por prompt, y cero señal cuando todo el grupo coincide."
+      }
+    },
+    {
+      "q": { "en": "You're asked to apply RLVR to an internal task. How do you set it up?", "es": "Te piden aplicar RLVR a una tarea interna. ¿Cómo lo montas?" },
+      "a": {
+        "en": "I start with the verifier, because the policy will optimize exactly what it checks and nothing else; I validate it against a few hundred hand-labelled outputs for false positives. Then I measure the SFT model's pass rate per task and keep the ones it solves sometimes. I run GRPO with TRL or veRL on a small model first, with a held-out set graded by a stricter check than training uses. During training I read samples, track length and KL, and stop at the first sign of reward hacking. If plain SFT gets most of the gain, I ship that instead.",
+        "es": "Empiezo por el verificador, porque la política va a optimizar exactamente lo que verifica y nada más; lo valido contra unos cientos de salidas etiquetadas a mano para detectar falsos positivos. Luego mido la tasa de acierto del modelo SFT por tarea y me quedo con las que resuelve a veces. Corro GRPO con TRL o veRL primero sobre un modelo pequeño, con un set reservado calificado por un chequeo más estricto que el de entrenamiento. Durante el entrenamiento leo muestras, sigo la longitud y el KL, y freno ante la primera señal de reward hacking. Si un SFT simple da la mayor parte de la mejora, despliego eso."
+      }
+    },
+    {
+      "q": { "en": "What did DeepSeek-R1-Zero show, and what are its limits?", "es": "¿Qué demostró DeepSeek-R1-Zero y cuáles son sus límites?" },
+      "a": {
+        "en": "That reasoning behaviours, long chains of thought, self-verification and backtracking, can emerge from pure RL on a strong base model with only rule-based rewards: AIME pass@1 went from 15.6% to 71%. The limits: R1-Zero's outputs were hard to read and mixed languages, so R1 added cold-start SFT and more stages. And later work suggests RLVR mostly sharpens sampling toward paths the base model could already find rather than creating new capability, so the base model still sets the ceiling.",
+        "es": "Que comportamientos de razonamiento, como cadenas largas, autoverificación y vuelta atrás, pueden surgir de RL puro sobre un modelo base fuerte con solo recompensas basadas en reglas: el pass@1 en AIME pasó de 15.6% a 71%. Los límites: las salidas de R1-Zero eran difíciles de leer y mezclaban idiomas, así que R1 agregó un SFT inicial (cold start) y más etapas. Además, trabajos posteriores sugieren que el RLVR sobre todo afina el muestreo hacia caminos que el modelo base ya podía encontrar, en lugar de crear capacidades nuevas, así que el modelo base sigue poniendo el techo."
+      }
+    }
+  ],
+  "related": ["dpo", "rlhf", "reasoning-models", "deterministic-graders", "llm-training-pipeline", "sft"],
+  "sources": [
+    { "title": "Shao et al. — DeepSeekMath (introduces GRPO)", "url": "https://arxiv.org/abs/2402.03300" },
+    { "title": "DeepSeek-AI — DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", "url": "https://arxiv.org/abs/2501.12948" },
+    { "title": "Lambert et al. — Tülu 3: Pushing Frontiers in Open Language Model Post-Training", "url": "https://arxiv.org/abs/2411.15124" },
+    { "title": "Hugging Face TRL — GRPO Trainer", "url": "https://huggingface.co/docs/trl/grpo_trainer" }
+  ]
+}

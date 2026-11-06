@@ -1,0 +1,98 @@
+{
+  "id": "rlhf",
+  "domain": "training",
+  "level": "advanced",
+  "title": { "en": "RLHF: reinforcement learning from human feedback", "es": "RLHF: aprendizaje por refuerzo con retroalimentación humana" },
+  "aliases": ["RLHF", "reinforcement learning from human feedback", "reward model", "PPO", "InstructGPT", "preference tuning", "RLAIF"],
+  "tldr": {
+    "en": "Humans pick the better of two answers, a reward model learns those preferences, and PPO pushes the model toward high reward while a KL penalty keeps it near the original. It turned GPT-3 into InstructGPT.",
+    "es": "Las personas eligen la mejor de dos respuestas, un reward model aprende esas preferencias y PPO empuja al modelo hacia mayor recompensa mientras una penalización KL lo mantiene cerca del original. Así GPT-3 se convirtió en InstructGPT."
+  },
+  "analogy": {
+    "en": "Training a chef with a food critic: diners rate pairs of dishes, the critic learns their taste, and the chef cooks to please the critic. Watch for the chef who just adds more salt because the critic loves it.",
+    "es": "Entrenar a un chef con un crítico: los comensales califican pares de platos, el crítico aprende su gusto y el chef cocina para agradarle. Cuidado con el chef que solo agrega más sal porque al crítico le encanta."
+  },
+  "explain": {
+    "en": "**RLHF** tunes a model toward what people *prefer*, for qualities that are easy to judge but hard to write as one ideal answer: helpfulness, tone, when to refuse. It starts from an [[sft]] model and adds three steps:\n\n1. **Collect comparisons.** Sample several responses per prompt; labelers rank them. Ranking is faster and more consistent than writing gold answers.\n2. **Train a reward model (RM).** Usually the SFT model with a scalar head, trained so the preferred response scores higher (a Bradley–Terry loss on pairs).\n3. **Optimize the policy with RL.** The model generates, the RM scores, **PPO** updates the weights. The reward subtracts a **KL penalty** to a frozen reference (the SFT model): `r = RM(x, y) − β·KL(π ‖ π_ref)`. Without it, the policy drifts into text that fools the RM.\n\nInstructGPT (2022) showed the payoff: labelers preferred outputs of the **1.3B** RLHF model over **175B** GPT-3.\n\nThe costs are real. PPO keeps four models busy (policy, reference, reward, value), hyperparameters are touchy, human labels are expensive, and the policy learns to exploit the RM's blind spots: **reward hacking** (padding, confident tone) and **sycophancy** (agreeing with the user). That's why many teams now use [[dpo]] for preferences and [[rlvr]] where answers can be checked.",
+    "es": "**RLHF** ajusta un modelo hacia lo que las personas *prefieren*, en cualidades fáciles de juzgar pero difíciles de escribir como una única respuesta ideal: utilidad, tono, cuándo negarse. Parte de un modelo con [[sft]] y agrega tres pasos:\n\n1. **Recolectar comparaciones.** Se generan varias respuestas por prompt y los evaluadores las ordenan. Ordenar es más rápido y consistente que escribir respuestas de referencia.\n2. **Entrenar un reward model (RM).** Suele ser el modelo SFT con una cabeza escalar, entrenado para que la respuesta preferida puntúe más alto (pérdida de Bradley–Terry sobre pares).\n3. **Optimizar la política con RL.** El modelo genera, el RM puntúa y **PPO** actualiza los pesos. A la recompensa se le resta una **penalización KL** contra una referencia congelada (el modelo SFT): `r = RM(x, y) − β·KL(π ‖ π_ref)`. Sin ella, la política deriva hacia texto que engaña al RM.\n\nInstructGPT (2022) mostró el beneficio: los evaluadores prefirieron las salidas del modelo RLHF de **1.3B** sobre las de GPT-3 de **175B**.\n\nLos costos son reales. PPO mantiene cuatro modelos ocupados (política, referencia, reward y value), los hiperparámetros son delicados, las etiquetas humanas son caras y la política aprende a explotar los puntos ciegos del RM: **reward hacking** (relleno, tono seguro) y **sycophancy** (darle la razón al usuario). Por eso muchos equipos hoy usan [[dpo]] para preferencias y [[rlvr]] cuando las respuestas se pueden verificar."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  P[(Prompts)] --> S[\"SFT model<br/>2+ answers each\"]\n  S --> H[\"Humans pick<br/>the better one\"]\n  H -->|train on pairs| RM[Reward model]\n  P --> PI[\"Policy<br/>init from SFT\"]\n  PI --> Y[Sampled answer]\n  Y --> RM\n  Y --> REF[\"Frozen reference<br/>KL penalty\"]\n  RM --> R[\"Reward minus<br/>beta x KL\"]\n  REF --> R\n  R -->|PPO update| PI",
+    "caption": {
+      "en": "Humans label once to build the reward model; the RL loop then queries the RM thousands of times. The KL term is the leash.",
+      "es": "Las personas etiquetan una vez para construir el reward model; después el loop de RL lo consulta miles de veces. El término KL es la correa."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Reward-model loss and the KL-penalized reward", "es": "Pérdida del reward model y recompensa con penalización KL" },
+    "source": "import torch.nn.functional as F\n\n# Step 2: reward model. The preferred answer must score higher (Bradley-Terry).\ndef reward_model_loss(rm, prompt, chosen, rejected):\n    r_chosen = rm(prompt, chosen)        # one scalar per example\n    r_rejected = rm(prompt, rejected)\n    return -F.logsigmoid(r_chosen - r_rejected).mean()\n\n# Step 3: RL reward. RM score minus a KL penalty to the frozen SFT model.\nBETA = 0.05  # too low -> reward hacking; too high -> policy barely moves\n\ndef rlhf_reward(rm, policy, ref, prompt, answer):\n    score = rm(prompt, answer)\n    logp = policy.token_logprobs(prompt, answer)   # helper: per-token log-probs\n    logp_ref = ref.token_logprobs(prompt, answer)  # ref = frozen copy of SFT model\n    kl = (logp - logp_ref).sum(-1)                 # sample estimate of KL\n    return score - BETA * kl\n\n# PPO loop (TRL, OpenRLHF, verl): sample answers -> rlhf_reward ->\n# clipped policy update, with a value model (critic) for advantages -> repeat"
+  },
+  "example": {
+    "en": "After SFT, a support assistant is accurate but stiff and refuses too often. The team collects ~20,000 comparisons from trained raters, trains a reward model and runs PPO. Win rate against the SFT model climbs to 68% on held-out prompts, but average answer length grows 40% and raters flag padded openings: the RM had learned that longer looks more helpful. They add length-controlled comparisons, raise β and keep an earlier checkpoint: 63% win rate at normal length.",
+    "es": "Después del SFT, un asistente de soporte es preciso pero rígido y se niega demasiado. El equipo recolecta ~20,000 comparaciones de evaluadores entrenados, entrena un reward model y corre PPO. El win rate contra el modelo SFT sube a 68% en prompts separados, pero el largo promedio de las respuestas crece 40% y los evaluadores marcan introducciones de relleno: el RM había aprendido que más largo parece más útil. Agregan comparaciones con largo controlado, suben β y se quedan con un checkpoint anterior: 63% de win rate con largo normal."
+  },
+  "pros": [
+    { "en": "Optimizes what humans prefer, including qualities with no single gold answer (helpfulness, tone, refusals).", "es": "Optimiza lo que las personas prefieren, incluidas cualidades sin una única respuesta ideal (utilidad, tono, rechazos)." },
+    { "en": "Comparisons are cheaper and more consistent to collect than written ideal answers.", "es": "Las comparaciones son más baratas y consistentes de recolectar que las respuestas ideales escritas." },
+    { "en": "On-policy: the RM scores whatever new answers the model produces, so it learns beyond the labeled set.", "es": "Es on-policy: el RM puntúa cualquier respuesta nueva que genere el modelo, así que aprende más allá del set etiquetado." },
+    { "en": "Proven at scale: InstructGPT, ChatGPT, Llama 2-Chat.", "es": "Probado a escala: InstructGPT, ChatGPT, Llama 2-Chat." }
+  ],
+  "cons": [
+    { "en": "Complex and unstable: four models in memory during PPO and many sensitive hyperparameters.", "es": "Complejo e inestable: cuatro modelos en memoria durante PPO y muchos hiperparámetros sensibles." },
+    { "en": "Reward hacking: the policy exploits RM blind spots (length, confident tone) instead of getting better.", "es": "Reward hacking: la política explota los puntos ciegos del RM (largo, tono seguro) en vez de mejorar." },
+    { "en": "Sycophancy: people reward agreement and flattery, so the model learns to tell them what they want to hear.", "es": "Sycophancy: las personas premian que les den la razón y los halagos, así que el modelo aprende a decirles lo que quieren oír." },
+    { "en": "Expensive human labeling, with rater disagreement baked in as noise.", "es": "Etiquetado humano caro, con el desacuerdo entre evaluadores incorporado como ruido." }
+  ],
+  "whenToUse": {
+    "en": "Large-scale assistant training with a big preference-data budget and an RL infrastructure team, where the target is a fuzzy human judgment you can't write as gold answers.",
+    "es": "Entrenamiento de asistentes a gran escala, con mucho presupuesto para datos de preferencia y un equipo de infraestructura de RL, cuando el objetivo es un juicio humano difuso que no puedes escribir como respuestas ideales."
+  },
+  "whenNotToUse": {
+    "en": "Most product teams: try SFT, then [[dpo]] on the same preference pairs (simpler, stable, no RM). For checkable tasks like math, code or SQL, use verifiable rewards ([[rlvr]]).",
+    "es": "La mayoría de los equipos de producto: prueba SFT y luego [[dpo]] con los mismos pares de preferencia (más simple, estable, sin RM). Para tareas verificables como matemáticas, código o SQL, usa recompensas verificables ([[rlvr]])."
+  },
+  "numbers": [
+    { "en": "InstructGPT: labelers preferred the 1.3B RLHF model over 175B GPT-3, with 100× fewer parameters.", "es": "InstructGPT: los evaluadores prefirieron el modelo RLHF de 1.3B sobre GPT-3 de 175B, con 100× menos parámetros." },
+    { "en": "InstructGPT data: ~13k SFT prompts, ~33k reward-model prompts, ~31k PPO prompts, ~40 contract labelers.", "es": "Datos de InstructGPT: ~13k prompts de SFT, ~33k para el reward model, ~31k para PPO, ~40 evaluadores contratados." },
+    { "en": "InstructGPT ranked 4–9 responses per prompt, giving up to 36 pairs per ranking.", "es": "InstructGPT ordenaba 4–9 respuestas por prompt, lo que da hasta 36 pares por ranking." },
+    { "en": "Llama 2-Chat: over 1M human binary comparisons collected by Meta.", "es": "Llama 2-Chat: más de 1M de comparaciones binarias humanas recolectadas por Meta." },
+    { "en": "PPO-based RLHF holds 4 models: policy, reference, reward and value (critic). DPO needs 2.", "es": "El RLHF con PPO mantiene 4 modelos: política, referencia, reward y value (crítico). DPO necesita 2." }
+  ],
+  "pitfalls": [
+    { "en": "Trusting the RM score: it keeps rising while real quality falls (overoptimization). Track fresh human or judge win rate.", "es": "Confiar en el puntaje del RM: sigue subiendo mientras la calidad real cae (sobreoptimización). Mide el win rate con personas o un juez nuevos." },
+    { "en": "A KL coefficient that's too low: the policy drifts into verbose, degenerate or reward-hacking text.", "es": "Un coeficiente KL demasiado bajo: la política deriva hacia texto verboso, degenerado o que hackea la recompensa." },
+    { "en": "Not controlling for length: raters and RMs favor longer answers, so the model learns to pad.", "es": "No controlar el largo: evaluadores y RMs prefieren respuestas más largas, así que el modelo aprende a rellenar." },
+    { "en": "Keeping a stale RM: as the policy improves it leaves the RM's training distribution. Refresh comparisons on new samples.", "es": "Mantener un RM viejo: a medida que la política mejora, sale de la distribución con la que se entrenó el RM. Renueva las comparaciones con muestras nuevas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Walk me through RLHF.", "es": "Explícame RLHF paso a paso." },
+      "a": {
+        "en": "Three stages on top of an SFT model. First, sample several answers per prompt and have humans rank them, because comparing is easier than writing ideal answers. Second, train a reward model on those pairs so the preferred answer scores higher. Third, run PPO: the policy generates, the RM scores, and the reward carries a KL penalty to the frozen SFT model so the policy can't drift into text that games the RM. InstructGPT showed it works: a 1.3B RLHF model beat 175B GPT-3 with labelers. The catch is cost and instability: four models in memory and a reward that can be hacked.",
+        "es": "Son tres etapas sobre un modelo con SFT. Primero, genero varias respuestas por prompt y las personas las ordenan, porque comparar es más fácil que escribir respuestas ideales. Segundo, entreno un reward model con esos pares para que la respuesta preferida puntúe más alto. Tercero, corro PPO: la política genera, el RM puntúa y la recompensa lleva una penalización KL contra el modelo SFT congelado para que la política no derive hacia texto que engaña al RM. InstructGPT mostró que funciona: un modelo RLHF de 1.3B le ganó a GPT-3 de 175B ante los evaluadores. El problema es el costo y la inestabilidad: cuatro modelos en memoria y una recompensa que se puede hackear."
+      }
+    },
+    {
+      "q": { "en": "What is reward hacking and how do you catch it?", "es": "¿Qué es el reward hacking y cómo lo detectas?" },
+      "a": {
+        "en": "The reward model is a proxy trained on limited data, and RL finds whatever raises the proxy: longer answers, confident tone, agreeing with the user. Gao et al. showed true quality rises, then falls as you optimize harder against a fixed RM. So I never trust the RM score alone: I track win rate from fresh human or held-out judge evaluations, plus length and refusal rates. To mitigate: the KL penalty, length-controlled data, early stopping, RM ensembles and refreshing the RM on new policy samples.",
+        "es": "El reward model es un proxy entrenado con datos limitados, y RL encuentra lo que sea que suba ese proxy: respuestas más largas, tono seguro, darle la razón al usuario. Gao et al. mostraron que la calidad real sube y después cae a medida que optimizas más fuerte contra un RM fijo. Por eso nunca confío solo en el puntaje del RM: mido el win rate con evaluaciones nuevas de personas o de un juez separado, además del largo y la tasa de rechazos. Para mitigarlo: la penalización KL, datos con largo controlado, early stopping, ensambles de RMs y renovar el RM con muestras nuevas de la política."
+      }
+    },
+    {
+      "q": { "en": "Would you use RLHF or DPO for your product?", "es": "¿Usarías RLHF o DPO para tu producto?" },
+      "a": {
+        "en": "Almost always DPO first. It learns from the same preference pairs with no reward model and no RL loop: one stable, supervised-style run with two models in memory instead of four. I'd reach for full RLHF only if I needed on-policy exploration or a reward model reused across many runs, and had an RL infrastructure team. If the task is checkable, like code that must pass tests, I'd use verifiable rewards instead of a learned one, which removes the RM's blind spots.",
+        "es": "Casi siempre DPO primero. Aprende de los mismos pares de preferencia sin reward model ni loop de RL: una sola corrida estable, al estilo supervisado, con dos modelos en memoria en vez de cuatro. Solo iría a RLHF completo si necesitara exploración on-policy o un reward model reutilizable en muchas corridas, y si tuviera un equipo de infraestructura de RL. Si la tarea es verificable, como código que debe pasar tests, usaría recompensas verificables en vez de una aprendida, lo que elimina los puntos ciegos del RM."
+      }
+    }
+  ],
+  "related": ["sft", "dpo", "rlvr", "alignment", "llm-training-pipeline", "human-eval"],
+  "sources": [
+    { "title": "Ouyang et al. — Training language models to follow instructions with human feedback (InstructGPT)", "url": "https://arxiv.org/abs/2203.02155" },
+    { "title": "Schulman et al. — Proximal Policy Optimization Algorithms", "url": "https://arxiv.org/abs/1707.06347" },
+    { "title": "Gao, Schulman, Hilton — Scaling Laws for Reward Model Overoptimization", "url": "https://arxiv.org/abs/2210.10760" },
+    { "title": "Sharma et al. — Towards Understanding Sycophancy in Language Models", "url": "https://arxiv.org/abs/2310.13548" }
+  ]
+}

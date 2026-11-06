@@ -1,0 +1,95 @@
+{
+  "id": "react",
+  "domain": "agents",
+  "level": "core",
+  "title": { "en": "ReAct: the agent loop", "es": "ReAct: el loop del agente" },
+  "aliases": ["ReAct", "Reason + Act", "thought-action-observation", "agent loop", "tool loop", "Yao et al. 2022"],
+  "tldr": {
+    "en": "The canonical agent loop: the model thinks, picks an action, your harness runs it and feeds back the real observation, and it repeats until done or until a cap you set stops it.",
+    "es": "El loop canónico de un agente: el modelo piensa, elige una acción, tu harness la ejecuta y le devuelve la observación real, y se repite hasta terminar o hasta que lo frene un tope que tú pones."
+  },
+  "analogy": {
+    "en": "A detective who writes down a hunch, checks one lead, reads what actually turned up, and only then decides the next lead, instead of solving the case from the armchair.",
+    "es": "Un detective que anota una sospecha, revisa una pista, lee lo que realmente apareció y recién entonces decide la siguiente pista, en vez de resolver el caso desde el sillón."
+  },
+  "explain": {
+    "en": "**ReAct** (Reason + Act; Yao et al., 2022) is the canonical agent loop. The model alternates **thinking** and **acting**, and each action's real result feeds the next thought:\n\n- **Thought**: reason about the goal and what is still missing.\n- **Action**: call a tool (`search[...]`, SQL, a file read) or `finish[answer]`.\n- **Observation**: the harness runs the tool and appends the *real* result.\n\nRepeat until done. Reasoning alone ([[chain-of-thought]]) states facts it never checks; acting alone can't plan or recover. Interleaving grounds each step in evidence.\n\nThe paper did it in plain text: the harness parsed `Action:` lines and stopped generation at `Observation:` so the model couldn't invent results. Today native [[tool-calling]] carries the actions and a reasoning model's thinking plays the Thought, but the loop is identical.\n\n**Stop conditions are yours**, not the model's:\n\n- a final answer (no tool call) or a `finish` tool;\n- a **step cap** and a token, time or $ **budget**;\n- **no progress**: repeated calls, or N steps with nothing new;\n- an action that needs a **human** ([[human-in-the-loop]]).\n\n**Failure modes**: **loops** (the same search again and again), **drift** (the goal fades as the transcript grows), **hallucinated observations**, and one bad early result derailing the rest. Cost grows faster than steps: each call re-sends the whole transcript.",
+    "es": "**ReAct** (Reason + Act; Yao et al., 2022) es el loop canónico de un agente. El modelo alterna entre **pensar** y **actuar**, y el resultado real de cada acción alimenta el siguiente pensamiento:\n\n- **Thought**: razona sobre el objetivo y lo que todavía falta.\n- **Action**: llama una herramienta (`search[...]`, SQL, leer un archivo) o `finish[answer]`.\n- **Observation**: el harness ejecuta la herramienta y agrega el resultado *real*.\n\nSe repite hasta terminar. Razonar solo ([[chain-of-thought]]) afirma hechos que nunca verifica; actuar solo no puede planear ni recuperarse. Intercalar ambos ancla cada paso en evidencia.\n\nEl paper lo hacía en texto plano: el harness parseaba las líneas `Action:` y cortaba la generación en `Observation:` para que el modelo no inventara resultados. Hoy el [[tool-calling]] nativo transporta las acciones y el thinking de un modelo de razonamiento cumple el papel del Thought, pero el loop es idéntico.\n\n**Las condiciones de parada son tuyas**, no del modelo:\n\n- una respuesta final (sin llamada a herramienta) o una herramienta `finish`;\n- un **tope de pasos** y un **presupuesto** de tokens, tiempo o dinero;\n- **sin progreso**: llamadas repetidas, o N pasos sin nada nuevo;\n- una acción que requiere a un **humano** ([[human-in-the-loop]]).\n\n**Modos de falla**: **loops** (la misma búsqueda una y otra vez), **deriva** (el objetivo se diluye mientras crece la conversación), **observaciones alucinadas**, y un mal resultado temprano que descarrila el resto. El costo crece más rápido que los pasos: cada llamada reenvía toda la conversación."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[Task] --> T[\"Thought<br/>(reason)\"]\n  T --> A{Action}\n  A -->|call tool| X[Harness runs tool]\n  X --> O[\"Observation<br/>(real result)\"]\n  O --> G{\"Budget left,<br/>making progress?\"}\n  G -->|yes| T\n  G -->|no| E[Stop or escalate]\n  A -->|finish| F[Final answer]",
+    "caption": {
+      "en": "The model chooses each action; the harness executes it, feeds back the real result and owns the stop.",
+      "es": "El modelo elige cada acción; el harness la ejecuta, devuelve el resultado real y decide cuándo parar."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Classic text ReAct loop with guards", "es": "Loop ReAct clásico en texto, con guardas" },
+    "source": "import re\nfrom openai import OpenAI\n\nclient = OpenAI()\nMODEL = \"gpt-4.1-mini\"  # any chat model that supports stop sequences\n\nSYSTEM = \"\"\"Solve the question by repeating:\nThought: what you know and what is missing\nAction: search[query] | lookup[term] | finish[answer]\nYou will then receive an Observation. Never write an Observation yourself.\"\"\"\nTOOLS = {\"search\": wiki_search, \"lookup\": wiki_lookup}  # your real tools\n\ndef react(question: str, max_steps: int = 8) -> str:\n    transcript, seen = f\"Question: {question}\\n\", set()\n    for _ in range(max_steps):  # hard cap: the loop never runs forever\n        out = client.chat.completions.create(\n            model=MODEL, temperature=0, stop=[\"Observation:\"],  # can't invent results\n            messages=[{\"role\": \"system\", \"content\": SYSTEM},\n                      {\"role\": \"user\", \"content\": transcript}],\n        ).choices[0].message.content\n        transcript += out\n        m = re.search(r\"Action:\\s*(\\w+)\\[(.*?)\\]\", out)\n        if not m:\n            obs = \"Invalid format. Reply with one Thought and one Action.\"\n        elif m.group(1) == \"finish\":\n            return m.group(2)\n        elif m.groups() in seen:  # no-progress guard\n            obs = \"You already ran this action. Try something different.\"\n        else:\n            seen.add(m.groups())\n            tool = TOOLS.get(m.group(1))\n            obs = tool(m.group(2))[:1500] if tool else f\"Unknown tool {m.group(1)}.\"\n        transcript += f\"\\nObservation: {obs}\\n\"  # real, truncated result goes back in\n    return \"Stopped: step budget exhausted without an answer.\""
+  },
+  "example": {
+    "en": "Question: *\"In what year was the CEO of the company that makes Pixel phones born?\"*\n\n- Thought: find the maker → `search[Pixel phone manufacturer]` → *Google*.\n- Thought: now its CEO → `search[Google CEO]` → *Sundar Pichai*.\n- Thought: birth year → `search[Sundar Pichai born]` → *1972* → `finish[1972]`.\n\nFour model calls, three tool calls, ~5 s. In another run the first search returned an unrelated page and the agent issued the same query three times; the repeat guard answered *\"you already ran this\"*, it searched `Google Pixel maker` instead and recovered within the 8-step cap.",
+    "es": "Pregunta: *\"¿En qué año nació el CEO de la empresa que fabrica los teléfonos Pixel?\"*\n\n- Thought: buscar el fabricante → `search[Pixel phone manufacturer]` → *Google*.\n- Thought: ahora su CEO → `search[Google CEO]` → *Sundar Pichai*.\n- Thought: año de nacimiento → `search[Sundar Pichai born]` → *1972* → `finish[1972]`.\n\nCuatro llamadas al modelo, tres a herramientas, ~5 s. En otra ejecución la primera búsqueda devolvió una página sin relación y el agente lanzó la misma consulta tres veces; el detector de repetición respondió *\"ya ejecutaste esto\"*, buscó `Google Pixel maker` en su lugar y se recuperó dentro del tope de 8 pasos."
+  },
+  "pros": [
+    { "en": "Grounds reasoning in real observations: fewer invented facts than pure chain-of-thought.", "es": "Ancla el razonamiento en observaciones reales: menos hechos inventados que el chain-of-thought puro." },
+    { "en": "Recovers: a bad result becomes input to the next thought instead of a dead end.", "es": "Se recupera: un mal resultado se vuelve entrada del siguiente pensamiento en vez de un callejón sin salida." },
+    { "en": "Interpretable: the thought/action trace is a debuggable log of why each step happened.", "es": "Interpretable: la traza de pensamientos y acciones es un log depurable de por qué ocurrió cada paso." },
+    { "en": "Simple: ~20 lines around any tool-calling model.", "es": "Simple: ~20 líneas alrededor de cualquier modelo con tool calling." }
+  ],
+  "cons": [
+    { "en": "Sequential: one model call per step, so latency grows linearly with steps.", "es": "Secuencial: una llamada al modelo por paso, así que la latencia crece linealmente con los pasos." },
+    { "en": "Input tokens grow roughly quadratically: every step re-sends the growing transcript.", "es": "Los tokens de entrada crecen de forma aproximadamente cuadrática: cada paso reenvía la conversación creciente." },
+    { "en": "Greedy and step-by-step: with no global plan, long tasks drift or loop ([[planning]]).", "es": "Codicioso y paso a paso: sin un plan global, las tareas largas se desvían o entran en loop ([[planning]])." }
+  ],
+  "whenToUse": {
+    "en": "Tasks where the next step depends on what the last one found: multi-hop QA, debugging, research, data exploration, interactive environments. It's the default inner loop of almost every agent.",
+    "es": "Tareas donde el siguiente paso depende de lo que encontró el anterior: preguntas multi-hop, depuración, investigación, exploración de datos, entornos interactivos. Es el loop interno por defecto de casi todo agente."
+  },
+  "whenNotToUse": {
+    "en": "When the steps are known (use a workflow), for single-lookup questions (one retrieval is enough), or for long tasks with many dependent subgoals, where you add an explicit plan or orchestrator on top.",
+    "es": "Cuando los pasos se conocen (usa un workflow), en preguntas de una sola consulta (basta una recuperación) o en tareas largas con muchas submetas dependientes, donde agregas encima un plan explícito o un orquestador."
+  },
+  "numbers": [
+    { "en": "ReAct paper: +34 and +10 points absolute success over imitation and RL baselines on ALFWorld and WebShop, prompted with only 1–2 examples.", "es": "Paper de ReAct: +34 y +10 puntos absolutos de éxito sobre baselines de imitación y RL en ALFWorld y WebShop, con solo 1–2 ejemplos en el prompt." },
+    { "en": "On HotpotQA, ReAct alone slightly trailed chain-of-thought; combining it with self-consistent CoT scored best. On FEVER, ReAct beat CoT.", "es": "En HotpotQA, ReAct solo quedó un poco por debajo de chain-of-thought; combinarlo con CoT con self-consistency dio el mejor resultado. En FEVER, ReAct superó a CoT." },
+    { "en": "Cost math: step k re-sends k prior steps, so n steps send ~n²/2 step-sized chunks of input; [[prompt-caching]] makes the repeated prefix cheap.", "es": "Cuenta de costo: el paso k reenvía los k pasos previos, así que n pasos envían ~n²/2 bloques de entrada del tamaño de un paso; [[prompt-caching]] abarata el prefijo repetido." },
+    { "en": "Rule of thumb: set the step cap at ~2–3× the steps a typical successful run needs, measured from traces.", "es": "Regla práctica: pon el tope de pasos en ~2–3× los pasos que necesita una ejecución exitosa típica, medidos en las trazas." }
+  ],
+  "pitfalls": [
+    { "en": "No stop sequence in a text-protocol loop: the model writes its own `Observation:` and answers from invented data.", "es": "Sin stop sequence en un loop de protocolo en texto: el modelo escribe su propia `Observation:` y responde con datos inventados." },
+    { "en": "Only a step cap: also detect no-progress (repeated identical calls) and fail early.", "es": "Tener solo un tope de pasos: detecta también la falta de progreso (llamadas idénticas repetidas) y falla temprano." },
+    { "en": "Appending raw tool output: a 30K-token page in step 2 crowds out the goal by step 6.", "es": "Agregar la salida cruda de las herramientas: una página de 30K tokens en el paso 2 tapa el objetivo para el paso 6." },
+    { "en": "Trusting `finish` blindly: check the answer is supported by the observations, or have a verifier grade it.", "es": "Confiar a ciegas en `finish`: verifica que la respuesta esté respaldada por las observaciones, o que la califique un verificador." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Walk me through an agent loop. How does it terminate?", "es": "Explícame el loop de un agente. ¿Cómo termina?" },
+      "a": {
+        "en": "It's ReAct: the model reasons, picks an action, my harness executes it and appends the real observation, and we repeat. Termination is mine, not the model's. It ends when the model answers without a tool call, but I also enforce a step cap, a token and wall-clock budget, a no-progress check on repeated calls, and a hand-off to a human for risky actions. When a guard trips I return an explicit 'couldn't finish' with the partial trace, never a guess.",
+        "es": "Es ReAct: el modelo razona, elige una acción, mi harness la ejecuta y agrega la observación real, y se repite. La terminación es mía, no del modelo. Termina cuando el modelo responde sin llamar herramientas, pero además impongo un tope de pasos, un presupuesto de tokens y de tiempo, un chequeo de falta de progreso sobre llamadas repetidas y un traspaso a un humano para acciones riesgosas. Si salta una guarda devuelvo un 'no pude terminar' explícito con la traza parcial, nunca una adivinanza."
+      }
+    },
+    {
+      "q": { "en": "Your agent calls the same search six times in a row. What do you do?", "es": "Tu agente llama la misma búsqueda seis veces seguidas. ¿Qué haces?" },
+      "a": {
+        "en": "First I read the trace: usually the observation isn't usable, a vague result or an error the model can't act on, so it retries. Fixes in order: make the tool's output and errors actionable, like 'no results; narrow the date range'; add a repeat detector that answers 'you already ran this' and forces a different action; and trim old observations so the goal stays in view. Then that trace goes into the eval set so the regression gets caught.",
+        "es": "Primero leo la traza: casi siempre la observación no sirve, un resultado vago o un error con el que el modelo no puede hacer nada, y por eso reintenta. Las correcciones, en orden: hacer accionables la salida y los errores de la herramienta, como 'sin resultados; acota el rango de fechas'; agregar un detector de repetición que responda 'ya ejecutaste esto' y fuerce otra acción; y recortar observaciones viejas para que el objetivo siga a la vista. Después esa traza entra al set de eval para atrapar la regresión."
+      }
+    },
+    {
+      "q": { "en": "Is ReAct still relevant with native tool calling and reasoning models?", "es": "¿ReAct sigue siendo relevante con tool calling nativo y modelos de razonamiento?" },
+      "a": {
+        "en": "Yes. The loop is unchanged; the transport changed. Actions are structured tool calls instead of parsed text, so no regex and no invented observations, and the Thought is the model's reasoning, which some APIs let it interleave between tool calls. What still decides quality is everything around the loop: stop conditions, budgets, context management and evals. ReAct is the inner loop; planning, memory and orchestration sit on top of it.",
+        "es": "Sí. El loop no cambió; cambió el transporte. Las acciones son llamadas estructuradas en vez de texto parseado, así que no hay regex ni observaciones inventadas, y el Thought es el razonamiento del modelo, que algunas APIs permiten intercalar entre llamadas a herramientas. Lo que sigue definiendo la calidad es todo lo que rodea al loop: condiciones de parada, presupuestos, manejo del contexto y evals. ReAct es el loop interno; la planificación, la memoria y la orquestación van encima."
+      }
+    }
+  ],
+  "related": ["tool-calling", "agents-vs-workflows", "chain-of-thought", "planning", "agent-reliability", "agent-evals"],
+  "sources": [
+    { "title": "Yao et al. — ReAct: Synergizing Reasoning and Acting in Language Models (2022)", "url": "https://arxiv.org/abs/2210.03629" },
+    { "title": "ReAct project page (prompts, trajectories)", "url": "https://react-lm.github.io/" },
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" }
+  ]
+}

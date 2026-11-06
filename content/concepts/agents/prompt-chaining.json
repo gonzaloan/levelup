@@ -1,0 +1,95 @@
+{
+  "id": "prompt-chaining",
+  "domain": "agents",
+  "level": "core",
+  "title": { "en": "Pattern: prompt chaining", "es": "Patrón: prompt chaining" },
+  "aliases": ["prompt chain", "LLM chain", "chained prompts", "sequential workflow", "gated pipeline", "chain of calls"],
+  "tldr": {
+    "en": "Split a task into a fixed sequence of LLM calls, each consuming the previous output, with code checks between steps: you trade extra latency for accuracy and per-step debuggability.",
+    "es": "Divide una tarea en una secuencia fija de llamadas al LLM, cada una con la salida de la anterior, y pon validaciones en código entre pasos: cambias latencia por precisión y depuras paso a paso."
+  },
+  "analogy": {
+    "en": "An assembly line with inspection stations: each worker does one simple job, and an inspector rejects a bad part before the next station spends work on it.",
+    "es": "Una línea de ensamblaje con puestos de inspección: cada operario hace una sola tarea simple y un inspector rechaza la pieza defectuosa antes de que la siguiente estación trabaje sobre ella."
+  },
+  "explain": {
+    "en": "**Prompt chaining** breaks one hard task into a **fixed** sequence of simpler LLM calls, where each call receives the previous call's output. You decide the steps, in code, not the model: that is what makes it a workflow rather than an agent ([[agents-vs-workflows]]).\n\nBetween steps you put **gates**: plain code that checks the intermediate result before you pay for the next call. Does the outline have 3–6 sections? Does the JSON validate against the schema ([[structured-outputs]])? Is the summary under 200 words? If a gate fails, you retry that step, repair it, or stop early.\n\nWhy it works: each call gets a narrower job and a shorter, focused prompt, so it makes fewer mistakes than one mega-prompt juggling ten instructions. You also get **one eval per step**: when the output is bad, you know *which* link broke.\n\nThe cost is **latency and tokens**: N sequential round-trips, and errors compound (five steps at 95% each ≈ 77% end-to-end) unless gates catch them. Chain only when the task decomposes cleanly into steps you can name in advance; if the steps depend on the input, you need [[routing]] or [[orchestrator-workers]].",
+    "es": "El **prompt chaining** divide una tarea difícil en una secuencia **fija** de llamadas más simples al LLM, donde cada llamada recibe la salida de la anterior. Los pasos los decides tú, en código, no el modelo: por eso es un workflow y no un agente ([[agents-vs-workflows]]).\n\nEntre pasos pones **compuertas** (*gates*): código simple que revisa el resultado intermedio antes de pagar la siguiente llamada. ¿El outline tiene entre 3 y 6 secciones? ¿El JSON valida contra el esquema ([[structured-outputs]])? ¿El resumen tiene menos de 200 palabras? Si una compuerta falla, reintentas ese paso, lo reparas o cortas antes.\n\nPor qué funciona: cada llamada tiene un trabajo más acotado y un prompt más corto y enfocado, así que se equivoca menos que un megaprompt que intenta cumplir diez instrucciones a la vez. Además tienes **un eval por paso**: cuando la salida es mala, sabes *qué* eslabón falló.\n\nEl costo es **latencia y tokens**: N viajes de ida y vuelta secuenciales, y los errores se acumulan (cinco pasos al 95% cada uno ≈ 77% de punta a punta) salvo que las compuertas los atajen. Encadena solo cuando la tarea se descompone limpiamente en pasos que puedes nombrar de antemano; si los pasos dependen de la entrada, necesitas [[routing]] u [[orchestrator-workers]]."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  I[Brief] --> S1[\"LLM 1<br/>outline\"]\n  S1 --> G1{\"Gate: outline valid?\"}\n  G1 -->|pass| S2[\"LLM 2<br/>write draft\"]\n  G1 -->|fail| X[\"Retry, repair or stop\"]\n  S2 --> G2{\"Gate: length, banned terms\"}\n  G2 -->|pass| S3[\"LLM 3<br/>translate\"]\n  G2 -->|fail| X\n  S3 --> O[Published post]",
+    "caption": {
+      "en": "Each step is one narrow LLM call; code gates between steps stop a bad intermediate before you pay for the next call.",
+      "es": "Cada paso es una llamada acotada al LLM; las compuertas en código frenan un resultado intermedio malo antes de pagar la siguiente llamada."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Outline → gate → write → translate", "es": "Outline → compuerta → redacción → traducción" },
+    "source": "import json\nfrom anthropic import Anthropic\n\nclient = Anthropic()\nMODEL = \"claude-sonnet-4-5\"  # any chat model\n\ndef llm(prompt: str) -> str:\n    msg = client.messages.create(model=MODEL, max_tokens=2048,\n                                 messages=[{\"role\": \"user\", \"content\": prompt}])\n    return msg.content[0].text\n\nOUTLINE = ('Outline a blog post for this brief. Reply with JSON only: '\n           '{\"sections\": [{\"title\": str, \"points\": [str]}]}\\n\\n')\n\ndef outline_gate(raw: str) -> dict | None:\n    # Gate = plain code: deterministic, free, microseconds\n    try:\n        sections = json.loads(raw)[\"sections\"]\n    except (json.JSONDecodeError, KeyError, TypeError):\n        return None\n    return {\"sections\": sections} if 3 <= len(sections) <= 6 else None\n\ndef launch_post(brief: str, retries: int = 2) -> str:\n    for _ in range(retries + 1):                     # retry only the step that failed\n        if outline := outline_gate(llm(OUTLINE + brief)):\n            break\n    else:\n        raise ValueError(\"outline failed its gate\")  # stop before paying for steps 2-3\n    # Carry the original brief forward: later steps must not lose its constraints\n    draft = llm(f\"Brief:\\n{brief}\\n\\nWrite the post following this outline:\\n{json.dumps(outline)}\")\n    if len(draft.split()) > 900:                     # gate 2: length budget -> repair step\n        draft = llm(f\"Cut this to under 800 words, keep every section:\\n{draft}\")\n    return llm(f\"Translate to Latin-American Spanish; keep product names:\\n{draft}\")"
+  },
+  "example": {
+    "en": "A SaaS team turns ~40 merged PRs into customer release notes. One mega-prompt (*summarize, group by feature, write for customers, translate*) dropped about 1 in 5 user-facing changes and leaked internal ticket ids. They split it: **(1)** a small model labels each PR user-facing or internal; **(2)** a larger model writes grouped notes, tagging each item with its PR id; **(3)** a code gate checks that every user-facing PR appears exactly once and no `JIRA-` id leaked; **(4)** translate. Latency rose from ~8 s to ~20 s, irrelevant for a nightly job, and each step now has its own eval set, so a regression points at one prompt.",
+    "es": "Un equipo SaaS convierte ~40 PRs fusionados en notas de versión para clientes. Un solo megaprompt (*resume, agrupa por funcionalidad, escribe para clientes, traduce*) omitía cerca de 1 de cada 5 cambios visibles y filtraba ids de tickets internos. Lo dividieron: **(1)** un modelo chico etiqueta cada PR como visible o interno; **(2)** un modelo más grande redacta las notas agrupadas, marcando cada ítem con su id de PR; **(3)** una compuerta en código verifica que cada PR visible aparezca exactamente una vez y que no se cuele ningún id `JIRA-`; **(4)** se traduce. La latencia subió de ~8 s a ~20 s, irrelevante para un job nocturno, y cada paso tiene ahora su propio set de eval, así que una regresión apunta a un solo prompt."
+  },
+  "pros": [
+    { "en": "Each call does one narrow job, which usually beats one mega-prompt juggling every instruction.", "es": "Cada llamada hace un solo trabajo acotado, lo que suele superar a un megaprompt que hace malabares con todas las instrucciones." },
+    { "en": "Debuggable: every intermediate output can be logged and evaluated, so failures point at one step.", "es": "Fácil de depurar: cada salida intermedia se puede registrar y evaluar, así que las fallas apuntan a un paso concreto." },
+    { "en": "Gates are plain code: deterministic, free, and they stop bad runs early.", "es": "Las compuertas son código simple: deterministas, gratis y cortan antes las ejecuciones malas." },
+    { "en": "Mix models per step: a small one to classify, a strong one to write.", "es": "Puedes usar un modelo distinto por paso: uno chico para clasificar y uno potente para redactar." }
+  ],
+  "cons": [
+    { "en": "Latency is additive: N sequential round-trips with no parallelism.", "es": "La latencia se suma: N viajes de ida y vuelta secuenciales, sin paralelismo." },
+    { "en": "Errors compound across steps unless gates catch them.", "es": "Los errores se acumulan entre pasos si las compuertas no los atajan." },
+    { "en": "Rigid: the step list is fixed, so unusual inputs get forced down the same path.", "es": "Es rígido: la lista de pasos es fija, así que las entradas atípicas pasan a la fuerza por el mismo camino." },
+    { "en": "Later steps see only what you pass forward; nuance from the original input can get lost.", "es": "Los pasos posteriores solo ven lo que les pasas; los matices de la entrada original se pueden perder." }
+  ],
+  "whenToUse": {
+    "en": "The task decomposes cleanly into steps you can name in advance (extract → check → write → translate), and you'd rather spend latency than accuracy.",
+    "es": "La tarea se descompone limpiamente en pasos que puedes nombrar de antemano (extraer → verificar → redactar → traducir) y prefieres gastar latencia antes que precisión."
+  },
+  "whenNotToUse": {
+    "en": "Latency-critical chat turns, tasks one good prompt already handles, or steps that depend on the input: that's routing or orchestrator–workers.",
+    "es": "Turnos de chat donde la latencia es crítica, tareas que un buen prompt ya resuelve, o pasos que dependen de la entrada: ahí van routing u orquestador–workers."
+  },
+  "numbers": [
+    { "en": "Reliability multiplies: five steps at 95% each ≈ 77% end-to-end (0.95⁵). Gates exist to break this math.", "es": "La confiabilidad se multiplica: cinco pasos al 95% cada uno ≈ 77% de punta a punta (0.95⁵). Las compuertas existen para romper esa cuenta." },
+    { "en": "Latency is additive: end-to-end ≈ sum of step latencies, plus any retries the gates trigger.", "es": "La latencia es aditiva: de punta a punta ≈ suma de las latencias de cada paso, más los reintentos que disparen las compuertas." },
+    { "en": "A code gate costs microseconds and $0; an LLM-judge gate adds a full call (~0.5–3 s). Prefer code gates where possible.", "es": "Una compuerta en código cuesta microsegundos y $0; una compuerta con LLM como juez suma una llamada completa (~0.5–3 s). Prefiere compuertas en código cuando se pueda." }
+  ],
+  "pitfalls": [
+    { "en": "Passing only the previous output forward: step 4 never sees the user's original constraints. Carry the original input through.", "es": "Pasar solo la salida anterior: el paso 4 nunca ve las restricciones originales del usuario. Arrastra la entrada original por toda la cadena." },
+    { "en": "Gates that check only format: valid JSON with wrong content sails through. Check invariants too (counts, ids, required facts).", "es": "Compuertas que solo validan formato: un JSON válido con contenido incorrecto pasa igual. Verifica también invariantes (conteos, ids, datos obligatorios)." },
+    { "en": "Rerunning the whole chain when one step fails; retry or repair just that step.", "es": "Volver a correr toda la cadena cuando falla un paso; reintenta o repara solo ese paso." },
+    { "en": "Chaining what one prompt already does well: 3× the latency for nothing. Measure a single-prompt baseline first.", "es": "Encadenar lo que un solo prompt ya hace bien: 3× la latencia a cambio de nada. Mide primero una línea base con un solo prompt." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you chain prompts instead of writing one bigger prompt?", "es": "¿Cuándo encadenarías prompts en vez de escribir un solo prompt más grande?" },
+      "a": {
+        "en": "When the task has distinct sub-jobs that compete for the model's attention (extract, then reason, then format) or when I need to check something in between. I start with a single-prompt baseline and an eval. If it fails consistently in one place, I split there, put a code gate on the intermediate output, and evaluate each step on its own. The trade-off is latency: every step is a sequential round-trip, so in an interactive turn I keep it to two or three calls and push longer chains into async jobs.",
+        "es": "Cuando la tarea tiene subtrabajos distintos que compiten por la atención del modelo (extraer, luego razonar, luego dar formato) o cuando necesito verificar algo en el medio. Empiezo con una línea base de un solo prompt y un eval. Si falla siempre en el mismo lugar, divido ahí, pongo una compuerta en código sobre la salida intermedia y evalúo cada paso por separado. El trade-off es la latencia: cada paso es un viaje secuencial, así que en un turno interactivo me quedo en dos o tres llamadas y mando las cadenas largas a jobs asíncronos."
+      }
+    },
+    {
+      "q": { "en": "Your four-step chain succeeds 70% of the time end to end. How do you debug it?", "es": "Tu cadena de cuatro pasos acierta el 70% de las veces de punta a punta. ¿Cómo la depuras?" },
+      "a": {
+        "en": "I log every intermediate output and score each step on its own eval set, because reliability multiplies: four steps at 92% already land near 70%. That shows me where success drops. Then I fix the weakest link: tighten its prompt, give it a structured-output schema, or add a gate with a retry right after it. I also check the hand-offs; often step 3 fails because step 1 dropped a constraint it needed, so I pass the original input forward too.",
+        "es": "Registro cada salida intermedia y puntúo cada paso con su propio set de eval, porque la confiabilidad se multiplica: cuatro pasos al 92% ya dan cerca de 70%. Eso me muestra dónde cae el éxito. Después arreglo el eslabón más débil: ajusto su prompt, le doy un esquema de salida estructurada o agrego una compuerta con reintento justo después. También reviso los traspasos; muchas veces el paso 3 falla porque el paso 1 descartó una restricción que necesitaba, así que también paso la entrada original hacia adelante."
+      }
+    },
+    {
+      "q": { "en": "How is a prompt chain different from an agent?", "es": "¿En qué se diferencia una cadena de prompts de un agente?" },
+      "a": {
+        "en": "In a chain, code fixes the steps and their order, and the model only fills in each step. In an agent, the model chooses the next action and when to stop. That makes chains predictable in cost and latency and easy to test step by step, while agents handle open-ended work at the price of variance and harder evals. I default to a chain and hand control to the model only when I can't list the steps in advance.",
+        "es": "En una cadena, el código fija los pasos y su orden, y el modelo solo resuelve cada paso. En un agente, el modelo elige la siguiente acción y cuándo parar. Por eso las cadenas son predecibles en costo y latencia y fáciles de probar paso a paso, mientras que los agentes resuelven trabajo abierto a cambio de más varianza y evals más difíciles. Por defecto uso una cadena y solo le cedo el control al modelo cuando no puedo listar los pasos de antemano."
+      }
+    }
+  ],
+  "related": ["agents-vs-workflows", "routing", "structured-outputs", "evaluator-optimizer", "deterministic-graders", "prompt-patterns"],
+  "sources": [
+    { "title": "Anthropic — Building effective agents", "url": "https://www.anthropic.com/research/building-effective-agents" },
+    { "title": "Anthropic docs — Chain complex prompts for stronger performance", "url": "https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering/chain-prompts" },
+    { "title": "Wu et al. — AI Chains: Transparent and Controllable Human-AI Interaction by Chaining Large Language Model Prompts (CHI 2022)", "url": "https://arxiv.org/abs/2110.01691" }
+  ]
+}

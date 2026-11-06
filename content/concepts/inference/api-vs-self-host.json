@@ -1,0 +1,88 @@
+{
+  "id": "api-vs-self-host",
+  "domain": "inference",
+  "level": "core",
+  "title": { "en": "API vs self-hosting", "es": "API vs self-hosting" },
+  "aliases": ["self-hosting LLMs", "managed API", "open weights", "build vs buy inference", "break-even analysis", "ZDR", "provisioned throughput"],
+  "tldr": {
+    "en": "Start with a managed API for speed and frontier quality; self-host open weights only when data control, custom weights or steady high utilization justify owning GPUs and on-call.",
+    "es": "Empieza con una API administrada por velocidad y calidad de frontera; haz self-hosting de modelos abiertos solo cuando el control de datos, los pesos propios o una utilización alta y estable justifiquen tener GPUs y guardias."
+  },
+  "analogy": {
+    "en": "Taking taxis vs buying a fleet: taxis win until you drive the same routes all day, every day, and a fleet means mechanics, parking and insurance even on quiet nights.",
+    "es": "Tomar taxis vs comprar una flotilla: los taxis ganan hasta que recorres las mismas rutas todo el día, todos los días, y la flotilla implica mecánicos, estacionamiento y seguro incluso en las noches tranquilas."
+  },
+  "explain": {
+    "en": "It's a build-vs-buy decision about who runs the model.\n\n**Managed API** (OpenAI, Anthropic, Google): fastest time-to-value, frontier quality, zero GPU ops, and pay per token, so idle costs nothing. You accept rate limits (tokens and requests per minute), the provider's deprecations and outages, and data leaving your network, mitigated by zero-data-retention (ZDR) agreements, regional endpoints and private connectivity.\n\n**Self-hosting open weights** (Llama, Qwen, Mistral, DeepSeek, gpt-oss on [[serving-stack]]): full control of data residency, latency, versions and fine-tuned weights. You pay for GPUs by the hour whether busy or not, plus people: upgrades, autoscaling, evals, on-call. It is cheaper **only at high, steady utilization**, and only against an API of *comparable quality*.\n\n**The middle ground** usually wins first:\n\n- Open models as a managed service: Amazon Bedrock, Google Vertex AI, Azure, or inference providers (Together, Fireworks, Baseten).\n- Dedicated or provisioned throughput: reserved capacity without running the stack.\n- Batch APIs (~50% off) for work that can wait.\n\nDecide in this order: quality on your evals → data and compliance constraints → cost at your real utilization → team capacity. Put the choice behind an [[llm-gateway]] so it stays reversible.",
+    "es": "Es una decisión de construir o comprar sobre quién corre el modelo.\n\n**API administrada** (OpenAI, Anthropic, Google): el camino más rápido a valor, calidad de frontera, cero operación de GPUs y pago por token, así que el tiempo ocioso no cuesta nada. A cambio aceptas rate limits (tokens y peticiones por minuto), las deprecaciones y caídas del proveedor, y que los datos salgan de tu red, algo que mitigas con acuerdos de zero data retention (ZDR), endpoints regionales y conectividad privada.\n\n**Self-hosting de pesos abiertos** (Llama, Qwen, Mistral, DeepSeek, gpt-oss sobre un [[serving-stack]]): control total de la residencia de datos, la latencia, las versiones y los pesos con fine-tuning. Pagas las GPUs por hora estén ocupadas o no, más personas: actualizaciones, autoescalado, evals y guardias. Sale más barato **solo con utilización alta y estable**, y solo frente a una API de *calidad comparable*.\n\n**El punto intermedio** suele ganar primero:\n\n- Modelos abiertos como servicio administrado: Amazon Bedrock, Google Vertex AI, Azure o proveedores de inferencia (Together, Fireworks, Baseten).\n- Throughput dedicado o aprovisionado: capacidad reservada sin operar el stack.\n- APIs batch (~50% de descuento) para trabajo que puede esperar.\n\nDecide en este orden: calidad en tus evals → restricciones de datos y cumplimiento → costo a tu utilización real → capacidad del equipo. Pon la decisión detrás de un [[llm-gateway]] para que sea reversible."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  S[New LLM workload] --> Q{\"Open model passes<br/>your evals?\"}\n  Q -->|no| API[Frontier managed API]\n  Q -->|yes| D{\"Must run in<br/>your infra?\"}\n  D -->|yes| SH[Self-host on vLLM]\n  D -->|no| U{\"Steady high<br/>utilization?\"}\n  U -->|no| MS[\"Managed open model<br/>Bedrock / provider\"]\n  U -->|yes| B{\"Beats API after<br/>ops cost?\"}\n  B -->|yes| SH\n  B -->|no| MS",
+    "caption": {
+      "en": "Quality first, then constraints, then cost at real utilization; a managed endpoint for an open model is the usual landing spot.",
+      "es": "Primero calidad, luego restricciones y al final costo a utilización real; un endpoint administrado de un modelo abierto es donde se suele aterrizar."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Break-even: rent GPUs vs pay per token, same model", "es": "Punto de equilibrio: rentar GPUs vs pagar por token, mismo modelo" },
+    "source": "# Break-even for ONE open 70B model: rent GPUs vs pay per token for the same weights.\n# Every constant is an ASSUMPTION: replace with your quotes and your own benchmark.\nGPU_HOUR = 2.00          # $/H100-hour, committed or neocloud pricing\nGPUS_PER_REPLICA = 4     # 70B in BF16 plus KV-cache headroom\nTOKENS_PER_SEC = 6_000   # blended in+out per replica at your p95 SLO: measure it!\nUTILIZATION = 0.60       # real traffic has peaks, nights and weekends\nOPS_MONTHLY = 10_000     # ~0.5 engineer: upgrades, autoscaling, evals, on-call\nAPI_PER_M = 0.80         # $/1M blended tokens at a hosted provider, same model\nHOURS = 730              # per month: GPUs bill whether busy or idle\n\nreplica_cost = GPU_HOUR * GPUS_PER_REPLICA * HOURS                    # $5,840/month\nreplica_m_tokens = TOKENS_PER_SEC * 3600 * HOURS * UTILIZATION / 1e6  # ~9,461M/month\n\ndef monthly(m_tokens: float) -> tuple[float, float]:\n    replicas = max(2, -(-m_tokens // replica_m_tokens))  # ceil; min 2 for availability\n    return m_tokens * API_PER_M, replicas * replica_cost + OPS_MONTHLY\n\nfor billions in (1, 10, 50, 100):\n    api, own = monthly(billions * 1_000)\n    print(f\"{billions:>4}B tokens/mo  API ${api:>8,.0f}  self-host ${own:>8,.0f}\")\n#    1B  API $    800  self-host $ 21,680\n#   10B  API $  8,000  self-host $ 21,680\n#   50B  API $ 40,000  self-host $ 45,040\n#  100B  API $ 80,000  self-host $ 74,240  -> crossover ~60-90B tokens/month"
+  },
+  "example": {
+    "en": "A team spends ~$8k/month on a hosted Llama 3.3 70B (10B tokens/month) and asks whether to self-host. Under the code's assumptions, self-hosting costs ~$21.7k: two replicas for availability plus half an engineer, mostly idle at that volume. At 50B tokens it's still $45k vs $40k; the crossover lands around 60–90B tokens/month (~23–34k tokens/s averaged around the clock). What finally moves them is not cost: a customer contract requiring processing on infrastructure they control. That's a constraint, not a price argument, and it's the more common real reason.",
+    "es": "Un equipo gasta ~$8k al mes en un Llama 3.3 70B hospedado (10B tokens al mes) y se pregunta si hacer self-hosting. Con los supuestos del código, el self-hosting cuesta ~$21.7k: dos réplicas por disponibilidad más medio ingeniero, casi ociosas a ese volumen. Con 50B tokens sigue costando $45k vs $40k; el punto de equilibrio cae entre 60 y 90B tokens al mes (~23–34k tokens/s promediados las 24 horas). Lo que al final los mueve no es el costo: un contrato con un cliente que exige procesar en infraestructura que ellos controlan. Eso es una restricción, no un argumento de precio, y es la razón real más común."
+  },
+  "pros": [
+    { "en": "Self-hosted data never leaves infrastructure you control: residency, air-gapped and sovereign setups.", "es": "Con self-hosting los datos nunca salen de infraestructura que controlas: residencia, entornos aislados y nubes soberanas." },
+    { "en": "Any open or fine-tuned weights, pinned versions, no forced deprecations or per-minute rate limits.", "es": "Cualquier peso abierto o con fine-tuning, versiones fijas, sin deprecaciones forzadas ni rate limits por minuto." },
+    { "en": "Lowest cost per token, but only at high and steady utilization.", "es": "El menor costo por token, pero solo con utilización alta y estable." }
+  ],
+  "cons": [
+    { "en": "You pay for idle GPUs: 730 hours a month, busy or not.", "es": "Pagas GPUs ociosas: 730 horas al mes, estén ocupadas o no." },
+    { "en": "Needs GPU, Kubernetes and inference expertise, plus someone on call.", "es": "Requiere experiencia en GPUs, Kubernetes e inferencia, y alguien de guardia." },
+    { "en": "Open models may trail the frontier on your hardest tasks; only your evals can tell.", "es": "Los modelos abiertos pueden quedar detrás de la frontera en tus tareas más difíciles; solo tus evals lo dicen." }
+  ],
+  "whenToUse": {
+    "en": "Self-host when data must stay on infrastructure you control, you need weights no provider serves, or volume is high and steady enough that GPUs beat per-token prices after ops cost.",
+    "es": "Haz self-hosting cuando los datos deben quedarse en infraestructura que controlas, necesitas pesos que ningún proveedor sirve o el volumen es tan alto y estable que las GPUs le ganan al precio por token incluso con el costo de operación."
+  },
+  "whenNotToUse": {
+    "en": "Prototypes, low or spiky traffic, tasks where only a frontier model passes your evals, or a team with no one to own GPUs at 3 a.m.",
+    "es": "Prototipos, tráfico bajo o con picos, tareas donde solo un modelo de frontera pasa tus evals, o un equipo sin nadie que se haga cargo de las GPUs a las 3 a.m."
+  },
+  "numbers": [
+    { "en": "A month is ~730 hours: a rented GPU bills all of them, busy or idle.", "es": "Un mes son ~730 horas: una GPU rentada las cobra todas, ocupada u ociosa." },
+    { "en": "Self-host cost per token = GPU $/hour ÷ tokens per hour actually served: halve utilization, double the unit cost.", "es": "Costo por token con self-hosting = $/hora de GPU ÷ tokens por hora realmente servidos: si la utilización baja a la mitad, el costo unitario se duplica." },
+    { "en": "Batch APIs cut prices ~50% for results within 24 h (OpenAI, Anthropic, Gemini).", "es": "Las APIs batch bajan el precio ~50% a cambio de resultados en hasta 24 h (OpenAI, Anthropic, Gemini)." },
+    { "en": "Worked example (assumptions in the code): ~$0.62/M at 60% utilization vs $0.80/M via API → crossover ~60–90B tokens/month once ops is counted.", "es": "Ejemplo resuelto (supuestos en el código): ~$0.62/M al 60% de utilización vs $0.80/M por API → equilibrio en ~60–90B tokens al mes al contar la operación." }
+  ],
+  "pitfalls": [
+    { "en": "Pricing GPUs at 100% utilization against API list price: real fleets average far less.", "es": "Calcular las GPUs al 100% de utilización contra el precio de lista de la API: las flotas reales promedian mucho menos." },
+    { "en": "Forgetting people: at small scale, on-call, upgrades and evals cost more than the GPUs.", "es": "Olvidar a las personas: a escala pequeña, guardias, actualizaciones y evals cuestan más que las GPUs." },
+    { "en": "Comparing a self-hosted 70B to a frontier API on price alone: compare at equal quality on your evals.", "es": "Comparar un 70B self-hosted con una API de frontera solo por precio: compara a calidad igual en tus evals." },
+    { "en": "Assuming an API means your data is retained or trained on: check ZDR, retention and regional options first.", "es": "Suponer que usar una API implica que guardan tus datos o entrenan con ellos: revisa primero ZDR, retención y opciones regionales." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "The API bill is $60k/month and the CFO asks why we don't self-host. What do you answer?", "es": "La factura de la API es de $60k al mes y el CFO pregunta por qué no hacemos self-hosting. ¿Qué respondes?" },
+      "a": {
+        "en": "First, self-host what? An open model has to match quality on our evals, or it's a product downgrade, not a saving. If one does, I compare at real utilization: GPUs bill 730 hours a month, we need at least two replicas for availability, and someone owns on-call. Often the cheaper wins are elsewhere: routing easy traffic to a small model, prompt caching, batch APIs at ~50% off. If an open model qualifies, a managed endpoint captures most of the saving without the ops. I'd come back with a break-even sheet, not an opinion.",
+        "es": "Primero: ¿self-hosting de qué? Un modelo abierto tiene que igualar la calidad en nuestras evals; si no, es empeorar el producto, no ahorrar. Si alguno la iguala, comparo a utilización real: las GPUs cobran 730 horas al mes, necesitamos al menos dos réplicas por disponibilidad y alguien tiene que hacer guardia. Muchas veces los ahorros más baratos están en otro lado: rutear el tráfico fácil a un modelo chico, prompt caching, APIs batch con ~50% de descuento. Si un modelo abierto califica, un endpoint administrado captura casi todo el ahorro sin la operación. Volvería con una hoja de punto de equilibrio, no con una opinión."
+      }
+    },
+    {
+      "q": { "en": "When is self-hosting clearly the right call?", "es": "¿Cuándo el self-hosting es claramente la decisión correcta?" },
+      "a": {
+        "en": "Three cases. Hard data constraints: air-gapped, sovereign or a contract saying it runs on our infrastructure, where no ZDR or regional endpoint satisfies legal. Custom weights: a fine-tuned or distilled model no provider serves with the latency or control we need. Sustained high volume, where benchmarked tokens per GPU-hour at realistic utilization beat the per-token price after ops cost. Even then I keep an API path behind the gateway as a fallback and a quality baseline, so the decision stays reversible.",
+        "es": "En tres casos. Restricciones duras de datos: entornos aislados, nube soberana o un contrato que exige correr en nuestra infraestructura, donde ni ZDR ni un endpoint regional satisfacen a legal. Pesos propios: un modelo con fine-tuning o destilado que ningún proveedor sirve con la latencia o el control que necesitamos. Volumen alto y sostenido, donde los tokens por hora de GPU medidos a utilización realista le ganan al precio por token después del costo de operación. Aun así mantengo una ruta a la API detrás del gateway como respaldo y línea base de calidad, para que la decisión siga siendo reversible."
+      }
+    }
+  ],
+  "related": ["serving-stack", "token-economics", "llm-gateway", "build-vs-buy", "model-selection", "pii-privacy"],
+  "sources": [
+    { "title": "OpenAI — Data controls in the OpenAI platform", "url": "https://platform.openai.com/docs/guides/your-data" },
+    { "title": "Amazon Bedrock — Data protection", "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/data-protection.html" },
+    { "title": "OpenAI — Batch API guide", "url": "https://platform.openai.com/docs/guides/batch" },
+    { "title": "vLLM documentation", "url": "https://docs.vllm.ai/en/latest/" }
+  ]
+}
