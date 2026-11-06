@@ -1,0 +1,87 @@
+{
+  "id": "ml-lifecycle",
+  "domain": "mlops",
+  "level": "core",
+  "title": { "en": "The ML lifecycle", "es": "El ciclo de vida de ML" },
+  "aliases": ["ML lifecycle", "MLOps", "MLOps maturity levels", "continuous training", "CT pipeline", "Hidden Technical Debt", "CRISP-DM"],
+  "tldr": {
+    "en": "ML is a loop, not a project: frame the problem, get labeled data, build features, train, evaluate, deploy, monitor and retrain. The model code is the small part; the pipeline around it is the system.",
+    "es": "ML es un ciclo, no un proyecto: define el problema, consigue datos etiquetados, construye features, entrena, evalúa, despliega, monitorea y reentrena. El código del modelo es la parte chica; el sistema es el pipeline que lo rodea."
+  },
+  "analogy": {
+    "en": "A restaurant isn't its recipe. Sourcing, prep, line cooks, health inspections and tasting the dish every night are what keep the food good long after opening day.",
+    "es": "Un restaurante no es su receta. Comprar insumos, preparar, cocinar en línea, pasar inspecciones y probar el plato cada noche es lo que mantiene buena la comida mucho después de la inauguración."
+  },
+  "explain": {
+    "en": "The **ML lifecycle** is the loop that turns data into a model in production and keeps it good as the world changes:\n\n1. **Frame the problem**: the decision it drives, the metric, a non-ML baseline. Often a heuristic is enough.\n2. **Collect and label data**: usually the slowest, costliest step.\n3. **Build features**: turn raw data into model inputs, identically for training and serving ([[training-serving-skew]]).\n4. **Train** and track every run ([[experiment-tracking]]).\n5. **Evaluate** offline against the current model, per slice, not just on average.\n6. **Deploy** from a [[model-registry]] via shadow, canary or A/B.\n7. **Monitor** inputs, predictions and outcomes ([[drift]]).\n8. **Retrain** on a schedule or a trigger, and go around again.\n\n*Hidden Technical Debt in Machine Learning Systems* (Sculley et al., NeurIPS 2015) drew the model code as a tiny box surrounded by configuration, data collection and verification, feature extraction, serving and monitoring. ML adds its own debt: *changing anything changes everything*, glue code, pipeline jungles and hidden feedback loops.\n\nGoogle's MLOps maturity levels measure how much of the loop is automated:\n\n- **Level 0**: manual notebooks; a person hands a model file to engineering.\n- **Level 1**: the *training pipeline* is deployed and retrains automatically (continuous training), with data and model validation.\n- **Level 2**: CI/CD tests and ships the pipeline itself.",
+    "es": "El **ciclo de vida de ML** es la vuelta completa que convierte datos en un modelo en producción y lo mantiene funcionando bien mientras el mundo cambia:\n\n1. **Definir el problema**: qué decisión mueve, con qué métrica y contra qué baseline sin ML. Muchas veces una heurística alcanza.\n2. **Recolectar y etiquetar datos**: casi siempre el paso más lento y caro.\n3. **Construir features**: convertir datos crudos en entradas del modelo, de forma idéntica en entrenamiento y en serving ([[training-serving-skew]]).\n4. **Entrenar** y registrar cada corrida ([[experiment-tracking]]).\n5. **Evaluar** offline contra el modelo actual, por segmento y no solo en promedio.\n6. **Desplegar** desde un [[model-registry]] con shadow, canary o A/B.\n7. **Monitorear** entradas, predicciones y resultados ([[drift]]).\n8. **Reentrenar** por calendario o por un disparador, y volver a empezar.\n\n*Hidden Technical Debt in Machine Learning Systems* (Sculley et al., NeurIPS 2015) dibujó el código del modelo como una caja diminuta rodeada de configuración, recolección y verificación de datos, extracción de features, serving y monitoreo. ML suma su propia deuda: *cambiar cualquier cosa cambia todo*, código pegamento, junglas de pipelines y ciclos de retroalimentación ocultos.\n\nLos niveles de madurez de MLOps de Google miden cuánto del ciclo está automatizado:\n\n- **Nivel 0**: notebooks manuales; una persona le entrega un archivo de modelo a ingeniería.\n- **Nivel 1**: se despliega el *pipeline de entrenamiento*, que reentrena solo (entrenamiento continuo) con validación de datos y de modelo.\n- **Nivel 2**: CI/CD prueba y despliega el propio pipeline."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  F[Frame problem] --> D[\"Collect & label data\"]\n  D --> FE[Build features]\n  FE --> T[Train]\n  T --> E{\"Beats current model?\"}\n  E -->|no| FE\n  E -->|yes| R[(Model registry)]\n  R --> DP[\"Deploy<br/>shadow, canary\"]\n  DP --> M[\"Monitor inputs<br/>and outcomes\"]\n  M -->|retrain trigger| D",
+    "caption": {
+      "en": "The loop never ends: monitoring feeds the next round of data, and the registry is the gate between experiment and production.",
+      "es": "El ciclo nunca termina: el monitoreo alimenta la siguiente ronda de datos y el registro es la compuerta entre experimento y producción."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A level-1 continuous-training pipeline with gates", "es": "Pipeline de entrenamiento continuo nivel 1 con compuertas" },
+    "source": "# Level 1 MLOps: you deploy this PIPELINE, not a model file.\n# It runs weekly or on a drift alert and promotes only a proven winner.\n# load_window, validate_schema, build_features, train, evaluate, registry\n# are your own pipeline steps.\n\ndef continuous_training(run_date: str) -> None:\n    raw = load_window(end=run_date, days=90)\n    report = validate_schema(raw, expected=\"schemas/orders_v7.json\")\n    if report.anomalies:  # bad data must stop the line, not train a bad model\n        raise RuntimeError(f\"data validation failed: {report.anomalies[:3]}\")\n\n    X, y = build_features(raw)  # the same code the serving path imports\n    model = train(X, y, params=\"configs/gbm.yaml\")\n\n    champion = registry.load(\"fraud-scorer\", stage=\"production\")\n    slices = [\"country\", \"new_user\"]\n    cand = evaluate(model, holdout=\"last_14_days\", slices=slices)\n    prod = evaluate(champion, holdout=\"last_14_days\", slices=slices)\n\n    # Promote only if better overall AND no slice regresses by > 1 point\n    if cand.auc > prod.auc and cand.worst_slice_drop(prod) < 0.01:\n        registry.register(model, name=\"fraud-scorer\", stage=\"staging\",\n                          metadata={\"data_end\": run_date, \"auc\": cand.auc})"
+  },
+  "example": {
+    "en": "A fraud team ships a gradient-boosted model at **level 0**: a data scientist trains in a notebook, hands over a pickle, and engineers wrap it in a service. Six months later fraudsters have changed tactics and precision has slid from 0.82 to 0.64. Nobody noticed, because nothing monitored outcomes, and retraining means two weeks of re-running notebooks. At **level 1** they deploy the training pipeline instead: weekly retrains on 90 days of data, schema validation, a champion–challenger gate per country, and an alert on chargeback rate. Retraining becomes a non-event, and the next tactic shift is caught in days.",
+    "es": "Un equipo antifraude lanza un modelo de gradient boosting en **nivel 0**: una científica de datos entrena en un notebook, entrega un pickle y los ingenieros lo envuelven en un servicio. Seis meses después los estafadores cambiaron de táctica y la precisión bajó de 0.82 a 0.64. Nadie lo notó, porque nada monitoreaba resultados, y reentrenar implica dos semanas de volver a correr notebooks. En **nivel 1** despliegan el pipeline de entrenamiento: reentrenamiento semanal con 90 días de datos, validación de esquema, una compuerta campeón–retador por país y una alerta sobre la tasa de contracargos. Reentrenar se vuelve rutina, y el siguiente cambio de táctica se detecta en días."
+  },
+  "pros": [
+    { "en": "Makes the hidden costs visible: data, validation and monitoring get owners and budgets.", "es": "Hace visibles los costos ocultos: datos, validación y monitoreo reciben dueños y presupuesto." },
+    { "en": "Continuous training turns model decay from an incident into a routine job.", "es": "El entrenamiento continuo convierte la degradación del modelo de incidente en tarea de rutina." },
+    { "en": "Levels 0/1/2 give a shared vocabulary to scope platform investment honestly.", "es": "Los niveles 0/1/2 dan un vocabulario común para dimensionar con honestidad la inversión en plataforma." }
+  ],
+  "cons": [
+    { "en": "Level 2 is real platform work: months of engineering rarely pay off for a single model.", "es": "El nivel 2 es trabajo de plataforma de verdad: meses de ingeniería rara vez se pagan con un solo modelo." },
+    { "en": "More moving parts: pipelines, registries and validators need their own maintenance and on-call.", "es": "Más piezas móviles: pipelines, registros y validadores necesitan su propio mantenimiento y guardia." },
+    { "en": "Automated retraining will faithfully learn from bad labels or a broken feedback loop.", "es": "El reentrenamiento automático aprende fielmente de etiquetas malas o de un ciclo de retroalimentación roto." }
+  ],
+  "whenToUse": {
+    "en": "Any model that will live longer than a quarter or whose inputs change. Automate in proportion to how often you retrain and how costly a silent failure is.",
+    "es": "Cualquier modelo que vaya a vivir más de un trimestre o cuyas entradas cambien. Automatiza en proporción a qué tan seguido reentrenas y cuánto cuesta una falla silenciosa."
+  },
+  "whenNotToUse": {
+    "en": "A one-off analysis or a stable batch model retrained yearly: a documented level-0 process plus monitoring is enough. Skip ML entirely when a heuristic meets the bar.",
+    "es": "Un análisis puntual o un modelo batch estable que se reentrena una vez al año: basta un proceso de nivel 0 documentado con monitoreo. Y evita ML del todo si una heurística cumple."
+  },
+  "numbers": [
+    { "en": "Google's maturity levels: 0 = manual, 1 = automated continuous training, 2 = CI/CD of the pipeline itself.", "es": "Niveles de madurez de Google: 0 = manual, 1 = entrenamiento continuo automatizado, 2 = CI/CD del propio pipeline." },
+    { "en": "Google's level-0 description: a new model version is deployed only a couple of times per year.", "es": "Según la descripción de Google del nivel 0, una nueva versión del modelo se despliega apenas un par de veces al año." },
+    { "en": "Sculley et al. (NeurIPS 2015): ML code is only a small fraction of a real-world ML system.", "es": "Sculley et al. (NeurIPS 2015): el código de ML es solo una pequeña fracción de un sistema de ML real." },
+    { "en": "Rules of ML #1: don't be afraid to launch a product without machine learning.", "es": "Rules of ML #1: no tengas miedo de lanzar un producto sin machine learning." }
+  ],
+  "pitfalls": [
+    { "en": "Deploying the model file instead of the pipeline that produced it: nobody can retrain it six months later.", "es": "Desplegar el archivo del modelo en lugar del pipeline que lo produjo: seis meses después nadie puede reentrenarlo." },
+    { "en": "Evaluating only the average metric; regressions hide in slices like new users or one country.", "es": "Evaluar solo la métrica promedio; las regresiones se esconden en segmentos como usuarios nuevos o un país." },
+    { "en": "Monitoring latency and errors but not prediction quality: the model fails silently behind HTTP 200.", "es": "Monitorear latencia y errores pero no la calidad de las predicciones: el modelo falla en silencio detrás de un HTTP 200." },
+    { "en": "Skipping framing: optimizing AUC when the decision needs calibrated probabilities at one threshold.", "es": "Saltarse la definición del problema: optimizar AUC cuando la decisión necesita probabilidades calibradas en un umbral." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "What's the difference between MLOps level 0, 1 and 2?", "es": "¿Cuál es la diferencia entre los niveles 0, 1 y 2 de MLOps?" },
+      "a": {
+        "en": "It's about what is automated. At level 0 a person trains in a notebook and hands a model artifact to engineering; releases are rare and nothing watches quality. At level 1 we deploy the training pipeline itself, so it retrains on new data automatically, with data validation, model validation against the champion, and a registry. Level 2 adds CI/CD for the pipeline code, so changing features or the algorithm is tested and shipped like any service. I move a model to level 1 once it needs retraining more than quarterly; level 2 pays off across many models or a platform team.",
+        "es": "Se trata de qué está automatizado. En nivel 0 una persona entrena en un notebook y le entrega un artefacto a ingeniería; los releases son raros y nadie vigila la calidad. En nivel 1 desplegamos el pipeline de entrenamiento, que reentrena solo con datos nuevos, con validación de datos, validación del modelo contra el campeón y un registro. El nivel 2 agrega CI/CD al código del pipeline, así que cambiar features o el algoritmo se prueba y despliega como cualquier servicio. Paso un modelo a nivel 1 cuando necesita reentrenarse más de una vez por trimestre; el nivel 2 se paga con muchos modelos o un equipo de plataforma."
+      }
+    },
+    {
+      "q": { "en": "What does \"Hidden Technical Debt in ML Systems\" argue, and what do you do about it?", "es": "¿Qué plantea \"Hidden Technical Debt in ML Systems\" y qué haces al respecto?" },
+      "a": {
+        "en": "That ML erodes the boundaries normal software relies on. A model entangles all its inputs, so shifting one feature changes everything; data dependencies are undeclared and harder to track than code; models create feedback loops with the users they influence; and most of the code is glue around a small core. What I do: budget for data validation, monitoring and pipeline ownership from day one, version data and configs like code, and treat the model as the cheap part to write and the expensive part to keep correct.",
+        "es": "Que ML erosiona los límites en los que se apoya el software normal. Un modelo entrelaza todas sus entradas, así que mover una feature cambia todo; las dependencias de datos no se declaran y son más difíciles de rastrear que las de código; los modelos crean ciclos de retroalimentación con los usuarios a los que influyen; y la mayor parte del código es pegamento alrededor de un núcleo chico. Lo que hago: presupuestar validación de datos, monitoreo y dueños del pipeline desde el primer día, versionar datos y configuración como código, y tratar el modelo como la parte barata de escribir y la cara de mantener correcta."
+      }
+    }
+  ],
+  "related": ["drift", "training-serving-skew", "model-registry", "experiment-tracking", "ml-monitoring", "llmops"],
+  "sources": [
+    { "title": "Sculley et al. — Hidden Technical Debt in Machine Learning Systems (NeurIPS 2015)", "url": "https://proceedings.neurips.cc/paper/2015/hash/86df7dcfd896fcaf2674f757a2463eba-Abstract.html" },
+    { "title": "Google Cloud — MLOps: Continuous delivery and automation pipelines in machine learning", "url": "https://cloud.google.com/architecture/mlops-continuous-delivery-and-automation-pipelines-in-machine-learning" },
+    { "title": "Google — Rules of Machine Learning", "url": "https://developers.google.com/machine-learning/guides/rules-of-ml" }
+  ]
+}

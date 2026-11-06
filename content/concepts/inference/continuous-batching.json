@@ -1,0 +1,88 @@
+{
+  "id": "continuous-batching",
+  "domain": "inference",
+  "level": "advanced",
+  "title": { "en": "Continuous batching", "es": "Continuous batching" },
+  "aliases": ["iteration-level batching", "iteration-level scheduling", "in-flight batching", "rolling batch", "Orca", "static batching", "max_num_seqs"],
+  "tldr": {
+    "en": "Re-form the batch at every decode step: finished sequences leave and queued requests take their slots at once, instead of everyone waiting for the longest member. It's the main reason engines get several-fold more throughput.",
+    "es": "Rearma el batch en cada paso de decode: las secuencias terminadas salen y los requests en cola toman su lugar al instante, en vez de que todos esperen al miembro más largo. Es la razón principal por la que los motores logran varias veces más throughput."
+  },
+  "analogy": {
+    "en": "A static batch is a tour bus that leaves only when full and doesn't return until the last tourist is done; continuous batching is a subway, where people board and leave at every stop.",
+    "es": "Un batch estático es un bus turístico que sale solo cuando se llena y no regresa hasta que el último turista termina; el continuous batching es un metro, donde la gente sube y baja en cada estación."
+  },
+  "explain": {
+    "en": "**Continuous batching** (also *iteration-level* or *in-flight* batching) decides who is in the batch at every forward pass, not once per batch.\n\nWith **static batching**, 8 requests start together and the batch runs until its *longest* member finishes. LLM output lengths vary wildly: if one answer needs 1,000 tokens and the rest 50, seven slots idle for ~950 steps, and new arrivals wait for the whole batch to drain, so their TTFT includes someone else's generation.\n\n**Orca** (OSDI 2022) moved scheduling to the granularity of one iteration. Every step, the scheduler:\n\n1. removes sequences that hit EOS or `max_tokens` and frees their KV cache;\n2. admits waiting requests if there is KV memory for them (their prefill joins this step, often chunked: [[prefill-decode]]);\n3. runs one forward pass that emits one token for every running sequence.\n\nDecode is bandwidth-bound, so an extra sequence in a step costs little until compute or memory runs out: a full batch is where throughput comes from. **KV memory is the real limit.** [[paged-attention]] allocates it in small blocks so more sequences fit; when it fills, the scheduler preempts a sequence and recomputes or swaps it back later.\n\nIt's the default in vLLM, SGLang, TGI, TensorRT-LLM (\"in-flight batching\") and LMDeploy. You don't choose it; you tune its caps: max sequences and max tokens per step.",
+    "es": "El **continuous batching** (también *iteration-level* o *in-flight batching*) decide quién está en el batch en cada pasada del modelo, no una vez por batch.\n\nCon **static batching**, 8 requests arrancan juntos y el batch corre hasta que termina su miembro *más largo*. La longitud de las salidas de un LLM varía muchísimo: si una respuesta necesita 1,000 tokens y las demás 50, siete lugares quedan ociosos durante ~950 pasos, y los requests que llegan esperan a que se vacíe todo el batch, así que su TTFT incluye la generación de otro.\n\n**Orca** (OSDI 2022) llevó la planificación a la granularidad de una iteración. En cada paso, el scheduler:\n\n1. saca las secuencias que llegaron a EOS o a `max_tokens` y libera su KV cache;\n2. admite requests en espera si hay memoria de KV para ellos (su prefill entra en este paso, a menudo en chunks: [[prefill-decode]]);\n3. ejecuta una pasada que emite un token para cada secuencia activa.\n\nEl decode está limitado por ancho de banda, así que sumar una secuencia a un paso cuesta poco hasta que se acaba el cómputo o la memoria: el throughput sale de mantener el batch lleno. **La memoria de KV es el límite real.** [[paged-attention]] la asigna en bloques chicos para que entren más secuencias; cuando se llena, el scheduler hace preemption de una secuencia y luego la recalcula o la trae de vuelta.\n\nEs el comportamiento por defecto en vLLM, SGLang, TGI, TensorRT-LLM (\"in-flight batching\") y LMDeploy. No eliges usarlo; ajustas sus límites: máximo de secuencias y máximo de tokens por paso."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  Q[(Request queue)] --> S{\"Scheduler<br/>every iteration\"}\n  S -->|admit if KV fits| B[Running batch]\n  S -->|KV full| P[Preempt or wait]\n  B --> F[\"Forward pass<br/>+1 token each\"]\n  F --> D{Sequence done?}\n  D -->|EOS or max_tokens| R[Return and free KV]\n  D -->|no| B\n  R -.->|slot freed| S",
+    "caption": {
+      "en": "Membership is decided every iteration: a finished sequence frees its slot and KV at once, and the next request takes it on the following step.",
+      "es": "La membresía se decide en cada iteración: una secuencia terminada libera al instante su lugar y su KV, y el siguiente request lo ocupa en el paso siguiente."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Toy simulation: static vs continuous batching", "es": "Simulación de juguete: batching estático vs. continuo" },
+    "source": "import random\nfrom collections import deque\n\ndef static_steps(lengths, batch):\n    # each batch runs until its LONGEST member finishes; the rest emit padding\n    return sum(max(lengths[i:i + batch]) for i in range(0, len(lengths), batch))\n\ndef continuous_steps(lengths, batch):\n    queue, running, steps = deque(lengths), [], 0\n    while queue or running:\n        while queue and len(running) < batch:        # refill free slots every step\n            running.append(queue.popleft())\n        running = [r - 1 for r in running if r > 1]  # one token each; drop finished\n        steps += 1\n    return steps\n\n# Toy model: decode steps only (no prefill, unlimited KV), 32 slots\nrng = random.Random(0)\nlengths = [rng.choice([30, 80, 150, 300, 600, 1500]) for _ in range(1024)]\ns, c, useful = static_steps(lengths, 32), continuous_steps(lengths, 32), sum(lengths)\nprint(f\"static:     {s} steps, slot utilization {useful / (s * 32):.0%}\")  # 48000, 29%\nprint(f\"continuous: {c} steps, slot utilization {useful / (c * 32):.0%}\")  # 14920, 94%\nprint(f\"speedup: {s / c:.1f}x\")                                            # 3.2x\n\n# In vLLM it's built in; you tune the caps, not the algorithm:\n#   vllm serve $MODEL --max-num-seqs 128 --max-num-batched-tokens 8192"
+  },
+  "example": {
+    "en": "An internal chat API served Llama-3-8B with Hugging Face `generate()` behind FastAPI, in fixed batches of 16. Answers ranged from 20 to 1,500 tokens, so each batch ran as long as its longest answer while finished rows generated padding. `nvidia-smi` showed the GPU busy, yet most slots did no useful work, and p95 TTFT hit ~6 s because new requests waited for the batch to drain. Moving the same GPU to vLLM raised throughput several-fold and cut p95 TTFT below 1 s, with no client changes.",
+    "es": "Una API de chat interna servía Llama-3-8B con `generate()` de Hugging Face detrás de FastAPI, en batches fijos de 16. Las respuestas iban de 20 a 1,500 tokens, así que cada batch duraba lo que su respuesta más larga mientras las filas terminadas generaban padding. `nvidia-smi` mostraba la GPU ocupada, pero la mayoría de los lugares no hacía trabajo útil, y el TTFT p95 llegaba a ~6 s porque los requests nuevos esperaban a que se vaciara el batch. Pasar la misma GPU a vLLM multiplicó varias veces el throughput y bajó el TTFT p95 a menos de 1 s, sin cambios en los clientes."
+  },
+  "pros": [
+    { "en": "Several-fold more throughput on the same GPUs: no slot idles waiting for the longest sequence.", "es": "Varias veces más throughput con las mismas GPUs: ningún lugar queda ocioso esperando a la secuencia más larga." },
+    { "en": "Lower TTFT under load: new requests join at the next step instead of waiting for a batch to drain.", "es": "Menor TTFT bajo carga: los requests nuevos entran en el siguiente paso en vez de esperar a que se vacíe un batch." },
+    { "en": "Server-side only: no client changes, and every major engine ships it on by default.", "es": "Es solo del lado del servidor: no cambia nada en los clientes y todos los motores importantes lo traen activado." }
+  ],
+  "cons": [
+    { "en": "Per-user TPOT grows with batch size; you must cap concurrency to hold the latency SLO.", "es": "El TPOT de cada usuario crece con el tamaño del batch; tienes que limitar la concurrencia para cumplir el SLO de latencia." },
+    { "en": "New prefills interfere with running decodes, causing inter-token latency spikes unless prefill is chunked.", "es": "Los prefills nuevos interfieren con los decodes en curso y causan picos de latencia entre tokens, salvo que el prefill vaya en chunks." },
+    { "en": "Needs dynamic KV management; under memory pressure, preemption causes sudden latency spikes.", "es": "Requiere gestión dinámica del KV; con presión de memoria, la preemption provoca picos repentinos de latencia." },
+    { "en": "Batch composition changes every step, so outputs can vary slightly even at temperature 0 unless kernels are batch-invariant.", "es": "La composición del batch cambia en cada paso, así que las salidas pueden variar un poco incluso con temperature 0, salvo que los kernels sean invariantes al batch." }
+  ],
+  "whenToUse": {
+    "en": "Any online LLM serving with concurrent users. Use an engine that has it (vLLM, SGLang, TGI, TensorRT-LLM) instead of wrapping `model.generate()` in a web server, and tune its caps against your TPOT SLO.",
+    "es": "Cualquier serving de LLM online con usuarios concurrentes. Usa un motor que lo tenga (vLLM, SGLang, TGI, TensorRT-LLM) en vez de envolver `model.generate()` en un servidor web, y ajusta sus límites según tu SLO de TPOT."
+  },
+  "whenNotToUse": {
+    "en": "It buys nothing at batch 1 (single-user local or on-device). If you need bitwise-reproducible outputs, varying batch composition breaks that unless the engine offers a batch-invariant mode.",
+    "es": "No aporta nada con batch 1 (un solo usuario local o en el dispositivo). Si necesitas salidas reproducibles bit a bit, la composición variable del batch lo impide, salvo que el motor ofrezca un modo invariante al batch."
+  },
+  "numbers": [
+    { "en": "Orca: 36.9× throughput over NVIDIA FasterTransformer at the same latency (GPT-3 175B).", "es": "Orca: 36.9× más throughput que NVIDIA FasterTransformer con la misma latencia (GPT-3 175B)." },
+    { "en": "Anyscale benchmark: up to ~23× throughput vs naive static batching (with vLLM), while also lowering p50 latency.", "es": "Benchmark de Anyscale: hasta ~23× más throughput que un static batching ingenuo (con vLLM), y además menor latencia p50." },
+    { "en": "vLLM (PagedAttention + continuous batching): 2–4× throughput over FasterTransformer and Orca at the same latency.", "es": "vLLM (PagedAttention + continuous batching): 2–4× más throughput que FasterTransformer y Orca con la misma latencia." },
+    { "en": "Static batch cost = longest sequence × batch size: a 50-token answer next to a 1,000-token one wastes ~95% of its slot.", "es": "Costo de un batch estático = secuencia más larga × tamaño del batch: una respuesta de 50 tokens junto a una de 1,000 desperdicia ~95% de su lugar." }
+  ],
+  "pitfalls": [
+    { "en": "Serving `model.generate()` behind a web server with a lock or fixed batches: the GPU looks busy but delivers a fraction of its capacity.", "es": "Servir `model.generate()` detrás de un servidor web con un lock o batches fijos: la GPU parece ocupada pero entrega una fracción de su capacidad." },
+    { "en": "Setting max batch size for peak throughput and blowing the TPOT SLO; derive it from a goodput sweep instead.", "es": "Fijar el tamaño máximo de batch por throughput pico y romper el SLO de TPOT; mejor derívalo de un barrido de goodput." },
+    { "en": "Benchmarking with identical output lengths, which hides the static-batching penalty; use a real length distribution.", "es": "Hacer benchmarks con salidas de longitud idéntica, lo que esconde la penalización del static batching; usa una distribución real de longitudes." },
+    { "en": "Ignoring KV usage and preemption counters: when they climb, latency spikes before throughput drops.", "es": "Ignorar el uso de KV y los contadores de preemption: cuando suben, la latencia se dispara antes de que caiga el throughput." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Explain continuous batching and why it improves throughput so much.", "es": "Explica el continuous batching y por qué mejora tanto el throughput." },
+      "a": {
+        "en": "Static batching fixes the batch for its whole lifetime, so it runs as long as its longest output while finished slots generate padding and new requests queue outside. Continuous batching re-decides membership every iteration: done sequences leave, waiting ones join. Since decode is bandwidth-bound, extra sequences in a step are nearly free, so keeping slots full turns into throughput, often several times more. The catches are memory and latency: admission is limited by KV cache, so it pairs with paged attention, and bigger batches raise TPOT, so I cap concurrency at the SLO.",
+        "es": "El static batching fija el batch durante toda su vida, así que dura lo que su salida más larga mientras los lugares terminados generan padding y los requests nuevos esperan afuera. El continuous batching vuelve a decidir quién entra en cada iteración: las secuencias terminadas salen y las que esperan entran. Como el decode está limitado por ancho de banda, sumar secuencias a un paso es casi gratis, así que mantener los lugares llenos se convierte en throughput, a menudo varias veces más. Los límites son memoria y latencia: la admisión depende del KV cache, por eso va de la mano con paged attention, y los batches más grandes suben el TPOT, así que limito la concurrencia según el SLO."
+      }
+    },
+    {
+      "q": { "en": "p99 inter-token latency spikes whenever someone sends a long document. Why, and what do you do?", "es": "El ITL p99 se dispara cada vez que alguien envía un documento largo. ¿Por qué y qué haces?" },
+      "a": {
+        "en": "With continuous batching, the new request's prefill runs in the same iteration as everyone's decode, so a 30k-token prefill turns a ~30 ms step into about a second and every stream freezes. First fix: chunked prefill with a tokens-per-step budget, so the document is processed over many steps alongside the decodes. If long prompts are frequent, I'd route them to a separate pool, or disaggregate prefill and decode at larger scale. I'd also watch preemptions: long contexts eat KV and can evict running sequences.",
+        "es": "Con continuous batching, el prefill del request nuevo corre en la misma iteración que el decode de todos, así que un prefill de 30k tokens convierte un paso de ~30 ms en alrededor de un segundo y todos los streams se congelan. Primera solución: chunked prefill con un presupuesto de tokens por paso, para que el documento se procese en muchos pasos junto con los decodes. Si los prompts largos son frecuentes, los mandaría a un pool separado, o desagregaría prefill y decode a mayor escala. También vigilaría las preemptions: los contextos largos consumen KV y pueden desalojar secuencias en curso."
+      }
+    }
+  ],
+  "related": ["paged-attention", "kv-cache", "prefill-decode", "inference-metrics", "serving-stack", "nondeterminism"],
+  "sources": [
+    { "title": "Yu et al. — Orca: A Distributed Serving System for Transformer-Based Generative Models (OSDI 2022)", "url": "https://www.usenix.org/conference/osdi22/presentation/yu" },
+    { "title": "Anyscale — How continuous batching enables 23x throughput in LLM inference", "url": "https://www.anyscale.com/blog/continuous-batching-llm-inference" },
+    { "title": "Kwon et al. — Efficient Memory Management for LLM Serving with PagedAttention (vLLM)", "url": "https://arxiv.org/abs/2309.06180" }
+  ]
+}

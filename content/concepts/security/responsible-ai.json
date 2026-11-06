@@ -1,0 +1,94 @@
+{
+  "id": "responsible-ai",
+  "domain": "security",
+  "level": "core",
+  "title": { "en": "Responsible AI: bias, fairness, transparency", "es": "IA responsable: sesgo, equidad, transparencia" },
+  "aliases": ["RAI", "AI fairness", "algorithmic bias", "disparate impact", "four-fifths rule", "model cards", "datasheets for datasets", "system cards"],
+  "tldr": {
+    "en": "Measure quality per user group, not just on average; document what the system is for and where it fails; keep humans able to intervene; and keep monitoring after launch.",
+    "es": "Mide la calidad por grupo de usuarios, no solo en promedio; documenta para qué sirve el sistema y dónde falla; deja que las personas puedan intervenir y sigue monitoreando después del lanzamiento."
+  },
+  "analogy": {
+    "en": "A nutrition label plus food-safety inspections: the label (model card) says what's inside and who shouldn't eat it; inspections (slice evals, monitoring) check it stays true batch after batch.",
+    "es": "Una etiqueta nutricional más inspecciones sanitarias: la etiqueta (model card) dice qué contiene y quién no debería comerlo; las inspecciones (evals por segmento, monitoreo) verifican que siga siendo cierto lote tras lote."
+  },
+  "explain": {
+    "en": "**Responsible AI** means making sure a system works well, and fails fairly and visibly, for everyone it affects. Four parts:\n\n- **Fairness, measured by slice.** Averages hide gaps. Break metrics down by group (language, region, age band, gender where lawful, device, disability) and compare error rates, not just accuracy. For decisions about people, check **disparate impact**: each group's selection rate ÷ the top group's; under 0.8 (the US *four-fifths rule*) is a red flag. Fairness definitions conflict: when base rates differ you can't equalize calibration and error rates at once, so pick one per use case and write down why.\n- **Transparency artifacts.** **Model cards** (Mitchell et al., 2019): intended and out-of-scope uses, per-group evaluation, limitations. **Datasheets for datasets** (Gebru et al.): origin, collection, consent, known gaps. **System cards**: the whole product, meaning model plus prompts, tools and guardrails.\n- **Human oversight and explainability.** Affected people can contest a decision and operators can override it. An LLM's chain-of-thought is not guaranteed to be a faithful explanation; prefer citations to sources and decision logs.\n- **Accessibility**: screen readers, plain language, non-English users.\n\nA lightweight program has four steps: an **impact assessment** at intake, a **review** sized to the risk, **documentation** that ships with the system, and **monitoring** per slice after launch.",
+    "es": "**IA responsable** significa asegurarte de que un sistema funcione bien, y falle de forma justa y visible, para todas las personas a las que afecta. Tiene cuatro partes:\n\n- **Equidad, medida por segmento.** Los promedios esconden brechas. Desglosa las métricas por grupo (idioma, región, rango de edad, género donde sea legal, dispositivo, discapacidad) y compara tasas de error, no solo la exactitud. Para decisiones sobre personas, revisa el **impacto dispar**: la tasa de selección de cada grupo ÷ la del grupo más alto; menos de 0.8 (la *regla de los cuatro quintos* de EE. UU.) es una señal de alarma. Las definiciones de equidad chocan entre sí: si las tasas base difieren, no puedes igualar a la vez la calibración y las tasas de error, así que elige una por caso de uso y documenta por qué.\n- **Artefactos de transparencia.** **Model cards** (Mitchell et al., 2019): usos previstos y fuera de alcance, evaluación por grupo, limitaciones. **Datasheets for datasets** (Gebru et al.): origen, recolección, consentimiento, vacíos conocidos. **System cards**: el producto completo, es decir el modelo más prompts, herramientas y guardrails.\n- **Supervisión humana y explicabilidad.** Las personas afectadas pueden impugnar una decisión y los operadores pueden anularla. El chain-of-thought de un LLM no garantiza ser una explicación fiel; prefiere citas a las fuentes y logs de decisiones.\n- **Accesibilidad**: lectores de pantalla, lenguaje claro, usuarios que no hablan inglés.\n\nUn programa liviano tiene cuatro pasos: una **evaluación de impacto** al inicio, una **revisión** proporcional al riesgo, **documentación** que se publica junto con el sistema y **monitoreo** por segmento después del lanzamiento."
+  },
+  "diagram": {
+    "code": "flowchart LR\n  I[New AI use case] --> A[\"Impact assessment<br/>(who is affected?)\"]\n  A --> T{Risk tier}\n  T -->|low| C[\"Checklist + owner\"]\n  T -->|high| R[Review board]\n  C --> E[\"Slice evals<br/>by group\"]\n  R --> E\n  E --> D[\"Model / system card\"]\n  D --> L[Launch with oversight]\n  L --> M[\"Monitor per slice<br/>+ feedback channel\"]\n  M -->|gap or incident| E",
+    "caption": {
+      "en": "Review depth scales with risk, but every system gets slice evals, a card and per-slice monitoring that loops back into evals.",
+      "es": "La profundidad de la revisión depende del riesgo, pero todo sistema lleva evals por segmento, una card y monitoreo por segmento que vuelve a las evals."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Per-group metrics and a four-fifths gate with Fairlearn", "es": "Métricas por grupo y un control de cuatro quintos con Fairlearn" },
+    "source": "from fairlearn.metrics import MetricFrame, selection_rate, false_negative_rate\nfrom sklearn.metrics import accuracy_score\n\n# y_pred: 1 = shortlisted by the screening model\nmf = MetricFrame(\n    metrics={\n        \"accuracy\": accuracy_score,\n        \"selection_rate\": selection_rate,\n        \"false_negative_rate\": false_negative_rate,  # qualified but rejected\n    },\n    y_true=y_true,\n    y_pred=y_pred,\n    sensitive_features=df[\"age_band\"],\n)\nprint(mf.overall)        # the number everyone reports\nprint(mf.by_group)       # the table that average hides\nprint(mf.difference())   # worst gap between groups, per metric\n\n# Disparate impact: lowest selection rate / highest (four-fifths rule)\nrates = mf.by_group[\"selection_rate\"]\nratio = rates.min() / rates.max()\nif ratio < 0.8:\n    raise SystemExit(f\"Disparate impact ratio {ratio:.2f} < 0.8: block release\")"
+  },
+  "example": {
+    "en": "A résumé-screening assistant agrees with recruiters 91% of the time overall. Sliced by language, it's 93% on CVs by native English speakers and 78% on CVs by non-native speakers, and its shortlist rate for applicants over 50 is 0.62× that of the 25–34 band, below the 0.8 threshold. The team drops graduation years from the input, adds counterfactual tests (same CV, swapped name and age), re-evaluates per slice, ships a model card stating \"decision support only: a recruiter reviews every rejection\", and adds a monthly per-slice dashboard.",
+    "es": "Un asistente de preselección de CVs coincide con los reclutadores el 91% de las veces en general. Segmentado por idioma, llega a 93% en CVs de hablantes nativos de inglés y a 78% en los de hablantes no nativos, y su tasa de preselección para mayores de 50 es 0.62× la del rango de 25–34, debajo del umbral de 0.8. El equipo quita los años de egreso de la entrada, agrega pruebas contrafactuales (mismo CV con otro nombre y otra edad), vuelve a evaluar por segmento, publica una model card que dice \"solo apoyo a la decisión: un reclutador revisa cada rechazo\" y suma un tablero mensual por segmento."
+  },
+  "pros": [
+    { "en": "Catches failures that averages hide, before users, journalists or regulators do.", "es": "Detecta fallas que los promedios esconden, antes que los usuarios, la prensa o los reguladores." },
+    { "en": "Model and system cards speed up reviews, procurement and audits, and double as onboarding docs.", "es": "Las model cards y system cards aceleran revisiones, compras y auditorías, y sirven también para la inducción del equipo." },
+    { "en": "The same artifacts become evidence for the EU AI Act and NIST AI RMF.", "es": "Los mismos artefactos sirven como evidencia para el EU AI Act y el NIST AI RMF." }
+  ],
+  "cons": [
+    { "en": "Needs group labels you often don't have, or may not lawfully collect.", "es": "Requiere etiquetas de grupo que muchas veces no tienes o que no puedes recolectar legalmente." },
+    { "en": "Fairness metrics conflict; choosing one is a value judgment someone must own.", "es": "Las métricas de equidad chocan entre sí; elegir una es un juicio de valor del que alguien debe hacerse cargo." },
+    { "en": "Small slices give noisy metrics; you need enough examples per group.", "es": "Los segmentos chicos dan métricas ruidosas; necesitas suficientes ejemplos por grupo." }
+  ],
+  "whenToUse": {
+    "en": "Any system that ranks, scores or decides about people (hiring, credit, healthcare, moderation, education) or serves a diverse user base. Scale the depth of review to the risk.",
+    "es": "Cualquier sistema que ordena, puntúa o decide sobre personas (contratación, crédito, salud, moderación, educación) o que atiende a usuarios diversos. Ajusta la profundidad de la revisión al riesgo."
+  },
+  "whenNotToUse": {
+    "en": "A full review board for an internal log summarizer with no effect on people is pure overhead; a short checklist and a named owner suffice.",
+    "es": "Un comité de revisión completo para un resumidor interno de logs que no afecta a personas es pura burocracia; alcanza con una lista corta y un responsable con nombre."
+  },
+  "numbers": [
+    { "en": "Four-fifths rule (US EEOC guidelines, 1978): a group's selection rate below 80% of the top group's signals adverse impact.", "es": "Regla de los cuatro quintos (lineamientos de la EEOC de EE. UU., 1978): una tasa de selección menor al 80% de la del grupo más alto indica impacto adverso." },
+    { "en": "Gender Shades (2018): commercial gender classifiers erred up to 34.7% on darker-skinned women vs 0.8% on lighter-skinned men.", "es": "Gender Shades (2018): clasificadores comerciales de género fallaban hasta un 34.7% con mujeres de piel oscura frente a 0.8% con hombres de piel clara." },
+    { "en": "Model cards: Mitchell et al., 2019. Datasheets for datasets: Gebru et al., 2018.", "es": "Las model cards las propusieron Mitchell et al. en 2019; las datasheets para datasets, Gebru et al. en 2018." }
+  ],
+  "pitfalls": [
+    { "en": "Reporting one aggregate metric and calling the system fair.", "es": "Reportar una sola métrica agregada y declarar que el sistema es justo." },
+    { "en": "\"Fairness through unawareness\": dropping the protected attribute while zip code or graduation year still proxies for it.", "es": "\"Equidad por desconocimiento\": quitar el atributo protegido mientras el código postal o el año de egreso lo siguen delatando." },
+    { "en": "Writing the model card once at launch and never updating it.", "es": "Escribir la model card una vez al lanzar y nunca actualizarla." },
+    { "en": "Treating an LLM's stated rationale as an explanation of how the decision was actually made.", "es": "Tomar la justificación que da un LLM como explicación de cómo se tomó realmente la decisión." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you assess fairness for an LLM feature that prioritizes support tickets?", "es": "¿Cómo evaluarías la equidad de una función con LLM que prioriza tickets de soporte?" },
+      "a": {
+        "en": "First I define who could be harmed: customers whose urgent tickets get deprioritized. Then the slices that matter: language, region, plan tier, writing style. I build an eval set with enough examples per slice and measure the false-negative rate on truly urgent tickets per slice, not overall accuracy. I add counterfactual tests, the same ticket with a different name or dialect. If a slice lags, I fix data or prompts or route it to a human queue, and I monitor per-slice metrics in production because the input mix drifts.",
+        "es": "Primero defino quién podría salir perjudicado: clientes cuyos tickets urgentes quedan relegados. Después, los segmentos que importan: idioma, región, plan, estilo de escritura. Armo un set de evaluación con suficientes ejemplos por segmento y mido la tasa de falsos negativos sobre tickets realmente urgentes en cada segmento, no la exactitud global. Agrego pruebas contrafactuales: el mismo ticket con otro nombre o dialecto. Si un segmento queda atrás, corrijo datos o prompts o lo derivo a una cola humana, y monitoreo las métricas por segmento en producción porque la mezcla de entradas cambia."
+      }
+    },
+    {
+      "q": { "en": "What goes in a model card versus a system card?", "es": "¿Qué va en una model card y qué en una system card?" },
+      "a": {
+        "en": "A model card documents one model: intended uses and explicit out-of-scope uses, a training-data summary, evaluation broken down by relevant groups, known limitations. A system card documents the deployed product, because that's what users experience: the model plus prompts, retrieval sources, tools, guardrails, human oversight and monitoring. When we build on a vendor LLM, the system card is the one I own; the vendor's model card is an input to it, not a substitute.",
+        "es": "Una model card documenta un modelo: usos previstos y usos explícitamente fuera de alcance, un resumen de los datos de entrenamiento, la evaluación desglosada por grupos relevantes y las limitaciones conocidas. Una system card documenta el producto desplegado, porque eso es lo que viven los usuarios: el modelo más prompts, fuentes de recuperación, herramientas, guardrails, supervisión humana y monitoreo. Cuando construimos sobre un LLM de un proveedor, la system card es la que me toca a mí; la model card del proveedor es un insumo, no un reemplazo."
+      }
+    },
+    {
+      "q": { "en": "How do you run responsible AI without slowing every team down?", "es": "¿Cómo haces IA responsable sin frenar a todos los equipos?" },
+      "a": {
+        "en": "I make it tiered and mostly self-serve. Every use case fills a 15-minute impact assessment, and most land in a low tier with a checklist and an accountable owner. Only systems that decide about people or act autonomously go to a review board, with a fixed turnaround. Card templates live next to the code, slice evals run in the same CI as quality evals, and monitoring reuses the observability stack. Skipping it isn't cheaper: rework after a public failure costs far more than a review.",
+        "es": "Lo hago por niveles y casi todo autoservicio. Cada caso de uso completa una evaluación de impacto de 15 minutos, y la mayoría cae en un nivel bajo con una lista de verificación y un responsable. Solo los sistemas que deciden sobre personas o actúan de forma autónoma pasan por un comité de revisión, con un plazo de respuesta fijo. Las plantillas de cards viven junto al código, las evals por segmento corren en el mismo CI que las de calidad y el monitoreo reutiliza el stack de observabilidad. Saltárselo no sale más barato: rehacer después de una falla pública cuesta mucho más que una revisión."
+      }
+    }
+  ],
+  "related": ["eu-ai-act", "ai-risk-frameworks", "red-teaming", "human-in-the-loop", "golden-datasets", "classification-metrics"],
+  "sources": [
+    { "title": "Mitchell et al. — Model Cards for Model Reporting", "url": "https://arxiv.org/abs/1810.03993" },
+    { "title": "Gebru et al. — Datasheets for Datasets", "url": "https://arxiv.org/abs/1803.09010" },
+    { "title": "Buolamwini & Gebru — Gender Shades (FAT* 2018)", "url": "https://proceedings.mlr.press/v81/buolamwini18a.html" },
+    { "title": "Fairlearn — user guide", "url": "https://fairlearn.org/" }
+  ]
+}

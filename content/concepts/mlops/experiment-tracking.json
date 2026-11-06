@@ -1,0 +1,87 @@
+{
+  "id": "experiment-tracking",
+  "domain": "mlops",
+  "level": "core",
+  "title": { "en": "Experiment tracking & reproducibility", "es": "Experiment tracking y reproducibilidad" },
+  "aliases": ["experiment tracking", "MLflow Tracking", "Weights & Biases", "W&B", "DVC", "lakeFS", "reproducibility", "run comparison"],
+  "tldr": {
+    "en": "Log every run's code commit, data version, config, metrics and artifacts automatically, so any result can be compared, explained and rebuilt months later.",
+    "es": "Registra automáticamente el commit, la versión de datos, la configuración, las métricas y los artefactos de cada corrida, para poder comparar, explicar y reconstruir cualquier resultado meses después."
+  },
+  "analogy": {
+    "en": "A lab notebook that writes itself: each experiment records the recipe, the batch number of every ingredient and the result, so anyone can bake the same cake again.",
+    "es": "Un cuaderno de laboratorio que se escribe solo: cada experimento anota la receta, el lote de cada ingrediente y el resultado, para que cualquiera pueda volver a hornear el mismo pastel."
+  },
+  "explain": {
+    "en": "**Experiment tracking** records, for every training or eval run, everything needed to answer *what produced this number?*:\n\n- **params**: hyperparameters, config, model or prompt id;\n- **metrics**: loss curves, eval scores, per-slice results;\n- **artifacts**: model files, plots, predictions;\n- **provenance**: git commit, data version, environment (lockfile or container digest).\n\nA tracking server (MLflow, Weights & Biases) stores runs so you can sort, diff and plot hundreds of them instead of digging through notebooks.\n\n**Reproducibility** needs three pinned inputs plus seeds: code (commit), **data** (an immutable snapshot via DVC, lakeFS or table time travel) and environment (image digest). Even then GPU kernels can be nondeterministic, so expect *statistically* equivalent results, not bit-identical ones.\n\nFor LLM apps a run is a prompt + model + retrieval config scored on a fixed eval set. Log the config, the eval set version, per-example outputs and judge scores, so 'the new prompt is better' becomes a measured claim. Winners get promoted to the [[model-registry]].",
+    "es": "El **experiment tracking** registra, en cada corrida de entrenamiento o evaluación, todo lo necesario para responder *¿qué produjo este número?*:\n\n- **parámetros**: hiperparámetros, configuración, id del modelo o del prompt;\n- **métricas**: curvas de pérdida, puntajes de eval, resultados por segmento;\n- **artefactos**: archivos del modelo, gráficas, predicciones;\n- **procedencia**: commit de git, versión de los datos, entorno (lockfile o digest del contenedor).\n\nUn servidor de tracking (MLflow, Weights & Biases) guarda las corridas para que puedas ordenar, comparar y graficar cientos de ellas en vez de escarbar en notebooks.\n\nLa **reproducibilidad** necesita tres entradas fijadas más las semillas: código (commit), **datos** (un snapshot inmutable con DVC, lakeFS o time travel de la tabla) y entorno (digest de la imagen). Aun así, los kernels de GPU pueden ser no deterministas, así que espera resultados *estadísticamente* equivalentes, no idénticos bit a bit.\n\nEn apps con LLM, una corrida es una configuración de prompt + modelo + recuperación evaluada sobre un eval set fijo. Registra la configuración, la versión del eval set, las salidas por ejemplo y los puntajes del juez, para que 'el prompt nuevo es mejor' sea una afirmación medida. Los ganadores se promueven al [[model-registry]]."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  C[Code commit] --> R[Training or eval run]\n  D[(\"Data snapshot<br/>DVC / lakeFS\")] --> R\n  E[Env image digest] --> R\n  P[\"Params + seed\"] --> R\n  R -->|log| T[(Tracking server)]\n  T --> M[\"Compare runs<br/>metrics, slices\"]\n  M -->|best run| G[(Model registry)]",
+    "caption": {
+      "en": "Pin the four inputs of a run, log its outputs, and the best run carries its lineage into the registry.",
+      "es": "Fija las cuatro entradas de una corrida, registra sus salidas, y la mejor corrida lleva su linaje al registry."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A tracked, reproducible run with MLflow", "es": "Una corrida rastreada y reproducible con MLflow" },
+    "source": "import subprocess\nimport mlflow\n\nmlflow.set_experiment(\"churn-model\")\nmlflow.autolog()  # captures framework params, metrics and the model\n\nwith mlflow.start_run():\n    commit = subprocess.check_output([\"git\", \"rev-parse\", \"HEAD\"], text=True).strip()\n    mlflow.set_tags({\n        \"git_commit\": commit,\n        \"data_version\": \"lakefs://ml-data/a1b2c3d/churn/\",  # immutable commit, not a branch\n        \"image\": \"ghcr.io/acme/train@sha256:9f2c...\",\n        \"eval_set\": \"churn-eval-v3\",                       # frozen eval set\n    })\n    mlflow.log_params({\"seed\": 42, \"max_depth\": 6, \"lr\": 0.05})\n\n    model = train(seed=42, max_depth=6, lr=0.05)\n    scores = evaluate(model, eval_set=\"churn-eval-v3\")\n    mlflow.log_metrics({\"auc\": scores.auc, \"auc_new_users\": scores.auc_new})\n\n# Later: rank every run by the metric that matters\nbest = mlflow.search_runs(order_by=[\"metrics.auc DESC\"], max_results=5)"
+  },
+  "example": {
+    "en": "Two engineers report AUC 0.87 and 0.84 for 'the same' churn model. The tracking server diffs both runs in a minute: same commit and params, different `data_version`; one trained before a backfill removed duplicated churn labels. Without tracking that is a week of 'works on my machine'. For an LLM support bot, the team logs 14 prompt variants on a 300-example eval set and only ships the winner after checking its 4-point gain exceeds the spread between reruns of the same prompt.",
+    "es": "Dos ingenieros reportan AUC de 0.87 y 0.84 para 'el mismo' modelo de churn. El servidor de tracking compara ambas corridas en un minuto: mismo commit y parámetros, distinto `data_version`; una se entrenó antes de un backfill que eliminó etiquetas de churn duplicadas. Sin tracking, eso es una semana de 'en mi máquina funciona'. Para un bot de soporte con LLM, el equipo registra 14 variantes de prompt sobre un eval set de 300 ejemplos y solo publica la ganadora tras comprobar que su mejora de 4 puntos supera la dispersión entre repeticiones del mismo prompt."
+  },
+  "pros": [
+    { "en": "Turns 'I think v3 was better' into a sortable, diffable table.", "es": "Convierte 'creo que la v3 era mejor' en una tabla que se puede ordenar y comparar." },
+    { "en": "Explains regressions fast: diff commit, data version and params between two runs.", "es": "Explica regresiones rápido: comparas commit, versión de datos y parámetros entre dos corridas." },
+    { "en": "Feeds lineage to the model registry and to audits at no extra effort.", "es": "Alimenta el linaje del model registry y de las auditorías sin esfuerzo extra." }
+  ],
+  "cons": [
+    { "en": "Only as complete as the discipline: untracked notebook runs still leak into decisions.", "es": "Es tan completo como la disciplina: las corridas de notebook sin rastrear igual se cuelan en las decisiones." },
+    { "en": "Versioning large datasets costs storage and tooling effort.", "es": "Versionar datasets grandes cuesta almacenamiento y esfuerzo de herramientas." },
+    { "en": "Bit-exact reproducibility on GPUs is often impossible; you settle for statistical equivalence.", "es": "La reproducibilidad exacta bit a bit en GPUs suele ser imposible; te conformas con equivalencia estadística." }
+  ],
+  "whenToUse": {
+    "en": "From the first model anyone will compare, and for every prompt or model change in an LLM app that is judged by an eval score.",
+    "es": "Desde el primer modelo que alguien vaya a comparar, y en cada cambio de prompt o de modelo en una app con LLM que se juzgue con un puntaje de eval."
+  },
+  "whenNotToUse": {
+    "en": "Quick throwaway exploration in a notebook; but the moment a result feeds a decision or a slide, rerun it tracked.",
+    "es": "Exploración rápida y descartable en un notebook; pero en cuanto un resultado alimenta una decisión o una diapositiva, vuelve a correrlo con tracking."
+  },
+  "numbers": [
+    { "en": "With 100 eval examples at ~80% accuracy, the 95% confidence interval is about ±8 points: a 2-point 'win' is noise.", "es": "Con 100 ejemplos de eval y ~80% de exactitud, el intervalo de confianza del 95% es de unos ±8 puntos: una 'mejora' de 2 puntos es ruido." },
+    { "en": "Rule of thumb: compare model changes across 3–5 seeds and report mean ± std.", "es": "Regla práctica: compara cambios de modelo con 3–5 semillas y reporta media ± desviación estándar." },
+    { "en": "A reproducible run pins 4 things: code commit, data snapshot, environment digest, config with seeds.", "es": "Una corrida reproducible fija 4 cosas: commit del código, snapshot de datos, digest del entorno y configuración con semillas." }
+  ],
+  "pitfalls": [
+    { "en": "Logging data as a path like `s3://bucket/train/`: paths change; log an immutable version.", "es": "Registrar los datos como una ruta tipo `s3://bucket/train/`: las rutas cambian; registra una versión inmutable." },
+    { "en": "Picking the best of 200 runs on the test set: the leaderboard overfits. Keep a held-out set you rarely touch.", "es": "Elegir la mejor de 200 corridas sobre el test set: el ranking se sobreajusta. Guarda un set reservado que casi nunca toques." },
+    { "en": "Changing the eval set between runs and then comparing their scores.", "es": "Cambiar el eval set entre corridas y luego comparar sus puntajes." },
+    { "en": "Tracking prompt experiments with only an aggregate score: log per-example outputs for error analysis.", "es": "Rastrear experimentos de prompts solo con un puntaje agregado: registra las salidas por ejemplo para el análisis de errores." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "A model trained last quarter must be rebuilt for an audit. What must you have kept?", "es": "Hay que reconstruir para una auditoría un modelo entrenado el trimestre pasado. ¿Qué debiste haber guardado?" },
+      "a": {
+        "en": "Four pinned inputs, tied to the outputs by the tracking run. The git commit for code; an immutable data snapshot, meaning a DVC hash, lakeFS commit or table version, not a path; the environment as a container digest; and the config with seeds. Then I rebuild and show the metrics match within seed variance, since bit-identical is unrealistic on GPUs. The trap is retention: if table time travel expires after a week, the training snapshot must be materialized explicitly.",
+        "es": "Cuatro entradas fijadas, ligadas a las salidas por la corrida de tracking. El commit de git para el código; un snapshot inmutable de datos, es decir, un hash de DVC, un commit de lakeFS o una versión de tabla, no una ruta; el entorno como digest del contenedor; y la configuración con semillas. Luego reconstruyo y muestro que las métricas coinciden dentro de la variación entre semillas, porque idéntico bit a bit no es realista en GPUs. La trampa es la retención: si el time travel de la tabla expira en una semana, hay que materializar el snapshot de entrenamiento explícitamente."
+      }
+    },
+    {
+      "q": { "en": "How do you run prompt experiments for an LLM feature?", "es": "¿Cómo haces experimentos de prompts para una funcionalidad con LLM?" },
+      "a": {
+        "en": "With the same discipline as training. Each variant is a run: prompt version, model id, temperature and retrieval config, scored on a frozen, versioned eval set with the same graders. I log aggregate scores and per-example outputs: the aggregate tells me which won, the examples tell me why. I check the gap exceeds rerun noise, because on a few hundred examples a 2-point difference often isn't significant. The winner ships as a prompt-plus-model bundle, never pasted into production by hand.",
+        "es": "Con la misma disciplina que un entrenamiento. Cada variante es una corrida: versión del prompt, id del modelo, temperatura y configuración de recuperación, evaluada sobre un eval set congelado y versionado con los mismos evaluadores. Registro puntajes agregados y salidas por ejemplo: el agregado me dice cuál ganó y los ejemplos me dicen por qué. Verifico que la diferencia supere el ruido entre repeticiones, porque con unos cientos de ejemplos 2 puntos muchas veces no son significativos. La ganadora sale como un bundle de prompt más modelo, nunca pegada a mano en producción."
+      }
+    }
+  ],
+  "related": ["model-registry", "ml-lifecycle", "golden-datasets", "error-analysis", "nondeterminism", "data-platform"],
+  "sources": [
+    { "title": "MLflow — Tracking", "url": "https://mlflow.org/docs/latest/tracking.html" },
+    { "title": "Weights & Biases — Experiments", "url": "https://docs.wandb.ai/guides/track" },
+    { "title": "DVC — Documentation", "url": "https://dvc.org/doc" },
+    { "title": "PyTorch — Reproducibility", "url": "https://pytorch.org/docs/stable/notes/randomness.html" }
+  ]
+}

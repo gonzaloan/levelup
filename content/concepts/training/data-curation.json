@@ -1,0 +1,90 @@
+{
+  "id": "data-curation",
+  "domain": "training",
+  "level": "advanced",
+  "title": { "en": "Training data quality & curation", "es": "Calidad y curación de datos de entrenamiento" },
+  "aliases": ["data curation", "deduplication", "MinHash", "near-duplicate detection", "quality filtering", "decontamination", "FineWeb-Edu", "data cards"],
+  "tldr": {
+    "en": "Quality beats quantity: remove exact and near duplicates, filter junk with heuristics and classifiers, decontaminate against evals, scrub PII and balance the mix. A smaller clean set routinely beats a bigger dirty one.",
+    "es": "La calidad le gana a la cantidad: elimina duplicados exactos y casi exactos, filtra basura con heurísticas y clasificadores, descontamina contra tus evals, limpia PII y balancea la mezcla. Un set más pequeño y limpio suele ganarle a uno grande y sucio."
+  },
+  "analogy": {
+    "en": "Stocking a restaurant kitchen: buying more doesn't help if a third is spoiled, half is duplicated and some of it is the judges' tasting plate. Sorting the pantry is the job.",
+    "es": "Surtir la cocina de un restaurante: comprar más no sirve si un tercio está echado a perder, la mitad está repetida y parte es el plato que va a probar el jurado. Ordenar la despensa es el trabajo."
+  },
+  "explain": {
+    "en": "**Data curation** decides what your model is allowed to learn from. For pretraining and fine-tuning alike, a smaller clean set usually beats a larger dirty one: LIMA turned a 65B base model into a strong assistant with [[sft]] on just 1,000 curated examples.\n\nThe standard pipeline:\n1. **Exact dedup**: hash normalized text and drop repeats.\n2. **Near-dup removal**: **MinHash + LSH** estimates Jaccard similarity over word n-grams (often 5-grams) and drops documents above a threshold (~0.7–0.8) in near-linear time. Duplicates waste compute and drive memorization.\n3. **Heuristic filters**: cheap Gopher-style rules: length bounds, symbol-to-word ratio, repeated lines, share of lines ending in punctuation, language ID.\n4. **Classifier filters**: a small model scores quality. FineWeb-Edu had Llama-3-70B rate ~450k pages for educational value, trained a classifier on those labels and kept ~1.3T of FineWeb's 15T tokens.\n5. **Decontamination**: remove anything overlapping your eval and benchmark sets (e.g. 13-gram matches), or your scores are fiction.\n6. **PII removal**: regex plus NER (e.g. Presidio) for emails, phones, IDs and keys.\n7. **Mix balancing**: set proportions per domain, language and task; upsample scarce, valuable sources.\n\nRecord all of it in a **datasheet / data card**: sources, licenses, filters, known gaps.",
+    "es": "La **curación de datos** decide de qué puede aprender tu modelo. Tanto en pretraining como en fine-tuning, un set más pequeño y limpio suele ganarle a uno más grande y sucio: LIMA convirtió un modelo base de 65B en un asistente sólido con [[sft]] sobre solo 1000 ejemplos curados.\n\nEl pipeline estándar:\n1. **Dedup exacta**: hashea el texto normalizado y elimina las repeticiones.\n2. **Casi duplicados**: **MinHash + LSH** estima la similitud de Jaccard sobre n-gramas de palabras (a menudo 5-gramas) y descarta los documentos por encima de un umbral (~0.7–0.8) en tiempo casi lineal. Los duplicados desperdician cómputo y fomentan la memorización.\n3. **Filtros heurísticos**: reglas baratas al estilo Gopher: límites de longitud, proporción de símbolos por palabra, líneas repetidas, porcentaje de líneas que terminan en puntuación, detección de idioma.\n4. **Filtros con clasificador**: un modelo pequeño puntúa la calidad. FineWeb-Edu hizo que Llama-3-70B calificara ~450 mil páginas por valor educativo, entrenó un clasificador con esas etiquetas y conservó ~1.3T de los 15T tokens de FineWeb.\n5. **Descontaminación**: elimina todo lo que se solape con tus sets de eval y benchmarks (por ejemplo, coincidencias de 13-gramas), o tus métricas son ficción.\n6. **Eliminación de PII**: regex más NER (por ejemplo, Presidio) para correos, teléfonos, documentos de identidad y llaves.\n7. **Balance de la mezcla**: define proporciones por dominio, idioma y tarea; sobremuestrea las fuentes escasas y valiosas.\n\nDocumenta todo en un **datasheet / data card**: fuentes, licencias, filtros y vacíos conocidos."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  R[(Raw sources)] --> X[\"Exact dedup<br/>normalized hash\"]\n  X --> N[\"Near-dup removal<br/>MinHash + LSH\"]\n  N --> H[\"Heuristic filters<br/>length, symbols, language\"]\n  H --> C{\"Quality classifier<br/>score threshold\"}\n  C -->|low| Q[Drop]\n  C -->|high| D[\"Decontaminate<br/>n-gram overlap\"]\n  E[(Eval and benchmark sets)] -.-> D\n  D --> P[\"PII scrub<br/>regex + NER\"]\n  P --> M[\"Mix and weight<br/>by domain\"]\n  M --> T[(Training set)]\n  M -.-> K[Data card]",
+    "caption": {
+      "en": "Cheap filters run first on everything; expensive ones run on what survives. Eval sets feed the decontamination step, never the training set.",
+      "es": "Los filtros baratos corren primero sobre todo; los caros, sobre lo que sobrevive. Los sets de eval alimentan la descontaminación, nunca el set de entrenamiento."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Exact + MinHash dedup, heuristics and decontamination", "es": "Dedup exacta + MinHash, heurísticas y descontaminación" },
+    "source": "import hashlib, re\nfrom datasketch import MinHash, MinHashLSH\n\ndef shingles(text: str, n: int = 5) -> set[str]:\n    w = re.findall(r\"\\w+\", text.lower())\n    return {\" \".join(w[i:i + n]) for i in range(max(1, len(w) - n + 1))}\n\ndef minhash(text: str) -> MinHash:\n    m = MinHash(num_perm=128)\n    for s in shingles(text):\n        m.update(s.encode())\n    return m\n\ndef gopher_like(t: str) -> bool:\n    words = t.split()\n    symbols = t.count(\"#\") + t.count(\"...\")\n    return 50 <= len(words) <= 100_000 and symbols / max(len(words), 1) < 0.1\n\neval_grams = {g for doc in eval_set for g in shingles(doc, n=13)}  # decontamination\nlsh, seen, kept = MinHashLSH(threshold=0.8, num_perm=128), set(), []\n\nfor i, doc in enumerate(corpus):\n    h = hashlib.sha1(\" \".join(doc.lower().split()).encode()).hexdigest()\n    if h in seen or not gopher_like(doc):\n        continue                                    # exact duplicate or junk\n    if shingles(doc, n=13) & eval_grams:\n        continue                                    # leaks an eval item\n    m = minhash(doc)\n    if lsh.query(m):\n        continue                                    # near-duplicate of a kept doc\n    seen.add(h); lsh.insert(str(i), m); kept.append(doc)\n\nkept = [d for d in kept if quality_score(d) >= 3]   # FineWeb-Edu-style classifier, 0-5"
+  },
+  "example": {
+    "en": "A fintech wants to fine-tune a support model on 120k historical chat transcripts. Exact dedup removes 22% (agents' canned macros); MinHash near-dup removes another 15%. They keep only resolved chats with CSAT ≥ 4, scrub card numbers and emails with Presidio, and find 400 chats that also sit in the eval set, which was built from the same quarter, so they rebuild the eval from a later month. 18k examples remain. The model trained on 18k beats the one trained on all 120k on the new eval (resolution judged correct 71% vs 63%) and trains in a sixth of the time.",
+    "es": "Una fintech quiere hacer fine-tuning de un modelo de soporte con 120 mil transcripciones históricas de chat. La dedup exacta elimina el 22% (las respuestas predefinidas de los agentes); la de casi duplicados con MinHash, otro 15%. Se quedan solo con chats resueltos con CSAT ≥ 4, limpian números de tarjeta y correos con Presidio, y encuentran 400 chats que también están en el set de eval, armado con el mismo trimestre, así que lo reconstruyen con un mes posterior. Quedan 18 mil ejemplos. El modelo entrenado con 18 mil le gana al entrenado con los 120 mil en la nueva eval (resolución correcta 71% contra 63%) y entrena en una sexta parte del tiempo."
+  },
+  "pros": [
+    { "en": "Often the cheapest quality lever: same model, same compute, better results.", "es": "Suele ser la palanca de calidad más barata: mismo modelo, mismo cómputo, mejores resultados." },
+    { "en": "Fewer tokens means cheaper, faster training runs.", "es": "Menos tokens significa corridas de entrenamiento más baratas y rápidas." },
+    { "en": "Less memorization, and less privacy and copyright exposure.", "es": "Menos memorización y menos exposición en privacidad y derechos de autor." },
+    { "en": "Trustworthy evals: decontamination keeps scores honest.", "es": "Evals confiables: la descontaminación mantiene honestos los puntajes." }
+  ],
+  "cons": [
+    { "en": "Engineering-heavy at scale: MinHash over billions of documents needs distributed tooling (datatrove, NeMo Curator, Spark).", "es": "Mucha ingeniería a escala: MinHash sobre miles de millones de documentos requiere herramientas distribuidas (datatrove, NeMo Curator, Spark)." },
+    { "en": "Quality classifiers encode someone's taste and can drop dialects, informal text and minority topics.", "es": "Los clasificadores de calidad codifican el gusto de alguien y pueden descartar dialectos, texto informal y temas minoritarios." },
+    { "en": "Hard to validate a filter without training ablation models, which costs compute.", "es": "Es difícil validar un filtro sin entrenar modelos de ablación, y eso cuesta cómputo." }
+  ],
+  "whenToUse": {
+    "en": "Before every training run, at every scale: fine-tuning sets need dedup, decontamination and PII scrubbing as much as pretraining corpora. Invest more when you see memorization, suspiciously good evals or noisy labels.",
+    "es": "Antes de cada corrida de entrenamiento, a cualquier escala: los sets de fine-tuning necesitan dedup, descontaminación y limpieza de PII tanto como los corpus de pretraining. Invierte más cuando veas memorización, evals sospechosamente buenas o etiquetas ruidosas."
+  },
+  "whenNotToUse": {
+    "en": "Don't build a pipeline for a 500-example SFT set: read every example yourself. Don't filter a niche domain corpus with a generic web-quality classifier; it will throw away your domain.",
+    "es": "No armes un pipeline para un set de SFT de 500 ejemplos: léelos todos tú mismo. No filtres un corpus de un dominio de nicho con un clasificador genérico de calidad web; va a tirar a la basura tu dominio."
+  },
+  "numbers": [
+    { "en": "LIMA: 1,000 curated SFT examples; its answers were equal to or preferred over GPT-4's in 43% of comparisons.", "es": "LIMA: 1000 ejemplos de SFT curados; sus respuestas igualaron o superaron a las de GPT-4 en el 43% de las comparaciones." },
+    { "en": "Lee et al.: C4 held one 61-word sentence 60,000+ times; deduplication cut verbatim memorized output ~10×.", "es": "Lee et al.: C4 contenía una oración de 61 palabras repetida más de 60 mil veces; deduplicar redujo ~10× el texto memorizado emitido literalmente." },
+    { "en": "FineWeb-Edu: ~1.3T of FineWeb's ~15T tokens, kept by a classifier trained on ~450k Llama-3-70B ratings.", "es": "FineWeb-Edu: ~1.3T de los ~15T tokens de FineWeb, seleccionados por un clasificador entrenado con ~450 mil calificaciones de Llama-3-70B." },
+    { "en": "DCLM-Baseline: a 7B model reached 64% 5-shot MMLU on 2.6T tokens, driven mainly by model-based filtering.", "es": "DCLM-Baseline: un modelo de 7B llegó a 64% en MMLU 5-shot con 2.6T tokens, gracias sobre todo al filtrado basado en modelos." },
+    { "en": "Llama 3's final pretraining mix: ~50% general knowledge, 25% math and reasoning, 17% code, 8% multilingual.", "es": "Mezcla final de pretraining de Llama 3: ~50% conocimiento general, 25% matemáticas y razonamiento, 17% código y 8% multilingüe." }
+  ],
+  "pitfalls": [
+    { "en": "Splitting before deduplicating: near-copies land in both train and test and inflate scores. Dedup first, then split, ideally by time or by customer.", "es": "Dividir antes de deduplicar: las casi copias quedan en train y en test e inflan los puntajes. Deduplica primero y luego divide, idealmente por tiempo o por cliente." },
+    { "en": "Decontaminating against public benchmarks but not against your own eval set, built from the same logs as the training data.", "es": "Descontaminar contra benchmarks públicos pero no contra tu propio set de eval, armado con los mismos logs que los datos de entrenamiento." },
+    { "en": "Trusting a quality classifier blindly: audit what it drops by language, dialect and topic before applying it.", "es": "Confiar a ciegas en un clasificador de calidad: audita qué descarta por idioma, dialecto y tema antes de aplicarlo." },
+    { "en": "No lineage: you can't answer \"was this customer's data used?\" for a deletion request. Version datasets and keep a data card.", "es": "Sin trazabilidad: no puedes responder \"¿se usaron los datos de este cliente?\" ante una solicitud de borrado. Versiona los datasets y mantén un data card." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "You have 200k noisy fine-tuning examples. What do you do first?", "es": "Tienes 200 mil ejemplos ruidosos para fine-tuning. ¿Qué haces primero?" },
+      "a": {
+        "en": "I read a hundred of them myself; it surfaces defects no metric names. Then exact and MinHash dedup, filter by outcome signals like resolved tickets or accepted code, scrub PII, and decontaminate against my eval set. Then I run an ablation instead of arguing: train on the best 10–20k and on everything, and compare on held-out data. LIMA showed quality and diversity dominate, so I'd expect the curated subset to match or win at a fraction of the compute. The risk is filtering out the hard cases, so I check slices.",
+        "es": "Leo cien de ellos yo mismo; salen defectos que ninguna métrica nombra. Después dedup exacta y con MinHash, filtro por señales de resultado como tickets resueltos o código aceptado, limpio PII y descontamino contra mi set de eval. Luego hago una ablación en vez de discutir: entreno con los mejores 10–20 mil y con todo, y comparo sobre datos reservados. LIMA mostró que la calidad y la diversidad dominan, así que espero que el subconjunto curado iguale o gane con una fracción del cómputo. El riesgo es filtrar los casos difíciles, así que reviso por segmentos."
+      }
+    },
+    {
+      "q": { "en": "How do you know your evals aren't contaminated?", "es": "¿Cómo sabes que tus evals no están contaminadas?" },
+      "a": {
+        "en": "For my own models, I check n-gram overlap (13-grams is the classic) and embedding nearest neighbours between training and eval data, and I dedup before splitting, ideally by time. For vendor models I can't inspect, I rely on private evals written after the model's cutoff and on perturbation: if accuracy drops sharply on paraphrased or re-numbered versions of the same items, the model probably memorized them. Public benchmark scores I treat as marketing until I reproduce them on my own data.",
+        "es": "Para mis propios modelos, reviso solapamiento de n-gramas (13-gramas es lo clásico) y vecinos más cercanos por embeddings entre datos de entrenamiento y de eval, y deduplico antes de dividir, idealmente por tiempo. Para modelos de proveedores que no puedo inspeccionar, uso evals privadas escritas después del corte del modelo y perturbaciones: si la exactitud cae fuerte con versiones parafraseadas o con otros números de los mismos ítems, probablemente los memorizó. Los puntajes de benchmarks públicos los trato como marketing hasta reproducirlos con mis propios datos."
+      }
+    }
+  ],
+  "related": ["synthetic-data", "sft", "golden-datasets", "pii-privacy", "benchmarks", "llm-training-pipeline"],
+  "sources": [
+    { "title": "Zhou et al. — LIMA: Less Is More for Alignment", "url": "https://arxiv.org/abs/2305.11206" },
+    { "title": "Lee et al. — Deduplicating Training Data Makes Language Models Better", "url": "https://arxiv.org/abs/2107.06499" },
+    { "title": "Penedo et al. — The FineWeb Datasets: Decanting the Web for the Finest Text Data at Scale", "url": "https://arxiv.org/abs/2406.17557" },
+    { "title": "Gebru et al. — Datasheets for Datasets", "url": "https://arxiv.org/abs/1803.09010" }
+  ]
+}
