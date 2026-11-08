@@ -26,7 +26,7 @@
   "code": {
     "lang": "python",
     "title": { "en": "Fetch a labeled prompt version and trace it", "es": "Traer una versión etiquetada del prompt y trazarla" },
-    "source": "from langfuse import Langfuse\nfrom openai import OpenAI\n\nlangfuse, llm = Langfuse(), OpenAI()\nDEFAULT_MODEL = \"gpt-4o-2024-08-06\"  # pinned snapshot, never a floating alias\n\n# Resolved by label: moving \"production\" to another version = deploy or rollback\nprompt = langfuse.get_prompt(\n    \"support-triage\",\n    label=\"production\",\n    cache_ttl_seconds=60,                         # keep the registry off the hot path\n    fallback=\"Classify this ticket: {{ticket}}\",  # served if the registry is down\n)\n\ndef triage(ticket: str) -> str:\n    cfg = prompt.config or {}                     # model + params versioned with the text\n    resp = llm.chat.completions.create(\n        model=cfg.get(\"model\", DEFAULT_MODEL),\n        temperature=cfg.get(\"temperature\", 0),\n        messages=[{\"role\": \"user\", \"content\": prompt.compile(ticket=ticket)}],\n    )\n    out = resp.choices[0].message.content\n    # Every trace records exactly which prompt and model produced it\n    log_trace(prompt=f\"{prompt.name}@v{prompt.version}\", model=resp.model, output=out)\n    return out"
+    "source": "from langfuse import Langfuse\nfrom openai import OpenAI\n\nlangfuse, llm = Langfuse(), OpenAI()\nDEFAULT_MODEL = \"gpt-4o-2024-08-06\"  # pinned snapshot, never a floating alias\n\ndef triage(ticket: str) -> str:\n    # Resolved by label on EVERY call (served from the SDK's local cache), so\n    # moving \"production\" to another version = deploy or rollback within ~60 s\n    prompt = langfuse.get_prompt(\n        \"support-triage\",\n        label=\"production\",\n        cache_ttl_seconds=60,                         # keep the registry off the hot path\n        fallback=\"Classify this ticket: {{ticket}}\",  # served if the registry is down\n    )\n    cfg = prompt.config or {}                     # model + params versioned with the text\n    resp = llm.chat.completions.create(\n        model=cfg.get(\"model\", DEFAULT_MODEL),\n        temperature=cfg.get(\"temperature\", 0),\n        messages=[{\"role\": \"user\", \"content\": prompt.compile(ticket=ticket)}],\n    )\n    out = resp.choices[0].message.content\n    # Every trace records exactly which prompt and model produced it\n    log_trace(prompt=f\"{prompt.name}@v{prompt.version}\", model=resp.model, output=out)\n    return out"
   },
   "example": {
     "en": "A fintech's chargeback classifier prompt lived as an f-string in three services. A \"small wording fix\" shipped in a hotfix and misrouted ~8% of disputes for two days, and nobody could tell which version had run. After moving to a registry, each change runs a 300-case golden set in CI, goes to 5% of traffic behind a flag, and every trace carries `dispute-triage@v14`. The next regression was caught at 5% and rolled back in under a minute by moving the `production` label.",
@@ -53,8 +53,9 @@
   },
   "numbers": [
     { "en": "Rollout ladder: ~1–5% → 25–50% → 100%, holding at each step long enough to read online metrics.", "es": "Escalera de rollout: ~1–5% → 25–50% → 100%, esperando en cada paso lo suficiente para leer las métricas online." },
-    { "en": "Start the CI golden set at ~50–200 cases per prompt; it must finish in minutes or people skip it.", "es": "Arranca el golden set de CI con ~50–200 casos por prompt; debe terminar en minutos o la gente lo saltea." },
-    { "en": "Registry fetches: client-side cache (TTL ~60 s) plus a bundled fallback, so an outage never blocks requests.", "es": "Lecturas del registro: caché en el cliente (TTL ~60 s) más un fallback empaquetado, para que una caída nunca bloquee requests." }
+    { "en": "Start the CI golden set at ~50–200 cases per prompt; it must finish in minutes or people skip it.", "es": "Arranca el golden set de CI con ~50–200 casos por prompt; debe terminar en minutos o la gente se lo salta." },
+    { "en": "Registry fetches: client-side cache (TTL ~60 s, Langfuse's default) plus a bundled fallback, so an outage never blocks requests.", "es": "Lecturas del registro: caché en el cliente (TTL ~60 s, el valor por defecto de Langfuse) más un fallback empaquetado, para que una caída nunca bloquee requests." },
+    { "en": "Pinned snapshots still retire: in Oct 2026 OpenAI gave 3 months' notice that gpt-4o and gpt-4.1 snapshots shut down on Jan 14, 2027. Budget a re-eval per migration.", "es": "Los snapshots fijados también se retiran: en octubre de 2026 OpenAI avisó con 3 meses que los snapshots de gpt-4o y gpt-4.1 se apagan el 14 de enero de 2027. Presupuesta una nueva eval por migración." }
   ],
   "pitfalls": [
     { "en": "Versioning the text but not the model and temperature: the same \"v12\" behaves differently next month.", "es": "Versionar el texto pero no el modelo ni la temperature: el mismo \"v12\" se comporta distinto el mes siguiente." },
@@ -80,9 +81,9 @@
   ],
   "related": ["eval-ci", "llm-observability", "llmops", "model-registry", "golden-datasets", "ab-testing"],
   "sources": [
-    { "title": "Langfuse — Prompt Management", "url": "https://langfuse.com/docs/prompts/get-started" },
+    { "title": "Langfuse — Prompt Management", "url": "https://langfuse.com/docs/prompt-management/get-started" },
     { "title": "promptfoo — CI/CD integration", "url": "https://www.promptfoo.dev/docs/integrations/ci-cd/" },
-    { "title": "OpenAI — Models and snapshots", "url": "https://platform.openai.com/docs/models" },
+    { "title": "OpenAI — Models and snapshots", "url": "https://developers.openai.com/api/docs/models" },
     { "title": "Hamel Husain — Your AI Product Needs Evals", "url": "https://hamel.dev/blog/posts/evals/" }
   ]
 }
