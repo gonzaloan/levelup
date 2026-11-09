@@ -1,0 +1,96 @@
+{
+  "id": "vector-search-scale",
+  "domain": "architecture",
+  "level": "staff",
+  "title": { "en": "Vector search at billion scale", "es": "Búsqueda vectorial a escala de miles de millones" },
+  "aliases": ["billion-scale ANN", "DiskANN", "product quantization", "binary quantization", "Matryoshka embeddings", "vector sharding", "filtered vector search", "tiered vector storage"],
+  "tldr": {
+    "en": "At a billion vectors, memory is the design constraint: compress the vectors, move the index to SSD or object storage, shard and replicate, and rescore a small candidate set at full precision.",
+    "es": "Con mil millones de vectores, la memoria es la restricción de diseño: comprime los vectores, lleva el índice a SSD u object storage, particiona y replica, y vuelve a puntuar un conjunto pequeño de candidatos con precisión completa."
+  },
+  "analogy": {
+    "en": "A national library can't keep every book on the reading-room shelves. It keeps a compact card catalog at hand, stores the books in the stacks, and fetches only the few you need.",
+    "es": "Una biblioteca nacional no puede tener todos los libros en los estantes de la sala de lectura. Tiene a mano un catálogo compacto de fichas, guarda los libros en el depósito y trae solo los pocos que necesitas."
+  },
+  "explain": {
+    "en": "Start with the arithmetic: **1B × 768 dims × 4 bytes ≈ 3 TB** of raw float32, before any index. Keeping that in RAM, replicated, takes a fleet of big machines. Every billion-scale design trades **recall, latency and cost** with four levers:\n\n- **Compress.** Scalar **int8** (4×, ~0.77 TB), **binary** quantization (32×, ~96 GB), **product quantization** (PQ, e.g. 96 bytes per vector) or **Matryoshka** truncation (store 256 of 768 dims). Search the compressed codes, then **rescore** the top few hundred with full vectors.\n- **Move off RAM.** **DiskANN** keeps compressed vectors in RAM and the graph plus full vectors on NVMe: a billion points on one 64 GB machine. Object-storage engines (turbopuffer, Amazon S3 Vectors) are cheaper and elastic, but cold queries take hundreds of ms.\n- **Shard and replicate.** Hash sharding fans every query out to every shard: cost grows with shard count and p99 is the slowest shard. Sharding by tenant or partition sends a query to one shard. Replicas add QPS and availability.\n- **Filter inside the index.** Post-filtering a selective predicate empties your top-k. Use filter-aware indexes (ACORN, Filtered-DiskANN, payload indexes) or partition on the filter.\n\nAdd **tiers** (hot data in RAM, the long tail on SSD or object storage) and plan **reindexing**: a new embedding model means re-embedding everything into a new index built side by side ([[index-lifecycle]]).",
+    "es": "Empieza por la aritmética: **1B × 768 dimensiones × 4 bytes ≈ 3 TB** de float32 crudo, antes de cualquier índice. Tener eso en RAM, y replicado, exige una flota de máquinas grandes. Todo diseño a escala de miles de millones negocia **recall, latencia y costo** con cuatro palancas:\n\n- **Comprimir.** **int8** escalar (4×, ~0.77 TB), **cuantización binaria** (32×, ~96 GB), **product quantization** (PQ, p. ej. 96 bytes por vector) o truncado **Matryoshka** (guardar 256 de 768 dimensiones). Buscas sobre los códigos comprimidos y luego haces **rescoring** de los mejores cientos con los vectores completos.\n- **Salir de la RAM.** **DiskANN** deja los vectores comprimidos en RAM y el grafo más los vectores completos en NVMe: mil millones de puntos en una máquina de 64 GB. Los motores sobre object storage (turbopuffer, Amazon S3 Vectors) son más baratos y elásticos, pero las consultas en frío tardan cientos de ms.\n- **Particionar y replicar.** El sharding por hash manda cada consulta a todos los shards: el costo crece con la cantidad de shards y el p99 es el del shard más lento. Particionar por tenant o por categoría manda la consulta a un solo shard. Las réplicas suman QPS y disponibilidad.\n- **Filtrar dentro del índice.** Post-filtrar con un predicado selectivo vacía tu top-k. Usa índices que entienden filtros (ACORN, Filtered-DiskANN, payload indexes) o particiona por el filtro.\n\nAgrega **niveles** (lo caliente en RAM, la cola larga en SSD u object storage) y planea el **reindexado**: un modelo de embeddings nuevo implica regenerar todos los embeddings en un índice nuevo construido en paralelo ([[index-lifecycle]])."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  Q[Query vector] --> R{\"Router:<br/>tenant or fan-out\"}\n  R --> A[\"Shard 1<br/>(replica set)\"]\n  R --> B[\"Shard 2<br/>(replica set)\"]\n  R --> C[\"Shard N<br/>(replica set)\"]\n  A --> P[\"Search compressed<br/>codes in RAM\"]\n  P --> S[\"Rescore candidates<br/>from SSD\"]\n  S --> M[\"Merge top-k<br/>across shards\"]\n  B --> M\n  C --> M\n  M --> K[Top 10 to app]\n  O[(\"Cold tier<br/>object storage\")] -.->|load on demand| S",
+    "caption": {
+      "en": "Inside each shard, compressed codes in RAM find candidates and full vectors on SSD rescore them. Fanning out to every shard means the slowest one sets p99.",
+      "es": "Dentro de cada shard, los códigos comprimidos en RAM encuentran candidatos y los vectores completos en SSD los vuelven a puntuar. Consultar todos los shards significa que el más lento define el p99."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Memory math, then IVF-PQ with full-precision rescoring", "es": "Cálculo de memoria y luego IVF-PQ con rescoring de precisión completa" },
+    "source": "import faiss\nimport numpy as np\n\nd, N = 768, 1_000_000_000\n\n# Memory math first: it decides the architecture\nfor name, bytes_per_vec in [(\"float32\", d * 4), (\"int8\", d), (\"PQ96\", 96), (\"binary\", d // 8)]:\n    print(f\"{name:8s} {N * bytes_per_vec / 1e12:5.2f} TB\")\n# float32 3.07 TB | int8 0.77 TB | PQ96 0.10 TB | binary 0.10 TB\n\n# One shard: IVF-PQ, 65,536 clusters, 96 sub-quantizers x 8 bits = 96 bytes/vector\nquantizer = faiss.IndexFlatIP(d)\nindex = faiss.IndexIVFPQ(quantizer, d, 65_536, 96, 8, faiss.METRIC_INNER_PRODUCT)\nindex.train(sample_vectors(4_000_000))      # ~30-256 training points per cluster\nfor ids, vecs in stream_shard(batch=1_000_000):\n    index.add_with_ids(vecs, ids)\n\ndef search(q: np.ndarray, k: int = 10, candidates: int = 200, nprobe: int = 64):\n    index.nprobe = nprobe                         # recall vs latency dial\n    _, cand = index.search(q[None, :].astype(\"float32\"), candidates)\n    full = fetch_full_vectors(cand[0])            # float32 from SSD or object storage\n    exact = full @ q                              # rescore at full precision\n    order = np.argsort(-exact)[:k]\n    return cand[0][order], exact[order]"
+  },
+  "example": {
+    "en": "Illustrative: marketplace search over 1B listing embeddings (768-d) at 3k QPS, p99 under 100 ms. All-in-RAM HNSW needs ~3.2 TB per replica. Instead: 16 hash shards of ~64M vectors, each a DiskANN-style index with ~6 GB of PQ codes in RAM and graph plus full vectors on local NVMe, 3 replicas each. A query fans out to all 16 shards, each rescoring 100 candidates from SSD; merged p99 lands near 40–60 ms. Region filters are 1–5% selective, so region becomes a partition key, not a post-filter. A new embedding model means re-embedding 1B listings: ~100 tokens each at an assumed $0.02 per 1M tokens is only ~$2k, but index builds take days, so the new index is built side by side and swapped behind an alias.",
+    "es": "Ilustrativo: búsqueda de un marketplace sobre 1B de embeddings de publicaciones (768 dimensiones) a 3k QPS con p99 menor a 100 ms. HNSW todo en RAM necesita ~3.2 TB por réplica. En cambio: 16 shards por hash de ~64M de vectores, cada uno un índice estilo DiskANN con ~6 GB de códigos PQ en RAM y el grafo más los vectores completos en NVMe local, con 3 réplicas cada uno. Una consulta va a los 16 shards, cada uno hace rescoring de 100 candidatos desde SSD; el p99 combinado queda cerca de 40–60 ms. Los filtros por región son 1–5% selectivos, así que la región se vuelve clave de partición y no un post-filtro. Un modelo de embeddings nuevo implica regenerar 1B de embeddings: ~100 tokens cada uno a un precio supuesto de $0.02 por 1M de tokens son apenas ~$2k, pero construir los índices toma días, así que el índice nuevo se arma en paralelo y se cambia detrás de un alias."
+  },
+  "pros": [
+    { "en": "Compression plus rescoring cuts memory 4–32× for a few points of recall you can mostly buy back.", "es": "Comprimir y hacer rescoring reduce la memoria 4–32× a cambio de unos puntos de recall que en gran parte recuperas." },
+    { "en": "SSD and object-storage tiers make cost track the data you query, not all the data you store.", "es": "Los niveles en SSD y object storage hacen que el costo siga a los datos que consultas, no a todo lo que guardas." },
+    { "en": "Tenant or partition sharding turns one billion-vector problem into many small ones.", "es": "Particionar por tenant o por categoría convierte un problema de mil millones de vectores en muchos problemas chicos." }
+  ],
+  "cons": [
+    { "en": "Every approximation layer costs recall, and you only know how much if you measure against exact search.", "es": "Cada capa de aproximación cuesta recall, y solo sabes cuánto si lo mides contra búsqueda exacta." },
+    { "en": "Fan-out multiplies cost per query and makes p99 the slowest shard's p99.", "es": "El fan-out multiplica el costo por consulta y hace que el p99 sea el del shard más lento." },
+    { "en": "Index builds take hours to days, so embedding-model changes become multi-week migrations.", "es": "Construir índices toma de horas a días, así que cambiar el modelo de embeddings se vuelve una migración de semanas." }
+  ],
+  "whenToUse": {
+    "en": "Corpora beyond ~100M vectors, or when RAM dominates the bill: web-scale retrieval, marketplaces, large multi-tenant SaaS, dedup and recommendation candidate generation.",
+    "es": "Corpus de más de ~100M de vectores, o cuando la RAM domina la factura: recuperación a escala web, marketplaces, SaaS multi-tenant grandes, deduplicación y generación de candidatos para recomendaciones."
+  },
+  "whenNotToUse": {
+    "en": "Under ~50M vectors a single node with HNSW or pgvector is simpler and cheaper. Don't build sharding before you've tried compression and a bigger box.",
+    "es": "Con menos de ~50M de vectores, un solo nodo con HNSW o pgvector es más simple y barato. No armes sharding antes de probar compresión y una máquina más grande."
+  },
+  "numbers": [
+    { "en": "1B × 768 dims: float32 ≈ 3.07 TB, int8 ≈ 0.77 TB, binary or 96-byte PQ ≈ 96 GB.", "es": "1B × 768 dimensiones: float32 ≈ 3.07 TB, int8 ≈ 0.77 TB, binario o PQ de 96 bytes ≈ 96 GB." },
+    { "en": "DiskANN (NeurIPS 2019): 1B SIFT points on one machine with 64 GB RAM plus SSD, >5,000 QPS, <3 ms mean latency, ≥95% 1-recall@1.", "es": "DiskANN (NeurIPS 2019): 1B de puntos SIFT en una máquina con 64 GB de RAM más SSD, >5,000 QPS, <3 ms de latencia media y ≥95% de 1-recall@1." },
+    { "en": "Hugging Face (Mar 2024): binary quantization kept ~92.5% of retrieval quality, ~96% with rescoring; int8 kept ~97%.", "es": "Hugging Face (mar 2024): la cuantización binaria conservó ~92.5% de la calidad de recuperación, ~96% con rescoring; int8 conservó ~97%." },
+    { "en": "Amazon S3 Vectors (GA Dec 2025): up to 2B vectors per index; under 1 s for infrequent queries, ~100 ms or less for frequent ones.", "es": "Amazon S3 Vectors (GA dic 2025): hasta 2B de vectores por índice; menos de 1 s en consultas poco frecuentes y ~100 ms o menos en las frecuentes." },
+    { "en": "OpenAI (Jan 2024): text-embedding-3-large truncated to 256 dims still beat ada-002 at 1,536 dims on MTEB.", "es": "OpenAI (ene 2024): text-embedding-3-large truncado a 256 dimensiones todavía superó a ada-002 con 1,536 dimensiones en MTEB." }
+  ],
+  "pitfalls": [
+    { "en": "Hash-sharding a multi-tenant corpus: every query fans out to every shard though one tenant's data would fit on one.", "es": "Hacer sharding por hash de un corpus multi-tenant: cada consulta va a todos los shards aunque los datos de un tenant cabrían en uno." },
+    { "en": "Post-filtering with a selective filter: take the top 100, keep the 1% that match, return ~1 result.", "es": "Post-filtrar con un filtro selectivo: tomas el top 100, te quedas con el 1% que cumple y devuelves ~1 resultado." },
+    { "en": "Measuring recall on the float32 index and shipping the compressed one. Measure recall@k against exact kNN in the production config.", "es": "Medir recall sobre el índice en float32 y desplegar el comprimido. Mide recall@k contra kNN exacto con la configuración de producción." },
+    { "en": "Reindexing in place. Build the new index side by side, dual-write, compare, then flip an alias.", "es": "Reindexar en el mismo lugar. Construye el índice nuevo en paralelo, escribe en ambos, compara y luego cambia el alias." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Design vector search for 1B documents at 1k QPS with p99 under 100 ms.", "es": "Diseña búsqueda vectorial para 1B de documentos a 1k QPS con p99 menor a 100 ms." },
+      "a": {
+        "en": "I start with memory: 1B × 768 float32 is ~3 TB, so all-in-RAM is out on cost. I'd use a DiskANN-style index per shard: PQ codes in RAM, graph and full vectors on NVMe, rescoring a couple hundred candidates. Shards of ~50–100M vectors, partitioned by tenant if queries are tenant-scoped, otherwise hashed with fan-out, plus 2–3 replicas for QPS and availability. Filters become partitions or use a filter-aware index. I'd measure recall@10 against exact search on a sample, track per-shard p99, and plan blue-green reindexing for embedding-model changes.",
+        "es": "Empiezo por la memoria: 1B × 768 en float32 son ~3 TB, así que tener todo en RAM queda descartado por costo. Usaría un índice estilo DiskANN por shard: códigos PQ en RAM, grafo y vectores completos en NVMe, y rescoring de un par de cientos de candidatos. Shards de ~50–100M de vectores, particionados por tenant si las consultas son por tenant y, si no, por hash con fan-out, más 2–3 réplicas para QPS y disponibilidad. Los filtros se vuelven particiones o usan un índice que entiende filtros. Mediría recall@10 contra búsqueda exacta en una muestra, seguiría el p99 por shard y planearía reindexado blue-green para los cambios de modelo de embeddings."
+      }
+    },
+    {
+      "q": { "en": "Managed or self-hosted at this scale?", "es": "¿Gestionado o self-hosted a esta escala?" },
+      "a": {
+        "en": "It's a question about the shape of the cost. Managed (Pinecone, turbopuffer, S3 Vectors, Vertex AI Vector Search) wins when the team is small, traffic is spiky or most data is cold, because you pay for storage and queries, not idle replicas. Self-hosting (Milvus, Vespa, Qdrant, or Faiss/DiskANN directly) wins at steady high QPS, where per-query pricing dominates, or when I need custom filtering, data residency or control over rebuilds. I'd model three numbers for both: monthly storage, cost at peak QPS, and the cost of a full reindex. The reindex is the one people forget.",
+        "es": "Es una pregunta sobre la forma del costo. Lo gestionado (Pinecone, turbopuffer, S3 Vectors, Vertex AI Vector Search) gana cuando el equipo es chico, el tráfico tiene picos o casi todos los datos están fríos, porque pagas almacenamiento y consultas, no réplicas ociosas. Hospedarlo tú (Milvus, Vespa, Qdrant o Faiss/DiskANN directo) gana con QPS alto y estable, donde el precio por consulta domina, o cuando necesito filtros a medida, residencia de datos o control sobre los rebuilds. Modelaría tres números para ambos: almacenamiento mensual, costo al QPS pico y costo de un reindexado completo. El reindexado es el que todos olvidan."
+      }
+    },
+    {
+      "q": { "en": "Recall dropped from 0.95 to 0.80 after you added a tenant filter. Why?", "es": "El recall cayó de 0.95 a 0.80 después de agregar un filtro por tenant. ¿Por qué?" },
+      "a": {
+        "en": "Two likely causes. If we post-filter, the ANN returns its top-k first and the filter throws most of it away, so small tenants get few or wrong results. If we filter during HNSW traversal, a selective filter disconnects the graph and the search gets stuck in regions with no matching nodes. Fixes, in order: partition the index by tenant when tenants are known, use a filter-aware index like ACORN or Qdrant's payload-indexed HNSW, or fall back to exact search when the filtered set is small enough to scan.",
+        "es": "Dos causas probables. Si post-filtramos, el ANN devuelve primero su top-k y el filtro descarta casi todo, así que los tenants chicos reciben pocos resultados o los equivocados. Si filtramos durante el recorrido de HNSW, un filtro selectivo desconecta el grafo y la búsqueda se atasca en zonas sin nodos que cumplan. Arreglos, en orden: particionar el índice por tenant cuando los tenants se conocen, usar un índice que entienda filtros como ACORN o el HNSW con payload index de Qdrant, o pasar a búsqueda exacta cuando el conjunto filtrado es lo bastante chico para recorrerlo."
+      }
+    }
+  ],
+  "related": ["ann-indexes", "vector-databases", "sharding", "index-lifecycle", "embedding-models", "case-semantic-search"],
+  "sources": [
+    { "title": "Subramanya et al. — DiskANN: Fast Accurate Billion-point Nearest Neighbor Search on a Single Node", "url": "https://www.microsoft.com/en-us/research/publication/diskann-fast-accurate-billion-point-nearest-neighbor-search-on-a-single-node/" },
+    { "title": "Hugging Face — Binary and Scalar Embedding Quantization", "url": "https://huggingface.co/blog/embedding-quantization" },
+    { "title": "Patel et al. — ACORN: Performant and Predicate-Agnostic Search Over Vector Embeddings and Structured Data", "url": "https://arxiv.org/abs/2403.04871" },
+    { "title": "AWS — Amazon S3 Vectors is now generally available", "url": "https://aws.amazon.com/about-aws/whats-new/2025/12/amazon-s3-vectors-generally-available" }
+  ]
+}

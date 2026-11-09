@@ -1,0 +1,95 @@
+{
+  "id": "model-migrations",
+  "domain": "architecture",
+  "level": "advanced",
+  "title": { "en": "Model upgrades & deprecations", "es": "Upgrades y deprecación de modelos" },
+  "aliases": ["model deprecation", "model retirement", "model migration", "version pinning", "model snapshot", "behavior drift", "LLM upgrade playbook"],
+  "tldr": {
+    "en": "Hosted models retire on published schedules, so every model you ship is a future migration: pin versions, hide providers behind one interface, and move only through an eval-gated path of shadow, canary and rollback.",
+    "es": "Los modelos hospedados se retiran según calendarios publicados, así que cada modelo que despliegas es una migración futura: fija versiones, esconde a los proveedores detrás de una interfaz y migra solo por un camino con evals, shadow, canary y rollback."
+  },
+  "analogy": {
+    "en": "Like a cloud provider retiring an OS image or a language runtime: the date is announced, the clock runs, and teams with good tests upgrade in a sprint while the rest scramble.",
+    "es": "Como cuando la nube retira una imagen de sistema operativo o una versión de runtime: la fecha se anuncia, el reloj corre y los equipos con buenas pruebas actualizan en un sprint mientras el resto apaga incendios."
+  },
+  "explain": {
+    "en": "Hosted models are **products with an end-of-life date**. A *deprecated* model still answers; a *retired* one returns errors. Anthropic gives ≥60 days' notice; OpenAI states ≥6 months for GA models but much less for previews. Every model you ship is a migration you will run.\n\nDesign for it from day one:\n\n- **Pin snapshots** (`claude-sonnet-4-5-20250929`, not an alias that moves under you) and send every call through one provider-agnostic interface, usually your [[llm-gateway]], so a swap is a config change.\n- **Keep prompts portable and versioned** in [[prompt-management]], with a variant per model family when needed. Prefer schemas over parsing prose.\n- **Keep a golden set** ([[golden-datasets]]) that scores behavior, not just accuracy, and run it in [[eval-ci]].\n\nThe playbook: offline eval on the golden set → prompt re-tuning → **shadow** traffic (both models answer, users see the old one, you diff) → **canary** at 1–5% → full rollout, keeping the old snapshot as rollback until it retires.\n\nWhat breaks is rarely average quality. It's **behavior drift**: output format, verbosity, refusals, tool-call style, a sampling parameter the new model rejects. Budget migrations as a **recurring line item**: with several models in production and ~1–2 year lifecycles, something is always migrating.",
+    "es": "Los modelos hospedados son **productos con fecha de fin de vida**. Un modelo *deprecated* sigue respondiendo; uno *retirado* devuelve errores. Anthropic avisa con al menos 60 días; OpenAI declara al menos 6 meses para modelos GA, pero mucho menos para los preview. Cada modelo que pones en producción es una migración que vas a tener que hacer.\n\nDiseña para eso desde el primer día:\n\n- **Fija snapshots** (`claude-sonnet-4-5-20250929`, no un alias que cambia sin avisarte) y pasa todas las llamadas por una sola interfaz agnóstica del proveedor, normalmente tu [[llm-gateway]], para que cambiar de modelo sea un cambio de configuración.\n- **Mantén los prompts portables y versionados** en [[prompt-management]], con una variante por familia de modelos cuando haga falta. Prefiere schemas a parsear texto libre.\n- **Mantén un golden set** ([[golden-datasets]]) que mida comportamiento, no solo exactitud, y córrelo en [[eval-ci]].\n\nEl playbook: eval offline sobre el golden set → reajuste de prompts → tráfico en **shadow** (los dos modelos responden, el usuario ve el viejo y tú comparas) → **canary** al 1–5% → rollout completo, conservando el snapshot anterior como rollback hasta que se retire.\n\nLo que se rompe casi nunca es la calidad promedio. Es el **drift de comportamiento**: formato de salida, verbosidad, rechazos, estilo de tool calls, un parámetro de sampling que el modelo nuevo rechaza. Presupuesta las migraciones como una **línea recurrente**: con varios modelos en producción y ciclos de vida de ~1–2 años, siempre hay algo migrando."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  N[Deprecation notice] --> I[\"Inventory usage<br/>via gateway logs\"]\n  I --> O[\"Offline eval<br/>golden set\"]\n  O --> G{Gates pass?}\n  G -->|no| T[\"Re-tune prompts\"]\n  T --> O\n  G -->|yes| S[\"Shadow traffic<br/>diff outputs\"]\n  S --> C[\"Canary 1-5%\"]\n  C --> M{Online metrics OK?}\n  M -->|no| RB[\"Roll back to<br/>pinned snapshot\"]\n  M -->|yes| F[Full rollout]\n  F --> K[\"Keep old snapshot<br/>until retirement\"]",
+    "caption": {
+      "en": "Every step can send you back; nothing reaches all users until it beats the pinned baseline offline, in shadow and on a canary.",
+      "es": "Cualquier paso puede devolverte atrás; nada llega a todos los usuarios hasta superar al baseline fijado offline, en shadow y en canary."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Eval gate: candidate vs pinned baseline", "es": "Gate de evals: candidato vs. baseline fijado" },
+    "source": "from gateway import complete                 # your provider-agnostic client\nfrom evals import load_golden, grade, summarize\n\nBASELINE  = \"claude-sonnet-4-5-20250929\"     # pinned prod snapshot; retires 2026-11-30\nCANDIDATE = \"claude-sonnet-5-5\"              # example replacement; never \"-latest\" in prod\n\n# metric -> (which way is better, tolerated regression). Gate behavior, not just accuracy.\nGATES = {\n    \"task_success\":     (\"higher\", 0.01),    # may drop at most 1 point\n    \"json_valid\":       (\"higher\", 0.0),     # format breaks are not tolerated\n    \"refusal_rate\":     (\"lower\",  0.005),\n    \"tool_call_errors\": (\"lower\",  0.0),\n    \"p95_output_toks\":  (\"lower\",  0.15),    # relative: at most 15% more verbose\n}\n\ndef run(model: str, prompt_version: str) -> dict:\n    cases = load_golden(\"golden/v12.jsonl\")             # same set, same graders\n    outs = [complete(model, c.render(prompt_version)) for c in cases]\n    return summarize([grade(c, o) for c, o in zip(cases, outs)])\n\ndef gate(base: dict, cand: dict) -> list[str]:\n    fails = []\n    for m, (better, tol) in GATES.items():\n        delta = cand[m] - base[m]\n        if m == \"p95_output_toks\":\n            delta /= base[m]                            # relative change\n        regression = -delta if better == \"higher\" else delta\n        if regression > tol:\n            fails.append(f\"{m}: {base[m]:.3f} -> {cand[m]:.3f}\")\n    return fails\n\nbase = run(BASELINE, prompt_version=\"v7\")\ncand = run(CANDIDATE, prompt_version=\"v8\")              # prompt re-tuned for the new model\nprint(gate(base, cand) or \"PASS: start shadow traffic\")"
+  },
+  "example": {
+    "en": "A ticket-triage pipeline pinned to one snapshot gets a 60-day retirement notice. Day 1: gateway logs show three features on that model. Week 1: on 1,500 golden cases the candidate gains 2 points of routing accuracy, but valid JSON drops from 99.7% to 97.9% (it wraps JSON in prose) and outputs run 30% longer. The team switches to schema-enforced structured outputs and trims the prompt; gates pass. Week 2: shadow on live traffic flags more refusals on billing disputes; a prompt fix closes it. Week 3: 5% canary, then 100%. The old snapshot stays configured as rollback until the retirement date. Cost: ~3 engineer-weeks, now a line in every quarter's plan.",
+    "es": "Un pipeline de clasificación de tickets fijado a un snapshot recibe un aviso de retiro con 60 días. Día 1: los logs del gateway muestran tres funcionalidades sobre ese modelo. Semana 1: en 1,500 casos del golden set el candidato gana 2 puntos de exactitud en el ruteo, pero el JSON válido cae de 99.7% a 97.9% (envuelve el JSON en texto) y las salidas son 30% más largas. El equipo pasa a structured outputs con schema y recorta el prompt; los gates pasan. Semana 2: el shadow sobre tráfico real detecta más rechazos en disputas de facturación; un ajuste al prompt lo resuelve. Semana 3: canary al 5% y luego 100%. El snapshot viejo queda configurado como rollback hasta la fecha de retiro. Costo: ~3 semanas-ingeniero, ahora una línea fija en el plan de cada trimestre."
+  },
+  "pros": [
+    { "en": "Turns a forced, dated event into a routine, low-risk deploy.", "es": "Convierte un evento forzado y con fecha en un deploy rutinario y de bajo riesgo." },
+    { "en": "Each migration is a chance to re-check cost: you can move down a tier, not just sideways.", "es": "Cada migración es una oportunidad para revisar costos: puedes bajar de tier, no solo moverte de lado." },
+    { "en": "One provider-agnostic interface gives you fallbacks during outages and leverage in pricing talks.", "es": "Una sola interfaz agnóstica del proveedor te da fallbacks durante caídas y poder de negociación en precios." }
+  ],
+  "cons": [
+    { "en": "A recurring cost: eval runs, prompt re-tuning and engineer-weeks every quarter.", "es": "Es un costo recurrente: corridas de evals, reajuste de prompts y semanas-ingeniero cada trimestre." },
+    { "en": "Abstraction can flatten provider-specific features such as caching, tool formats and reasoning controls.", "es": "La abstracción puede aplanar funciones propias de cada proveedor, como caching, formatos de tools y controles de razonamiento." },
+    { "en": "A stale golden set approves bad migrations with full confidence.", "es": "Un golden set desactualizado aprueba malas migraciones con total confianza." }
+  ],
+  "whenToUse": {
+    "en": "Any production feature on a hosted model. Assume a forced migration within ~1–2 years and build the pins, gateway and golden set before the first notice arrives.",
+    "es": "Cualquier funcionalidad en producción sobre un modelo hospedado. Asume una migración forzada en ~1–2 años y arma los pins, el gateway y el golden set antes de que llegue el primer aviso."
+  },
+  "whenNotToUse": {
+    "en": "Throwaway prototypes can track the latest alias and accept breakage. Self-hosted open weights never retire on you, but you still run the same playbook when you choose to upgrade.",
+    "es": "Los prototipos desechables pueden seguir el alias más reciente y aceptar que algo se rompa. Los modelos open weights que hospedas tú no se retiran solos, pero igual corres el mismo playbook cuando decides actualizar."
+  },
+  "numbers": [
+    { "en": "Anthropic: ≥60 days' notice before retiring a public model; Claude Sonnet 4.5 was deprecated Sep 30, 2026 and retires Nov 30, 2026.", "es": "Anthropic: aviso de al menos 60 días antes de retirar un modelo público; Claude Sonnet 4.5 se marcó deprecated el 30 de septiembre de 2026 y se retira el 30 de noviembre de 2026." },
+    { "en": "OpenAI's stated minimums (2026): ≥6 months for GA models, ≥3 months for specialized variants, as little as ~2 weeks for previews.", "es": "Mínimos que declara OpenAI (2026): al menos 6 meses para modelos GA, 3 meses para variantes especializadas y apenas ~2 semanas para los preview." },
+    { "en": "Recent Claude snapshots were retired ~1–2 years after release (Sonnet 3.7: Feb 2025 → Feb 2026).", "es": "Los snapshots recientes de Claude se retiraron ~1–2 años después de su lanzamiento (Sonnet 3.7: feb 2025 → feb 2026)." },
+    { "en": "Same name, different behavior: GPT-4's prime-number accuracy went from 84% (March 2023) to 51% (June 2023) in Chen et al.", "es": "Mismo nombre, otro comportamiento: la exactitud de GPT-4 para identificar primos pasó de 84% (marzo 2023) a 51% (junio 2023) según Chen et al." },
+    { "en": "Rule of thumb: shadow for ≥1 week and canary at 1–5% for days, so weekly traffic patterns show up.", "es": "Regla práctica: shadow de al menos 1 semana y canary al 1–5% durante días, para que aparezcan los patrones semanales de tráfico." }
+  ],
+  "pitfalls": [
+    { "en": "Floating aliases (`-latest`) in production: behavior changes without a deploy and your evals describe a model you no longer run.", "es": "Usar alias flotantes (`-latest`) en producción: el comportamiento cambia sin deploy y tus evals describen un modelo que ya no corres." },
+    { "en": "Forgetting fine-tunes: OpenAI serves a fine-tuned model only until its base model is deprecated, so the re-train is part of the migration.", "es": "Olvidar los fine-tunes: OpenAI sirve un modelo afinado solo hasta que su modelo base se depreca, así que reentrenar es parte de la migración." },
+    { "en": "Hard-coded sampling params: Claude 4.7 and later return a 400 on a non-default `temperature`, `top_p` or `top_k`.", "es": "Dejar fijos los parámetros de sampling: Claude 4.7 y posteriores devuelven un 400 si mandas `temperature`, `top_p` o `top_k` distintos del default." },
+    { "en": "Gating only on average accuracy: format, refusal and verbosity regressions hide behind a flat score. Gate per slice and per behavior.", "es": "Usar como gate solo la exactitud promedio: las regresiones de formato, rechazos y verbosidad se esconden detrás de un puntaje estable. Pon gates por segmento y por comportamiento." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your production model retires in 60 days. Walk me through the migration.", "es": "Tu modelo en producción se retira en 60 días. Explícame la migración." },
+      "a": {
+        "en": "Day one, I inventory usage from gateway logs: which features, prompts and fine-tunes depend on it. Then I pick one or two candidates and run the golden set offline with gates on quality *and* behavior: format validity, refusals, verbosity, tool-call errors, cost and latency. I re-tune prompts per model until the gates pass, shadow real traffic for a week and diff outputs. Then a 5% canary with online metrics and a flag to roll back instantly, then ramp. The old snapshot stays wired as rollback until the retirement date, and I write down what drifted so the next migration is faster.",
+        "es": "El primer día hago un inventario con los logs del gateway: qué funcionalidades, prompts y fine-tunes dependen del modelo. Después elijo uno o dos candidatos y corro el golden set offline con gates de calidad *y* de comportamiento: formato válido, rechazos, verbosidad, errores en tool calls, costo y latencia. Reajusto los prompts por modelo hasta que pasen los gates, pongo tráfico real en shadow una semana y comparo salidas. Luego un canary al 5% con métricas online y un flag para volver atrás al instante, y subo gradualmente. El snapshot viejo queda conectado como rollback hasta la fecha de retiro, y documento qué cambió para que la próxima migración sea más rápida."
+      }
+    },
+    {
+      "q": { "en": "How do you architect so that model migrations are cheap?", "es": "¿Cómo diseñas la arquitectura para que migrar de modelo sea barato?" },
+      "a": {
+        "en": "Four things. Model ids are config, pinned to snapshots, behind a gateway with one internal API, so a swap is a flag, not a refactor. Prompts are versioned artifacts with per-family variants. Outputs go through schemas and validators instead of parsing prose, which removes most format drift. And a golden set with behavior metrics runs in CI against every candidate the week it launches, not the week before retirement. The trade-off: a lowest-common-denominator interface loses provider features, so I allow them behind adapters when they pay for themselves, like prompt caching.",
+        "es": "Cuatro cosas. Los ids de modelo son configuración, fijados a snapshots, detrás de un gateway con una sola API interna, así que cambiar es un flag y no un refactor. Los prompts son artefactos versionados con variantes por familia. Las salidas pasan por schemas y validadores en vez de parsear texto, lo que elimina casi todo el drift de formato. Y un golden set con métricas de comportamiento corre en CI contra cada candidato la semana en que sale, no la semana antes del retiro. El trade-off: una interfaz de mínimo común denominador pierde funciones del proveedor, así que las permito detrás de adaptadores cuando se pagan solas, como el prompt caching."
+      }
+    },
+    {
+      "q": { "en": "A new model launches and tops the benchmarks. Do you upgrade?", "es": "Sale un modelo nuevo que lidera los benchmarks. ¿Actualizas?" },
+      "a": {
+        "en": "Not because of benchmarks. I run it through my golden set the week it launches, because public benchmarks don't measure my format, my refusal boundaries or my tool schemas. If it wins on my evals for quality, cost or latency, I start the normal shadow-and-canary path; if not, I keep the pinned model and re-check later. Either way, evaluating early buys runway: when the deprecation notice arrives, the migration is already half done.",
+        "es": "No por los benchmarks. Lo paso por mi golden set la semana en que sale, porque los benchmarks públicos no miden mi formato, mis límites de rechazo ni mis schemas de tools. Si gana en mis evals en calidad, costo o latencia, arranco el camino normal de shadow y canary; si no, me quedo con el modelo fijado y vuelvo a revisar más adelante. En cualquier caso, evaluar temprano me da margen: cuando llega el aviso de deprecación, la migración ya está a medio camino."
+      }
+    }
+  ],
+  "related": ["golden-datasets", "eval-ci", "llm-gateway", "prompt-management", "offline-online-evals", "model-selection"],
+  "sources": [
+    { "title": "Anthropic — Model deprecations", "url": "https://platform.claude.com/docs/en/about-claude/model-deprecations" },
+    { "title": "OpenAI — Deprecations", "url": "https://developers.openai.com/api/docs/deprecations" },
+    { "title": "Chen, Zaharia & Zou — How Is ChatGPT's Behavior Changing over Time?", "url": "https://arxiv.org/abs/2307.09009" }
+  ]
+}

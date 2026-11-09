@@ -1,0 +1,97 @@
+{
+  "id": "edge-ai",
+  "domain": "architecture",
+  "level": "advanced",
+  "title": { "en": "On-device & edge inference", "es": "Inferencia on-device y en el edge" },
+  "aliases": ["on-device AI", "edge AI", "small language models", "SLM", "Core ML", "ExecuTorch", "llama.cpp", "Private Cloud Compute"],
+  "tldr": {
+    "en": "Run the model on the device instead of the cloud: you win latency, privacy, offline use and near-zero cost per query, and pay with small models, tight memory and a fleet to update.",
+    "es": "Corre el modelo en el dispositivo en vez de la nube: ganas latencia, privacidad, uso offline y un costo por consulta casi nulo, y pagas con modelos chicos, memoria justa y una flota que actualizar."
+  },
+  "analogy": {
+    "en": "A pocket calculator versus calling a mathematician: the calculator is instant, private and works in a tunnel, but for hard problems you still make the call.",
+    "es": "Una calculadora de bolsillo frente a llamar a un matemático: la calculadora es instantánea, privada y funciona en un túnel, pero para los problemas difíciles igual haces la llamada."
+  },
+  "explain": {
+    "en": "**Edge inference** runs the model where the data is born: phone, laptop, car or camera. Four reasons: **latency** (no network round trip), **privacy** (data stays local), **offline** operation and **cost** (the user paid for the chip, so a query costs you ~nothing).\n\nThe constraints are physical:\n\n- **Memory**: a flagship phone has ~8–12 GB of RAM shared with the OS and apps. A 3B model at 4-bit is ~1.5 GB of weights, plus the KV cache.\n- **Bandwidth**: decode reads every weight per token, so tokens/s ≈ memory bandwidth ÷ model bytes ([[gpu-memory-math]]).\n- **Power and heat**: sustained load throttles and drains the battery.\n- **Accelerators**: NPUs are fast only for the ops and formats they support.\n\nTechniques: **small models** (~1–4B), [[quantization]] to 4 bits or below, [[distillation]] from a large teacher, pruning, and small LoRA adapters per task over one shared base.\n\nRuntimes: **Core ML** (Apple), **LiteRT** (ex-TensorFlow Lite) and AICore with Gemini Nano (Android), **ONNX Runtime**, **ExecuTorch** (PyTorch, 1.0 in Oct 2025), **llama.cpp/GGUF** (laptops), **TensorRT** (NVIDIA Jetson, cars).\n\nMost products are **hybrid**: a router keeps easy or private requests on device and escalates hard ones, as Apple Intelligence does with **Private Cloud Compute**. Ship models **over the air** like code: versioned, staged, with rollback and a compatibility matrix per device class.",
+    "es": "La **inferencia en el edge** corre el modelo donde nacen los datos: teléfono, laptop, auto o cámara. Cuatro razones: **latencia** (sin ida y vuelta por la red), **privacidad** (los datos no salen del dispositivo), funcionamiento **offline** y **costo** (el usuario ya pagó el chip, así que cada consulta te cuesta ~nada).\n\nLas restricciones son físicas:\n\n- **Memoria**: un teléfono de gama alta tiene ~8–12 GB de RAM compartidos con el sistema y otras apps. Un modelo de 3B en 4 bits ocupa ~1.5 GB de pesos, más el KV cache.\n- **Ancho de banda**: el decode lee todos los pesos en cada token, así que tokens/s ≈ ancho de banda de memoria ÷ bytes del modelo ([[gpu-memory-math]]).\n- **Energía y temperatura**: la carga sostenida provoca throttling y agota la batería.\n- **Aceleradores**: las NPUs solo son rápidas con las operaciones y formatos que soportan.\n\nTécnicas: **modelos chicos** (~1–4B), [[quantization]] a 4 bits o menos, [[distillation]] desde un modelo maestro grande, pruning y adaptadores LoRA pequeños por tarea sobre una sola base compartida.\n\nRuntimes: **Core ML** (Apple), **LiteRT** (antes TensorFlow Lite) y AICore con Gemini Nano (Android), **ONNX Runtime**, **ExecuTorch** (PyTorch, 1.0 en oct 2025), **llama.cpp/GGUF** (laptops), **TensorRT** (NVIDIA Jetson, autos).\n\nCasi todos los productos son **híbridos**: un router deja en el dispositivo las solicitudes fáciles o privadas y escala las difíciles, como hace Apple Intelligence con **Private Cloud Compute**. Distribuye los modelos **por OTA** como si fueran código: versionados, en etapas, con rollback y una matriz de compatibilidad por tipo de dispositivo."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[User request] --> R{On-device router}\n  R -->|simple or private| L[\"Local SLM<br/>3B, 4-bit\"]\n  R -->|hard or long| C[\"Cloud model<br/>stateless, attested\"]\n  L --> V{Good enough?}\n  V -->|yes| A[Answer]\n  V -->|escalate| C\n  C --> A\n  O[(\"OTA model registry\")] -.->|staged rollout| L",
+    "caption": {
+      "en": "Easy and private requests stay on device; hard ones escalate to a stateless cloud model. Models ship over the air like app releases: staged and reversible.",
+      "es": "Las solicitudes fáciles y privadas se quedan en el dispositivo; las difíciles escalan a un modelo en la nube sin estado. Los modelos se distribuyen por OTA como una versión de la app: en etapas y reversibles."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Local model first, cloud on escalation", "es": "Primero el modelo local, la nube al escalar" },
+    "source": "from llama_cpp import Llama   # llama.cpp bindings: GGUF on CPU, Metal or CUDA\n\n# Any ~3B instruct model in GGUF. Q4_K_M averages ~4.8 bits/weight -> ~2 GB file.\nlocal = Llama(\n    model_path=\"models/slm-3b-instruct.Q4_K_M.gguf\",\n    n_ctx=4096,        # KV cache grows with context: keep it small on device\n    n_gpu_layers=-1,   # offload all layers to the GPU when there is one\n)\n\nLOCAL_TASKS = {\"classify\", \"rewrite\", \"summarize_short\"}   # where evals say 3B is enough\n\ndef route(task: str, prompt_tokens: int, sensitive: bool, online: bool, cloud_ok: bool) -> str:\n    if not online or (sensitive and not cloud_ok):\n        return \"local\"                       # offline and privacy beat quality\n    if task in LOCAL_TASKS and prompt_tokens < 2_000:\n        return \"local\"                       # free for us, no network round trip\n    return \"cloud\"                           # hard or long: escalate\n\ndef answer(task: str, prompt: str, **ctx) -> str:\n    target = route(task, len(prompt) // 4, **ctx)   # ~4 characters per token\n    log_route(task, target)                         # escalation rate is your key metric\n    if target == \"local\":\n        out = local.create_chat_completion(\n            messages=[{\"role\": \"user\", \"content\": prompt}], max_tokens=256)\n        return out[\"choices\"][0][\"message\"][\"content\"]\n    return cloud_complete(prompt)                   # via your gateway"
+  },
+  "example": {
+    "en": "Tesla's FSD computer is edge inference where the cloud is not an option: at highway speed a 100 ms network round trip is ~3 m of travel, and coverage drops in tunnels. The 2019 board (HW3) carries two independent FSD chips, each with its own power and memory, ~144 TOPS in total. Each chip runs the networks on all camera feeds and produces a driving plan; the plans are cross-checked before the car acts, so it can keep going if one chip fails. New networks reach the fleet over the air after shadow-mode validation. The datacenter's job is training, not driving.",
+    "es": "La computadora FSD de Tesla es inferencia en el edge donde la nube no es opción: a velocidad de autopista, una ida y vuelta de red de 100 ms equivale a ~3 m recorridos, y la cobertura se cae en los túneles. La placa de 2019 (HW3) lleva dos chips FSD independientes, cada uno con su propia alimentación y memoria, ~144 TOPS en total. Cada chip corre las redes sobre todas las cámaras y produce un plan de manejo; los planes se comparan antes de que el auto actúe, así puede seguir si un chip falla. Las redes nuevas llegan a la flota por OTA después de validarse en shadow mode. El datacenter entrena; no maneja."
+  },
+  "pros": [
+    { "en": "Latency with no network round trip, and it keeps working offline.", "es": "Latencia sin ida y vuelta por la red, y sigue funcionando offline." },
+    { "en": "Data stays on the device: a simpler privacy and compliance story.", "es": "Los datos se quedan en el dispositivo: la historia de privacidad y cumplimiento es más simple." },
+    { "en": "Marginal cost per query is ~zero for you; the user's hardware pays.", "es": "El costo marginal por consulta es ~cero para ti; lo paga el hardware del usuario." }
+  ],
+  "cons": [
+    { "en": "Small models reason and know far less than frontier cloud models.", "es": "Los modelos chicos razonan y saben mucho menos que los modelos de frontera en la nube." },
+    { "en": "Fragmented hardware: each device class needs its own build, quantization and tests.", "es": "Hardware fragmentado: cada tipo de dispositivo necesita su propio build, cuantización y pruebas." },
+    { "en": "Slow, partial updates: a long tail of devices keeps running old model versions.", "es": "Actualizaciones lentas y parciales: una cola larga de dispositivos sigue con versiones viejas del modelo." },
+    { "en": "Battery, heat and app-size budgets: a 2 GB model download is a product decision.", "es": "Presupuestos de batería, temperatura y tamaño de la app: descargar un modelo de 2 GB es una decisión de producto." }
+  ],
+  "whenToUse": {
+    "en": "Latency-critical or offline paths (cars, robots, AR, keyboards), data that shouldn't leave the device, or very high-volume simple tasks where cloud cost per query would dominate.",
+    "es": "Caminos críticos en latencia u offline (autos, robots, AR, teclados), datos que no deberían salir del dispositivo, o tareas simples de altísimo volumen donde el costo por consulta en la nube dominaría."
+  },
+  "whenNotToUse": {
+    "en": "Tasks that need frontier reasoning, fresh knowledge or long context; low-volume features where cloud cost is trivial; or teams that can't maintain device-specific model builds.",
+    "es": "Tareas que necesitan razonamiento de frontera, conocimiento actualizado o contexto largo; funcionalidades de poco volumen donde el costo en la nube es trivial; o equipos que no pueden mantener builds del modelo por dispositivo."
+  },
+  "numbers": [
+    { "en": "Apple (2024): ~3B on-device model, mixed 2/4-bit at ~3.7 bits/weight; ~0.6 ms per prompt token and ~30 tokens/s on iPhone 15 Pro.", "es": "Apple (2024): modelo on-device de ~3B, mezcla de 2 y 4 bits con ~3.7 bits por peso; ~0.6 ms por token de prompt y ~30 tokens/s en iPhone 15 Pro." },
+    { "en": "Weights ≈ params × bits ÷ 8: 3B at 4-bit ≈ 1.5 GB; at 16-bit ≈ 6 GB, too much for most phones.", "es": "Pesos ≈ parámetros × bits ÷ 8: 3B en 4 bits ≈ 1.5 GB; en 16 bits ≈ 6 GB, demasiado para la mayoría de los teléfonos." },
+    { "en": "Rule of thumb: decode tokens/s ≲ memory bandwidth ÷ weight bytes; ~50 GB/s ÷ 1.5 GB ≈ ~30 tokens/s.", "es": "Regla práctica: tokens/s de decode ≲ ancho de banda de memoria ÷ bytes de pesos; ~50 GB/s ÷ 1.5 GB ≈ ~30 tokens/s." },
+    { "en": "Apple's per-task LoRA adapters (rank 16) on the 3B model weigh tens of MB, so one base serves many features.", "es": "Los adaptadores LoRA por tarea de Apple (rango 16) sobre el modelo de 3B pesan decenas de MB, así una sola base sirve a muchas funcionalidades." },
+    { "en": "Tesla HW3 (2019): two independent FSD chips, ~72 TOPS each, ~144 TOPS per computer.", "es": "Tesla HW3 (2019): dos chips FSD independientes, ~72 TOPS cada uno, ~144 TOPS por computadora." }
+  ],
+  "pitfalls": [
+    { "en": "Benchmarking on a cool, plugged-in dev device. Measure sustained speed on a warm phone running on battery.", "es": "Medir en un dispositivo de desarrollo frío y enchufado. Mide la velocidad sostenida en un teléfono caliente y con batería." },
+    { "en": "Ignoring the KV cache: long contexts can need as much memory as the weights.", "es": "Ignorar el KV cache: con contextos largos puede ocupar tanta memoria como los pesos." },
+    { "en": "No escalation telemetry: without logging how often and why the router escalates, you can't see the local model failing.", "es": "No tener telemetría de escalamiento: si no registras cuánto y por qué escala el router, no ves cuando el modelo local falla." },
+    { "en": "OTA updates without a device compatibility matrix: an op the NPU lacks silently falls back to the much slower CPU.", "es": "Actualizar por OTA sin matriz de compatibilidad por dispositivo: una operación que la NPU no soporta cae en silencio a la CPU, mucho más lenta." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you put an LLM feature on device instead of in the cloud?", "es": "¿Cuándo pondrías una funcionalidad con LLM en el dispositivo en vez de en la nube?" },
+      "a": {
+        "en": "When one of four drivers is strong: latency the network can't meet, data that must not leave the device, offline use, or volume so high that cloud cost per query hurts. Then the real test is whether a ~3B quantized model passes my evals for that task on the weakest device I support, measured warm and on battery. If yes, I go hybrid: on device by default, escalate hard cases to the cloud, and track the escalation rate. The trade-off is a lower quality ceiling and a fleet of model builds to maintain.",
+        "es": "Cuando uno de cuatro motivos pesa mucho: una latencia que la red no puede cumplir, datos que no deben salir del dispositivo, uso offline o un volumen tan alto que el costo por consulta en la nube duele. Después, la prueba real es si un modelo cuantizado de ~3B pasa mis evals para esa tarea en el dispositivo más débil que soporto, medido caliente y con batería. Si pasa, voy a un esquema híbrido: en el dispositivo por defecto, escalo los casos difíciles a la nube y sigo la tasa de escalamiento. El trade-off es un techo de calidad más bajo y una flota de builds del modelo que mantener."
+      }
+    },
+    {
+      "q": { "en": "Design the hybrid edge–cloud architecture for a phone assistant.", "es": "Diseña la arquitectura híbrida edge–nube para un asistente en el teléfono." },
+      "a": {
+        "en": "On device: a small base model with per-feature LoRA adapters, plus a router that uses task type, length and a confidence check. Hard requests escalate to a cloud model. For privacy I'd follow Apple's Private Cloud Compute principles: stateless processing, no privileged admin access, and server images published so researchers can verify them. Models ship through an OTA registry with staged rollout by device class, a kill switch and rollback. Telemetry is aggregated and privacy-preserving: escalation rate, latency, crash rate per model version. Offline, the assistant degrades gracefully instead of failing.",
+        "es": "En el dispositivo: un modelo base chico con adaptadores LoRA por funcionalidad, más un router que usa el tipo de tarea, la longitud y un chequeo de confianza. Las solicitudes difíciles escalan a un modelo en la nube. Para la privacidad seguiría los principios de Private Cloud Compute de Apple: procesamiento sin estado, sin acceso administrativo privilegiado e imágenes de servidor publicadas para que investigadores las verifiquen. Los modelos salen por un registro OTA con rollout en etapas por tipo de dispositivo, kill switch y rollback. La telemetría es agregada y preserva la privacidad: tasa de escalamiento, latencia y tasa de crashes por versión de modelo. Sin conexión, el asistente se degrada con elegancia en vez de fallar."
+      }
+    },
+    {
+      "q": { "en": "What changes when edge inference is safety-critical, like Tesla's FSD?", "es": "¿Qué cambia cuando la inferencia en el edge es crítica para la seguridad, como el FSD de Tesla?" },
+      "a": {
+        "en": "Three things. Availability: the model can't depend on a network, so perception and planning run in the car within a fixed compute and power budget. Redundancy: Tesla's HW3 has two independent chips that each compute a plan and cross-check it, so one failure doesn't stop the car. Validation: new networks run in shadow mode on the fleet, compared against human drivers, before they're allowed to act, and rollouts are staged over the air. The fixed hardware budget also forces efficiency work that cloud teams can postpone.",
+        "es": "Tres cosas. Disponibilidad: el modelo no puede depender de la red, así que la percepción y la planificación corren en el auto dentro de un presupuesto fijo de cómputo y energía. Redundancia: el HW3 de Tesla tiene dos chips independientes que calculan cada uno un plan y lo comparan, así una falla no detiene el auto. Validación: las redes nuevas corren en shadow mode en la flota, comparadas con conductores humanos, antes de que se les permita actuar, y los rollouts por OTA son en etapas. Además, el presupuesto fijo de hardware obliga a un trabajo de eficiencia que los equipos en la nube pueden posponer."
+      }
+    }
+  ],
+  "related": ["quantization", "distillation", "model-routing", "gpu-memory-math", "inference-metrics", "pii-privacy"],
+  "sources": [
+    { "title": "Apple ML Research — Introducing Apple's On-Device and Server Foundation Models", "url": "https://machinelearning.apple.com/research/introducing-apple-foundation-models" },
+    { "title": "Apple Security Research — Private Cloud Compute", "url": "https://security.apple.com/blog/private-cloud-compute/" },
+    { "title": "PyTorch — Introducing ExecuTorch 1.0", "url": "https://pytorch.org/blog/introducing-executorch-1-0/" },
+    { "title": "llama.cpp — LLM inference in C/C++", "url": "https://github.com/ggml-org/llama.cpp" }
+  ]
+}

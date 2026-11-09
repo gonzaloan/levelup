@@ -200,7 +200,7 @@ export default async function ConceptPage({ params }: P) {
         </nav>
       </article>
 
-      <KeyNav prev={prev ? `/${locale}/c/${prev.id}/` : undefined} next={next ? `/${locale}/c/${next.id}/` : undefined} />
+      <KeyNav self={`/${locale}/c/${id}/`} prev={prev ? `/${locale}/c/${prev.id}/` : undefined} next={next ? `/${locale}/c/${next.id}/` : undefined} />
       <aside className="rail rail-right">
         <MasteredToggle id={c.id} label={L("markKnown")} doneLabel={L("known")} />
         <Toc items={toc} title={L("onThisPage")} />

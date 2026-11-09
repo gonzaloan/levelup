@@ -1,0 +1,97 @@
+{
+  "id": "ai-assisted-engineering",
+  "domain": "leadership",
+  "level": "staff",
+  "title": { "en": "Rolling out AI coding agents in an org", "es": "Adopción de agentes de código con IA" },
+  "aliases": ["AI coding assistants", "coding agents", "Copilot rollout", "AI developer productivity", "AGENTS.md", "DORA metrics", "METR study", "AI-assisted development"],
+  "tldr": {
+    "en": "Treat AI coding tools as an engineering-system change, not a license purchase: keep review and security gates, make repos agent-friendly, measure delivery and quality against a control, and expand where data shows gains.",
+    "es": "Trata las herramientas de código con IA como un cambio en el sistema de ingeniería, no como una compra de licencias: mantén los gates de revisión y seguridad, prepara los repos para agentes, mide entrega y calidad contra un grupo de control y expande donde los datos muestren mejoras."
+  },
+  "analogy": {
+    "en": "Like giving every engineer a fast, tireless junior who never says 'I'm not sure': output goes up, and so does what senior reviewers must catch.",
+    "es": "Como darle a cada ingeniero un junior rápido e incansable que nunca dice 'no estoy seguro': sube la producción, y también lo que los revisores senior tienen que atrapar."
+  },
+  "explain": {
+    "en": "AI coding tools span **autocomplete**, **IDE chat** and **agents** that edit many files, run tests and open PRs. The evidence is mixed, which is why rollout is a Staff-level problem, not a license purchase:\n\n- GitHub's 2022 RCT: developers finished a small greenfield task **55.8% faster** with Copilot.\n- METR's 2025 RCT: experienced maintainers were **19% slower** on their own mature repos, while *believing* they were ~20% faster.\n- DORA 2025: **90%** of developers use AI; adoption now tracks higher throughput but still **more delivery instability**. AI **amplifies** the system it lands in.\n\nIt helps most with boilerplate, tests, migrations, unfamiliar code and prototypes; it hurts on subtle domain logic, huge diffs and security-sensitive code.\n\n**Guardrails**: review stays mandatory and the PR author owns every line; secret scanning and SAST on every PR; license and IP checks; agents get sandboxes and scoped tokens, never prod credentials.\n\n**Enablement**: shared rules files (`AGENTS.md`, `CLAUDE.md`), fast reliable tests an agent can run, small PRs, and champions who share prompts and patterns.\n\n**Measure honestly**: DORA metrics (lead time, deploy frequency, change failure rate, recovery time) plus incidents, review wait and developer surveys, against a baseline or a control group. Never lines of code or acceptance rate alone.\n\nWatch two slow risks: **review load** piling onto seniors and **skill atrophy** in juniors.",
+    "es": "Las herramientas de código con IA van desde el **autocompletado** y el **chat en el IDE** hasta **agentes** que editan muchos archivos, corren pruebas y abren PRs. La evidencia es mixta, y por eso adoptarlas es un problema de nivel Staff, no una compra de licencias:\n\n- RCT de GitHub en 2022: los desarrolladores terminaron una tarea chica desde cero **55.8% más rápido** con Copilot.\n- RCT de METR en 2025: mantenedores experimentados fueron **19% más lentos** en sus propios repos maduros, mientras *creían* ir ~20% más rápido.\n- DORA 2025: el **90%** de los desarrolladores usa IA; la adopción ya se asocia con más throughput, pero todavía con **más inestabilidad en las entregas**. La IA **amplifica** el sistema en el que aterriza.\n\nAyuda más con boilerplate, pruebas, migraciones, código desconocido y prototipos; perjudica en lógica de dominio sutil, diffs enormes y código sensible para la seguridad.\n\n**Guardrails**: la revisión sigue siendo obligatoria y el autor del PR responde por cada línea; secret scanning y SAST en cada PR; chequeos de licencias y propiedad intelectual; los agentes trabajan en sandboxes con tokens acotados, nunca con credenciales de producción.\n\n**Habilitación**: archivos de reglas compartidos (`AGENTS.md`, `CLAUDE.md`), pruebas rápidas y confiables que un agente pueda correr, PRs chicos y referentes internos que compartan prompts y patrones.\n\n**Mide con honestidad**: métricas DORA (lead time, frecuencia de deploy, tasa de fallas por cambio, tiempo de recuperación) más incidentes, espera de revisión y encuestas, contra una línea base o un grupo de control. Nunca líneas de código ni tasa de aceptación por sí solas.\n\nVigila dos riesgos lentos: la **carga de revisión** que se acumula en los seniors y la **atrofia de habilidades** en los juniors."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  B[\"Baseline DORA<br/>+ quality metrics\"] --> G[\"Guardrails: review,<br/>scanning, sandboxes\"]\n  G --> P[\"Pilot with<br/>volunteer teams\"]\n  P --> E[\"Enable: rules files,<br/>tests, champions\"]\n  E --> M[\"Measure vs<br/>control group\"]\n  M --> D{\"Faster without<br/>quality loss?\"}\n  D -->|yes| X[\"Expand to<br/>next cohort\"]\n  D -->|no| F[\"Fix tasks, repos<br/>or training\"]\n  F --> E\n  X --> M",
+    "caption": {
+      "en": "Guardrails come before the pilot, and every cohort is measured against a control before the next one starts. Expansion is earned with data, not mandated.",
+      "es": "Los guardrails van antes del piloto, y cada cohorte se mide contra un grupo de control antes de que arranque la siguiente. La expansión se gana con datos, no por mandato."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "Pilot vs control, before vs after the rollout", "es": "Piloto vs. control, antes vs. después del rollout" },
+    "source": "-- Pilot vs control teams, 8 weeks before vs 8 weeks after the rollout (2026-09-01).\n-- Read it as a difference-in-differences: (pilot after - before) - (control after - before).\nWITH pr AS (\n  SELECT t.cohort,                                          -- 'pilot' | 'control'\n         CASE WHEN p.merged_at < DATE '2026-09-01' THEN 'before' ELSE 'after' END AS period,\n         PERCENTILE_CONT(0.5) WITHIN GROUP (\n           ORDER BY EXTRACT(EPOCH FROM p.merged_at - p.opened_at) / 3600)       AS median_cycle_h,\n         PERCENTILE_CONT(0.5) WITHIN GROUP (\n           ORDER BY EXTRACT(EPOCH FROM p.first_review_at - p.opened_at) / 3600) AS median_review_wait_h,\n         AVG(p.lines_changed)                            AS avg_pr_size,  -- AI tends to inflate this\n         AVG(CASE WHEN p.reverted_30d THEN 1 ELSE 0 END) AS revert_rate\n  FROM prs p JOIN teams t USING (team_id)\n  WHERE p.merged_at >= DATE '2026-07-07' AND p.merged_at < DATE '2026-10-27'\n  GROUP BY 1, 2\n),\ndep AS (\n  SELECT t.cohort,\n         CASE WHEN d.deployed_at < DATE '2026-09-01' THEN 'before' ELSE 'after' END AS period,\n         COUNT(*)                                           AS deploys,\n         AVG(CASE WHEN d.caused_incident THEN 1 ELSE 0 END) AS change_failure_rate\n  FROM deploys d JOIN teams t USING (team_id)\n  WHERE d.deployed_at >= DATE '2026-07-07' AND d.deployed_at < DATE '2026-10-27'\n  GROUP BY 1, 2\n)\nSELECT cohort, period, median_cycle_h, median_review_wait_h, avg_pr_size,\n       revert_rate, deploys, change_failure_rate\nFROM pr JOIN dep USING (cohort, period)\nORDER BY cohort, period DESC;   -- 'before' first"
+  },
+  "example": {
+    "en": "Illustrative: a 400-engineer org pilots an agentic coding tool with 3 volunteer teams and 3 matched control teams for 8 weeks. Pilot teams merge 25% more PRs and median cycle time falls 15%, but average PR size grows 60%, review wait grows 40%, and one team's revert rate rises from 2% to 3.5% after agents shipped large refactors. Fixes: a ~400-line PR cap, tests required in the same PR, an `AGENTS.md` with build, test and style rules, and agent PRs tagged for review. The second cohort keeps most of the speedup with reverts back at baseline, and only then does the rollout expand.",
+    "es": "Ilustrativo: una organización de 400 ingenieros prueba una herramienta de agentes de código con 3 equipos voluntarios y 3 equipos de control comparables durante 8 semanas. Los equipos piloto mergean 25% más PRs y el cycle time mediano cae 15%, pero el tamaño promedio de los PRs crece 60%, la espera de revisión sube 40% y la tasa de reverts de un equipo pasa de 2% a 3.5% después de que los agentes enviaron refactors grandes. Arreglos: tope de ~400 líneas por PR, pruebas obligatorias en el mismo PR, un `AGENTS.md` con reglas de build, pruebas y estilo, y PRs de agentes etiquetados para revisión. La segunda cohorte conserva casi toda la mejora con los reverts de vuelta en la línea base, y solo entonces se amplía el rollout."
+  },
+  "pros": [
+    { "en": "Real speedups on boilerplate, tests, migrations and unfamiliar codebases.", "es": "Mejoras reales de velocidad en boilerplate, pruebas, migraciones y codebases desconocidos." },
+    { "en": "Agents can absorb long-tail toil: dependency bumps, lint fixes, flaky tests.", "es": "Los agentes pueden absorber el trabajo repetitivo de la cola larga: actualizar dependencias, arreglar lint, pruebas inestables." },
+    { "en": "Rules files and fast tests help human onboarding as much as they help agents.", "es": "Los archivos de reglas y las pruebas rápidas ayudan al onboarding de las personas tanto como a los agentes." }
+  ],
+  "cons": [
+    { "en": "Review becomes the bottleneck: more and larger PRs land on the same senior reviewers.", "es": "La revisión se vuelve el cuello de botella: más PRs, y más grandes, caen sobre los mismos revisores senior." },
+    { "en": "Perceived gains overstate measured ones (METR: felt ~20% faster, measured 19% slower).", "es": "Las mejoras percibidas exageran las medidas (METR: se sentían ~20% más rápidos y medían 19% más lentos)." },
+    { "en": "New risk surface: leaked secrets, insecure patterns, license questions, over-privileged agents.", "es": "Nueva superficie de riesgo: secretos filtrados, patrones inseguros, dudas de licencias y agentes con demasiados permisos." },
+    { "en": "Skill atrophy, especially for juniors who skip the struggle that builds judgment.", "es": "Atrofia de habilidades, sobre todo en juniors que se saltan el esfuerzo que construye criterio." }
+  ],
+  "whenToUse": {
+    "en": "Once you have CI you trust, real code review and a baseline of delivery metrics. Start with volunteer teams on well-tested repos and well-scoped tasks.",
+    "es": "Cuando tienes un CI en el que confías, revisión de código real y una línea base de métricas de entrega. Empieza con equipos voluntarios en repos bien probados y tareas bien acotadas."
+  },
+  "whenNotToUse": {
+    "en": "Don't mandate usage org-wide or tie it to performance reviews, and keep agents off safety-critical, regulated or poorly tested code until extra gates exist.",
+    "es": "No impongas el uso a toda la organización ni lo ates a las evaluaciones de desempeño, y mantén a los agentes lejos del código crítico, regulado o mal probado hasta tener gates adicionales."
+  },
+  "numbers": [
+    { "en": "METR RCT (Jul 2025): 16 experienced OSS developers, 246 tasks, 19% slower with AI; they predicted 24% faster and afterwards believed 20% faster.", "es": "RCT de METR (jul 2025): 16 desarrolladores open source experimentados, 246 tareas, 19% más lentos con IA; esperaban ir 24% más rápido y después creían haber ido 20% más rápido." },
+    { "en": "GitHub RCT (Peng et al., 2023): the Copilot group finished an HTTP-server task 55.8% faster.", "es": "RCT de GitHub (Peng et al., 2023): el grupo con Copilot terminó una tarea de servidor HTTP 55.8% más rápido." },
+    { "en": "DORA 2025 (~5,000 respondents): 90% use AI at work, median ~2 h/day; >80% report higher productivity; 30% trust AI little or not at all.", "es": "DORA 2025 (~5,000 encuestados): el 90% usa IA en el trabajo, con una mediana de ~2 h/día; más del 80% reporta más productividad; el 30% confía poco o nada en la IA." },
+    { "en": "DORA 2024: a 25% rise in AI adoption was associated with ~1.5% lower delivery throughput and ~7.2% lower delivery stability.", "es": "DORA 2024: un aumento de 25% en la adopción de IA se asoció con ~1.5% menos throughput de entrega y ~7.2% menos estabilidad de entrega." },
+    { "en": "AGENTS.md, now stewarded by the Linux Foundation's Agentic AI Foundation, is used by 60k+ open-source projects.", "es": "AGENTS.md, hoy a cargo de la Agentic AI Foundation de la Linux Foundation, se usa en más de 60k proyectos open source." }
+  ],
+  "pitfalls": [
+    { "en": "Measuring lines of code, PR count or acceptance rate: all rise with AI whether or not value does.", "es": "Medir líneas de código, cantidad de PRs o tasa de aceptación: todas suben con IA, haya o no más valor." },
+    { "en": "No control group: seasonality, re-orgs and the novelty effect masquerade as AI impact.", "es": "No tener grupo de control: la estacionalidad, las reorganizaciones y el efecto novedad se disfrazan de impacto de la IA." },
+    { "en": "Agents running with developers' full credentials, or mixing secrets and untrusted issue text in one session.", "es": "Agentes que corren con las credenciales completas del desarrollador, o que mezclan secretos y texto no confiable de issues en una misma sesión." },
+    { "en": "Accepting bigger PRs because the AI wrote them: review quality drops. Keep batches small.", "es": "Aceptar PRs más grandes porque los escribió la IA: la calidad de la revisión cae. Mantén los cambios chicos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your CTO wants AI coding agents mandated for all 500 engineers next quarter. What do you advise?", "es": "Tu CTO quiere imponer agentes de código con IA a los 500 ingenieros el próximo trimestre. ¿Qué le aconsejas?" },
+      "a": {
+        "en": "I'd back the goal and push back on the mandate. The evidence is mixed: METR measured experienced developers 19% slower on mature repos, and DORA links AI adoption to more delivery instability. So: baseline DORA and quality metrics now, guardrails first (mandatory review, secret scanning, sandboxed agents), then a pilot with volunteer teams against a control group for 6–8 weeks. Fix what the pilot exposes, usually review load and PR size, and expand cohort by cohort with a go/no-go on data. Same quarter, much lower risk, and a result the CTO can defend.",
+        "es": "Apoyaría el objetivo y cuestionaría el mandato. La evidencia es mixta: METR midió a desarrolladores experimentados 19% más lentos en repos maduros, y DORA asocia la adopción de IA con más inestabilidad en las entregas. Entonces: línea base de métricas DORA y de calidad ya, primero los guardrails (revisión obligatoria, secret scanning, agentes en sandbox) y después un piloto con equipos voluntarios contra un grupo de control durante 6–8 semanas. Arreglo lo que el piloto exponga, normalmente la carga de revisión y el tamaño de los PRs, y expando cohorte por cohorte con un go/no-go basado en datos. Mismo trimestre, mucho menos riesgo y un resultado que el CTO puede defender."
+      }
+    },
+    {
+      "q": { "en": "How do you measure whether AI coding tools actually help?", "es": "¿Cómo mides si las herramientas de código con IA realmente ayudan?" },
+      "a": {
+        "en": "Outcomes, not activity: lines of code and acceptance rate go up no matter what. I compare pilot and control teams before and after on DORA metrics, plus revert rate, incidents, review wait and PR size, and I run a developer survey because experience matters too. I segment by task type and seniority, since gains on boilerplate can hide losses on complex work. And I don't trust self-reports alone: in METR's study developers felt ~20% faster while measuring 19% slower.",
+        "es": "Resultados, no actividad: las líneas de código y la tasa de aceptación suben pase lo que pase. Comparo equipos piloto y de control, antes y después, en métricas DORA, más tasa de reverts, incidentes, espera de revisión y tamaño de PR, y hago una encuesta a los desarrolladores porque la experiencia también importa. Segmento por tipo de tarea y seniority, porque las mejoras en boilerplate pueden esconder pérdidas en trabajo complejo. Y no confío solo en lo que la gente reporta: en el estudio de METR los desarrolladores se sentían ~20% más rápidos mientras medían 19% más lentos."
+      }
+    },
+    {
+      "q": { "en": "What guardrails do you put on coding agents?", "es": "¿Qué guardrails le pones a los agentes de código?" },
+      "a": {
+        "en": "I treat the agent as an untrusted contributor. The human author owns every line and review stays mandatory; agents can open PRs but never merge or push to protected branches. They run in sandboxes with scoped, short-lived tokens and no production secrets. Every PR gets secret scanning, SAST, dependency and license checks. Because agents read issues, docs and web pages, prompt injection is real: I avoid combining private data, untrusted input and outbound access in one session, the [[lethal-trifecta]]. Everything is logged for audit.",
+        "es": "Trato al agente como un colaborador no confiable. El autor humano responde por cada línea y la revisión sigue siendo obligatoria; los agentes pueden abrir PRs pero nunca mergear ni hacer push a ramas protegidas. Corren en sandboxes con tokens acotados y de corta duración, sin secretos de producción. Cada PR pasa por secret scanning, SAST y chequeos de dependencias y licencias. Como los agentes leen issues, documentación y páginas web, el prompt injection es real: evito combinar datos privados, entradas no confiables y acceso de salida en una misma sesión, la [[lethal-trifecta]]. Todo queda registrado para auditoría."
+      }
+    }
+  ],
+  "related": ["case-coding-assistant", "ai-strategy", "supply-chain", "tech-debt", "mentoring", "lethal-trifecta"],
+  "sources": [
+    { "title": "Becker et al. (METR) — Measuring the Impact of Early-2025 AI on Experienced Open-Source Developer Productivity", "url": "https://arxiv.org/abs/2507.09089" },
+    { "title": "Google — How are developers using AI? Inside our 2025 DORA report", "url": "https://blog.google/technology/developers/dora-report-2025/" },
+    { "title": "Peng et al. — The Impact of AI on Developer Productivity: Evidence from GitHub Copilot", "url": "https://arxiv.org/abs/2302.06590" },
+    { "title": "AGENTS.md — A simple, open format for guiding coding agents", "url": "https://agents.md/" }
+  ]
+}

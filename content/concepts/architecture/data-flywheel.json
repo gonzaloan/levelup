@@ -1,0 +1,95 @@
+{
+  "id": "data-flywheel",
+  "domain": "architecture",
+  "level": "advanced",
+  "title": { "en": "The data flywheel", "es": "El data flywheel" },
+  "aliases": ["data engine", "feedback loop", "production feedback", "implicit feedback", "shadow mode", "active learning", "learning from usage"],
+  "tldr": {
+    "en": "Turn usage into improvement: log traces and feedback, select and label the informative cases, use them for evals first and training second, ship, and let more usage feed the next turn.",
+    "es": "Convierte el uso en mejora: registra traces y feedback, selecciona y etiqueta los casos que enseñan algo, úsalos primero para evals y luego para entrenar, despliega y deja que más uso alimente la siguiente vuelta."
+  },
+  "analogy": {
+    "en": "A restaurant that records every dish sent back and why, tests fixes on the staff meal, and updates the menu weekly. More diners mean more notes, which mean a better menu.",
+    "es": "Un restaurante que anota cada plato devuelto y el motivo, prueba los arreglos en la comida del personal y actualiza el menú cada semana. Más comensales traen más notas, y más notas, un mejor menú."
+  },
+  "explain": {
+    "en": "A **data flywheel** is the loop that makes a product improve from its own usage: **log → select → label → evaluate/train → ship → more usage**. Base models are a commodity; the stream of real tasks and outcomes only you see is not.\n\n1. **Log traces**: input, retrieved context, prompt and model version, output, tool calls, cost and the outcome. See [[llm-observability]].\n2. **Capture feedback.** *Explicit* signals (thumbs, ratings, corrections) are precise but sparse. *Implicit* ones are dense but noisy: a suggestion accepted or rejected, a draft edited before sending, a retry, an escalation to a human.\n3. **Select** what teaches you something: failures, disagreements, low confidence, rare slices, plus a random sample. Tesla's **data engine** is the canonical case: cars run networks in **shadow mode**, and *triggers* upload clips when the network and the driver disagree.\n4. **Label and curate** with guidelines and agreement checks ([[data-curation]]). New failures go into the eval set *before* similar cases go into training.\n5. **Use it**: cheap fixes first (prompts, retrieval, new [[golden-datasets]] cases), then fine-tuning or preference training once volume justifies it.\n\nNone of this is allowed without **consent and privacy**: honor what users agreed to, scrub PII before humans see traces ([[pii-privacy]]), set retention limits and keep tenant opt-outs.",
+    "es": "Un **data flywheel** es el ciclo que hace que un producto mejore con su propio uso: **registrar → seleccionar → etiquetar → evaluar/entrenar → desplegar → más uso**. Los modelos base son commodity; el flujo de tareas y resultados reales que solo tú ves, no.\n\n1. **Registra traces**: entrada, contexto recuperado, versión de prompt y de modelo, salida, tool calls, costo y el resultado. Ver [[llm-observability]].\n2. **Captura feedback.** Las señales *explícitas* (pulgares, calificaciones, correcciones) son precisas pero escasas. Las *implícitas* son abundantes pero ruidosas: una sugerencia aceptada o rechazada, un borrador editado antes de enviarlo, un reintento, un escalamiento a un humano.\n3. **Selecciona** lo que te enseña algo: fallas, desacuerdos, baja confianza, segmentos raros, más una muestra aleatoria. El **data engine** de Tesla es el caso canónico: los autos corren redes en **shadow mode** y unos *triggers* suben clips cuando la red y el conductor no coinciden.\n4. **Etiqueta y cura** con guías y chequeos de acuerdo entre anotadores ([[data-curation]]). Las fallas nuevas entran al set de evals *antes* de que casos parecidos entren al entrenamiento.\n5. **Úsalo**: primero los arreglos baratos (prompts, recuperación, casos nuevos en [[golden-datasets]]) y después fine-tuning o entrenamiento por preferencias cuando el volumen lo justifique.\n\nNada de esto está permitido sin **consentimiento y privacidad**: respeta lo que el usuario aceptó, elimina la PII antes de que una persona vea los traces ([[pii-privacy]]), define límites de retención y mantén los opt-outs por tenant."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[Users] --> P[Product]\n  P --> L[(\"Consented traces<br/>+ feedback\")]\n  L --> R[\"Scrub PII\"]\n  R --> S[\"Select: failures,<br/>triggers, random slice\"]\n  S --> LB[\"Label + curate\"]\n  LB --> E[\"Eval set first\"]\n  LB --> T[\"Fix prompts or<br/>fine-tune\"]\n  T --> G{Beats evals?}\n  E --> G\n  G -->|ship| P\n  G -->|no| T",
+    "caption": {
+      "en": "Each turn adds eval cases before training data, and nothing ships unless it beats the current evals. More usage makes the next turn faster.",
+      "es": "Cada vuelta agrega casos de eval antes que datos de entrenamiento, y nada se despliega si no supera los evals actuales. Más uso acelera la siguiente vuelta."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Pick which production traces to label", "es": "Elegir qué traces de producción etiquetar" },
+    "source": "import random\nfrom dataclasses import dataclass\n\n@dataclass\nclass Trace:\n    trace_id: str\n    tenant: str\n    output: str\n    accepted: bool | None     # implicit: suggestion kept or dismissed\n    edit_ratio: float         # implicit: 0 = sent as-is, 1 = fully rewritten\n    thumbs: int | None        # explicit: +1 / -1 / None (most traces)\n    escalated: bool           # handed off to a human\n    consent: bool             # tenant/user allows use for improvement\n\ndef priority(t: Trace) -> float:\n    # Rank by how much a label would teach us, not by recency\n    score = 0.0\n    if t.thumbs == -1 or t.escalated:\n        score += 1.0                          # clear failure\n    if t.accepted and t.edit_ratio > 0.5:\n        score += 0.6                          # \"accepted\", then rewritten: hidden failure\n    if t.accepted is False:\n        score += 0.3\n    return score\n\ndef select_for_labeling(traces: list[Trace], budget: int, explore: float = 0.1) -> list[Trace]:\n    pool = [scrub_pii(t) for t in traces if t.consent]   # consent and PII first\n    ranked = sorted(pool, key=priority, reverse=True)\n    n_rand = int(budget * explore)            # random slice keeps evals unbiased\n    head, tail = ranked[: budget - n_rand], ranked[budget - n_rand :]\n    return head + random.sample(tail, min(n_rand, len(tail)))"
+  },
+  "example": {
+    "en": "Cursor's Tab model handles 400M+ requests a day, and every shown suggestion ends in an accept or a reject. In 2025 Cursor turned that into the reward for online RL: accepts score positive, rejects negative, showing nothing scores zero, so the model learns *when not to suggest*. New checkpoints ship to users several times a day; each collect-and-train cycle takes 1.5–2 hours. Result (Sep 2025): 21% fewer suggestions with a 28% higher accept rate. The flywheel works because the signal is dense and tied to the product goal, and the loop is short.",
+    "es": "El modelo Tab de Cursor atiende más de 400M de requests al día, y cada sugerencia que muestra termina aceptada o rechazada. En 2025 Cursor convirtió eso en la recompensa de un RL online: aceptar suma, rechazar resta y no sugerir vale cero, así el modelo aprende *cuándo no sugerir*. Los checkpoints nuevos llegan a los usuarios varias veces al día; cada ciclo de recolección y entrenamiento toma 1.5–2 horas. Resultado (sep 2025): 21% menos sugerencias con una tasa de aceptación 28% mayor. El flywheel funciona porque la señal es abundante y está atada al objetivo del producto, y el ciclo es corto."
+  },
+  "pros": [
+    { "en": "A compounding advantage competitors can't buy: your users' real tasks and outcomes.", "es": "Una ventaja que se acumula y que la competencia no puede comprar: las tareas y resultados reales de tus usuarios." },
+    { "en": "Evals stay representative of today's traffic instead of last year's guesses.", "es": "Los evals siguen representando el tráfico de hoy y no las suposiciones del año pasado." },
+    { "en": "Implicit signals deliver labels at a volume no annotation team can match.", "es": "Las señales implícitas dan etiquetas a un volumen que ningún equipo de anotación puede igualar." }
+  ],
+  "cons": [
+    { "en": "Consent, privacy and contracts limit what you may use; many enterprise customers forbid training on their data.", "es": "El consentimiento, la privacidad y los contratos limitan lo que puedes usar; muchos clientes enterprise prohíben entrenar con sus datos." },
+    { "en": "Feedback loops: the model learns from data shaped by its own past outputs.", "es": "Ciclos de retroalimentación: el modelo aprende de datos moldeados por sus propias salidas anteriores." },
+    { "en": "Logging, labeling and pipelines cost real money months before the payoff.", "es": "El logging, el etiquetado y los pipelines cuestan dinero real meses antes de que se vea el retorno." }
+  ],
+  "whenToUse": {
+    "en": "A product with real usage and a measurable outcome (accepted, resolved, converted), where the quality gaps are specific to your users and you are allowed to use their data.",
+    "es": "Un producto con uso real y un resultado medible (aceptado, resuelto, convertido), donde las brechas de calidad son propias de tus usuarios y tienes permiso para usar sus datos."
+  },
+  "whenNotToUse": {
+    "en": "Pre-launch or low-volume products: write evals by hand instead. Also when contracts forbid using customer data and you cannot get opt-in.",
+    "es": "Productos sin lanzar o con poco volumen: escribe los evals a mano. Tampoco cuando los contratos prohíben usar datos de clientes y no puedes conseguir opt-in."
+  },
+  "numbers": [
+    { "en": "Cursor Tab (Sep 2025): online RL on accept/reject signals from 400M+ daily requests → 21% fewer suggestions, 28% higher accept rate.", "es": "Cursor Tab (sep 2025): RL online sobre señales de aceptar/rechazar de más de 400M de requests diarios → 21% menos sugerencias y 28% más aceptación." },
+    { "en": "Tesla (Karpathy, CVPR 2021): 221 shadow-mode triggers and 7 data-engine loops built ~1M 10-second clips, ~6B labeled objects, 1.5 PB.", "es": "Tesla (Karpathy, CVPR 2021): 221 triggers en shadow mode y 7 vueltas del data engine produjeron ~1M de clips de 10 segundos, ~6B de objetos etiquetados y 1.5 PB." },
+    { "en": "GitHub Copilot study (Ziegler et al., 2022): acceptance rate predicted perceived productivity better than how long the code persisted.", "es": "Estudio de GitHub Copilot (Ziegler et al., 2022): la tasa de aceptación predijo la productividad percibida mejor que el tiempo que el código sobrevivía." },
+    { "en": "OpenAI API: customer data is not used for training by default since March 1, 2023. Check each provider's terms.", "es": "API de OpenAI: los datos de clientes no se usan para entrenar por defecto desde el 1 de marzo de 2023. Revisa los términos de cada proveedor." },
+    { "en": "Rule of thumb: reserve ~10% of the labeling budget for a random sample, so evals don't inherit the selection bias.", "es": "Regla práctica: reserva ~10% del presupuesto de etiquetado para una muestra aleatoria, así los evals no heredan el sesgo de selección." }
+  ],
+  "pitfalls": [
+    { "en": "Treating implicit signals as truth: an accepted draft that was then rewritten is a failure. Join with downstream edits.", "es": "Tomar las señales implícitas como verdad: un borrador aceptado y luego reescrito es una falla. Crúzalo con las ediciones posteriores." },
+    { "en": "Training on your own unverified outputs: errors and style quirks get amplified on every loop.", "es": "Entrenar con tus propias salidas sin verificar: los errores y las mañas de estilo se amplifican en cada vuelta." },
+    { "en": "Leaking customer data into a shared model where another tenant can extract it. Gate by consent and tenant before training.", "es": "Filtrar datos de un cliente a un modelo compartido del que otro tenant puede extraerlos. Filtra por consentimiento y por tenant antes de entrenar." },
+    { "en": "Eval/train contamination: near-duplicates in both sets make progress look better than it is.", "es": "Contaminar los evals con el entrenamiento: casi duplicados en ambos sets hacen que el progreso parezca mayor de lo que es." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Design the data flywheel for an enterprise support copilot.", "es": "Diseña el data flywheel para un copiloto de soporte enterprise." },
+      "a": {
+        "en": "I start from the outcome: tickets resolved without escalation, and drafts sent unedited. I log every trace with prompt, model and retrieval versions, plus implicit signals: edit distance between draft and sent reply, escalations, reopened tickets. A selector picks failures and disagreements plus a 10% random slice, only from tenants who opted in, with PII scrubbed. Agents' edits become labels after a rubric review. First use: new eval cases and prompt or retrieval fixes; fine-tuning only once we have thousands of clean examples. Every change ships behind the eval gate and an A/B test.",
+        "es": "Parto del resultado: tickets resueltos sin escalar y borradores enviados sin editar. Registro cada trace con versiones de prompt, modelo y recuperación, más señales implícitas: distancia de edición entre el borrador y la respuesta enviada, escalamientos, tickets reabiertos. Un selector elige fallas y desacuerdos más un 10% aleatorio, solo de tenants que dieron opt-in y con la PII eliminada. Las ediciones de los agentes se vuelven etiquetas después de una revisión con rúbrica. Primer uso: casos nuevos de eval y arreglos de prompt o recuperación; fine-tuning solo cuando tengamos miles de ejemplos limpios. Cada cambio sale detrás del gate de evals y de un A/B test."
+      }
+    },
+    {
+      "q": { "en": "What can go wrong when you learn from user feedback?", "es": "¿Qué puede salir mal cuando aprendes del feedback de los usuarios?" },
+      "a": {
+        "en": "Four things. Selection bias: mostly frustrated users click thumbs-down, so explicit feedback over-represents edge cases. Feedback loops: the model only gets signal on what it chose to show, so it can't learn about what it never tried; I keep an exploration slice. Reward hacking: optimize accept rate alone and you get short, safe, useless suggestions, so I pair it with a downstream outcome. And privacy: one tenant's data surfacing for another. Mitigations are random holdouts, multiple signals, periodic human audits of labels, and consent gates enforced in the pipeline, not in a policy doc.",
+        "es": "Cuatro cosas. Sesgo de selección: casi solo los usuarios frustrados ponen pulgar abajo, así que el feedback explícito sobrerrepresenta los casos extremos. Ciclos de retroalimentación: el modelo solo recibe señal sobre lo que eligió mostrar y no aprende de lo que nunca intentó; por eso mantengo una porción de exploración. Reward hacking: si optimizas solo la tasa de aceptación obtienes sugerencias cortas, seguras e inútiles, así que la combino con un resultado posterior. Y privacidad: datos de un tenant que aparecen en otro. Las mitigaciones son holdouts aleatorios, varias señales, auditorías humanas periódicas de las etiquetas y gates de consentimiento aplicados en el pipeline, no en un documento de políticas."
+      }
+    },
+    {
+      "q": { "en": "How did Tesla's data engine work, and what's the LLM equivalent?", "es": "¿Cómo funcionaba el data engine de Tesla y cuál es el equivalente con LLMs?" },
+      "a": {
+        "en": "Tesla deploys a candidate network in shadow mode: it runs on the car but doesn't control it. Triggers fire on interesting events, like disagreement with the driver or a detection that flickers, and upload short clips. Those get labeled offline with bigger models plus human review, join the training and eval sets, and the retrained network goes back to shadow. Karpathy reported 221 triggers and seven loops for one release. The LLM version: run a candidate model in shadow on production traffic, trigger on disagreement with prod, low judge scores or heavy user edits, and route those traces to labeling.",
+        "es": "Tesla despliega una red candidata en shadow mode: corre en el auto pero no lo controla. Unos triggers se disparan ante eventos interesantes, como un desacuerdo con el conductor o una detección que parpadea, y suben clips cortos. Esos clips se etiquetan offline con modelos más grandes y revisión humana, entran a los sets de entrenamiento y de evals, y la red reentrenada vuelve a shadow. Karpathy reportó 221 triggers y siete vueltas para una sola versión. La versión con LLMs: corre un modelo candidato en shadow sobre tráfico de producción, dispara triggers ante desacuerdo con producción, puntajes bajos del juez o ediciones fuertes del usuario, y manda esos traces a etiquetar."
+      }
+    }
+  ],
+  "related": ["llm-observability", "error-analysis", "data-curation", "pii-privacy", "golden-datasets", "case-autonomy-data-engine"],
+  "sources": [
+    { "title": "Cursor — Improving Cursor Tab with online RL", "url": "https://cursor.com/blog/tab-rl" },
+    { "title": "IEEE Spectrum — Tesla's Autopilot Depends on a Deluge of Data", "url": "https://spectrum.ieee.org/tesla-autopilot-data-deluge" },
+    { "title": "Ziegler et al. — Productivity Assessment of Neural Code Completion", "url": "https://arxiv.org/abs/2205.06537" }
+  ]
+}

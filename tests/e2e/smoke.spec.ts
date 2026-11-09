@@ -79,9 +79,14 @@ test("architecture map links every box to a concept", async ({ page }) => {
 
 test("arrow keys move between concepts in a topic", async ({ page }) => {
   const rag = DOMAINS.find((d) => d.id === "rag")!.concepts;
-  await page.goto(`/en/c/${rag[1]}/`);
+  const title = (id: string) => JSON.parse(fs.readFileSync(`content/concepts/rag/${id}.json`, "utf8")).title.en;
+  await page.goto(`/en/c/${rag[1]}/`, { waitUntil: "networkidle" });
   await page.keyboard.press("ArrowRight");
   await expect(page).toHaveURL(new RegExp(`/en/c/${rag[2]}/$`));
+  // Wait for the new page to render (its listener mounts with it) before the next key.
+  await expect(page.locator("h1")).toHaveText(title(rag[2]));
+  await page.waitForLoadState("networkidle");
   await page.keyboard.press("ArrowLeft");
   await expect(page).toHaveURL(new RegExp(`/en/c/${rag[1]}/$`));
+  await expect(page.locator("h1")).toHaveText(title(rag[1]));
 });
