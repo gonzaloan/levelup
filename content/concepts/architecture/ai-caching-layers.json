@@ -1,0 +1,96 @@
+{
+  "id": "ai-caching-layers",
+  "domain": "architecture",
+  "level": "advanced",
+  "title": { "en": "Caching layers in an AI system", "es": "Capas de caché en un sistema de IA" },
+  "aliases": ["cache hierarchy", "LLM caching", "response cache", "prefix caching", "embedding cache", "cache invalidation", "KV cache reuse"],
+  "tldr": {
+    "en": "One AI request can pass eight caches, from the CDN down to the GPU's KV cache. Each saves different latency or dollars; key every one by tenant, permissions and model, prompt and index version.",
+    "es": "Una request de IA puede pasar por ocho cachés, desde el CDN hasta la KV cache de la GPU. Cada una ahorra latencia o dinero distinto; arma cada clave con tenant, permisos y versión de modelo, prompt e índice."
+  },
+  "analogy": {
+    "en": "A kitchen: plated dishes waiting at the pass, prepped sauces in the fridge, chopped vegetables on the line. Each shortcut skips a different amount of work, and each needs a label with what's inside and when it expires.",
+    "es": "Una cocina: platos listos esperando para salir, salsas preparadas en el refrigerador, verduras picadas en la estación. Cada atajo se salta una parte distinta del trabajo y cada uno necesita una etiqueta con su contenido y su fecha de vencimiento."
+  },
+  "explain": {
+    "en": "A cache is only as good as its **key** and its **invalidation**. An AI system has several, outside in:\n\n- **Client / CDN**: identical public answers (FAQ, generated docs). Saves the whole request. Never for personalized output.\n- **Exact response cache**: hash(normalized input, model, params, prompt version) → answer. Saves 100% of a call; low hit rate on free-form chat.\n- **[[semantic-caching]]**: embedding similarity above a threshold → stored answer. More hits, but a false hit serves a wrong answer.\n- **Retrieval-result cache**: query → top-k chunk ids. Skips embedding, vector search and [[reranking]]. Key by index version.\n- **Tool-result cache**: API or DB results with a TTL matching data freshness; also shields rate-limited APIs.\n- **Embedding cache**: hash(text, embedding model) → vector. Makes re-indexing cheap; valid until the model changes.\n- **Provider [[prompt-caching]]**: reuses the computed prefix. ~90% off cached input and lower TTFT, but only if the prompt is **static first** (instructions, tools, documents) and variable last.\n- **Engine [[kv-cache]] / prefix caching** (vLLM, SGLang): the same idea when you self-host.\n\n**Scope every key** by tenant, permissions (an ACL hash), model, prompt version and index version. A key without the tenant is a data leak ([[tenant-isolation]]). Set TTLs by how fast the truth changes, and track hit rate and wrong-hit rate per layer.",
+    "es": "Una caché vale lo que valen su **clave** y su **invalidación**. Un sistema de IA tiene varias, de afuera hacia adentro:\n\n- **Cliente / CDN**: respuestas públicas idénticas (FAQ, documentación generada). Ahorra la request completa. Nunca para respuestas personalizadas.\n- **Caché de respuesta exacta**: hash(entrada normalizada, modelo, parámetros, versión del prompt) → respuesta. Ahorra el 100% de la llamada; pocos hits en chat libre.\n- **[[semantic-caching]]**: similitud de embeddings sobre un umbral → respuesta guardada. Más hits, pero un hit falso entrega una respuesta incorrecta.\n- **Caché de resultados de recuperación**: consulta → ids de los chunks del top-k. Se salta el embedding, la búsqueda vectorial y el [[reranking]]. Incluye la versión del índice en la clave.\n- **Caché de resultados de herramientas**: respuestas de APIs o bases de datos con un TTL acorde a la frescura del dato; además protege APIs con rate limit.\n- **Caché de embeddings**: hash(texto, modelo de embeddings) → vector. Abarata el reindexado; vale hasta que cambia el modelo.\n- **[[prompt-caching]] del proveedor**: reutiliza el prefijo ya calculado. ~90% de descuento en el input cacheado y menor TTFT, pero solo si el prompt va **primero lo estático** (instrucciones, herramientas, documentos) y al final lo variable.\n- **[[kv-cache]] del motor / prefix caching** (vLLM, SGLang): la misma idea cuando haces self-hosting.\n\n**Acota cada clave** por tenant, permisos (un hash de ACL), modelo, versión del prompt y versión del índice. Una clave sin tenant es una fuga de datos ([[tenant-isolation]]). Fija los TTL según qué tan rápido cambia la verdad y mide la tasa de hits y de hits erróneos por capa."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  Q[Request] --> X{\"Exact or semantic<br/>cache hit?\"}\n  X -->|hit| A[Return answer]\n  X -->|miss| R{\"Retrieval cache<br/>hit?\"}\n  R -->|miss| E[\"Embed query<br/>embedding cache\"]\n  E --> V[(Vector index)]\n  V --> K[Top-k chunk ids]\n  R -->|hit| K\n  K --> P[\"Prompt: static prefix,<br/>then variable\"]\n  P --> PC[\"Prefix cache<br/>provider or engine\"]\n  PC --> G[Generate]\n  G <-->|tool calls| TC[(Tool-result cache)]\n  G --> A\n  G -.->|\"store, scoped key\"| X",
+    "caption": {
+      "en": "Outer caches skip work entirely; inner ones make the remaining work cheaper. Every stored entry carries a scoped, versioned key.",
+      "es": "Las cachés externas se saltan el trabajo por completo; las internas abaratan el que queda. Cada entrada guardada lleva una clave acotada y versionada."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Scoped keys across response, retrieval and prompt caches", "es": "Claves acotadas en las cachés de respuesta, recuperación y prompt" },
+    "source": "import hashlib, json\n\nMODEL = \"claude-sonnet-4-5\"        # any chat model; part of every key\nPROMPT_VERSION = \"helpdesk-v14\"\nINDEX_VERSION = \"kb-2026-11-02\"     # bumped on re-index: old entries just miss\n\ndef key(layer: str, **parts) -> str:\n    blob = json.dumps(parts, sort_keys=True)\n    return f\"{layer}:{hashlib.sha256(blob.encode()).hexdigest()}\"\n\ndef answer(user, question: str) -> str:\n    q = normalize(question)                       # lowercase, trim, collapse spaces\n    scope = dict(tenant=user.tenant, acl=user.acl_hash, model=MODEL, prompt=PROMPT_VERSION)\n    rkey = key(\"resp\", q=q, **scope)\n    if (hit := cache.get(rkey)) is not None:      # exact hit: whole call saved\n        return hit\n\n    ret_key = key(\"ret\", q=q, tenant=user.tenant, acl=user.acl_hash, index=INDEX_VERSION)\n    chunk_ids = cache.get(ret_key)\n    if chunk_ids is None:                         # skip embed + search + rerank on hit\n        chunk_ids = retrieve(q, user)\n        cache.set(ret_key, chunk_ids, ttl=3600)\n\n    out = llm(                                    # Anthropic Messages-style call\n        system=[{\"type\": \"text\", \"text\": SYSTEM_PROMPT,           # static first...\n                 \"cache_control\": {\"type\": \"ephemeral\"}}],      # ...marked cacheable\n        messages=[{\"role\": \"user\", \"content\": render(load(chunk_ids), question)}],\n    )\n    cache.set(rkey, out, ttl=86400)               # TTL = how fast the truth changes\n    return out"
+  },
+  "example": {
+    "en": "An IT help-desk bot gets 40,000 questions a day. Measured per layer: the exact cache hits 12% (password-reset phrasing repeats); a semantic cache adds 8% at a 0.93 threshold, after 0.88 confused *\"reset VPN\"* with *\"reset MFA\"*. A 6k-token system prompt plus tool definitions sits first, so the other 80% of calls pay ~0.1× on that prefix. Retrieval results are cached for 1 h, saving ~150 ms per hit, and a re-index bumps the index version, so stale entries simply stop matching.",
+    "es": "Un bot de mesa de ayuda de TI recibe 40,000 preguntas al día. Medido por capa: la caché exacta acierta el 12% (las frases para restablecer contraseña se repiten); una caché semántica suma otro 8% con umbral de 0.93, después de que 0.88 confundiera *\"reiniciar VPN\"* con *\"reiniciar MFA\"*. Un system prompt de 6k tokens con las definiciones de herramientas va primero, así que el 80% restante de las llamadas paga ~0.1× por ese prefijo. Los resultados de recuperación se guardan 1 h y ahorran ~150 ms por hit, y un reindexado sube la versión del índice, así que las entradas viejas simplemente dejan de coincidir."
+  },
+  "pros": [
+    { "en": "Outer layers cut both cost and latency to near zero on a hit.", "es": "Las capas externas bajan costo y latencia casi a cero cuando hay hit." },
+    { "en": "Prefix caching is nearly free: reorder the prompt and repeated input gets ~90% cheaper.", "es": "El prefix caching es casi gratis: reordenas el prompt y el input repetido sale ~90% más barato." },
+    { "en": "Versioned keys make invalidation automatic on model, prompt or index changes.", "es": "Las claves versionadas hacen automática la invalidación cuando cambia el modelo, el prompt o el índice." }
+  ],
+  "cons": [
+    { "en": "Every layer is one more place to leak data across tenants or permissions.", "es": "Cada capa es un lugar más por donde filtrar datos entre tenants o permisos." },
+    { "en": "Stale or false hits serve wrong answers confidently, and look great on latency dashboards.", "es": "Los hits viejos o falsos entregan respuestas incorrectas con total seguridad, y se ven muy bien en los dashboards de latencia." },
+    { "en": "Hit rates on open-ended chat are often low; measure before building a semantic cache.", "es": "En chat abierto la tasa de hits suele ser baja; mide antes de construir una caché semántica." }
+  ],
+  "whenToUse": {
+    "en": "High-volume features with repeated questions or long shared prefixes (system prompts, tool schemas, documents), and RAG pipelines where retrieval is a big share of latency.",
+    "es": "Features de alto volumen con preguntas repetidas o prefijos largos compartidos (system prompts, esquemas de herramientas, documentos), y pipelines RAG donde la recuperación pesa mucho en la latencia."
+  },
+  "whenNotToUse": {
+    "en": "Response caches on personalized, time-sensitive or high-stakes answers (balances, prices, medical), or before you can scope keys by tenant and permissions.",
+    "es": "Cachés de respuesta para contenido personalizado, sensible al tiempo o de alto riesgo (saldos, precios, salud), o antes de poder acotar las claves por tenant y permisos."
+  },
+  "numbers": [
+    { "en": "Anthropic prompt caching: reads ~0.1× base input; 5-minute default TTL refreshed on each hit, 1-hour option at a 2× write.", "es": "Prompt caching de Anthropic: lecturas a ~0.1× del input base; TTL por defecto de 5 minutos que se renueva con cada hit, opción de 1 hora con escritura a 2×." },
+    { "en": "OpenAI caches prompts automatically from 1,024 tokens; caches are not shared between organizations.", "es": "OpenAI cachea prompts automáticamente desde 1,024 tokens; las cachés no se comparten entre organizaciones." },
+    { "en": "Anthropic (2024): caching a 100k-token prompt cut time to first token from 11.5 s to 2.4 s.", "es": "Anthropic (2024): cachear un prompt de 100k tokens bajó el tiempo al primer token de 11.5 s a 2.4 s." },
+    { "en": "Semantic-cache threshold ~0.90–0.95 cosine (rule of thumb); tune it on labeled query pairs.", "es": "Umbral de caché semántica ~0.90–0.95 de coseno (regla práctica); ajústalo con pares de consultas etiquetados." },
+    { "en": "Average latency = hit × cache + miss × origin: 30% hits at 5 ms vs 3 s misses ≈ 2.1 s.", "es": "Latencia promedio = hit × caché + miss × origen: 30% de hits a 5 ms vs. misses de 3 s ≈ 2.1 s." }
+  ],
+  "pitfalls": [
+    { "en": "Keys without tenant, ACL or prompt version: one user's cached answer is served to another.", "es": "Claves sin tenant, ACL o versión del prompt: la respuesta cacheada de un usuario se le entrega a otro." },
+    { "en": "A timestamp, user name or request id at the top of the prompt breaks prefix caching on every call.", "es": "Un timestamp, el nombre del usuario o un request id al inicio del prompt rompe el prefix caching en cada llamada." },
+    { "en": "Caching answers from a degraded fallback model with a 24-hour TTL.", "es": "Cachear respuestas de un modelo de fallback degradado con un TTL de 24 horas." },
+    { "en": "No invalidation on re-index: the retrieval cache keeps returning deleted chunks.", "es": "No invalidar al reindexar: la caché de recuperación sigue devolviendo chunks que ya se borraron." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Walk me through the caches you'd put in a RAG chatbot.", "es": "Explícame qué cachés pondrías en un chatbot con RAG." },
+      "a": {
+        "en": "Outside in. An exact response cache keyed by normalized question, tenant, ACL hash, model and prompt version; a semantic cache only for FAQ-like traffic, with a tuned threshold. A retrieval-result cache keyed by query and index version, and an embedding cache so re-indexing doesn't re-pay. Then I order the prompt static-first so provider prefix caching cuts input cost and TTFT. I track hit rate and wrong-hit rate per layer. The main risk is a cross-tenant leak, so key scope is non-negotiable.",
+        "es": "De afuera hacia adentro. Una caché de respuesta exacta con clave de pregunta normalizada, tenant, hash de ACL, modelo y versión del prompt; una caché semántica solo para tráfico tipo FAQ y con el umbral ajustado. Una caché de resultados de recuperación con la consulta y la versión del índice, y una caché de embeddings para no volver a pagar al reindexar. Después ordeno el prompt con lo estático primero para que el prefix caching del proveedor baje el costo de input y el TTFT. Mido tasa de hits y de hits erróneos por capa. El riesgo principal es una fuga entre tenants, así que el alcance de la clave no se negocia."
+      }
+    },
+    {
+      "q": { "en": "Prompt caching vs semantic caching: what's the difference?", "es": "Prompt caching vs. semantic caching: ¿cuál es la diferencia?" },
+      "a": {
+        "en": "Prompt caching reuses computation: the provider keeps the state of a repeated prefix, and the model still generates a fresh answer, just cheaper and faster on input. It can't make the answer wrong. Semantic caching reuses the answer: if a new question is close enough to an old one, the model is skipped entirely. It saves far more per hit, but a false hit returns a confident wrong answer. So prompt caching is default hygiene, and a semantic cache is a product decision backed by an eval.",
+        "es": "El prompt caching reutiliza cómputo: el proveedor guarda el estado de un prefijo repetido y el modelo igual genera una respuesta nueva, solo que más barata y rápida en el input. No puede volver incorrecta la respuesta. El semantic caching reutiliza la respuesta: si una pregunta nueva se parece lo suficiente a una vieja, se salta el modelo por completo. Ahorra mucho más por hit, pero un hit falso devuelve una respuesta incorrecta con total seguridad. Por eso el prompt caching es higiene por defecto y una caché semántica es una decisión de producto respaldada por una eval."
+      }
+    },
+    {
+      "q": { "en": "How do you handle invalidation across these layers?", "es": "¿Cómo manejas la invalidación entre estas capas?" },
+      "a": {
+        "en": "Mostly by versioning keys instead of deleting entries: model id, prompt version, index version and embedding model go into the key, so a deploy or re-index naturally misses old entries. TTLs follow how fast the truth changes: minutes for tool results like inventory, a day for policy answers, no expiry for embeddings of unchanged text. For deletions with legal weight, like a removed document or a GDPR request, I also purge by tag, because waiting for a TTL isn't acceptable.",
+        "es": "Sobre todo versionando las claves en lugar de borrar entradas: el id del modelo, la versión del prompt, la versión del índice y el modelo de embeddings van en la clave, así un deploy o un reindexado deja de encontrar las entradas viejas. Los TTL siguen qué tan rápido cambia la verdad: minutos para resultados de herramientas como inventario, un día para respuestas sobre políticas, sin vencimiento para embeddings de texto que no cambió. Para borrados con peso legal, como un documento eliminado o una solicitud de GDPR, además purgo por etiqueta, porque esperar a que venza un TTL no es aceptable."
+      }
+    }
+  ],
+  "related": ["prompt-caching", "semantic-caching", "kv-cache", "caching", "tenant-isolation", "context-engineering", "ai-tradeoff-triangle"],
+  "sources": [
+    { "title": "Anthropic — Prompt caching (docs)", "url": "https://platform.claude.com/docs/en/build-with-claude/prompt-caching" },
+    { "title": "OpenAI — Prompt caching guide", "url": "https://developers.openai.com/api/docs/guides/prompt-caching" },
+    { "title": "vLLM — Automatic prefix caching (design)", "url": "https://docs.vllm.ai/en/latest/design/prefix_caching.html" },
+    { "title": "Zheng et al. — SGLang: Efficient Execution of Structured Language Model Programs (RadixAttention)", "url": "https://arxiv.org/abs/2312.07104" }
+  ]
+}

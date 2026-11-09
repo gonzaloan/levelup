@@ -1,0 +1,96 @@
+{
+  "id": "agent-authz",
+  "domain": "architecture",
+  "level": "staff",
+  "title": { "en": "Identity & authorization for agents", "es": "Identidad y autorización para agentes" },
+  "aliases": ["agent identity", "delegated authorization", "on-behalf-of", "OBO", "token exchange", "RFC 8693", "confused deputy", "non-human identity"],
+  "tldr": {
+    "en": "An agent acts for a user: give it short-lived, narrowly scoped, delegated tokens capped by the user's rights; authorize every tool call in code, confirm risky ones, and audit each action to the human.",
+    "es": "Un agente actúa en nombre de un usuario: dale tokens delegados, de vida corta y alcance estrecho, con los permisos del usuario como techo; autoriza cada llamada a herramientas en código, confirma las riesgosas y audita cada acción ligada al humano."
+  },
+  "analogy": {
+    "en": "A valet key: it starts the car and opens the door, but not the trunk or the glovebox, and you get it back when you leave.",
+    "es": "La llave de valet parking: enciende el auto y abre la puerta, pero no el maletero ni la guantera, y te la devuelven cuando te vas."
+  },
+  "explain": {
+    "en": "An agent is software acting **on behalf of** a user, so every call answers two questions: *who asked* (the human) and *who acts* (the agent).\n\n- **Delegate, don't impersonate.** The agent gets a credential derived from the user's: OAuth consent, or **token exchange** (RFC 8693, Entra's *on-behalf-of*) yielding a token that names the user as subject and the agent as actor.\n- **The user's rights are the ceiling.** Effective access = user rights ∩ agent scopes ∩ what the task needs. Never a shared admin service account.\n- **Short-lived and narrow.** Minutes to an hour, one audience, minimal scopes (`calendar.read`) to shrink any leak.\n- **Authorize every tool call in code**, at the tool. A rule in the prompt is not a control: [[prompt-injection]] can rewrite the prompt, not your policy engine.\n- **Confirm high-risk actions** with the human ([[human-in-the-loop]]): payments, deletes, external messages.\n- **Workload identity for the agent** (SPIFFE, cloud IAM roles): no static keys in prompts or code.\n- **Audit**: log user, agent, tool, arguments and decision on every call.\n\nRemote [[mcp]] servers follow this model: each is an OAuth 2.1 resource server, tokens are bound to it (RFC 8707), and **token passthrough is forbidden**.\n\nThe bug this prevents is the **confused deputy** (Hardy, 1988): a privileged program tricked into using *its* authority for someone else.",
+    "es": "Un agente es software que actúa **en nombre de** un usuario, así que cada llamada responde dos preguntas: *quién pidió* (el humano) y *quién actúa* (el agente).\n\n- **Delega, no suplantes.** El agente recibe una credencial derivada de la del usuario: consentimiento OAuth, o **token exchange** (RFC 8693, el *on-behalf-of* de Entra), que produce un token con el usuario como sujeto y el agente como actor.\n- **Los permisos del usuario son el techo.** Acceso efectivo = permisos del usuario ∩ scopes del agente ∩ lo que la tarea necesita. Nunca una cuenta de servicio compartida con permisos de admin.\n- **Vida corta y alcance estrecho.** De minutos a una hora, una sola audiencia, scopes mínimos (`calendar.read`) para acotar cualquier filtración.\n- **Autoriza cada llamada a herramientas en código**, en la herramienta. Una regla en el prompt no es un control: la [[prompt-injection]] puede reescribir el prompt, no tu motor de políticas.\n- **Confirma las acciones de alto riesgo** con el humano ([[human-in-the-loop]]): pagos, borrados, mensajes hacia afuera.\n- **Identidad de workload para el agente** (SPIFFE, roles de IAM en la nube): nada de keys estáticas en prompts ni en código.\n- **Auditoría**: registra usuario, agente, herramienta, argumentos y decisión en cada llamada.\n\nLos servidores remotos de [[mcp]] siguen este modelo: cada uno es un resource server de OAuth 2.1, los tokens quedan atados a él (RFC 8707) y **el token passthrough está prohibido**.\n\nEl bug que esto evita es el **confused deputy** (Hardy, 1988): un programa con privilegios al que engañan para usar *su* autoridad a favor de otro."
+  },
+  "diagram": {
+    "code": "sequenceDiagram\n  participant U as User\n  participant A as Agent\n  participant S as Token service\n  participant T as Tool API\n  U->>A: Task + user token\n  A->>S: Token exchange (user, agent)\n  S-->>A: 15-min token, refunds scope\n  A->>U: Confirm refund of 80 USD?\n  U-->>A: Approve\n  A->>T: Refund call + scoped token\n  T->>T: Check user rights and scope\n  T-->>A: OK, audit logged",
+    "caption": {
+      "en": "The agent never holds the user's master credential: it gets a short-lived token naming both parties, and the tool decides.",
+      "es": "El agente nunca tiene la credencial maestra del usuario: recibe un token de vida corta que nombra a ambas partes, y la herramienta decide."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "RFC 8693 token exchange + authorization enforced in the tool", "es": "Token exchange RFC 8693 + autorización aplicada en la herramienta" },
+    "source": "import httpx\n\nTOKEN_URL = \"https://auth.example.com/oauth2/token\"\n\ndef token_for_tool(user_token: str, agent_token: str, scope: str, audience: str) -> str:\n    \"\"\"Short-lived token for one tool, naming the user (subject) and the agent (actor).\"\"\"\n    r = httpx.post(TOKEN_URL, auth=(CLIENT_ID, CLIENT_SECRET), data={\n        \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n        \"subject_token\": user_token,\n        \"subject_token_type\": \"urn:ietf:params:oauth:token-type:access_token\",\n        \"actor_token\": agent_token,           # the agent's own workload identity\n        \"actor_token_type\": \"urn:ietf:params:oauth:token-type:jwt\",\n        \"scope\": scope,                       # e.g. \"refunds:write\", nothing more\n        \"audience\": audience,                 # valid only at this API\n    })\n    r.raise_for_status()\n    return r.json()[\"access_token\"]\n\n# Inside the tool: the model only *proposed* this call; code decides.\ndef refund(order_id: str, amount: float, claims: dict) -> dict:\n    user, agent = claims[\"sub\"], claims[\"act\"][\"sub\"]      # who asked, who acts\n    if \"refunds:write\" not in claims[\"scope\"].split():\n        raise PermissionError(\"missing scope\")\n    if not owns_order(user, order_id):                       # user's rights are the ceiling\n        raise PermissionError(\"not your order\")\n    if amount > 100 and not approvals.verify(user, order_id, amount):\n        raise NeedsConfirmation(order_id, amount)            # human approves high risk\n    audit.log(user=user, agent=agent, tool=\"refund\", order=order_id, amount=amount)\n    return payments.refund(order_id, amount)"
+  },
+  "example": {
+    "en": "A sales agent books meetings and updates the CRM for 3,000 reps. Version 1 used one integration user with org-wide admin rights; in a red-team test, a single injected email made it export every account. Version 2: each rep's session exchanges their SSO token for 15-minute tokens scoped to their own calendar and the accounts they own, the CRM tool re-checks ownership in code, external emails need a click, and every call logs rep, agent and arguments. The same email now gets a 403 and raises an alert.",
+    "es": "Un agente de ventas agenda reuniones y actualiza el CRM para 3,000 vendedores. La versión 1 usaba un único usuario de integración con permisos de admin sobre toda la organización; en una prueba de red team, un solo correo con una inyección logró que exportara todas las cuentas. Versión 2: la sesión de cada vendedor intercambia su token de SSO por tokens de 15 minutos limitados a su propio calendario y a sus cuentas, la herramienta del CRM vuelve a verificar la propiedad en código, los correos externos requieren un clic y cada llamada registra vendedor, agente y argumentos. El mismo correo ahora recibe un 403 y dispara una alerta."
+  },
+  "pros": [
+    { "en": "Caps a prompt injection's blast radius at what one user could already do.", "es": "Limita el radio de impacto de una prompt injection a lo que un usuario ya podía hacer." },
+    { "en": "The audit trail answers 'who did this?' for every agent action, as compliance requires.", "es": "El registro de auditoría responde '¿quién hizo esto?' para cada acción del agente, como exige el cumplimiento normativo." },
+    { "en": "Reuses standard IAM (OAuth, OIDC, cloud roles) instead of inventing agent security.", "es": "Reutiliza IAM estándar (OAuth, OIDC, roles en la nube) en vez de inventar seguridad para agentes." }
+  ],
+  "cons": [
+    { "en": "Token exchange and per-tool scopes add identity-provider work, integration effort and a little latency.", "es": "El token exchange y los scopes por herramienta suman trabajo en el proveedor de identidad, integración y algo de latencia." },
+    { "en": "Many SaaS APIs still lack fine-grained scopes or delegation, forcing broad tokens.", "es": "Muchas APIs SaaS todavía no tienen scopes finos ni delegación, lo que obliga a usar tokens amplios." },
+    { "en": "Too many confirmations and users approve without reading.", "es": "Con demasiadas confirmaciones, los usuarios aprueban sin leer." }
+  ],
+  "whenToUse": {
+    "en": "Any agent that reads private data or acts in other systems for a user, especially in multi-tenant or enterprise products with audit requirements.",
+    "es": "Cualquier agente que lea datos privados o actúe en otros sistemas por un usuario, sobre todo en productos multi-tenant o empresariales con requisitos de auditoría."
+  },
+  "whenNotToUse": {
+    "en": "Pure generation with no tools and no private data. Keep provider keys server-side anyway; you just don't need delegation.",
+    "es": "Generación pura, sin herramientas ni datos privados. Igual mantén las keys del proveedor en el servidor; solo que no necesitas delegación."
+  },
+  "numbers": [
+    { "en": "RFC 8693 (Jan 2020) defines OAuth token exchange; its `act` claim records who is acting for whom.", "es": "El RFC 8693 (enero de 2020) define el token exchange de OAuth; su claim `act` registra quién actúa por quién." },
+    { "en": "AWS STS role sessions last 15 min to 12 h, default 1 h; role chaining caps them at 1 h.", "es": "Las sesiones de rol de AWS STS duran de 15 min a 12 h, 1 h por defecto; el encadenamiento de roles las limita a 1 h." },
+    { "en": "Microsoft Entra access tokens default to a random 60–90 minute lifetime (75 on average).", "es": "Los access tokens de Microsoft Entra duran por defecto un valor aleatorio de 60–90 minutos (75 en promedio)." },
+    { "en": "MCP spec: authorization is optional; HTTP servers that use it are OAuth 2.1 resource servers and must reject tokens not issued for them.", "es": "Spec de MCP: la autorización es opcional; los servidores HTTP que la usan son resource servers de OAuth 2.1 y deben rechazar tokens que no se emitieron para ellos." },
+    { "en": "Confused deputy: named by Norm Hardy in 1988, still the core agent-security bug.", "es": "Confused deputy: lo nombró Norm Hardy en 1988 y sigue siendo el bug central de seguridad en agentes." }
+  ],
+  "pitfalls": [
+    { "en": "One shared service account with broad rights for all users: every injection becomes an org-wide breach.", "es": "Una sola cuenta de servicio compartida con permisos amplios para todos: cada inyección se vuelve una brecha de toda la organización." },
+    { "en": "Writing rules in the system prompt ('never refund over $100') instead of in the tool's code.", "es": "Escribir reglas en el system prompt ('nunca reembolses más de $100') en lugar de en el código de la herramienta." },
+    { "en": "Passing the user's token straight through to downstream APIs: wrong audience, no actor, no audit.", "es": "Pasar el token del usuario tal cual a las APIs de abajo: audiencia incorrecta, sin actor y sin auditoría." },
+    { "en": "Long-lived refresh tokens stored in agent memory, transcripts or logs.", "es": "Refresh tokens de larga vida guardados en la memoria del agente, en transcripciones o en logs." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you authorize an agent that acts on behalf of a user?", "es": "¿Cómo autorizas a un agente que actúa en nombre de un usuario?" },
+      "a": {
+        "en": "I separate who asks from who acts. The user signs in normally; the agent has its own workload identity. When it needs a tool, it exchanges the user's token for a short-lived one scoped to that tool and audience and carrying both identities, via RFC 8693 or the IdP's on-behalf-of flow. Each tool authorizes in code against the user's rights, so the agent can never exceed them. Irreversible actions need confirmation, and every call is logged with both identities. The trade-off is integration work, but it caps an injection at one user's blast radius.",
+        "es": "Separo quién pide de quién actúa. El usuario inicia sesión normalmente; el agente tiene su propia identidad de workload. Cuando necesita una herramienta, intercambia el token del usuario por uno de vida corta, limitado a esa herramienta y audiencia y con ambas identidades, vía RFC 8693 o el flujo on-behalf-of del IdP. Cada herramienta autoriza en código contra los permisos del usuario, así que el agente nunca puede superarlos. Las acciones irreversibles piden confirmación y cada llamada queda registrada con ambas identidades. El costo es trabajo de integración, pero limita una inyección al radio de impacto de un usuario."
+      }
+    },
+    {
+      "q": { "en": "What is the confused deputy problem in an agent context?", "es": "¿Qué es el problema del confused deputy en el contexto de agentes?" },
+      "a": {
+        "en": "A deputy is a program with its own authority acting on someone's request; it's confused when the requester tricks it into using that authority for them. With agents the classic case is a shared service account: a user can't see another team's data, but asks the agent, or plants an instruction in a document, and the agent fetches it with its own broad rights. The fix is that the agent's authority never exceeds the requester's: delegated, audience-bound tokens and checks at the resource. That's why MCP forbids token passthrough.",
+        "es": "Un deputy es un programa con autoridad propia que actúa a pedido de alguien; está confundido cuando quien pide lo engaña para que use esa autoridad a su favor. Con agentes, el caso clásico es una cuenta de servicio compartida: un usuario no puede ver los datos de otro equipo, pero se los pide al agente, o planta una instrucción en un documento, y el agente los trae con sus propios permisos amplios. La solución es que la autoridad del agente nunca supere la de quien pide: tokens delegados y atados a una audiencia, y verificaciones en el recurso. Por eso MCP prohíbe el token passthrough."
+      }
+    },
+    {
+      "q": { "en": "Why not just tell the model in the system prompt what it's allowed to do?", "es": "¿Por qué no basta con decirle al modelo en el system prompt qué puede hacer?" },
+      "a": {
+        "en": "Because the prompt is not a security boundary. Prompt injection can override instructions and has no complete fix. The model proposes a tool call; deterministic code holding the user's scoped credentials decides. I still describe permissions in the prompt so the model makes fewer doomed calls, but enforcement lives in the tool or a policy engine like OPA or Cedar, and denials return clear errors the agent can explain to the user.",
+        "es": "Porque el prompt no es una frontera de seguridad. La prompt injection puede anular instrucciones y no tiene solución completa. El modelo propone una llamada; el código determinista, con las credenciales acotadas del usuario, decide. Igual describo los permisos en el prompt para que el modelo haga menos llamadas destinadas a fallar, pero la aplicación vive en la herramienta o en un motor de políticas como OPA o Cedar, y los rechazos devuelven errores claros que el agente puede explicarle al usuario."
+      }
+    }
+  ],
+  "related": ["mcp", "prompt-injection", "lethal-trifecta", "human-in-the-loop", "permission-aware-retrieval", "tenant-isolation", "tool-design"],
+  "sources": [
+    { "title": "RFC 8693 — OAuth 2.0 Token Exchange", "url": "https://datatracker.ietf.org/doc/html/rfc8693" },
+    { "title": "Model Context Protocol — Authorization (spec 2026-07-28)", "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization" },
+    { "title": "Microsoft identity platform — OAuth 2.0 On-Behalf-Of flow", "url": "https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow" },
+    { "title": "OWASP GenAI — LLM06:2025 Excessive Agency", "url": "https://genai.owasp.org/llmrisk/llm062025-excessive-agency/" }
+  ]
+}

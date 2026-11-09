@@ -1,0 +1,96 @@
+{
+  "id": "llm-resilience",
+  "domain": "architecture",
+  "level": "advanced",
+  "title": { "en": "Resilience: multi-provider failover & degradation", "es": "Resiliencia: failover multiproveedor y degradación" },
+  "aliases": ["failover", "fallback", "circuit breaker", "graceful degradation", "multi-provider", "hedged requests", "provisioned throughput", "high availability"],
+  "tldr": {
+    "en": "LLM providers fail loudly (outages, 429/529) and quietly (latency spikes, quality regressions). Time out fast, retry with backoff, trip circuit breakers, fail over to an evaluated backup, then degrade gracefully.",
+    "es": "Los proveedores de LLM fallan de forma ruidosa (caídas, 429/529) y silenciosa (picos de latencia, regresiones de calidad). Corta rápido por timeout, reintenta con backoff, abre circuit breakers, pasa a un respaldo evaluado y luego degrada con elegancia."
+  },
+  "analogy": {
+    "en": "A hospital's power: grid first, then a generator that is tested monthly, then battery for critical machines, then flashlights. Each step does less, but the lights never go fully out.",
+    "es": "La electricidad de un hospital: primero la red, luego un generador que se prueba cada mes, después baterías para los equipos críticos y al final linternas. Cada paso hace menos, pero nunca se apaga todo."
+  },
+  "explain": {
+    "en": "You inherit the reliability of every provider you call, and LLM APIs fail in more ways than most dependencies:\n\n- **Hard failures**: regional or global outages, 5xx errors.\n- **Overload**: 429 rate limits, Anthropic's 529 *overloaded*, no capacity in one region.\n- **Latency spikes**: TTFT jumps from 1 s to 20 s with no error.\n- **Silent quality regressions**: a provider bug or model update degrades answers while returning HTTP 200.\n\nThe patterns, in the order a request meets them ([[retries-backoff]]):\n\n1. **Timeouts** on TTFT and total time, not just on connect.\n2. **Retries** for transient errors only, with backoff, jitter and a retry budget.\n3. **Circuit breaker** per provider and region: after N failures, stop sending traffic, then probe.\n4. **Fallback** to another region or provider, usually in the [[llm-gateway]]. The backup needs **its own prompt and evals**: a prompt tuned for one model can lose quality or break the JSON schema on another.\n5. **Hedged requests**: if the first call is slower than ~p95, send a second and keep the winner.\n6. **Degradation ladder**: smaller model → cached answer → plain search results → human.\n\nFor critical traffic, buy **reserved capacity** (Azure OpenAI PTUs, Bedrock or Vertex AI provisioned throughput, priority tiers) and route across regions. Set [[slos]] on success rate, TTFT and an online quality score.",
+    "es": "Heredas la confiabilidad de cada proveedor al que llamas, y las APIs de LLM fallan de más formas que casi cualquier otra dependencia:\n\n- **Fallas duras**: caídas regionales o globales, errores 5xx.\n- **Sobrecarga**: rate limits 429, el 529 *overloaded* de Anthropic, falta de capacidad en una región.\n- **Picos de latencia**: el TTFT salta de 1 s a 20 s sin ningún error.\n- **Regresiones de calidad silenciosas**: un bug del proveedor o una actualización del modelo empeora las respuestas mientras devuelve HTTP 200.\n\nLos patrones, en el orden en que una request se los encuentra ([[retries-backoff]]):\n\n1. **Timeouts** sobre el TTFT y el tiempo total, no solo sobre la conexión.\n2. **Reintentos** solo para errores transitorios, con backoff, jitter y un presupuesto de reintentos.\n3. **Circuit breaker** por proveedor y región: tras N fallas, deja de mandar tráfico y luego prueba.\n4. **Fallback** a otra región u otro proveedor, normalmente en el [[llm-gateway]]. El respaldo necesita **su propio prompt y sus propias evals**: un prompt afinado para un modelo puede perder calidad o romper el esquema JSON en otro.\n5. **Hedged requests**: si la primera llamada tarda más que ~el p95, manda una segunda y quédate con la que gane.\n6. **Escalera de degradación**: modelo más chico → respuesta en caché → resultados de búsqueda simples → humano.\n\nPara tráfico crítico, compra **capacidad reservada** (PTUs de Azure OpenAI, provisioned throughput de Bedrock o Vertex AI, tiers de prioridad) y enruta entre regiones. Define [[slos]] de tasa de éxito, TTFT y un puntaje de calidad online."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  Q[Request] --> B{\"Primary breaker<br/>closed?\"}\n  B -->|yes| P[\"Primary model<br/>timeout + 1 retry\"]\n  B -->|open| F\n  P -->|ok| A[Answer]\n  P -->|\"429, 529, timeout\"| F[\"Backup provider<br/>own prompt, evals\"]\n  F -->|ok| A\n  F -->|fail| S[\"Smaller model<br/>reduced features\"]\n  S -->|ok| A\n  S -->|fail| C[(Cached answer)]\n  C -->|hit| A\n  C -->|miss| R[\"Search results<br/>no generation\"]\n  R --> H[Human handoff]",
+    "caption": {
+      "en": "Each rung trades quality for availability. Test every rung regularly, or it fails the day you need it.",
+      "es": "Cada escalón cambia calidad por disponibilidad. Prueba cada escalón con regularidad, o fallará justo el día que lo necesites."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Circuit breakers over a fallback ladder", "es": "Circuit breakers sobre una escalera de fallback" },
+    "source": "import time\n\nclass Breaker:\n    def __init__(self, threshold: int = 5, cooldown_s: float = 30):\n        self.fails, self.opened_at = 0, None\n        self.threshold, self.cooldown = threshold, cooldown_s\n\n    def allow(self) -> bool:        # after the cooldown, let traffic probe again\n        return self.opened_at is None or time.monotonic() - self.opened_at > self.cooldown\n\n    def record(self, ok: bool) -> None:\n        self.fails = 0 if ok else self.fails + 1\n        if ok:\n            self.opened_at = None\n        elif self.fails >= self.threshold:\n            self.opened_at = time.monotonic()\n\n# Each rung has its own prompt, evaluated on the golden set every week\nLADDER = [(\"primary\", call_primary, 20), (\"backup\", call_backup, 20), (\"small\", call_small, 8)]\nbreakers = {name: Breaker() for name, _, _ in LADDER}\n\ndef answer(msg: str) -> str:\n    for name, call, timeout_s in LADDER:\n        if not breakers[name].allow():\n            continue                                  # fail fast, don't pile on\n        try:\n            out = call(msg, timeout=timeout_s)        # SDK retries 429/5xx with backoff\n            breakers[name].record(True)\n            metrics.incr(\"llm.served_by\", tags={\"rung\": name})  # alert on fallback share\n            return out\n        except (TimeoutError, RateLimited, Overloaded, ServerError):\n            breakers[name].record(False)\n    return cached_answer(msg) or search_results(msg) or handoff_to_human(msg)"
+  },
+  "example": {
+    "en": "A support assistant runs on Provider A with a 99.9% SLO for successful answers. During a 3-hour regional overload, 529s jump to 30%. The breaker opens after 5 consecutive failures; the gateway first moves traffic to the same model in a second region, then to Provider B when that region saturates. Provider B has its own prompt, re-run weekly on the golden set (0.86 vs 0.89 for the primary). Users get slightly shorter answers, the SLO holds, and on-call gets one alert: fallback share above 20%.",
+    "es": "Un asistente de soporte corre sobre el Proveedor A con un SLO de 99.9% de respuestas exitosas. Durante una sobrecarga regional de 3 horas, los 529 suben al 30%. El breaker se abre tras 5 fallas seguidas; el gateway primero mueve el tráfico al mismo modelo en una segunda región y, cuando esa región se satura, al Proveedor B. El Proveedor B tiene su propio prompt, evaluado cada semana contra el golden set (0.86 vs. 0.89 del primario). Los usuarios reciben respuestas algo más cortas, el SLO se mantiene y el equipo de guardia recibe una sola alerta: la proporción de fallback pasó del 20%."
+  },
+  "pros": [
+    { "en": "A provider outage becomes a small quality dip instead of a down product.", "es": "Una caída del proveedor se vuelve una pequeña baja de calidad en lugar de un producto caído." },
+    { "en": "Timeouts and hedging cut tail latency, which users feel more than the mean.", "es": "Los timeouts y el hedging recortan la latencia de cola, que el usuario siente más que el promedio." },
+    { "en": "A second provider also gives pricing leverage and a ready migration path.", "es": "Un segundo proveedor también da poder de negociación en precios y un camino de migración listo." }
+  ],
+  "cons": [
+    { "en": "Every fallback is another prompt, eval suite and contract to maintain.", "es": "Cada fallback es otro prompt, otra suite de evals y otro contrato que mantener." },
+    { "en": "Cross-provider failover can break data-residency or zero-retention commitments.", "es": "El failover entre proveedores puede romper compromisos de residencia de datos o de cero retención." },
+    { "en": "Retries and hedges add load and cost; done naively, they amplify an outage.", "es": "Los reintentos y el hedging suman carga y costo; mal hechos, amplifican una caída." }
+  ],
+  "whenToUse": {
+    "en": "Customer-facing or revenue-critical LLM features whose availability SLO is higher than one provider delivers, or where a multi-minute outage makes headlines.",
+    "es": "Features de LLM de cara al cliente o críticas para el negocio cuyo SLO de disponibilidad supera lo que da un solo proveedor, o donde una caída de varios minutos sale en las noticias."
+  },
+  "whenNotToUse": {
+    "en": "Internal tools and batch jobs that can wait: a queue plus retries beats a second provider you must keep evaluated.",
+    "es": "Herramientas internas y jobs batch que pueden esperar: una cola con reintentos le gana a un segundo proveedor que debes mantener evaluado."
+  },
+  "numbers": [
+    { "en": "Serial availability: a 99.9% app on a 99.5% model API ≈ 99.4%. An independent fallback lifts the model tier to ~99.997% (independence is optimistic).", "es": "Disponibilidad en serie: una app de 99.9% sobre una API de 99.5% ≈ 99.4%. Un fallback independiente sube la capa de modelos a ~99.997% (la independencia es optimista)." },
+    { "en": "The Tail at Scale (Google): a hedged request after 10 ms cut p99.9 latency from 1,800 ms to 74 ms with only 2% more requests.", "es": "The Tail at Scale (Google): una hedged request a los 10 ms bajó la latencia p99.9 de 1,800 ms a 74 ms con solo 2% más de requests." },
+    { "en": "Google SRE: at most 3 attempts per request; keep retries under ~10% of a client's traffic.", "es": "Google SRE: como máximo 3 intentos por request; mantén los reintentos por debajo de ~10% del tráfico de cada cliente." },
+    { "en": "Anthropic postmortem (Sep 2025): a routing bug degraded up to 16% of Sonnet 4 requests in the worst hour, with no errors returned.", "es": "Postmortem de Anthropic (sept. 2025): un bug de enrutamiento degradó hasta el 16% de las requests a Sonnet 4 en la peor hora, sin devolver errores." },
+    { "en": "Anthropic returns 429 for rate limits and 529 when overloaded; retry both with backoff.", "es": "Anthropic devuelve 429 por rate limit y 529 cuando está sobrecargado; reintenta ambos con backoff." }
+  ],
+  "pitfalls": [
+    { "en": "An untested fallback: the backup prompt breaks the output schema on the day the primary goes down.", "es": "Un fallback sin probar: el prompt de respaldo rompe el esquema de salida el mismo día que se cae el primario." },
+    { "en": "Retrying in every layer (SDK, gateway, app) multiplies load on an already overloaded provider.", "es": "Reintentar en cada capa (SDK, gateway, app) multiplica la carga sobre un proveedor que ya está sobrecargado." },
+    { "en": "Alerting only on HTTP errors: latency spikes and silent quality drops need TTFT SLOs and online evals.", "es": "Alertar solo por errores HTTP: los picos de latencia y las caídas silenciosas de calidad necesitan SLOs de TTFT y evals online." },
+    { "en": "Failing over to a provider or region your data-processing agreement doesn't cover.", "es": "Hacer failover a un proveedor o región que tu acuerdo de procesamiento de datos no cubre." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your main LLM provider is down for two hours. What happens in your system?", "es": "Tu proveedor principal de LLM está caído dos horas. ¿Qué pasa en tu sistema?" },
+      "a": {
+        "en": "The breaker for that provider opens after a handful of failures, so we stop burning time on timeouts. If the outage is regional, the gateway moves to the same model in another region; otherwise to a second provider with its own tuned prompt, which we evaluate weekly against the golden set. If both are saturated, we drop to a smaller model with fewer features, then cached answers or search results, and finally a human handoff. Users see a banner, not an error page. The price is maintaining that second prompt and eval suite.",
+        "es": "El breaker de ese proveedor se abre tras unas pocas fallas, así dejamos de perder tiempo en timeouts. Si la caída es regional, el gateway pasa al mismo modelo en otra región; si no, a un segundo proveedor con su propio prompt afinado, que evaluamos cada semana contra el golden set. Si ambos están saturados, bajamos a un modelo más chico con menos funciones, luego a respuestas en caché o resultados de búsqueda, y al final a un humano. El usuario ve un aviso, no una página de error. El precio es mantener ese segundo prompt y su suite de evals."
+      }
+    },
+    {
+      "q": { "en": "How would you detect a silent quality regression from a provider?", "es": "¿Cómo detectarías una regresión de calidad silenciosa del proveedor?" },
+      "a": {
+        "en": "Error rates and latency won't show it, so I run online evals: sampled production traces scored by deterministic checks like schema validity and citation coverage plus an LLM judge, and the user-feedback rate, each alerting on a drop versus the trailing week. I pin model snapshots where possible and run a small canary golden set every hour against the live endpoint. Anthropic's 2025 postmortem is the textbook case: infrastructure bugs degraded answers while requests returned 200.",
+        "es": "Las tasas de error y la latencia no lo muestran, así que corro evals online: trazas de producción muestreadas y puntuadas con chequeos deterministas como validez del esquema y cobertura de citas, más un LLM juez, y la tasa de feedback de usuarios, cada una con alerta si cae frente a la semana anterior. Fijo snapshots del modelo cuando se puede y corro cada hora un golden set canario pequeño contra el endpoint en vivo. El postmortem de Anthropic de 2025 es el caso de libro: bugs de infraestructura degradaron respuestas mientras las requests devolvían 200."
+      }
+    },
+    {
+      "q": { "en": "When would you use hedged requests, and what's the catch?", "es": "¿Cuándo usarías hedged requests y cuál es la trampa?" },
+      "a": {
+        "en": "When tail latency matters more than cost, like a voice agent where a 10-second TTFT means a hang-up. I send the second request only after the first passes roughly the p95, so extra load stays near 5%. The catch with LLMs is that both calls bill tokens, so I cancel the loser as soon as the winner streams its first token, and I never hedge calls with side effects, like tool actions.",
+        "es": "Cuando la latencia de cola importa más que el costo, como un agente de voz donde un TTFT de 10 segundos significa que el usuario cuelga. Mando la segunda request solo cuando la primera pasa aproximadamente el p95, así la carga extra queda cerca del 5%. La trampa con LLMs es que ambas llamadas cobran tokens, así que cancelo la perdedora en cuanto la ganadora emite su primer token, y nunca hago hedging de llamadas con efectos secundarios, como acciones de herramientas."
+      }
+    }
+  ],
+  "related": ["retries-backoff", "slos", "llm-gateway", "model-routing", "model-migrations", "ai-caching-layers", "incident-leadership"],
+  "sources": [
+    { "title": "Amazon Builders' Library — Timeouts, retries, and backoff with jitter", "url": "https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/" },
+    { "title": "Dean & Barroso — The Tail at Scale (Google Research)", "url": "https://research.google/pubs/the-tail-at-scale/" },
+    { "title": "Anthropic — A postmortem of three recent issues (2025)", "url": "https://www.anthropic.com/engineering/a-postmortem-of-three-recent-issues" },
+    { "title": "Amazon Bedrock — Cross-Region inference", "url": "https://docs.aws.amazon.com/bedrock/latest/userguide/cross-region-inference.html" }
+  ]
+}

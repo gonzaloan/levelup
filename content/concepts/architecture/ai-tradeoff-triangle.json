@@ -1,0 +1,96 @@
+{
+  "id": "ai-tradeoff-triangle",
+  "domain": "architecture",
+  "level": "core",
+  "title": { "en": "Quality, latency, cost: the AI trade-off triangle", "es": "Calidad, latencia y costo: el triángulo de trade-offs" },
+  "aliases": ["quality latency cost", "Pareto frontier", "cost-quality trade-off", "latency budget", "cost-performance", "iron triangle"],
+  "tldr": {
+    "en": "Every AI design choice trades quality, latency and cost, plus risk. Set a bar for each, know which lever moves which corner, and pick from the measured Pareto frontier instead of arguing.",
+    "es": "Cada decisión de diseño de IA intercambia calidad, latencia y costo, además de riesgo. Fija un umbral para cada uno, conoce qué palanca mueve cada vértice y elige sobre la frontera de Pareto medida en lugar de discutir."
+  },
+  "analogy": {
+    "en": "Shipping parcels: overnight is fast and pricey, ground is cheap and slow. A sensible company picks per parcel based on what it's worth, not one service for everything.",
+    "es": "Enviar paquetes: el envío urgente es rápido y caro, el terrestre es barato y lento. Una empresa sensata elige por paquete según lo que vale, no un solo servicio para todo."
+  },
+  "explain": {
+    "en": "Every AI architecture decision moves you inside a triangle of **quality**, **latency** and **cost**, with **risk** (safety, compliance, blast radius) as a fourth constraint. You rarely improve one corner for free: hit the bar on two and optimize the third.\n\nThe levers, and what they buy:\n\n- **Model size, [[model-routing]]**: quality at the price of $ and latency. Route easy traffic to small models.\n- **Reasoning effort** ([[reasoning-models]]): quality on hard tasks, paid in output tokens and seconds.\n- **Retrieval depth, [[reranking]]**: quality, for ~50–300 ms more.\n- **Caching** ([[ai-caching-layers]]): cost and latency, almost free on quality if keys are right.\n- **Batching** ([[batch-inference]]): ~50% cheaper, but hours instead of seconds.\n- **[[streaming]]**: perceived latency only; total time and cost don't change.\n- **[[quantization]], shorter outputs**: latency and cost, with a quality risk to measure.\n\n**Measure, don't argue.** Run one eval set over candidate configs, record quality, p95 latency and cost, and keep the **Pareto frontier**: configs that no other config beats on every axis. Present it as a menu: *\"Option B: 2 points less quality, 60% cheaper, 1.2 s faster. Which do we want?\"* That turns a debate into a product decision with data ([[tradeoff-communication]]).",
+    "es": "Cada decisión de arquitectura de IA te mueve dentro de un triángulo de **calidad**, **latencia** y **costo**, con el **riesgo** (seguridad, cumplimiento, radio de impacto) como cuarta restricción. Casi nunca mejoras un vértice gratis: cumple el umbral en dos y optimiza el tercero.\n\nLas palancas y lo que compran:\n\n- **Tamaño del modelo, [[model-routing]]**: calidad a cambio de $ y latencia. Manda el tráfico fácil a modelos pequeños.\n- **Esfuerzo de razonamiento** ([[reasoning-models]]): calidad en tareas difíciles, pagada en tokens de salida y segundos.\n- **Profundidad de recuperación, [[reranking]]**: calidad, por ~50–300 ms más.\n- **Caché** ([[ai-caching-layers]]): costo y latencia, casi gratis en calidad si las claves están bien.\n- **Batch** ([[batch-inference]]): ~50% más barato, pero horas en vez de segundos.\n- **[[streaming]]**: solo la latencia percibida; el tiempo total y el costo no cambian.\n- **[[quantization]], salidas más cortas**: latencia y costo, con un riesgo de calidad que hay que medir.\n\n**Mide, no discutas.** Corre un mismo set de evals sobre las configuraciones candidatas, registra calidad, latencia p95 y costo, y quédate con la **frontera de Pareto**: las configuraciones que ninguna otra supera en todos los ejes. Preséntala como un menú: *\"Opción B: 2 puntos menos de calidad, 60% más barata, 1.2 s más rápida. ¿Cuál queremos?\"* Así un debate se vuelve una decisión de producto con datos ([[tradeoff-communication]])."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  B[\"Set bars<br/>quality, p95, cost\"] --> C[\"Candidate configs<br/>model, effort, top-k\"]\n  C --> E[Run same eval set]\n  E --> M[\"Measure quality,<br/>p95 latency, cost\"]\n  M --> F[Keep Pareto frontier]\n  F --> D{\"Any config<br/>meets all bars?\"}\n  D -->|yes| P[Ship cheapest passing]\n  D -->|no| L[\"Add a lever or<br/>renegotiate a bar\"]\n  L --> C\n  P -.->|monitor online| B",
+    "caption": {
+      "en": "Decide with measurements: evaluate candidates on one eval set, keep the frontier, ship the cheapest config that clears every bar.",
+      "es": "Decide con mediciones: evalúa candidatos sobre un mismo set de evals, conserva la frontera y despliega la configuración más barata que cumple todos los umbrales."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Pick the cheapest config that clears quality and p95 bars", "es": "Elegir la configuración más barata que cumple calidad y p95" },
+    "source": "QUALITY_BAR = 0.85   # pass rate on the golden set\nP95_BAR_MS = 2500    # end-to-end latency budget\n\n# One row per config: the same eval set run against each\nresults = [\n    {\"config\": \"large, effort=high, k=20\", \"quality\": 0.91, \"p95_ms\": 6200, \"usd_per_1k\": 41.0},\n    {\"config\": \"large, effort=low, k=50\",  \"quality\": 0.87, \"p95_ms\": 3400, \"usd_per_1k\": 24.0},\n    {\"config\": \"large, effort=low, k=20\",  \"quality\": 0.88, \"p95_ms\": 2900, \"usd_per_1k\": 18.0},\n    {\"config\": \"mid + rerank, k=8\",        \"quality\": 0.87, \"p95_ms\": 1900, \"usd_per_1k\": 6.5},\n    {\"config\": \"mid, k=8\",                 \"quality\": 0.83, \"p95_ms\": 1600, \"usd_per_1k\": 5.9},\n    {\"config\": \"small + cache, k=5\",       \"quality\": 0.79, \"p95_ms\": 700,  \"usd_per_1k\": 1.2},\n]\n\ndef dominates(b: dict, a: dict) -> bool:\n    \"\"\"b is no worse than a on every axis and strictly better on one.\"\"\"\n    axes = [(b[\"quality\"], a[\"quality\"]), (-b[\"p95_ms\"], -a[\"p95_ms\"]),\n            (-b[\"usd_per_1k\"], -a[\"usd_per_1k\"])]   # higher is better after sign flip\n    return all(x >= y for x, y in axes) and any(x > y for x, y in axes)\n\nfrontier = [a for a in results if not any(dominates(b, a) for b in results)]\npassing = [r for r in frontier\n           if r[\"quality\"] >= QUALITY_BAR and r[\"p95_ms\"] <= P95_BAR_MS]\n\nif passing:\n    best = min(passing, key=lambda r: r[\"usd_per_1k\"])\n    print(\"ship:\", best[\"config\"])          # -> mid + rerank, k=8\nelse:\n    print(\"no config clears the bars; frontier:\", [r[\"config\"] for r in frontier])"
+  },
+  "example": {
+    "en": "Product asks for *\"the best model, fast and cheap\"* for support answers. Instead of debating, you run 400 golden questions over six configs. The large model with high reasoning effort scores 91% but has a 6.2 s p95 and costs ~$41 per 1,000 requests. A mid-size model plus a reranker scores 87% at 1.9 s and ~$6.50. Against bars of 85% and 2.5 s, mid + rerank ships, ~84% cheaper than the large one. A classifier sends the hardest ~5% of questions to the large model.",
+    "es": "Producto pide *\"el mejor modelo, rápido y barato\"* para respuestas de soporte. En vez de debatir, corres 400 preguntas del golden set sobre seis configuraciones. El modelo grande con esfuerzo de razonamiento alto saca 91%, pero tiene un p95 de 6.2 s y cuesta ~$41 por cada 1,000 requests. Un modelo mediano con reranker saca 87% a 1.9 s y ~$6.50. Con umbrales de 85% y 2.5 s, se despliega el mediano con reranker, ~84% más barato que el grande. Un clasificador manda el ~5% de preguntas más difíciles al modelo grande."
+  },
+  "pros": [
+    { "en": "Turns opinion fights into one chart and a data-backed choice.", "es": "Convierte peleas de opinión en una gráfica y una decisión respaldada por datos." },
+    { "en": "Exposes free wins: configs that are both better and cheaper do exist.", "es": "Expone mejoras gratis: sí existen configuraciones mejores y más baratas a la vez." },
+    { "en": "Gives stakeholders a menu with explicit costs instead of a single 'best'.", "es": "Da a los stakeholders un menú con costos explícitos en lugar de un único 'mejor'." }
+  ],
+  "cons": [
+    { "en": "Needs a trustworthy eval set; a small or noisy one draws a fake frontier.", "es": "Necesita un set de evals confiable; uno pequeño o ruidoso dibuja una frontera falsa." },
+    { "en": "The frontier drifts as prices, models and traffic mix change every few months.", "es": "La frontera se mueve cuando cambian precios, modelos y mezcla de tráfico, cada pocos meses." },
+    { "en": "Risk and UX don't fit neatly on the chart; judgment is still required.", "es": "El riesgo y la UX no caben bien en la gráfica; el criterio sigue siendo necesario." }
+  ],
+  "whenToUse": {
+    "en": "Any model, prompt, retrieval or infra choice with real cost or latency at stake, and whenever someone asks for 'the best model' without naming a budget.",
+    "es": "Cualquier decisión de modelo, prompt, recuperación o infraestructura con costo o latencia en juego, y siempre que alguien pida 'el mejor modelo' sin dar un presupuesto."
+  },
+  "whenNotToUse": {
+    "en": "Early prototypes with tiny traffic: start with a strong model and get quality right; optimize cost once volume and an eval set exist.",
+    "es": "Prototipos tempranos con poco tráfico: arranca con un modelo fuerte y logra la calidad; optimiza el costo cuando existan volumen y un set de evals."
+  },
+  "numbers": [
+    { "en": "OpenAI latency guide: halving output tokens can cut latency ~50%; halving the prompt often only ~1–5%.", "es": "Guía de latencia de OpenAI: reducir a la mitad los tokens de salida puede bajar la latencia ~50%; reducir el prompt a la mitad, a menudo solo ~1–5%." },
+    { "en": "Price spread inside one family: GPT-4.1 $2 vs GPT-4.1-nano $0.10 per 1M input tokens (20×, 2025 list).", "es": "Diferencia de precio dentro de una familia: GPT-4.1 $2 vs. GPT-4.1-nano $0.10 por 1M de tokens de entrada (20×, lista 2025)." },
+    { "en": "RouteLLM (2024): ~85% cheaper than GPT-4-only on MT Bench at 95% of its quality.", "es": "RouteLLM (2024): ~85% más barato que usar solo GPT-4 en MT Bench, con el 95% de su calidad." },
+    { "en": "Batch APIs: ~50% off for results within 24 h. Anthropic cached input reads: ~0.1× base price.", "es": "APIs batch: ~50% de descuento con resultados en 24 h. Lecturas de input en caché en Anthropic: ~0.1× el precio base." },
+    { "en": "Nielsen's limits: ~0.1 s feels instant, ~1 s keeps the flow of thought, ~10 s loses attention.", "es": "Límites de Nielsen: ~0.1 s se siente instantáneo, ~1 s mantiene el hilo de pensamiento, ~10 s pierde la atención." }
+  ],
+  "pitfalls": [
+    { "en": "Comparing configs on a few dozen examples: 1–2 point gaps are noise. Report confidence intervals.", "es": "Comparar configuraciones con unas pocas docenas de ejemplos: diferencias de 1–2 puntos son ruido. Reporta intervalos de confianza." },
+    { "en": "Optimizing mean latency when users feel p95, p99 and time to first token.", "es": "Optimizar la latencia promedio cuando el usuario siente el p95, el p99 y el tiempo al primer token." },
+    { "en": "Counting only list price per token: retries, reasoning tokens, reranker GPUs and human review cost too.", "es": "Contar solo el precio de lista por token: reintentos, tokens de razonamiento, GPUs del reranker y revisión humana también cuestan." },
+    { "en": "Deciding once: re-run the frontier when a new model ships or prices drop.", "es": "Decidir una sola vez: vuelve a calcular la frontera cuando sale un modelo nuevo o bajan los precios." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "The PM wants the best model, fast and cheap. How do you respond?", "es": "El PM quiere el mejor modelo, rápido y barato. ¿Qué le respondes?" },
+      "a": {
+        "en": "I agree with the goal and make the trade-off explicit. First I ask for bars: what quality is good enough on our eval set, what p95 the UX tolerates, and what a request may cost at projected volume. Then I evaluate several configs on the same golden set and show the Pareto frontier. Usually a mid-size model with better retrieval or routing clears the bar at a fraction of the cost, and only the hard slice goes to the big model. The risk I flag: the frontier is only as good as the eval set.",
+        "es": "Estoy de acuerdo con el objetivo y hago explícito el trade-off. Primero pido umbrales: qué calidad es suficiente en nuestro set de evals, qué p95 tolera la UX y cuánto puede costar una request con el volumen proyectado. Después evalúo varias configuraciones sobre el mismo golden set y muestro la frontera de Pareto. Casi siempre un modelo mediano con mejor recuperación o routing cumple el umbral por una fracción del costo, y solo la porción difícil va al modelo grande. El riesgo que señalo: la frontera vale lo que vale el set de evals."
+      }
+    },
+    {
+      "q": { "en": "Which levers do you pull to cut latency without hurting quality?", "es": "¿Qué palancas usas para bajar la latencia sin afectar la calidad?" },
+      "a": {
+        "en": "In order of safety: stream, so perceived latency drops to TTFT. Cache the static prompt prefix to cut prefill. Shorten outputs, since output tokens dominate generation time. Run independent steps like retrieval and guardrails in parallel. Then route easy requests to a smaller model and lower reasoning effort; those do touch quality, so I verify them on the eval set. If we self-host, quantization and speculative decoding come next. I track p95, never the mean.",
+        "es": "En orden de seguridad: streaming, para que la latencia percibida baje al TTFT. Caché del prefijo estático del prompt para recortar el prefill. Salidas más cortas, porque los tokens de salida dominan el tiempo de generación. Pasos independientes como recuperación y guardrails en paralelo. Después, mandar las requests fáciles a un modelo más chico y bajar el esfuerzo de razonamiento; eso sí toca la calidad, así que lo verifico en el set de evals. Si hacemos self-hosting, siguen la cuantización y el speculative decoding. Mido el p95, nunca el promedio."
+      }
+    },
+    {
+      "q": { "en": "How do you present an AI trade-off to executives?", "es": "¿Cómo presentas un trade-off de IA a ejecutivos?" },
+      "a": {
+        "en": "As a short menu, not a lecture. Two or three options from the frontier, each with quality on our eval set, p95 latency, monthly cost at projected volume and its main risk. Then my recommendation and what would change it, for example: if volume doubles, we switch to routing. Executives decide on business impact, so I translate points of quality into outcomes like resolution rate or escalations avoided.",
+        "es": "Como un menú corto, no como una clase. Dos o tres opciones de la frontera, cada una con su calidad en nuestro set de evals, latencia p95, costo mensual con el volumen proyectado y su riesgo principal. Luego mi recomendación y qué la cambiaría, por ejemplo: si el volumen se duplica, pasamos a routing. Los ejecutivos deciden por impacto en el negocio, así que traduzco puntos de calidad a resultados como tasa de resolución o escalamientos evitados."
+      }
+    }
+  ],
+  "related": ["model-routing", "token-economics", "inference-metrics", "eval-driven-development", "tradeoff-communication", "model-selection", "ai-caching-layers"],
+  "sources": [
+    { "title": "OpenAI — Latency optimization guide", "url": "https://developers.openai.com/api/docs/guides/latency-optimization" },
+    { "title": "Kapoor et al. — AI Agents That Matter (2024)", "url": "https://arxiv.org/abs/2407.01502" },
+    { "title": "Ong et al. — RouteLLM: Learning to Route LLMs with Preference Data", "url": "https://arxiv.org/abs/2406.18665" },
+    { "title": "Chen, Zaharia, Zou — FrugalGPT", "url": "https://arxiv.org/abs/2305.05176" }
+  ]
+}

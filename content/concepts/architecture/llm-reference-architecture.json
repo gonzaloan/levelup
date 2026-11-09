@@ -1,0 +1,95 @@
+{
+  "id": "llm-reference-architecture",
+  "domain": "architecture",
+  "level": "core",
+  "title": { "en": "Reference architecture of an LLM application", "es": "Arquitectura de referencia de una app con LLMs" },
+  "aliases": ["LLM app architecture", "compound AI systems", "LLM stack", "GenAI platform", "AI reference architecture", "LLMOps stack"],
+  "tldr": {
+    "en": "A production LLM app is layers around the model: client → API & auth → orchestration → context (retrieval, memory, tools) → model gateway → models, wrapped in guardrails, evals, observability and cost control.",
+    "es": "Una app de LLM en producción son capas alrededor del modelo: cliente → API y auth → orquestación → contexto (recuperación, memoria, herramientas) → gateway de modelos → modelos, envueltas en guardrails, evals, observabilidad y control de costos."
+  },
+  "analogy": {
+    "en": "A restaurant: the chef (model) matters, but so do the host checking reservations, the ticket system, the pantry, the expediter inspecting every plate and the books. Great chefs still fail in badly run kitchens.",
+    "es": "Un restaurante: el chef (el modelo) importa, pero también el anfitrión que revisa reservas, el sistema de comandas, la despensa, quien inspecciona cada plato antes de salir y la contabilidad. Un gran chef igual fracasa en una cocina mal organizada."
+  },
+  "explain": {
+    "en": "A production LLM app is a **compound AI system** (Berkeley BAIR, Feb 2024): quality comes from the system around the model (retrieval, tools, checks, routing), not from the model alone. Most designs share the same layers along the request path:\n\n1. **Experience**: chat or embedded UI with [[streaming]], [[citations-grounding]] and [[human-in-the-loop]].\n2. **API & auth**: identity, tenant, quotas ([[rate-limiting]]). The tenant comes from the token, never from the prompt.\n3. **Orchestration**: a fixed workflow or an agent ([[agents-vs-workflows]]), with [[durable-agents]] so long tasks survive crashes.\n4. **Context layer**: [[rag]], [[agent-memory]] and tools exposed via [[mcp]], assembled by [[context-engineering]].\n5. **Model access**: an [[llm-gateway]] with [[model-routing]], [[ai-caching-layers]], fallbacks ([[llm-resilience]]) and cost attribution.\n6. **Models**: provider APIs or self-hosted ([[api-vs-self-host]]).\n\n**Cross-cutting**: [[guardrails]] on input, output and actions; [[agent-authz]] on every tool call; [[llm-observability]] traces; online evals; budgets ([[ai-finops]]).\n\n**Offline paths**: ingestion and [[index-lifecycle]] keep retrieval fresh; traces and feedback become [[golden-datasets]], evals and fine-tuning data: the [[data-flywheel]].",
+    "es": "Una app de LLM en producción es un **sistema de IA compuesto** (Berkeley BAIR, febrero de 2024): la calidad sale del sistema que rodea al modelo (recuperación, herramientas, verificaciones, enrutamiento), no solo del modelo. Casi todos los diseños comparten las mismas capas a lo largo del camino de la petición:\n\n1. **Experiencia**: chat o UI embebida con [[streaming]], [[citations-grounding]] y [[human-in-the-loop]].\n2. **API y auth**: identidad, tenant y cuotas ([[rate-limiting]]). El tenant sale del token, nunca del prompt.\n3. **Orquestación**: un workflow fijo o un agente ([[agents-vs-workflows]]), con [[durable-agents]] para que las tareas largas sobrevivan a una caída.\n4. **Capa de contexto**: [[rag]], [[agent-memory]] y herramientas expuestas vía [[mcp]], ensambladas con [[context-engineering]].\n5. **Acceso a modelos**: un [[llm-gateway]] con [[model-routing]], [[ai-caching-layers]], fallbacks ([[llm-resilience]]) y atribución de costos.\n6. **Modelos**: APIs de proveedores o self-hosted ([[api-vs-self-host]]).\n\n**Transversales**: [[guardrails]] en entrada, salida y acciones; [[agent-authz]] en cada llamada a herramientas; trazas de [[llm-observability]]; evals online; presupuestos ([[ai-finops]]).\n\n**Caminos offline**: la ingesta y el [[index-lifecycle]] mantienen fresca la recuperación; las trazas y el feedback se convierten en [[golden-datasets]], evals y datos de fine-tuning: el [[data-flywheel]]."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  U[\"Client<br/>streaming, citations, HITL\"] --> A[\"API + auth<br/>tenant, quotas\"]\n  A --> GR[\"Guardrails<br/>input and output\"]\n  GR --> O[\"Durable orchestrator<br/>workflow or agent\"]\n  O --> C[Context layer]\n  C --> R[(Retrieval index)]\n  C --> M[(Memory)]\n  C --> T[Tools via MCP]\n  O --> G[\"Model gateway<br/>route, cache, fallback\"]\n  G --> P[Provider APIs]\n  G --> S[Self-hosted models]\n  I[Ingestion pipeline] -.-> R\n  O -.->|traces| OB[\"Observability + evals\"]\n  OB -.-> D[(\"Eval + fine-tune data\")]\n  D -.->|fine-tune| S",
+    "caption": {
+      "en": "Solid: the online request path. Dashed: offline loops that keep the index fresh and turn traces into evals and training data.",
+      "es": "Línea continua: el camino online de la petición. Punteada: los ciclos offline que mantienen fresco el índice y convierten trazas en evals y datos de entrenamiento."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "One request through every layer (FastAPI sketch)", "es": "Una petición por todas las capas (boceto en FastAPI)" },
+    "source": "from fastapi import FastAPI, Request\nfrom fastapi.responses import StreamingResponse\n\napp = FastAPI()\nPROMPT_VERSION = \"support-v12\"\n\n@app.post(\"/chat\")\nasync def chat(req: Request):\n    user = authenticate(req)                         # API & auth: tenant from the token\n    body = await req.json()\n    enforce_quota(user.tenant, body[\"message\"])      # rate limits + budgets\n    check_input(body[\"message\"])                     # guardrail: injection, PII\n\n    with tracer.start_as_current_span(\"chat\") as span:\n        span.set_attribute(\"prompt.version\", PROMPT_VERSION)\n        chunks = await retrieve(body[\"message\"], acl=user.groups)  # permission-aware RAG\n        memory = await recall(user.id, body[\"message\"])\n        prompt = build_prompt(PROMPT_VERSION, memory, chunks, body[\"message\"])  # static first\n\n        stream = gateway.stream(                     # model access layer\n            model=\"tier:default\",                    # gateway picks model + fallbacks\n            messages=prompt,\n            tools=mcp_tools_for(user),               # only tools this user may use\n            metadata={\"tenant\": user.tenant, \"prompt_version\": PROMPT_VERSION},\n        )\n        return StreamingResponse(check_output(stream, sources=chunks))  # cite + filter"
+  },
+  "example": {
+    "en": "An HR assistant for a 20,000-employee company. A question arrives with an SSO token; the API layer derives the employee's country and role and checks the team quota. An input guardrail masks an ID number. A **3-step workflow** (no agent needed) retrieves 50 chunks filtered by country and role, reranks to 5, and the gateway sends them to a mid-size model with a cached 3k-token system prompt. The answer streams with citations at ~1 s TTFT. Every trace carries the prompt version; thumbs-down answers go to weekly error analysis and become new golden-set cases.",
+    "es": "Un asistente de RR. HH. para una empresa de 20,000 empleados. Llega una pregunta con un token de SSO; la capa de API obtiene el país y el rol del empleado y revisa la cuota del equipo. Un guardrail de entrada enmascara un número de identificación. Un **workflow de 3 pasos** (no hace falta un agente) recupera 50 chunks filtrados por país y rol, reordena a 5, y el gateway los envía a un modelo mediano con un system prompt de 3k tokens en caché. La respuesta llega en streaming con citas y un TTFT de ~1 s. Cada traza lleva la versión del prompt; las respuestas con pulgar abajo van al análisis de errores semanal y se vuelven casos nuevos del golden set."
+  },
+  "pros": [
+    { "en": "Shared map for design reviews and interviews: you can point at the layer where a problem lives.", "es": "Un mapa común para revisiones de diseño y entrevistas: puedes señalar la capa donde vive cada problema." },
+    { "en": "Layers swap independently (new model, new vector DB) behind stable interfaces.", "es": "Cada capa se reemplaza por separado (otro modelo, otra base vectorial) detrás de interfaces estables." },
+    { "en": "Auth, cost, logging and safety are enforced once, not re-built in every feature.", "es": "Auth, costos, logs y seguridad se aplican una sola vez, no se reconstruyen en cada feature." }
+  ],
+  "cons": [
+    { "en": "Overbuilt for a prototype: a prompt, one model call and an eval set may be all you need.", "es": "Es demasiado para un prototipo: un prompt, una llamada al modelo y un set de evals pueden bastar." },
+    { "en": "Every layer adds latency and a failure point; serial availabilities multiply.", "es": "Cada capa suma latencia y un punto de falla; las disponibilidades en serie se multiplican." },
+    { "en": "A central platform can over-standardize and slow down product teams.", "es": "Una plataforma central puede estandarizar de más y frenar a los equipos de producto." }
+  ],
+  "whenToUse": {
+    "en": "As the default skeleton for any production LLM feature or system-design answer: walk the request path, then the cross-cutting concerns, then the offline loops.",
+    "es": "Como esqueleto por defecto para cualquier feature de LLM en producción o respuesta de diseño de sistemas: recorre el camino de la petición, luego lo transversal y al final los ciclos offline."
+  },
+  "whenNotToUse": {
+    "en": "Don't build every layer on day one. Add a layer when a real need appears: tenants, scale, cost, risk or a second team.",
+    "es": "No construyas todas las capas el primer día. Agrega una capa cuando aparezca una necesidad real: tenants, escala, costo, riesgo o un segundo equipo."
+  },
+  "numbers": [
+    { "en": "Databricks data cited by BAIR (2024): 60% of LLM apps used some form of RAG, 30% used multi-step chains.", "es": "Datos de Databricks citados por BAIR (2024): el 60% de las apps de LLM usaba alguna forma de RAG y el 30% cadenas de varios pasos." },
+    { "en": "Serial availability multiplies: a 99.9% app on a 99.5% model API is ≈ 99.4% without a fallback.", "es": "La disponibilidad en serie se multiplica: una app de 99.9% sobre una API de modelo de 99.5% queda en ≈ 99.4% sin fallback." },
+    { "en": "Rule of thumb: the model call dominates latency and cost; a gateway should add only single-digit ms.", "es": "Regla práctica: la llamada al modelo domina la latencia y el costo; un gateway debería sumar solo unos pocos ms." },
+    { "en": "Anthropic (2025): agents use ~4× the tokens of a chat interaction; multi-agent systems ~15×.", "es": "Anthropic (2025): los agentes usan ~4× los tokens de una interacción de chat; los sistemas multiagente, ~15×." }
+  ],
+  "pitfalls": [
+    { "en": "Enforcing tenant or permissions in the prompt instead of in code and retrieval filters.", "es": "Aplicar el tenant o los permisos en el prompt en lugar de hacerlo en código y en los filtros de recuperación." },
+    { "en": "Every service calling providers directly: no single place for keys, quotas, fallbacks or cost per team.", "es": "Que cada servicio llame directo a los proveedores: no hay un solo lugar para keys, cuotas, fallbacks ni costo por equipo." },
+    { "en": "Choosing an agent where a fixed workflow would do: more tokens, less predictability.", "es": "Elegir un agente donde bastaba un workflow fijo: más tokens y menos previsibilidad." },
+    { "en": "No offline loop: without traces and a golden set, every model or prompt change is a guess.", "es": "No tener ciclo offline: sin trazas ni golden set, cada cambio de modelo o de prompt es una apuesta." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Walk me through the architecture of a production LLM application.", "es": "Explícame la arquitectura de una aplicación de LLM en producción." },
+      "a": {
+        "en": "I follow the request path. The client streams tokens and shows citations. The API layer authenticates and derives tenant and quotas. An orchestrator, a workflow by default and an agent only when the path can't be fixed, keeps durable state. The context layer does permission-aware retrieval, memory and tools over MCP. A gateway handles routing, caching and fallbacks across models. Around it: guardrails, per-tool authorization, tracing, online evals and budgets. Offline, ingestion keeps the index fresh and traces feed evals and fine-tuning. Then I go deep where the risk is, usually retrieval quality or cost.",
+        "es": "Sigo el camino de la petición. El cliente muestra tokens en streaming y citas. La capa de API autentica y obtiene tenant y cuotas. Un orquestador, workflow por defecto y agente solo cuando el camino no se puede fijar, guarda estado durable. La capa de contexto hace recuperación con permisos, memoria y herramientas vía MCP. Un gateway se encarga del enrutamiento, la caché y los fallbacks entre modelos. Alrededor: guardrails, autorización por herramienta, trazas, evals online y presupuestos. Offline, la ingesta mantiene fresco el índice y las trazas alimentan evals y fine-tuning. Después profundizo donde está el riesgo, casi siempre calidad de recuperación o costo."
+      }
+    },
+    {
+      "q": { "en": "What is a compound AI system, and why does it matter to an architect?", "es": "¿Qué es un sistema de IA compuesto y por qué le importa a un arquitecto?" },
+      "a": {
+        "en": "It's a system where quality comes from several interacting components, such as retrievers, multiple model calls, tools and verifiers, rather than from one model. BAIR made the case in 2024 with examples like AlphaCode 2, which generates up to a million candidate solutions and filters them. For me it changes where I invest: the model is a swappable part, while retrieval, evals and routing are where my team builds lasting advantage. The cost is more failure points and harder debugging, so per-step tracing is mandatory.",
+        "es": "Es un sistema donde la calidad sale de varios componentes que interactúan, como recuperadores, varias llamadas al modelo, herramientas y verificadores, y no de un solo modelo. BAIR lo argumentó en 2024 con ejemplos como AlphaCode 2, que genera hasta un millón de soluciones candidatas y las filtra. Para mí cambia dónde invierto: el modelo es una pieza reemplazable, mientras que la recuperación, las evals y el enrutamiento son donde mi equipo construye una ventaja duradera. El costo es más puntos de falla y un debugging más difícil, así que las trazas por paso son obligatorias."
+      }
+    },
+    {
+      "q": { "en": "Where do you enforce security in this architecture?", "es": "¿Dónde aplicas la seguridad en esta arquitectura?" },
+      "a": {
+        "en": "In deterministic code at the boundaries, never in the prompt. Identity and tenant at the API layer, from the token. Permission filters inside retrieval. Per-tool authorization with the user's scoped credentials. Output checks before rendering, especially links and markdown images. Human approval for irreversible actions. Guardrail classifiers reduce risk, but because prompt injection has no complete fix, a hijacked model must still be unable to do damage.",
+        "es": "En código determinista en los bordes, nunca en el prompt. Identidad y tenant en la capa de API, a partir del token. Filtros de permisos dentro de la recuperación. Autorización por herramienta con credenciales acotadas del usuario. Revisión de la salida antes de renderizarla, sobre todo links e imágenes en markdown. Aprobación humana para acciones irreversibles. Los clasificadores de guardrails reducen el riesgo, pero como la prompt injection no tiene solución completa, un modelo secuestrado igual no debe poder hacer daño."
+      }
+    }
+  ],
+  "related": ["rag", "agents-vs-workflows", "llm-gateway", "guardrails", "llm-observability", "design-framework", "case-ai-platform"],
+  "sources": [
+    { "title": "BAIR — The Shift from Models to Compound AI Systems (2024)", "url": "https://bair.berkeley.edu/blog/2024/02/18/compound-ai-systems/" },
+    { "title": "Chip Huyen — Building A Generative AI Platform (2024)", "url": "https://huyenchip.com/2024/07/25/genai-platform.html" },
+    { "title": "a16z — Emerging Architectures for LLM Applications (2023)", "url": "https://a16z.com/emerging-architectures-for-llm-applications/" },
+    { "title": "Anthropic — Building effective agents (2024)", "url": "https://www.anthropic.com/research/building-effective-agents" }
+  ]
+}
