@@ -1,0 +1,97 @@
+{
+  "id": "computer-vision",
+  "domain": "ml",
+  "level": "core",
+  "title": { "en": "Computer vision: CNNs & Vision Transformers", "es": "Visión por computadora: CNNs y Vision Transformers" },
+  "aliases": ["CNN", "ConvNet", "ViT", "ResNet", "YOLO", "object detection", "image segmentation", "bird's-eye view"],
+  "tldr": {
+    "en": "A backbone (a CNN sliding small filters, or a ViT attending over image patches) turns pixels into features; task heads turn them into labels, boxes or masks. Start from a pretrained backbone.",
+    "es": "Un backbone (una CNN que desliza filtros pequeños o un ViT que aplica atención sobre parches de la imagen) convierte píxeles en features; las cabezas de cada tarea los vuelven etiquetas, cajas o máscaras. Parte de un backbone preentrenado."
+  },
+  "analogy": {
+    "en": "A CNN reads a photo with a magnifying glass, building up from strokes to shapes to objects. A ViT cuts the photo into puzzle pieces and lets every piece compare notes with every other.",
+    "es": "Una CNN lee una foto con lupa y va de trazos a formas y de formas a objetos. Un ViT corta la foto en piezas de rompecabezas y deja que cada pieza se compare con todas las demás."
+  },
+  "explain": {
+    "en": "Vision models turn pixels into features with a **backbone**; a task **head** turns features into an answer.\n\n**CNNs** slide small learned filters (e.g. 3×3) over the image, reusing the same weights at every position: an edge detector finds edges anywhere, with few parameters. **Pooling** (or strided convs) halves the resolution, and stacking layers grows the **receptive field**, the input area one unit sees: edges → textures → parts → objects. **ResNet** added skip connections, output = F(x) + x, so gradients flow through 100+ layers; ResNet-50 is still the standard baseline.\n\n**Vision Transformers (ViT)** cut the image into 16×16 patches and embed each as a token (224×224 → 196 tokens) for a standard [[transformer]]. Every patch attends to every other from layer one: global context, but no built-in locality, so ViTs need more data or pretraining to beat CNNs, and attention cost grows quadratically with patch count.\n\n**Tasks**: *classification* (one label per image), *detection* (boxes + classes; YOLO-style single-stage detectors predict every box in one forward pass, then non-max suppression drops duplicates) and *segmentation* (a class per pixel).\n\nYou rarely train from scratch: **transfer learning** from an ImageNet- or CLIP-pretrained backbone, plus **data augmentation** (crops, flips, color jitter) that teaches invariances, gets strong results from a few thousand labeled images.",
+    "es": "Los modelos de visión convierten píxeles en features con un **backbone**; una **cabeza** de tarea convierte esos features en una respuesta.\n\nLas **CNNs** deslizan filtros pequeños aprendidos (p. ej. 3×3) sobre la imagen y reutilizan los mismos pesos en cada posición: un detector de bordes los encuentra en cualquier lugar, con pocos parámetros. El **pooling** (o las convoluciones con stride) reduce la resolución a la mitad, y apilar capas agranda el **campo receptivo**, la zona de la entrada que ve cada unidad: bordes → texturas → partes → objetos. **ResNet** agregó conexiones residuales, salida = F(x) + x, para que el gradiente fluya por más de 100 capas; ResNet-50 sigue siendo el baseline estándar.\n\nLos **Vision Transformers (ViT)** cortan la imagen en parches de 16×16 y convierten cada uno en un token (224×224 → 196 tokens) para un [[transformer]] estándar. Cada parche atiende a todos los demás desde la primera capa: contexto global, pero sin noción de localidad incorporada, así que los ViT necesitan más datos o preentrenamiento para superar a las CNNs, y el costo de la atención crece de forma cuadrática con la cantidad de parches.\n\n**Tareas**: *clasificación* (una etiqueta por imagen), *detección* (cajas + clases; los detectores de una etapa estilo YOLO predicen todas las cajas en una sola pasada y luego non-max suppression elimina duplicados) y *segmentación* (una clase por píxel).\n\nCasi nunca entrenas desde cero: **transfer learning** desde un backbone preentrenado en ImageNet o con CLIP, más **data augmentation** (recortes, volteos, variaciones de color) que enseña invariancias, da buenos resultados con unos pocos miles de imágenes etiquetadas."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  I[\"Image 224×224\"] --> C[\"CNN<br/>conv, pool, residuals\"]\n  I --> P[\"ViT: 196 patches<br/>16×16 each\"]\n  P --> T[\"Transformer encoder<br/>global attention\"]\n  C --> F[\"Shared features\"]\n  T --> F\n  F --> H1[\"Classification<br/>one label\"]\n  F --> H2[\"Detection<br/>boxes + NMS\"]\n  F --> H3[\"Segmentation<br/>class per pixel\"]",
+    "caption": {
+      "en": "Two backbone families, one interface: features in, task heads out. You can swap the backbone and keep the heads.",
+      "es": "Dos familias de backbone, una sola interfaz: entran features, salen las cabezas de cada tarea. Puedes cambiar el backbone y conservar las cabezas."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Transfer learning with augmentation, and ViT patchify", "es": "Transfer learning con augmentation y patchify de ViT" },
+    "source": "import torch, torch.nn as nn\nfrom torchvision import models, transforms\n\n# Augment at train time only: the label survives a crop or flip, so the model learns invariance\ntrain_tf = transforms.Compose([\n    transforms.RandomResizedCrop(224),\n    transforms.RandomHorizontalFlip(),\n    transforms.ColorJitter(0.2, 0.2, 0.2),\n    transforms.ToTensor(),\n    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),  # ImageNet stats\n])\n\n# Transfer learning: ImageNet backbone, new head for 5 defect classes\nmodel = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V2)\nfor p in model.parameters():\n    p.requires_grad = False                        # freeze the features first\nmodel.fc = nn.Linear(model.fc.in_features, 5)      # 2048 -> 5: the only trainable layer\nopt = torch.optim.AdamW(model.fc.parameters(), lr=1e-3)\n\n# ViT's view of an image: 224 / 16 = 14, so 14 x 14 = 196 patch tokens\nimg = torch.randn(1, 3, 224, 224)\npatches = img.unfold(2, 16, 16).unfold(3, 16, 16)   # (1, 3, 14, 14, 16, 16)\ntokens = patches.permute(0, 2, 3, 1, 4, 5).reshape(1, 196, 3 * 16 * 16)\nprint(tokens.shape)  # (1, 196, 768) -> linear projection -> transformer"
+  },
+  "example": {
+    "en": "Tesla's Autopilot stack, as presented at AI Day 2021: **8 cameras** feed one shared backbone (a RegNet CNN with a BiFPN for multi-scale features). A transformer then fuses all cameras into a single **bird's-eye-view** (BEV) space around the car, a video module adds memory across frames, and many task heads share the result in a \"HydraNet\" (vehicles, lanes, traffic lights). Why BEV: a truck spanning three cameras becomes one object in 3D instead of three partial boxes, and the planner reasons top-down anyway. The shared backbone means one expensive pass serves dozens of tasks inside the car's latency budget.",
+    "es": "El stack de Autopilot de Tesla, tal como lo mostraron en AI Day 2021: **8 cámaras** alimentan un backbone compartido (una CNN RegNet con un BiFPN para features multiescala). Luego un transformer fusiona todas las cámaras en un único espacio de **vista de pájaro** (BEV, bird's-eye view) alrededor del auto, un módulo de video agrega memoria entre frames y muchas cabezas de tarea comparten el resultado en una \"HydraNet\" (vehículos, carriles, semáforos). Por qué BEV: un camión que ocupa tres cámaras se vuelve un solo objeto en 3D en vez de tres cajas parciales, y el planificador razona en vista cenital de todos modos. Compartir el backbone permite que una sola pasada costosa sirva a decenas de tareas dentro del presupuesto de latencia del auto."
+  },
+  "pros": [
+    { "en": "Pretrained backbones transfer well: a few thousand labeled images are often enough for a strong model.", "es": "Los backbones preentrenados transfieren bien: unos pocos miles de imágenes etiquetadas suelen bastar para un modelo sólido." },
+    { "en": "CNNs are efficient and mature on edge hardware: phones, cameras, cars.", "es": "Las CNNs son eficientes y maduras en hardware de borde: celulares, cámaras, autos." },
+    { "en": "ViTs scale with data and share the transformer stack with LLMs, which makes multimodal models natural.", "es": "Los ViT escalan con los datos y comparten el stack de transformer con los LLMs, lo que hace natural construir modelos multimodales." },
+    { "en": "One backbone can feed many heads, amortizing compute across tasks.", "es": "Un backbone puede alimentar muchas cabezas y repartir el cómputo entre tareas." }
+  ],
+  "cons": [
+    { "en": "Labels are expensive, especially boxes and pixel masks.", "es": "Las etiquetas son caras, sobre todo las cajas y las máscaras por píxel." },
+    { "en": "ViT attention cost grows quadratically with patches: high-resolution inputs get expensive.", "es": "El costo de la atención de un ViT crece de forma cuadrática con los parches: las entradas de alta resolución se encarecen." },
+    { "en": "Domain shift (lighting, weather, a new camera) silently degrades accuracy.", "es": "El cambio de dominio (iluminación, clima, una cámara nueva) degrada la precisión en silencio." }
+  ],
+  "whenToUse": {
+    "en": "Any pixel input at volume or under latency limits: inspection, retail shelves, medical scans, document images, driving. CNN or small ViT for edge and real time; large ViT when data and compute are plentiful.",
+    "es": "Cualquier entrada de píxeles con volumen o límites de latencia: inspección, góndolas, imágenes médicas, documentos escaneados, conducción. CNN o ViT pequeño para borde y tiempo real; ViT grande cuando sobran datos y cómputo."
+  },
+  "whenNotToUse": {
+    "en": "Don't train a custom model first if a multimodal LLM or zero-shot CLIP already meets accuracy at your volume and cost. Don't ship a large ViT under tight edge latency without distilling it.",
+    "es": "No entrenes un modelo propio de entrada si un LLM multimodal o CLIP zero-shot ya alcanza la precisión a tu volumen y costo. No despliegues un ViT grande con latencia de borde ajustada sin destilarlo."
+  },
+  "numbers": [
+    { "en": "AlexNet (2012): 15.3% top-5 ImageNet error vs 26.2% for the runner-up, the start of deep learning in vision.", "es": "AlexNet (2012): 15,3% de error top-5 en ImageNet frente a 26,2% del segundo lugar, el inicio del deep learning en visión." },
+    { "en": "ResNet won ILSVRC 2015 at 3.57% top-5 error with up to 152 layers; ResNet-50: ~25.6M params, ~3.8 GFLOPs per image.", "es": "ResNet ganó ILSVRC 2015 con 3,57% de error top-5 y hasta 152 capas; ResNet-50: ~25,6M parámetros, ~3,8 GFLOPs por imagen." },
+    { "en": "ViT-B/16 at 224×224: 196 patch tokens (+1 [CLS]), ~86M params.", "es": "ViT-B/16 a 224×224: 196 tokens de parche (+1 [CLS]), ~86M parámetros." },
+    { "en": "Original YOLO: 45 FPS on a Titan X GPU; Fast YOLO: 155 FPS.", "es": "YOLO original: 45 FPS en una GPU Titan X; Fast YOLO: 155 FPS." },
+    { "en": "Two stacked 3×3 convs see 5×5 and three see 7×7, with 27C² weights vs 49C² for one 7×7.", "es": "Dos convoluciones 3×3 apiladas ven 5×5 y tres ven 7×7, con 27C² pesos frente a 49C² de una sola 7×7." }
+  ],
+  "pitfalls": [
+    { "en": "Train/serve preprocessing mismatch: a different resize, BGR vs RGB or normalization silently costs accuracy.", "es": "Preprocesamiento distinto entre entrenamiento y serving: otro resize, BGR vs RGB u otra normalización cuestan precisión en silencio." },
+    { "en": "Augmentations that change the label: flipping text or left/right signs, cropping out the defect.", "es": "Augmentations que cambian la etiqueta: voltear texto o señales de izquierda/derecha, recortar justo el defecto." },
+    { "en": "Leakage: near-duplicate frames of the same video or patient in train and test. Split by video, scene or patient.", "es": "Fuga de datos: frames casi idénticos del mismo video o paciente en train y test. Separa por video, escena o paciente." },
+    { "en": "Judging a detector by accuracy: report mAP at a stated IoU and recall on rare, safety-critical classes.", "es": "Juzgar un detector por accuracy: reporta mAP con un IoU explícito y el recall de las clases raras y críticas para la seguridad." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "CNN or Vision Transformer: how do you choose?", "es": "¿CNN o Vision Transformer? ¿Cómo eliges?" },
+      "a": {
+        "en": "It comes down to data and constraints. CNNs bake in locality and weight sharing, so they're data-efficient and fast on edge hardware; for small datasets or tight latency, a ResNet- or ConvNeXt-class model is my default. ViTs have weaker built-in assumptions, so from scratch they need far more data, but pretrained at scale they match or beat CNNs, see global context from layer one and plug into multimodal models. In practice I fine-tune a pretrained backbone of each type and compare on my own eval set under the latency budget, watching attention cost at high resolution.",
+        "es": "Depende de los datos y las restricciones. Las CNNs traen incorporadas la localidad y el reuso de pesos, así que aprenden con menos datos y corren rápido en hardware de borde; con datasets chicos o latencia ajustada, mi opción por defecto es un modelo tipo ResNet o ConvNeXt. Los ViT tienen menos supuestos incorporados, así que desde cero necesitan muchos más datos, pero preentrenados a escala igualan o superan a las CNNs, ven contexto global desde la primera capa y se conectan con modelos multimodales. En la práctica hago fine-tuning de un backbone preentrenado de cada tipo y comparo en mi propio set de evaluación con el presupuesto de latencia, vigilando el costo de la atención en alta resolución."
+      }
+    },
+    {
+      "q": { "en": "Why do residual connections matter?", "es": "¿Por qué importan las conexiones residuales?" },
+      "a": {
+        "en": "Before ResNet, adding layers beyond ~20 made *training* error go up: an optimization problem, not overfitting. A residual block outputs F(x) + x, so the identity is the default: a useless block can push F toward zero, and gradients flow straight through the skip path to early layers. That let He et al. train 152 layers in 2015 and win ImageNet. The same trick sits inside every transformer block today and is a big reason deep LLMs train stably.",
+        "es": "Antes de ResNet, agregar capas más allá de ~20 hacía subir el error de *entrenamiento*: un problema de optimización, no de overfitting. Un bloque residual devuelve F(x) + x, así que la identidad es el comportamiento por defecto: un bloque inútil puede llevar F hacia cero y el gradiente fluye directo por el atajo hasta las primeras capas. Eso permitió a He et al. entrenar 152 capas en 2015 y ganar ImageNet. El mismo truco está dentro de cada bloque de transformer hoy y es una de las grandes razones por las que los LLMs profundos entrenan de forma estable."
+      }
+    },
+    {
+      "q": { "en": "Why fuse a car's cameras into bird's-eye view instead of detecting per camera?", "es": "¿Por qué fusionar las cámaras de un auto en vista de pájaro en vez de detectar por cámara?" },
+      "a": {
+        "en": "Per-camera detections live in image space, and stitching them is brittle: a truck spanning three cameras becomes three partial boxes, and depth from one image is ambiguous. Fusing features from all cameras into one top-down grid lets the network resolve objects in 3D directly, handle occlusion across views and output the space the planner actually uses. A video module adds memory, so a car hidden for a second isn't forgotten. The cost: you need 3D labels at scale, which pushes you to auto-labeling, and camera calibration must be precise.",
+        "es": "Las detecciones por cámara viven en el espacio de la imagen y unirlas es frágil: un camión que ocupa tres cámaras se vuelve tres cajas parciales y la profundidad desde una sola imagen es ambigua. Fusionar los features de todas las cámaras en una grilla cenital permite que la red resuelva los objetos directamente en 3D, maneje oclusiones entre vistas y entregue el espacio que el planificador realmente usa. Un módulo de video agrega memoria, así un auto oculto por un segundo no se olvida. El costo: necesitas etiquetas 3D a escala, lo que te empuja al auto-etiquetado, y la calibración de las cámaras debe ser precisa."
+      }
+    }
+  ],
+  "related": ["neural-networks", "transformer", "contrastive-learning", "multimodal", "edge-ai", "case-autonomy-data-engine"],
+  "sources": [
+    { "title": "He et al. — Deep Residual Learning for Image Recognition (ResNet)", "url": "https://arxiv.org/abs/1512.03385" },
+    { "title": "Dosovitskiy et al. — An Image is Worth 16x16 Words (ViT)", "url": "https://arxiv.org/abs/2010.11929" },
+    { "title": "Redmon et al. — You Only Look Once: Unified, Real-Time Object Detection", "url": "https://arxiv.org/abs/1506.02640" },
+    { "title": "Tesla AI Day 2021 (vision stack, HydraNets, BEV)", "url": "https://www.youtube.com/watch?v=j0z4FweCy4M" }
+  ]
+}

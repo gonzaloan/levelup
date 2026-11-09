@@ -1,0 +1,97 @@
+{
+  "id": "diffusion-models",
+  "domain": "ml",
+  "level": "advanced",
+  "title": { "en": "Diffusion models", "es": "Modelos de difusión" },
+  "aliases": ["diffusion", "DDPM", "latent diffusion", "Stable Diffusion", "DiT", "classifier-free guidance", "CFG", "flow matching"],
+  "tldr": {
+    "en": "Train a network to predict the noise added to real data; generate by starting from pure noise and removing predicted noise step by step. Quality, steps and latency trade off directly.",
+    "es": "Entrena una red para predecir el ruido que se agregó a datos reales; genera partiendo de ruido puro y quitando el ruido predicho paso a paso. Calidad, pasos y latencia se intercambian directamente."
+  },
+  "analogy": {
+    "en": "A restorer who has watched thousands of photos fade into static learns to reverse one small step of fading. Repeat that step enough times on pure static and a new photo appears.",
+    "es": "Un restaurador que vio miles de fotos desvanecerse hasta quedar en estática aprende a revertir un pequeño paso del deterioro. Repite ese paso suficientes veces sobre estática pura y aparece una foto nueva."
+  },
+  "explain": {
+    "en": "A **diffusion model** generates by learning to undo noise. **Training**: take a real image, add Gaussian noise at a random level t (closed form, no loop) and train a network to predict the noise that was added. Plain MSE loss: stable, no adversarial game as in GANs. **Sampling**: start from pure noise and repeatedly remove the predicted noise, over ~20–50 steps, until an image emerges.\n\n**Latent diffusion** (Stable Diffusion) makes it affordable: a VAE compresses a 512×512×3 image into a 64×64×4 latent (48× fewer values), diffusion runs there, and the decoder maps back to pixels.\n\nThe **denoiser** was a **U-Net** (a conv encoder–decoder with skip connections); newer models use **diffusion transformers (DiT)** over latent patches, which scale like LLMs (SD3, FLUX, Sora).\n\n**Text conditioning**: a text encoder (CLIP, T5) feeds the denoiser through cross-attention. **Classifier-free guidance** (CFG) trains with the prompt sometimes dropped, then extrapolates away from the unconditional prediction: `ε = ε_u + w·(ε_c − ε_u)`. A higher w follows the prompt more but loses diversity, and each step costs 2 passes.\n\n**Steps vs quality vs latency** is the core trade-off. Better ODE samplers (DDIM, DPM-Solver) cut DDPM's 1,000 steps to tens; distillation (LCM, SDXL Turbo) reaches 1–4. **Flow matching** (rectified flow), the newer formulation, learns a velocity along near-straight noise-to-data paths, so fewer steps suffice.",
+    "es": "Un **modelo de difusión** genera aprendiendo a deshacer ruido. **Entrenamiento**: toma una imagen real, agrégale ruido gaussiano en un nivel t aleatorio (fórmula cerrada, sin bucle) y entrena una red para predecir el ruido agregado. Loss MSE simple: estable y sin el juego adversarial de las GANs. **Muestreo**: parte de ruido puro y quita una y otra vez el ruido predicho, en ~20–50 pasos, hasta que aparece una imagen.\n\nLa **difusión latente** (Stable Diffusion) lo vuelve accesible: un VAE comprime una imagen de 512×512×3 en un latente de 64×64×4 (48× menos valores), la difusión corre ahí y el decoder vuelve a píxeles.\n\nEl **denoiser** era una **U-Net** (un encoder–decoder convolucional con conexiones de salto); los modelos nuevos usan **diffusion transformers (DiT)** sobre parches del latente, que escalan como los LLMs (SD3, FLUX, Sora).\n\n**Condicionamiento por texto**: un encoder de texto (CLIP, T5) alimenta al denoiser mediante cross-attention. **Classifier-free guidance** (CFG) entrena quitando a veces el prompt y, al muestrear, extrapola alejándose de la predicción incondicional: `ε = ε_u + w·(ε_c − ε_u)`. Un w más alto sigue mejor el prompt pero pierde diversidad, y cada paso cuesta 2 pasadas.\n\n**Pasos vs calidad vs latencia** es el trade-off central. Mejores samplers de ODE (DDIM, DPM-Solver) bajan los 1.000 pasos de DDPM a decenas; la destilación (LCM, SDXL Turbo) llega a 1–4. **Flow matching** (rectified flow), la formulación más nueva, aprende una velocidad a lo largo de caminos casi rectos de ruido a datos, así que bastan menos pasos."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  P[\"Text prompt\"] --> TE[\"Text encoder<br/>CLIP or T5\"]\n  N[\"Random noise latent\"] --> D[\"Denoiser<br/>U-Net or DiT\"]\n  TE -->|conditioning| D\n  D --> G[\"Guidance mix<br/>cond vs uncond\"]\n  G --> S[\"Sampler step<br/>remove predicted noise\"]\n  S -->|\"repeat 20–50×\"| D\n  S -->|final step| V[\"VAE decoder<br/>latent to pixels\"]\n  V --> I[\"Image\"]",
+    "caption": {
+      "en": "Latent diffusion at inference: the denoiser runs once per step (twice with CFG); the VAE decodes only at the end.",
+      "es": "Difusión latente en inferencia: el denoiser corre una vez por paso (dos con CFG); el VAE decodifica solo al final."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Noise-prediction training step, then sampling with diffusers", "es": "Paso de entrenamiento con predicción de ruido y muestreo con diffusers" },
+    "source": "import torch, torch.nn.functional as F\nfrom diffusers import AutoPipelineForText2Image\n\nT = 1000\nbetas = torch.linspace(1e-4, 0.02, T)          # DDPM linear noise schedule\nalpha_bar = torch.cumprod(1 - betas, dim=0)    # share of signal left at step t\n\ndef train_step(model, x0, text_emb, null_emb, opt, p_uncond=0.1):\n    \"\"\"x0: clean latents (B, 4, 64, 64). The model learns to predict the noise.\"\"\"\n    B = x0.shape[0]\n    t = torch.randint(0, T, (B,))              # random noise level per sample\n    eps = torch.randn_like(x0)\n    a = alpha_bar[t].view(B, 1, 1, 1)\n    xt = a.sqrt() * x0 + (1 - a).sqrt() * eps  # jump straight to step t, no loop\n    # Drop the prompt ~10% of the time: one model learns cond + uncond (for CFG)\n    drop = (torch.rand(B) < p_uncond).view(B, 1, 1)\n    cond = torch.where(drop, null_emb, text_emb)\n    loss = F.mse_loss(model(xt, t, cond), eps)  # plain MSE on the noise\n    opt.zero_grad(); loss.backward(); opt.step()\n    return loss.item()\n\nMODEL = \"stabilityai/stable-diffusion-xl-base-1.0\"  # any text-to-image checkpoint\npipe = AutoPipelineForText2Image.from_pretrained(MODEL, torch_dtype=torch.float16).to(\"cuda\")\nimage = pipe(\n    \"isometric illustration of a data center, soft morning light\",\n    num_inference_steps=30,  # latency ~ steps x 2 passes (CFG)\n    guidance_scale=7.0,      # eps_u + w * (eps_c - eps_u): prompt adherence vs diversity\n).images[0]"
+  },
+  "example": {
+    "en": "A design tool generates 1024×1024 product shots. SDXL base at 30 steps with CFG means 60 denoiser evaluations per image (batched as 30 passes of 2) on a 128×128×4 latent: seconds per image. For live previews while the user types, SDXL Turbo samples 512×512 in 1–4 steps with no CFG: 15–60× fewer evaluations, each on a latent 4× smaller, at the cost of detail and diversity. You ship both: Turbo for previews, the full model for the final render, and you cache the prompt's text embeddings between the two.",
+    "es": "Una herramienta de diseño genera fotos de producto de 1024×1024. SDXL base con 30 pasos y CFG implica 60 evaluaciones del denoiser por imagen (en lotes de 2, 30 pasadas) sobre un latente de 128×128×4: segundos por imagen. Para previsualizaciones en vivo mientras el usuario escribe, SDXL Turbo genera a 512×512 en 1–4 pasos sin CFG: de 15 a 60× menos evaluaciones, cada una sobre un latente 4× más chico, a costa de detalle y diversidad. Despliegas ambos: Turbo para las previsualizaciones y el modelo completo para el render final, y cacheas los embeddings de texto del prompt entre uno y otro."
+  },
+  "pros": [
+    { "en": "State-of-the-art quality and diversity for images, video and audio; stable training (MSE loss, no GAN mode collapse).", "es": "Calidad y diversidad de punta en imágenes, video y audio; entrenamiento estable (loss MSE, sin el mode collapse de las GANs)." },
+    { "en": "Flexible conditioning on one model: text, reference images, depth or pose (ControlNet), inpainting, editing.", "es": "Condicionamiento flexible sobre un mismo modelo: texto, imágenes de referencia, profundidad o pose (ControlNet), inpainting, edición." },
+    { "en": "A quality dial at inference: trade steps and guidance for latency without retraining.", "es": "Una perilla de calidad en inferencia: intercambias pasos y guidance por latencia sin reentrenar." }
+  ],
+  "cons": [
+    { "en": "Iterative: tens of full forward passes per output, so seconds of latency without distillation.", "es": "Es iterativo: decenas de pasadas completas por salida, así que hay segundos de latencia sin destilación." },
+    { "en": "Compute grows with resolution (and frames for video); DiT attention grows quadratically with latent tokens.", "es": "El cómputo crece con la resolución (y con los frames en video); la atención de un DiT crece de forma cuadrática con los tokens del latente." },
+    { "en": "Guidance and distillation trade diversity for fidelity; hands, text and counts still fail.", "es": "El guidance y la destilación cambian diversidad por fidelidad; manos, texto y cantidades siguen fallando." },
+    { "en": "Hard to evaluate: FID and CLIP score track human preference only loosely.", "es": "Es difícil de evaluar: FID y CLIP score siguen la preferencia humana solo de forma aproximada." }
+  ],
+  "whenToUse": {
+    "en": "Generating or editing images, video or audio from text or other conditions: creative tools, inpainting, super-resolution, product shots, synthetic training data for vision models.",
+    "es": "Generar o editar imágenes, video o audio a partir de texto u otras condiciones: herramientas creativas, inpainting, superresolución, fotos de producto, datos sintéticos para entrenar modelos de visión."
+  },
+  "whenNotToUse": {
+    "en": "Hard real-time or on-device budgets without a distilled few-step model; outputs that need exact text, layout or counts (render them instead); plain text generation, where autoregressive LLMs dominate.",
+    "es": "Presupuestos de tiempo real estricto o en el dispositivo sin un modelo destilado de pocos pasos; salidas que exigen texto, layout o cantidades exactas (mejor renderízalas); generación de texto, donde dominan los LLMs autorregresivos."
+  },
+  "numbers": [
+    { "en": "DDPM trains with T = 1,000 noise steps; DDIM samples in tens of steps, 10–50× faster wall-clock (Song et al., 2020).", "es": "DDPM entrena con T = 1.000 pasos de ruido; DDIM muestrea en decenas de pasos, 10–50× más rápido en tiempo real (Song et al., 2020)." },
+    { "en": "Stable Diffusion v1: 512×512×3 → 64×64×4 latent (48× fewer values); ~860M-param U-Net plus a 123M CLIP text encoder.", "es": "Stable Diffusion v1: 512×512×3 → latente de 64×64×4 (48× menos valores); U-Net de ~860M parámetros más un encoder de texto CLIP de 123M." },
+    { "en": "CFG costs 2 denoiser passes per step; the diffusers Stable Diffusion pipeline defaults to guidance 7.5.", "es": "CFG cuesta 2 pasadas del denoiser por paso; el pipeline de Stable Diffusion en diffusers usa guidance 7,5 por defecto." },
+    { "en": "Distilled models (LCM, SDXL Turbo) sample in 1–4 steps; SDXL Turbo runs at 512×512 without CFG.", "es": "Los modelos destilados (LCM, SDXL Turbo) muestrean en 1–4 pasos; SDXL Turbo trabaja a 512×512 sin CFG." },
+    { "en": "Rule of thumb: cost per image ≈ steps × (2 with CFG) × one denoiser pass, which grows with resolution.", "es": "Regla práctica: costo por imagen ≈ pasos × (2 con CFG) × una pasada del denoiser, que crece con la resolución." }
+  ],
+  "pitfalls": [
+    { "en": "Cranking guidance: oversaturated, artifact-heavy images and less diversity. Tune w together with steps.", "es": "Subir demasiado el guidance: imágenes sobresaturadas, llenas de artefactos y con menos diversidad. Ajusta w junto con los pasos." },
+    { "en": "Evaluating at 50 steps, then shipping 20: test the exact sampler, step count and guidance you serve.", "es": "Evaluar con 50 pasos y desplegar con 20: prueba exactamente el sampler, la cantidad de pasos y el guidance que sirves." },
+    { "en": "Applying CFG or negative prompts to a distilled model trained without them (Turbo expects guidance 0).", "es": "Usar CFG o prompts negativos en un modelo destilado que se entrenó sin ellos (Turbo espera guidance 0)." },
+    { "en": "A scheduler that doesn't match the model's noise schedule or prediction target (noise, v or velocity): silent garbage.", "es": "Un scheduler que no coincide con el schedule de ruido o el objetivo de predicción del modelo (ruido, v o velocidad): basura silenciosa." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Explain how a diffusion model is trained and sampled.", "es": "Explica cómo se entrena y cómo se muestrea un modelo de difusión." },
+      "a": {
+        "en": "In training I take a clean sample, pick a random timestep, mix in Gaussian noise with the closed-form schedule and train the network to predict that noise with MSE. One random timestep per example, so training is cheap and stable. Sampling inverts it: start from pure noise, predict the noise, take a solver step toward clean data and repeat, typically 20 to 50 times. Text enters through cross-attention, and classifier-free guidance strengthens it. In latent diffusion all of this runs in a VAE latent, 48 times smaller than the pixels.",
+        "es": "En el entrenamiento tomo una muestra limpia, elijo un paso de tiempo al azar, mezclo ruido gaussiano con la fórmula cerrada del schedule y entreno la red para predecir ese ruido con MSE. Un solo paso aleatorio por ejemplo, así que entrenar es barato y estable. El muestreo lo invierte: parte de ruido puro, predice el ruido, da un paso del solver hacia los datos limpios y repite, típicamente entre 20 y 50 veces. El texto entra por cross-attention y classifier-free guidance lo refuerza. En difusión latente todo esto corre en un latente del VAE, 48 veces más chico que los píxeles."
+      }
+    },
+    {
+      "q": { "en": "How does serving a diffusion model differ from serving an LLM?", "es": "¿En qué se diferencia servir un modelo de difusión de servir un LLM?" },
+      "a": {
+        "en": "LLM decode is memory-bandwidth bound: one token at a time, a KV cache, cost proportional to output length, and continuous batching is the key optimization. Diffusion is compute-bound: each step is a full forward pass over the whole latent in parallel, for a fixed number of steps, doubled by CFG, with no KV cache. Cost per image is predictable from steps and resolution. So my levers differ: fewer steps through better samplers or distillation, generating small and upscaling, batching same-shape requests, lower precision and compilation, and caching prompt embeddings. Latency is seconds, so I design an async UX with fast previews.",
+        "es": "El decode de un LLM está limitado por el ancho de banda de memoria: un token a la vez, un KV cache, costo proporcional a la longitud de la salida, y la optimización clave es el continuous batching. La difusión está limitada por cómputo: cada paso es una pasada completa sobre todo el latente en paralelo, durante una cantidad fija de pasos, el doble con CFG, y sin KV cache. El costo por imagen se predice a partir de los pasos y la resolución. Por eso mis palancas son otras: menos pasos con mejores samplers o destilación, generar en chico y escalar, agrupar solicitudes de la misma forma, menor precisión y compilación, y cachear los embeddings del prompt. La latencia es de segundos, así que diseño una UX asíncrona con previsualizaciones rápidas."
+      }
+    },
+    {
+      "q": { "en": "What is flow matching, and why did SD3 and FLUX adopt it?", "es": "¿Qué es flow matching y por qué lo adoptaron SD3 y FLUX?" },
+      "a": {
+        "en": "Flow matching trains the network to predict a velocity that moves a sample from noise to data along a chosen path. With rectified flow the path is a straight line, xₜ = (1 − t)·x₀ + t·ε, so the target is simply ε − x₀. It is simpler and more general than the noise-prediction view, and straighter paths let an ODE solver take bigger steps for the same quality. Esser et al. showed rectified-flow transformers scale well, which is why SD3 and FLUX use them. The practical consequence for me: fewer sampling steps, so lower serving cost.",
+        "es": "Flow matching entrena la red para predecir una velocidad que lleva una muestra del ruido a los datos por un camino elegido. Con rectified flow el camino es una línea recta, xₜ = (1 − t)·x₀ + t·ε, así que el objetivo es simplemente ε − x₀. Es más simple y más general que la visión de predicción de ruido, y los caminos más rectos permiten que un solver de ODE dé pasos más grandes con la misma calidad. Esser et al. mostraron que los transformers con rectified flow escalan bien, y por eso SD3 y FLUX los usan. La consecuencia práctica para mí: menos pasos de muestreo, o sea, menor costo de serving."
+      }
+    }
+  ],
+  "related": ["contrastive-learning", "multimodal", "transformer", "distillation", "prefill-decode", "synthetic-data"],
+  "sources": [
+    { "title": "Ho, Jain & Abbeel — Denoising Diffusion Probabilistic Models (DDPM)", "url": "https://arxiv.org/abs/2006.11239" },
+    { "title": "Rombach et al. — High-Resolution Image Synthesis with Latent Diffusion Models", "url": "https://arxiv.org/abs/2112.10752" },
+    { "title": "Ho & Salimans — Classifier-Free Diffusion Guidance", "url": "https://arxiv.org/abs/2207.12598" },
+    { "title": "Esser et al. — Scaling Rectified Flow Transformers for High-Resolution Image Synthesis (SD3)", "url": "https://arxiv.org/abs/2403.03206" }
+  ]
+}

@@ -1,0 +1,95 @@
+{
+  "id": "bandits",
+  "domain": "ml",
+  "level": "advanced",
+  "title": { "en": "Exploration: multi-armed bandits", "es": "Exploración: multi-armed bandits" },
+  "aliases": ["multi-armed bandit", "MAB", "explore-exploit", "Thompson sampling", "UCB", "epsilon-greedy", "contextual bandit", "LinUCB"],
+  "tldr": {
+    "en": "Choose among options one request at a time, shifting traffic toward the winners as evidence arrives, so you learn which is best while losing as little reward (regret) as possible.",
+    "es": "Elige entre opciones solicitud por solicitud y mueve el tráfico hacia las ganadoras a medida que llega evidencia: aprendes cuál es la mejor perdiendo la menor recompensa (regret) posible."
+  },
+  "analogy": {
+    "en": "In a new city you mostly eat at the best place you've found, but now and then try a new one. Too loyal and you miss the gem; too curious and you eat badly.",
+    "es": "En una ciudad nueva comes casi siempre en el mejor lugar que encontraste, pero de vez en cuando pruebas uno nuevo. Si eres muy fiel te pierdes la joya; si eres muy curioso, comes mal."
+  },
+  "explain": {
+    "en": "A **multi-armed bandit** picks one of K options (*arms*: headlines, ads, prompts, models) per request and observes a reward (click, thumbs-up). The tension is **explore vs exploit**: always play the current best and you may never find a better arm; explore too much and you waste traffic on losers. The cost is **regret**: reward lost versus always playing the best arm.\n\n- **ε-greedy**: play the best arm, a random one with probability ε. Simple, but a fixed ε wastes traffic forever: regret grows linearly.\n- **UCB**: play the highest *optimistic* estimate, mean + √(2 ln t / nᵢ). Rarely tried arms get a bonus. Regret grows ~log T.\n- **Thompson sampling**: keep a posterior per arm (Beta for clicks), draw one sample from each, play the max. Each arm is played with the probability it is the best; exploration fades on its own. My default.\n\n**Contextual bandits** (LinUCB, Vowpal Wabbit) add features (user, device, query type), so the best arm can differ per request: one-step RL with no state.\n\n**vs [[ab-testing]]**: an A/B test holds a fixed split to *learn* an unbiased effect; a bandit shifts traffic to *earn* during the test, at the cost of clean inference.",
+    "es": "Un **multi-armed bandit** elige una de K opciones (*brazos*: titulares, anuncios, prompts, modelos) en cada solicitud y observa una recompensa (clic, pulgar arriba). La tensión es **explorar vs explotar**: si siempre juegas el mejor actual quizá nunca encuentres uno mejor; si exploras demasiado, desperdicias tráfico en perdedores. El costo es el **regret**: la recompensa que pierdes frente a jugar siempre el mejor brazo.\n\n- **ε-greedy**: juega el mejor brazo y, con probabilidad ε, uno al azar. Simple, pero un ε fijo desperdicia tráfico para siempre: el regret crece linealmente.\n- **UCB**: juega la estimación más *optimista*, media + √(2 ln t / nᵢ). Los brazos poco probados reciben un bono. El regret crece ~log T.\n- **Thompson sampling**: mantén una posterior por brazo (Beta para clics), toma una muestra de cada una y juega la mayor. Cada brazo se juega con la probabilidad de que sea el mejor; la exploración se apaga sola. Es mi opción por defecto.\n\nLos **bandits contextuales** (LinUCB, Vowpal Wabbit) suman features (usuario, dispositivo, tipo de consulta), así el mejor brazo puede cambiar por solicitud: RL de un solo paso, sin estado.\n\n**Frente a [[ab-testing]]**: un A/B test mantiene un reparto fijo para *aprender* un efecto sin sesgo; un bandit mueve el tráfico para *ganar* durante la prueba, a costa de una inferencia menos limpia."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  R[\"Request + context\"] --> P{\"Policy<br/>sample each posterior\"}\n  P -->|argmax| A[\"Serve chosen arm\"]\n  A --> O[\"Observe reward<br/>clicked or not\"]\n  O --> U[\"Update that arm's<br/>posterior\"]\n  U --> P\n  A -.-> L[(\"Log arm, propensity,<br/>reward\")]\n  O -.-> L\n  L -.-> E[\"Off-policy eval<br/>of new policies\"]",
+    "caption": {
+      "en": "Serve, observe, update, repeat. Logging the probability of each choice lets you evaluate new policies offline.",
+      "es": "Servir, observar, actualizar, repetir. Registrar la probabilidad de cada elección te permite evaluar políticas nuevas offline."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Thompson sampling for 4 headlines (Beta-Bernoulli)", "es": "Thompson sampling para 4 titulares (Beta-Bernoulli)" },
+    "source": "import numpy as np\n\nrng = np.random.default_rng(0)\ntrue_ctr = np.array([0.040, 0.045, 0.050, 0.060])  # unknown in real life\nK, T = len(true_ctr), 50_000\nalpha, beta = np.ones(K), np.ones(K)               # Beta(1,1) prior = \"no idea yet\"\npulls = np.zeros(K, dtype=int)\n\nfor t in range(T):\n    # Sample a plausible CTR per arm, play the best sample. Uncertain arms\n    # have wide posteriors, sometimes sample high, and so keep being explored.\n    theta = rng.beta(alpha, beta)\n    arm = int(np.argmax(theta))\n    click = int(rng.random() < true_ctr[arm])      # observe the reward\n    alpha[arm] += click                            # successes\n    beta[arm] += 1 - click                         # failures\n    pulls[arm] += 1\n\nlost = T * true_ctr.max() - pulls @ true_ctr       # expected regret, in clicks\nuniform = T * (true_ctr.max() - true_ctr.mean())   # regret of a fixed 4-way split\nprint(\"traffic share:\", (pulls / T).round(2))     # [0.03 0.05 0.13 0.79]\nprint(f\"clicks lost: {lost:.0f} vs {uniform:.0f}\")  # 129 vs 562"
+  },
+  "example": {
+    "en": "A news site has 4 headlines for a story that stays hot for ~6 hours, with CTRs of 4.0, 4.5, 5.0 and 6.0% (unknown to you). A fixed 4-way A/B split would still be sending 75% of readers to worse headlines when the story goes cold. In a 50,000-impression simulation (the code above, 6 seeds), Thompson sampling sent ~80–93% of traffic to the best headline and lost ~45–130 clicks versus 562 for the fixed split. The same loop picks among prompt variants or models, with thumbs-up minus a cost penalty as the reward.",
+    "es": "Un sitio de noticias tiene 4 titulares para una nota que estará en tendencia ~6 horas, con CTR de 4,0, 4,5, 5,0 y 6,0% (que tú no conoces). Un A/B fijo en 4 partes seguiría mandando al 75% de los lectores a titulares peores cuando la nota ya se enfrió. En una simulación de 50.000 impresiones (el código de arriba, 6 semillas), Thompson sampling envió ~80–93% del tráfico al mejor titular y perdió ~45–130 clics, frente a 562 del reparto fijo. El mismo ciclo elige entre variantes de prompt o modelos, con pulgar arriba menos una penalización por costo como recompensa."
+  },
+  "pros": [
+    { "en": "Less regret: traffic moves to winners during the experiment, not after it.", "es": "Menos regret: el tráfico se mueve a las ganadoras durante el experimento, no después." },
+    { "en": "Fits many arms and short-lived options (headlines, creatives, promos) where a test would end too late.", "es": "Sirve con muchos brazos y opciones de vida corta (titulares, creatividades, promociones), donde un test terminaría demasiado tarde." },
+    { "en": "Contextual versions personalize: the best arm per user or query, not one global winner.", "es": "Las versiones contextuales personalizan: el mejor brazo por usuario o consulta, no un único ganador global." },
+    { "en": "Runs continuously and absorbs new arms without restarting an experiment.", "es": "Corre de forma continua y absorbe brazos nuevos sin reiniciar un experimento." }
+  ],
+  "cons": [
+    { "en": "Adaptive allocation biases naive effect estimates and p-values: weak for launch decisions.", "es": "La asignación adaptativa sesga las estimaciones ingenuas del efecto y los p-valores: es débil para decidir un lanzamiento." },
+    { "en": "Optimizes one short-term reward; guardrails and long-term effects are invisible unless you build them in.", "es": "Optimiza una sola recompensa de corto plazo; los guardrails y los efectos de largo plazo son invisibles si no los incorporas." },
+    { "en": "Assumes fast feedback and roughly stable rewards; delayed conversions and drift break it.", "es": "Asume feedback rápido y recompensas más o menos estables; las conversiones tardías y el drift lo rompen." }
+  ],
+  "whenToUse": {
+    "en": "Many or short-lived options with fast, clear feedback: headlines, ad creatives, promotions, cold-start items, or routing among prompts and models by a cost-adjusted reward.",
+    "es": "Muchas opciones o de vida corta, con feedback rápido y claro: titulares, creatividades de anuncios, promociones, ítems en cold start, o elegir entre prompts y modelos con una recompensa ajustada por costo."
+  },
+  "whenNotToUse": {
+    "en": "When you need a clean causal estimate for a launch, the outcome is delayed (retention, revenue), several guardrail metrics matter, or traffic is tiny. Run an A/B test.",
+    "es": "Cuando necesitas una estimación causal limpia para un lanzamiento, el resultado es tardío (retención, ingresos), importan varias métricas guardrail o el tráfico es mínimo. Ahí haz un A/B test."
+  },
+  "numbers": [
+    { "en": "UCB1 bonus √(2 ln t / nᵢ) gives regret O(log T) (Auer et al., 2002); a fixed-ε greedy policy has linear regret.", "es": "El bono de UCB1, √(2 ln t / nᵢ), da regret O(log T) (Auer et al., 2002); un greedy con ε fijo tiene regret lineal." },
+    { "en": "Lai & Robbins (1985): no policy beats ~log T regret growth; UCB and Thompson sampling match that order.", "es": "Lai y Robbins (1985): ninguna política crece más lento que ~log T en regret; UCB y Thompson sampling alcanzan ese orden." },
+    { "en": "LinUCB on Yahoo!'s front page: 12.5% click lift over a context-free bandit (Li et al., 2010).", "es": "LinUCB en la portada de Yahoo!: 12,5% más clics que un bandit sin contexto (Li et al., 2010)." },
+    { "en": "Rule of thumb: ε = 5–10% for ε-greedy; Beta(1,1) prior for Thompson sampling on clicks.", "es": "Regla práctica: ε = 5–10% para ε-greedy; prior Beta(1,1) para Thompson sampling sobre clics." }
+  ],
+  "pitfalls": [
+    { "en": "Not logging the propensity (probability of the chosen arm): no unbiased off-policy evaluation later.", "es": "No registrar la propensión (probabilidad del brazo elegido): después no hay evaluación off-policy sin sesgo." },
+    { "en": "Rewarding clicks when the goal is a purchase days later: the bandit races to clickbait.", "es": "Premiar clics cuando el objetivo es una compra días después: el bandit corre hacia el clickbait." },
+    { "en": "Posteriors that never forget lock onto last month's winner; add decay or a sliding window.", "es": "Las posteriores que nunca olvidan se quedan con el ganador del mes pasado; agrega decaimiento o una ventana deslizante." },
+    { "en": "Reading the bandit's traffic split as an A/B result: adaptive sampling biases the comparison.", "es": "Leer el reparto de tráfico del bandit como si fuera un A/B: el muestreo adaptativo sesga la comparación." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "When would you use a bandit instead of an A/B test?", "es": "¿Cuándo usarías un bandit en lugar de un A/B test?" },
+      "a": {
+        "en": "It depends on whether I need to learn or to earn. For a launch decision like a new ranking model, I want an A/B test: a fixed split gives an unbiased effect, a confidence interval and guardrail readouts. When options are many or short-lived, like headlines or ad creatives, a bandit loses far less reward by shifting traffic as evidence arrives. The price is biased estimates, a single reward and the assumption of fast, stable feedback. Often I combine them: the bandit optimizes inside a surface, and an A/B test validates the bandit policy against the old one.",
+        "es": "Depende de si necesito aprender o ganar. Para una decisión de lanzamiento, como un modelo de ranking nuevo, quiero un A/B test: un reparto fijo da un efecto sin sesgo, un intervalo de confianza y lecturas de guardrails. Cuando las opciones son muchas o duran poco, como titulares o creatividades, un bandit pierde mucha menos recompensa porque mueve el tráfico a medida que llega evidencia. El precio son estimaciones sesgadas, una sola recompensa y suponer feedback rápido y estable. Muchas veces los combino: el bandit optimiza dentro de una superficie y un A/B test valida la política del bandit contra la anterior."
+      }
+    },
+    {
+      "q": { "en": "Explain Thompson sampling. Why does it explore?", "es": "Explica Thompson sampling. ¿Por qué explora?" },
+      "a": {
+        "en": "Each arm keeps a posterior over its reward; for clicks, Beta(successes + 1, failures + 1). Per request I draw one sample from each posterior and play the highest. An arm with little data has a wide posterior, so it sometimes draws high and gets tried; as data accumulates the posteriors narrow and the best arm wins almost every draw. So each arm is played with the probability that it is the best, and exploration fades automatically. In practice it matches or beats UCB, and it tolerates batched or delayed updates.",
+        "es": "Cada brazo mantiene una posterior sobre su recompensa; para clics, Beta(éxitos + 1, fracasos + 1). En cada solicitud tomo una muestra de cada posterior y juego la más alta. Un brazo con pocos datos tiene una posterior ancha, así que a veces saca un valor alto y se prueba; al acumular datos las posteriores se angostan y el mejor brazo gana casi siempre. Así, cada brazo se juega con la probabilidad de que sea el mejor y la exploración se apaga sola. En la práctica iguala o supera a UCB y tolera actualizaciones por lotes o con retraso."
+      }
+    },
+    {
+      "q": { "en": "How would you use a bandit to choose among LLMs or prompts?", "es": "¿Cómo usarías un bandit para elegir entre LLMs o prompts?" },
+      "a": {
+        "en": "Each (model, prompt) pair is an arm, and the reward combines quality and cost: task success or thumbs-up minus a penalty per dollar. A contextual bandit uses query type, language and length, so cheap models win easy queries. I log the propensity of every choice to evaluate new policies offline with inverse propensity scoring. Safety and latency stay outside as hard constraints, not reward terms. And since thumbs-up is sparse and biased, I check the reward against an offline eval set so the bandit doesn't optimize a broken signal.",
+        "es": "Cada par (modelo, prompt) es un brazo y la recompensa combina calidad y costo: éxito de la tarea o pulgar arriba menos una penalización por dólar. Un bandit contextual usa el tipo de consulta, el idioma y la longitud, así los modelos baratos ganan las consultas fáciles. Registro la propensión de cada elección para evaluar políticas nuevas offline con inverse propensity scoring. La seguridad y la latencia quedan fuera como restricciones duras, no como términos de la recompensa. Y como el pulgar arriba es escaso y sesgado, contrasto la recompensa con un set de evaluación offline para que el bandit no optimice una señal rota."
+      }
+    }
+  ],
+  "related": ["ab-testing", "recsys", "model-routing", "offline-online-evals", "case-ads-ctr", "learning-to-rank"],
+  "sources": [
+    { "title": "Russo et al. — A Tutorial on Thompson Sampling", "url": "https://arxiv.org/abs/1707.02038" },
+    { "title": "Li et al. — A Contextual-Bandit Approach to Personalized News Article Recommendation (LinUCB)", "url": "https://arxiv.org/abs/1003.0146" },
+    { "title": "Auer, Cesa-Bianchi & Fischer — Finite-time Analysis of the Multiarmed Bandit Problem (UCB1)", "url": "https://link.springer.com/article/10.1023/A:1013689704352" }
+  ]
+}

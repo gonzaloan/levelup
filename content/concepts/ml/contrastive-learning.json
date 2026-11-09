@@ -1,0 +1,95 @@
+{
+  "id": "contrastive-learning",
+  "domain": "ml",
+  "level": "advanced",
+  "title": { "en": "Contrastive learning & CLIP", "es": "Aprendizaje contrastivo y CLIP" },
+  "aliases": ["contrastive loss", "InfoNCE", "CLIP", "in-batch negatives", "hard negatives", "SimCLR", "SigLIP", "zero-shot classification"],
+  "tldr": {
+    "en": "Learn embeddings from pairs: pull matching items (image and caption, query and answer) together and push everything else in the batch apart. CLIP did this for images and text, enabling zero-shot classification and cross-modal search.",
+    "es": "Aprende embeddings a partir de pares: acerca los elementos que coinciden (imagen y descripción, pregunta y respuesta) y aleja todo lo demás del batch. CLIP lo hizo con imágenes y texto, y habilitó la clasificación zero-shot y la búsqueda entre modalidades."
+  },
+  "analogy": {
+    "en": "A seating chart learned at a party: couples keep being pushed to the same table and strangers to different ones, until where you sit says who you are.",
+    "es": "Un plano de mesas que se aprende en una fiesta: a las parejas las siguen sentando juntas y a los desconocidos en mesas distintas, hasta que dónde te sientas dice quién eres."
+  },
+  "explain": {
+    "en": "**Contrastive learning** trains an encoder from *pairs* instead of labels: given items that should match (two crops of one photo, an image and its caption, a question and the passage that answers it), it pulls their embeddings together and pushes everything else apart. The geometry of the space is what the model learns.\n\n**InfoNCE**, the standard loss, is cross-entropy over similarities: score an anchor against its positive and N−1 negatives, divide by a **temperature** τ, softmax, and treat the positive as the correct class. A low τ sharpens the softmax so the hardest negatives dominate the gradient; too low and training gets unstable.\n\n**In-batch negatives** make it cheap: in a batch of N pairs, the other N−1 items are free negatives, so bigger batches give more and harder negatives (SimCLR used up to 8,192; CLIP 32,768). Mined **hard negatives** (close but wrong) add the most signal.\n\n**CLIP** (OpenAI, 2021) trained an image encoder and a text encoder on ~400M web image–text pairs with a symmetric InfoNCE over the N×N similarity matrix. The result is one shared space where an image lands near its description. **Zero-shot classification** embeds prompts like \"a photo of a {label}\" and picks the closest one, with no task-specific training.\n\nThe same recipe trains text [[embedding-models]] on query–passage pairs and powers [[multimodal]] search: embed images once, query them with text.",
+    "es": "El **aprendizaje contrastivo** entrena un encoder con *pares* en lugar de etiquetas: dados elementos que deberían coincidir (dos recortes de la misma foto, una imagen y su descripción, una pregunta y el pasaje que la responde), acerca sus embeddings y aleja todo lo demás. Lo que el modelo aprende es la geometría del espacio.\n\n**InfoNCE**, la loss estándar, es cross-entropy sobre similitudes: compara un ancla con su positivo y N−1 negativos, divide por una **temperatura** τ, aplica softmax y trata al positivo como la clase correcta. Un τ bajo afila la softmax para que los negativos más difíciles dominen el gradiente; si es demasiado bajo, el entrenamiento se vuelve inestable.\n\nLos **negativos in-batch** lo abaratan: en un batch de N pares, los otros N−1 elementos son negativos gratis, así que batches más grandes dan más negativos y más difíciles (SimCLR usó hasta 8.192; CLIP, 32.768). Los **hard negatives** minados (parecidos pero incorrectos) aportan la mayor señal.\n\n**CLIP** (OpenAI, 2021) entrenó un encoder de imágenes y uno de texto con ~400M pares imagen–texto de la web, usando InfoNCE simétrica sobre la matriz de similitud de N×N. El resultado es un espacio compartido donde una imagen cae cerca de su descripción. La **clasificación zero-shot** convierte en embeddings prompts como \"a photo of a {label}\" y elige el más cercano, sin entrenamiento específico para la tarea.\n\nLa misma receta entrena [[embedding-models]] de texto con pares consulta–pasaje e impulsa la búsqueda [[multimodal]]: generas los embeddings de las imágenes una vez y las consultas con texto."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  B[\"Batch of N<br/>image–caption pairs\"] --> IE[\"Image encoder<br/>ViT\"]\n  B --> TE[\"Text encoder<br/>transformer\"]\n  IE --> IV[\"N image vectors\"]\n  TE --> TV[\"N text vectors\"]\n  IV --> S[\"N×N cosine<br/>similarity ÷ τ\"]\n  TV --> S\n  S --> L[\"Cross-entropy<br/>diagonal = positive\"]\n  L -.->|gradients| IE\n  L -.->|gradients| TE",
+    "caption": {
+      "en": "Each row and column of the N×N matrix is an N-way classification: one positive on the diagonal, N−1 in-batch negatives.",
+      "es": "Cada fila y cada columna de la matriz de N×N es una clasificación entre N opciones: un positivo en la diagonal y N−1 negativos in-batch."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "CLIP-style symmetric InfoNCE and zero-shot classification", "es": "InfoNCE simétrica estilo CLIP y clasificación zero-shot" },
+    "source": "import torch\nimport torch.nn.functional as F\n\ndef info_nce(a, b, logit_scale):\n    \"\"\"Symmetric InfoNCE (CLIP loss). a[i] and b[i] are a positive pair.\"\"\"\n    a, b = F.normalize(a, dim=-1), F.normalize(b, dim=-1)  # dot = cosine\n    logits = logit_scale.exp().clamp(max=100) * a @ b.T     # (N, N), scale = 1/tau\n    targets = torch.arange(len(a), device=a.device)         # positives on the diagonal\n    # Each row is an N-way classification: 1 positive, N-1 in-batch negatives for free\n    return (F.cross_entropy(logits, targets) + F.cross_entropy(logits.T, targets)) / 2\n\nlogit_scale = torch.nn.Parameter(torch.tensor(1 / 0.07).log())  # CLIP init tau = 0.07, learned\n\n# One training step on N (image, caption) pairs\nimg_emb = image_encoder(images)     # ViT + projection -> (N, 512)\ntxt_emb = text_encoder(captions)    # transformer + projection -> (N, 512)\nloss = info_nce(img_emb, txt_emb, logit_scale)\nloss.backward()                     # updates both encoders and the temperature\n\n# Zero-shot classification: the classes are just text prompts\nlabels = [\"dog\", \"cat\", \"pickup truck\"]\nwith torch.no_grad():\n    cls = F.normalize(text_encoder([f\"a photo of a {l}\" for l in labels]), dim=-1)\n    img = F.normalize(image_encoder(new_image), dim=-1)\n    probs = (100 * img @ cls.T).softmax(dim=-1)   # argmax = predicted class"
+  },
+  "example": {
+    "en": "A marketplace has 5M product photos with poor titles and wants text search over them. You embed every photo once with a CLIP image encoder (512-d for ViT-B/32: 5M × 512 × 4 bytes ≈ 10 GB in float32) into a vector index. At query time you embed \"red running shoes, white sole\" with the text encoder and run ANN search: cross-modal search with zero labels. The same vectors auto-tag the catalog against ~200 category prompts. Off-the-shelf CLIP confuses near-identical products, so you fine-tune on (query, clicked photo) pairs from search logs with in-batch negatives and compare recall@10 before and after.",
+    "es": "Un marketplace tiene 5M de fotos de productos con títulos pobres y quiere búsqueda por texto sobre ellas. Generas una vez el embedding de cada foto con el encoder de imágenes de CLIP (512 dimensiones en ViT-B/32: 5M × 512 × 4 bytes ≈ 10 GB en float32) y lo guardas en un índice vectorial. En consulta, conviertes \"zapatillas rojas para correr, suela blanca\" con el encoder de texto y haces búsqueda ANN: búsqueda entre modalidades sin ninguna etiqueta. Los mismos vectores etiquetan el catálogo contra ~200 prompts de categoría. CLIP genérico confunde productos casi idénticos, así que haces fine-tuning con pares (consulta, foto en la que se hizo clic) de los logs de búsqueda con negativos in-batch y comparas el recall@10 antes y después."
+  },
+  "pros": [
+    { "en": "Learns from naturally paired data (captions, clicks, query–answer logs) instead of manual labels.", "es": "Aprende de datos que ya vienen en pares (descripciones, clics, logs de consulta–respuesta) en lugar de etiquetas manuales." },
+    { "en": "One reusable embedding space serves search, clustering, dedup and zero-shot classification.", "es": "Un solo espacio de embeddings reutilizable sirve para búsqueda, clustering, deduplicación y clasificación zero-shot." },
+    { "en": "Aligns modalities: text can search images, and vice versa, in a single index.", "es": "Alinea modalidades: el texto puede buscar imágenes, y al revés, en un único índice." }
+  ],
+  "cons": [
+    { "en": "Quality hinges on negatives: needs large batches (SigLIP's sigmoid loss eases this) or a hard-negative mining pipeline.", "es": "La calidad depende de los negativos: necesita batches grandes (la loss sigmoide de SigLIP lo alivia) o un pipeline de minado de hard negatives." },
+    { "en": "False negatives: duplicates or paraphrases in the batch get pushed apart.", "es": "Falsos negativos: duplicados o paráfrasis dentro del batch se alejan entre sí." },
+    { "en": "CLIP-style models are weak at counting, spatial relations and reading text in images, and inherit web-data biases.", "es": "Los modelos tipo CLIP son flojos para contar, entender relaciones espaciales y leer texto en imágenes, y heredan los sesgos de los datos web." }
+  ],
+  "whenToUse": {
+    "en": "You have or can mine pairs that should match (captions, clicks, query–answer logs, augmentations) and need embeddings for retrieval, dedup, zero-shot tagging or cross-modal search.",
+    "es": "Tienes o puedes minar pares que deberían coincidir (descripciones, clics, logs de consulta–respuesta, augmentations) y necesitas embeddings para recuperación, deduplicación, etiquetado zero-shot o búsqueda entre modalidades."
+  },
+  "whenNotToUse": {
+    "en": "A fixed label set with plenty of labeled data: a supervised classifier is simpler. Tasks that need reasoning over the image (counting, reading charts): use a multimodal LLM.",
+    "es": "Un conjunto fijo de etiquetas con muchos datos etiquetados: un clasificador supervisado es más simple. Tareas que exigen razonar sobre la imagen (contar, leer gráficos): usa un LLM multimodal."
+  },
+  "numbers": [
+    { "en": "CLIP: ~400M image–text pairs, batch 32,768, learned temperature initialized at τ = 0.07 (logit scale capped at 100).", "es": "CLIP: ~400M pares imagen–texto, batch de 32.768, temperatura aprendida que arranca en τ = 0,07 (escala de logits limitada a 100)." },
+    { "en": "CLIP zero-shot ImageNet: 76.2% top-1, matching the original ResNet-50 without any of its 1.28M labeled training images.", "es": "CLIP zero-shot en ImageNet: 76,2% top-1, igual que el ResNet-50 original sin usar ninguna de sus 1,28M imágenes etiquetadas." },
+    { "en": "SimCLR: a batch of 8,192 gives 16,382 negatives per positive pair (two augmented views per image).", "es": "SimCLR: un batch de 8.192 da 16.382 negativos por par positivo (dos vistas aumentadas por imagen)." },
+    { "en": "Sentence-Transformers' MultipleNegativesRankingLoss is InfoNCE with in-batch negatives; default scale 20, i.e. τ = 0.05.", "es": "MultipleNegativesRankingLoss de Sentence-Transformers es InfoNCE con negativos in-batch; escala por defecto 20, es decir τ = 0,05." }
+  ],
+  "pitfalls": [
+    { "en": "Small batches with no hard negatives: the task is too easy and embeddings stay coarse.", "es": "Batches chicos sin hard negatives: la tarea es demasiado fácil y los embeddings quedan gruesos." },
+    { "en": "Duplicates in a batch act as false negatives; dedup or mask them.", "es": "Los duplicados dentro de un batch actúan como falsos negativos; elimínalos o enmascáralos." },
+    { "en": "Treating raw cosine scores as probabilities or reusing one threshold across domains; calibrate per use case.", "es": "Tratar los puntajes coseno crudos como probabilidades o reusar un mismo umbral entre dominios; calibra para cada caso de uso." },
+    { "en": "Mixing vectors from different models or versions: the spaces aren't aligned, so re-embed everything on upgrade.", "es": "Mezclar vectores de modelos o versiones distintas: los espacios no están alineados, así que regenera todos los embeddings al actualizar." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Explain InfoNCE and the role of temperature.", "es": "Explica InfoNCE y el rol de la temperatura." },
+      "a": {
+        "en": "InfoNCE turns representation learning into classification: for each anchor, which of the N candidates is its positive? I compute cosine similarities, divide by τ and apply cross-entropy with the positive as the target. Minimizing it pulls the positive closer and pushes negatives away, weighted by how close they are. Temperature controls that weighting: a low τ makes the softmax peaky, so the hardest negatives dominate, which is good for fine distinctions but unstable and sensitive to false negatives. CLIP avoids hand-tuning by learning τ, starting at 0.07.",
+        "es": "InfoNCE convierte el aprendizaje de representaciones en clasificación: para cada ancla, ¿cuál de los N candidatos es su positivo? Calculo similitudes coseno, divido por τ y aplico cross-entropy con el positivo como objetivo. Al minimizarla, el positivo se acerca y los negativos se alejan, ponderados según qué tan cerca están. La temperatura controla esa ponderación: un τ bajo hace la softmax más puntiaguda y los negativos más difíciles dominan, lo que sirve para distinciones finas pero es inestable y sensible a falsos negativos. CLIP evita ajustarla a mano porque aprende τ, partiendo de 0,07."
+      }
+    },
+    {
+      "q": { "en": "How does CLIP do zero-shot classification, and where does it fail?", "es": "¿Cómo hace CLIP clasificación zero-shot y dónde falla?" },
+      "a": {
+        "en": "Both encoders map into one space, so I turn each class into text, like \"a photo of a {label}\", embed those prompts once and assign the image to the closest prompt by cosine similarity. No training, and a new class is just a new string. It fails where web captions are thin: counting, spatial relations, specialized domains like medical or satellite imagery, and it can be fooled by text in the image, such as a handwritten \"iPod\" label on an apple. There I'd fine-tune on in-domain pairs, train a linear probe or call a multimodal LLM.",
+        "es": "Ambos encoders proyectan al mismo espacio, así que convierto cada clase en texto, como \"a photo of a {label}\", genero una vez los embeddings de esos prompts y asigno la imagen al prompt más cercano por similitud coseno. Sin entrenar, y una clase nueva es solo un texto nuevo. Falla donde las descripciones web son escasas: contar, relaciones espaciales, dominios especializados como imágenes médicas o satelitales, y lo puede engañar el texto dentro de la imagen, como una etiqueta escrita \"iPod\" pegada a una manzana. Ahí haría fine-tuning con pares del dominio, entrenaría un linear probe o usaría un LLM multimodal."
+      }
+    },
+    {
+      "q": { "en": "You're fine-tuning an embedding model on your domain. How do you choose negatives?", "es": "Vas a hacer fine-tuning de un modelo de embeddings en tu dominio. ¿Cómo eliges los negativos?" },
+      "a": {
+        "en": "I start with in-batch negatives, which are free and diverse, using the largest batch that fits in memory. Then I add hard negatives mined with BM25 or the current model: passages that rank high but aren't labeled relevant. They carry most of the signal, but they also hide false negatives, so I drop candidates a cross-encoder scores as relevant and dedup each batch. I judge success by recall@k and nDCG on a held-out set, not by the training loss.",
+        "es": "Empiezo con negativos in-batch, que son gratis y variados, con el batch más grande que entre en memoria. Luego agrego hard negatives minados con BM25 o con el modelo actual: pasajes que rankean alto pero no están marcados como relevantes. Aportan la mayor parte de la señal, pero también esconden falsos negativos, así que descarto los candidatos que un cross-encoder puntúa como relevantes y deduplico cada batch. Mido el éxito con recall@k y nDCG en un set separado, no con la loss de entrenamiento."
+      }
+    }
+  ],
+  "related": ["embeddings", "embedding-models", "embedding-finetuning", "multimodal", "computer-vision", "diffusion-models"],
+  "sources": [
+    { "title": "Radford et al. — Learning Transferable Visual Models From Natural Language Supervision (CLIP)", "url": "https://arxiv.org/abs/2103.00020" },
+    { "title": "van den Oord et al. — Representation Learning with Contrastive Predictive Coding (InfoNCE)", "url": "https://arxiv.org/abs/1807.03748" },
+    { "title": "Chen et al. — A Simple Framework for Contrastive Learning of Visual Representations (SimCLR)", "url": "https://arxiv.org/abs/2002.05709" },
+    { "title": "Zhai et al. — Sigmoid Loss for Language Image Pre-Training (SigLIP)", "url": "https://arxiv.org/abs/2303.15343" }
+  ]
+}
