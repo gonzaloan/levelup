@@ -1,0 +1,67 @@
+{
+  "concept": "few-shot",
+  "items": [
+    {
+      "id": "few-shot.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your ticket classifier uses dynamic few-shot: it retrieves the **k = 4** most similar reviewed examples per ticket. It keeps answering `billing` for tickets that are really `bug`. Traces show all 4 retrieved demos are labeled `billing`. Best fix?",
+        "es": "Tu clasificador de tickets usa few-shot dinámico: recupera los **k = 4** ejemplos revisados más parecidos a cada ticket. Sigue respondiendo `billing` en tickets que en realidad son `bug`. Las trazas muestran que los 4 demos recuperados tienen la etiqueta `billing`. ¿Mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Cap retrieved examples per label so the demos stay balanced", "es": "Limitar los ejemplos recuperados por etiqueta para que los demos queden balanceados" },
+          "why": { "en": "The model echoes the majority label in its demos; a per-label cap restores the boundary it must learn.", "es": "El modelo repite la etiqueta mayoritaria de sus demos; un límite por etiqueta recupera la frontera que debe aprender." } },
+        { "text": { "en": "Raise k from 4 to 20 so the model sees more examples", "es": "Subir k de 4 a 20 para que el modelo vea más ejemplos" },
+          "why": { "en": "Neighbors of a billing-like ticket are mostly `billing`; more of them deepens the bias and adds tokens to every call.", "es": "Los vecinos de un ticket con pinta de cobro son casi todos `billing`; traer más profundiza el sesgo y suma tokens a cada llamada." } },
+        { "text": { "en": "Switch to a reasoning model and keep the same demos", "es": "Cambiar a un modelo de razonamiento y mantener los mismos demos" },
+          "why": { "en": "Reasoning models tend to do worse with few-shot (DeepSeek-R1), and the one-label demo set is still there.", "es": "Los modelos de razonamiento suelen empeorar con few-shot (DeepSeek-R1), y el set de demos de una sola etiqueta sigue ahí." } },
+        { "text": { "en": "Place the most similar example first instead of last", "es": "Poner el ejemplo más parecido primero en lugar de al final" },
+          "why": { "en": "Order bias matters when labels differ; with four `billing` demos, every order still says `billing`.", "es": "El sesgo de orden importa cuando las etiquetas difieren; con cuatro demos `billing`, cualquier orden sigue diciendo `billing`." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Models over-predict the majority label and the last one shown (Zhao et al. 2021). Similarity retrieval can silently hand the model a one-label demo set, and it just echoes it. Capping per label (and shuffling order) keeps the demos a spec of the boundary, not a vote.",
+        "es": "Los modelos sobrepredicen la etiqueta mayoritaria y la última que ven (Zhao et al. 2021). La recuperación por similitud puede entregarle al modelo, sin avisar, un set de demos de una sola etiqueta, y el modelo solo lo repite. Limitar por etiqueta (y mezclar el orden) hace que los demos sean una especificación de la frontera, no una votación."
+      }
+    },
+    {
+      "id": "few-shot.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A ticket router adds **k = 4** examples of ~80 tokens each to every call and handles **2M** tickets a month. How many extra input tokens per month do the examples cost, in **millions**? Assume no prompt caching.",
+        "es": "Un router de tickets agrega **k = 4** ejemplos de ~80 tokens cada uno a cada llamada y procesa **2M** tickets al mes. ¿Cuántos tokens de entrada extra por mes cuestan los ejemplos, en **millones**? Asume que no hay prompt caching."
+      },
+      "answer": 640,
+      "tolerance": 0.1,
+      "unit": "M tokens",
+      "explain": {
+        "en": "4 × 80 = 320 tokens per call; 320 × 2M = 640M tokens a month. Examples are paid on every call, so keep a static block cached or keep k small. Dynamic examples change the prefix on each call and miss the cache, so you pay full price for all of it.",
+        "es": "4 × 80 = 320 tokens por llamada; 320 × 2M = 640M tokens al mes. Los ejemplos se pagan en cada llamada, así que mantén un bloque estático cacheado o un k chico. Los ejemplos dinámicos cambian el prefijo en cada llamada y no aciertan en el cache, así que pagas todo a precio completo."
+      }
+    },
+    {
+      "id": "few-shot.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about few-shot examples are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los ejemplos few-shot son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "When examples contradict the instructions, the examples usually win", "es": "Cuando los ejemplos contradicen las instrucciones, suelen ganar los ejemplos" } },
+        { "text": { "en": "Few-shot updates the model's weights for the rest of the session", "es": "El few-shot actualiza los pesos del modelo por el resto de la sesión" },
+          "why": { "en": "In-context learning needs no weight updates; remove the examples and the behavior is gone.", "es": "El aprendizaje en contexto no actualiza pesos; quita los ejemplos y el comportamiento desaparece." } },
+        { "text": { "en": "The model copies surface quirks like length, opener and phrasing", "es": "El modelo copia rasgos superficiales como la longitud, el arranque y la redacción" } },
+        { "text": { "en": "Adding examples reliably helps reasoning models like DeepSeek-R1", "es": "Agregar ejemplos ayuda de forma confiable a modelos de razonamiento como DeepSeek-R1" },
+          "why": { "en": "DeepSeek reported few-shot consistently degraded R1; start reasoning models zero-shot.", "es": "DeepSeek reportó que el few-shot degradaba de forma consistente a R1; con modelos de razonamiento, empieza en zero-shot." } },
+        { "text": { "en": "Scoring the eval on the same items used as examples is fine", "es": "Evaluar con los mismos ítems que usaste como ejemplos está bien" },
+          "why": { "en": "That is leakage: the model has seen the answers, so the score is inflated.", "es": "Eso es una fuga: el modelo ya vio las respuestas, así que el puntaje queda inflado." } },
+        { "text": { "en": "Random labels in demos barely hurt accuracy in Min et al. 2022", "es": "En Min et al. 2022, etiquetas aleatorias en los demos casi no bajaron la precisión" } }
+      ],
+      "answers": [0, 2, 5],
+      "explain": {
+        "en": "Examples are the most precise spec you write, and the model imitates all of it: the format, the label space, and the accidents. Much of the gain comes from format and label space rather than the exact labels, so vary length and phrasing, balance labels, and keep eval items out of the bank.",
+        "es": "Los ejemplos son la especificación más precisa que escribes, y el modelo imita todo: el formato, el espacio de etiquetas y los accidentes. Gran parte de la mejora viene del formato y del espacio de etiquetas, no de las etiquetas exactas; por eso varía longitud y redacción, balancea etiquetas y deja los ítems de evaluación fuera del banco."
+      }
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "concept": "prompt-caching",
+  "items": [
+    {
+      "id": "prompt-caching.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your RAG prompt is laid out as: system prompt (2K tokens) → this query's retrieved chunks (6K) → 40K tokens of fixed policy documents → user question. Caching is enabled, yet input cost barely moved. Best fix?",
+        "es": "Tu prompt RAG está armado así: system prompt (2K tokens) → chunks recuperados para esta consulta (6K) → 40K tokens de documentos de políticas fijos → pregunta del usuario. El caching está activado, pero el costo de entrada casi no bajó. ¿Mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Move the per-query chunks after the fixed policy documents", "es": "Mover los chunks de cada consulta después de los documentos de políticas fijos" },
+          "why": { "en": "Then system prompt + policy docs form a 42K identical prefix that every call can reuse.", "es": "Así el system prompt y los documentos forman un prefijo idéntico de 42K que todas las llamadas pueden reutilizar." } },
+        { "text": { "en": "Add a second cache breakpoint at the end of the policy documents", "es": "Agregar un segundo breakpoint de cache al final de los documentos de políticas" },
+          "why": { "en": "A hit needs the exact prefix from the first token; the chunks before the docs change per call, so that breakpoint never matches.", "es": "Un acierto exige el prefijo exacto desde el primer token; los chunks previos cambian en cada llamada, así que ese breakpoint nunca coincide." } },
+        { "text": { "en": "Switch to the 1-hour TTL so cached entries live longer", "es": "Cambiar al TTL de 1 hora para que las entradas cacheadas duren más" },
+          "why": { "en": "Expiry isn't the problem: the prefix differs on every call, and the 2× write price makes misses costlier.", "es": "La expiración no es el problema: el prefijo cambia en cada llamada, y la escritura a 2× encarece los fallos." } },
+        { "text": { "en": "Add semantic caching keyed on the user question", "es": "Agregar semantic caching con la pregunta del usuario como clave" },
+          "why": { "en": "That serves stored answers to similar questions, risking stale ones; it doesn't make the 40K prefix reusable.", "es": "Eso sirve respuestas guardadas para preguntas parecidas, con riesgo de que estén desactualizadas; no hace reutilizable el prefijo de 40K." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Prompt caching reuses KV state only for a prefix that matches byte for byte from the first token. Everything after the first changing span is uncacheable, so layout is the whole game: tools and system, then static documents, then append-only history, then per-request data last.",
+        "es": "El prompt caching reutiliza el estado KV solo para un prefijo que coincide byte a byte desde el primer token. Todo lo que viene después del primer tramo que cambia no se puede cachear, así que el orden lo es todo: herramientas y system, luego documentos estáticos, luego historial que solo crece, y al final los datos de cada request."
+      }
+    },
+    {
+      "id": "prompt-caching.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "An HR assistant resends a 52K-token stable prefix (system prompt + handbook) ~1,000 times an hour. Assume $3 per million input tokens and cache reads at 0.1× that price, with traffic keeping the cache warm. Ignoring cache writes and the short questions, how much input cost do you save per hour?",
+        "es": "Un asistente de RR. HH. reenvía un prefijo estable de 52K tokens (system prompt + manual) ~1,000 veces por hora. Asume $3 por millón de tokens de entrada y lecturas de cache a 0.1× ese precio, con tráfico que mantiene el cache caliente. Sin contar escrituras al cache ni las preguntas cortas, ¿cuánto ahorras por hora en costo de entrada?"
+      },
+      "answer": 140.4,
+      "tolerance": 0.1,
+      "unit": "$/hour",
+      "explain": {
+        "en": "Uncached: 52,000 × $3 / 1M = $0.156 per call, ~$156 an hour. Cached reads cost 0.1× that, ~$15.6 an hour. Savings ≈ $140 an hour, about 90%. The few 1.25× writes barely matter as long as traffic keeps the 5-minute TTL warm.",
+        "es": "Sin cache: 52,000 × $3 / 1M = $0.156 por llamada, ~$156 por hora. Las lecturas cacheadas cuestan 0.1× eso, ~$15.6 por hora. Ahorro ≈ $140 por hora, cerca de 90%. Las pocas escrituras a 1.25× casi no pesan mientras el tráfico mantenga caliente el TTL de 5 minutos."
+      }
+    },
+    {
+      "id": "prompt-caching.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about prompt caching are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre el prompt caching son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A cache hit can return a stale answer from an earlier request", "es": "Un acierto de cache puede devolver una respuesta vieja de un request anterior" },
+          "why": { "en": "Only the prefill (KV state) is reused; the answer is generated fresh every time.", "es": "Solo se reutiliza el prefill (estado KV); la respuesta se genera de nuevo cada vez." } },
+        { "text": { "en": "One changed byte early in the prompt invalidates everything after it", "es": "Un byte que cambia al principio del prompt invalida todo lo que viene después" } },
+        { "text": { "en": "With 1.25× writes and 0.1× reads, a single reuse already beats no caching", "es": "Con escrituras a 1.25× y lecturas a 0.1×, una sola reutilización ya le gana a no cachear" } },
+        { "text": { "en": "Caching saves money even when a prefix is never reused within the TTL", "es": "El caching ahorra dinero aunque un prefijo nunca se reutilice dentro del TTL" },
+          "why": { "en": "Where writes are billed, an unreused prefix just pays the 25% write premium.", "es": "Donde se cobran las escrituras, un prefijo que no se reutiliza solo paga el recargo de escritura de 25%." } },
+        { "text": { "en": "Tools serialized in a different key order per call can silently break hits", "es": "Herramientas serializadas con las claves en otro orden en cada llamada pueden romper los aciertos sin aviso" } },
+        { "text": { "en": "A 300-token system prompt gets cached on any major provider", "es": "Un system prompt de 300 tokens se cachea en cualquier proveedor grande" },
+          "why": { "en": "Minimums are 512–4,096 tokens on Claude and 1,024 on OpenAI; shorter prompts never cache.", "es": "Los mínimos son 512–4,096 tokens en Claude y 1,024 en OpenAI; los prompts más cortos nunca se cachean." } }
+      ],
+      "answers": [1, 2, 4],
+      "explain": {
+        "en": "Caching is an exact-prefix, time-limited reuse of prefill work. Two calls cost ~1.35× instead of 2×, so it pays from the first reuse, but only if the bytes really match: deterministic serialization, stable-first layout, and reading the cache fields in usage to confirm hits.",
+        "es": "El caching reutiliza el trabajo de prefill para un prefijo exacto y por tiempo limitado. Dos llamadas cuestan ~1.35× en lugar de 2×, así que conviene desde la primera reutilización, pero solo si los bytes coinciden de verdad: serialización determinista, lo estable primero y leer los campos de cache en usage para confirmar aciertos."
+      }
+    }
+  ]
+}

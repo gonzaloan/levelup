@@ -43,13 +43,13 @@ test("language switch keeps the page", async ({ page }) => {
   await expect(page).toHaveURL(/\/en\/c\/reranking\/$/);
 });
 
-test("mastered toggle persists across reloads", async ({ page }) => {
+test("mark as read persists across reloads", async ({ page }) => {
   await page.goto("/en/c/reranking/");
-  const btn = page.locator(".mastered-btn");
+  const btn = page.locator(".rail-right .mastered-btn");
   await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "true");
   await page.reload();
-  await expect(page.locator(".mastered-btn")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".rail-right .mastered-btn")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("cheatsheet filter narrows rows", async ({ page }) => {
@@ -60,13 +60,37 @@ test("cheatsheet filter narrows rows", async ({ page }) => {
   await expect(page.locator(".sheet-row:visible").first()).toContainText(/rerank/i);
 });
 
-test("practice reveals and grades a card", async ({ page }) => {
+test("practice: answer, get feedback, earn XP and schedule the card", async ({ page }) => {
+  await page.goto("/en/practice/play/?mode=concept&id=reranking");
+  await expect(page.locator(".p-prompt")).toBeVisible();
+  await page.locator(".p-opt").first().click();
+  await page.keyboard.press("Enter"); // check as "think so"
+  await expect(page.locator(".p-feedback")).toBeVisible();
+  await expect(page.locator(".p-xp")).toContainText("XP");
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("fg.study.v1") || "{}"));
+  expect(Object.keys(saved.cards ?? {})).toContain("reranking.def");
   await page.goto("/en/practice/");
-  await expect(page.locator(".flash-q")).toBeVisible();
-  await page.keyboard.press(" ");
-  await expect(page.locator(".flash-a")).toBeVisible();
-  await page.locator(".btn-good").click();
-  await expect(page.locator(".flash-stats")).toContainText("1 reviewed");
+  await expect(page.locator(".hub-stat.goal")).toContainText("XP");
+});
+
+test("practice: rebuild-the-diagram places components over the real diagram", async ({ page }) => {
+  await page.goto("/en/practice/play/?mode=concept&id=reranking");
+  for (let i = 0; i < 10 && !(await page.locator(".p-dg-slot").count()); i++) {
+    await page.locator(".p-actions .link-btn").click(); // skip to the diagram item
+  }
+  const slots = page.locator(".p-dg-slot");
+  await expect(slots.first()).toBeVisible();
+  const n = await slots.count();
+  for (let s = 0; s < n; s++) { await page.locator(".p-bank .p-chip:not(.used)").first().click(); await slots.nth(s).click(); }
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".p-feedback")).toBeVisible();
+});
+
+test("study path lists every concept once and links to practice", async ({ page }) => {
+  await page.goto("/es/path/");
+  const total = DOMAINS.reduce((n, d) => n + d.concepts.length, 0);
+  await expect(page.locator(".module-list li")).toHaveCount(total);
+  await expect(page.locator(".module-practice").first()).toHaveAttribute("href", /mode=module/);
 });
 
 test("architecture map links every box to a concept", async ({ page }) => {

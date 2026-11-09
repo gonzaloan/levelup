@@ -1,0 +1,86 @@
+{
+  "concept": "rate-limiting",
+  "items": [
+    {
+      "id": "rate-limiting.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your LLM gateway runs 8 replicas behind a load balancer, each enforcing a 100 RPM per-tenant limit with in-memory counters. One tenant sustains ~800 RPM without a single 429. Best fix?",
+        "es": "Tu gateway de LLM corre 8 réplicas detrás de un load balancer, y cada una aplica un límite de 100 RPM por tenant con contadores en memoria. Un tenant sostiene ~800 RPM sin recibir ni un 429. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Share the counters: one Redis bucket per tenant, updated by an atomic script", "es": "Compartir los contadores: un bucket en Redis por tenant, actualizado con un script atómico" } },
+        { "text": { "en": "Switch each replica from fixed windows to sliding window counters", "es": "Cambiar cada réplica de ventanas fijas a contadores de ventana deslizante" },
+          "why": { "en": "That fixes the 2× boundary burst, not this. Each replica still enforces its own copy, so the real limit stays 8×.", "es": "Eso corrige la ráfaga de 2× en el borde, no esto. Cada réplica sigue aplicando su propia copia, así que el límite real sigue siendo 8×." } },
+        { "text": { "en": "Meter tokens per minute on each replica instead of requests", "es": "Medir tokens por minuto en cada réplica en vez de solicitudes" },
+          "why": { "en": "LLM limits do need TPM, but per-replica TPM counters inflate exactly the same way.", "es": "Los límites de LLM sí necesitan TPM, pero los contadores de TPM por réplica se inflan exactamente igual." } },
+        { "text": { "en": "Send Retry-After with every 429 so the tenant backs off", "es": "Enviar Retry-After con cada 429 para que el tenant espere" },
+          "why": { "en": "Retry-After helps clients that get a 429. This tenant never gets one.", "es": "Retry-After ayuda a los clientes que reciben un 429. Este tenant nunca recibe uno." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "N replicas each enforcing a local limit L give an effective limit of N × L, and it silently grows with autoscaling. Keep the bucket in a shared store and make refill-and-spend one atomic operation, so concurrent replicas can't both spend the last tokens.",
+        "es": "N réplicas que aplican cada una un límite local L dan un límite efectivo de N × L, que además crece en silencio con el autoscaling. Guarda el bucket en un store compartido y haz que recargar y gastar sea una sola operación atómica, para que dos réplicas concurrentes no gasten los mismos últimos tokens."
+      }
+    },
+    {
+      "id": "rate-limiting.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A tenant's token bucket is full at **20,000 tokens**. Request A arrives with 6,000 input tokens and `max_tokens = 4,000`; the gateway reserves input + `max_tokens` on admission. While A is still streaming, request B arrives. Ignoring refill, what is the largest cost B can have and still be admitted?",
+        "es": "El token bucket de un tenant está lleno con **20.000 tokens**. Llega la solicitud A con 6.000 tokens de entrada y `max_tokens = 4.000`; el gateway reserva entrada + `max_tokens` al admitirla. Mientras A sigue en streaming, llega la solicitud B. Sin contar la recarga, ¿cuál es el costo máximo que puede tener B para ser admitida?"
+      },
+      "answer": 10000,
+      "tolerance": 0.05,
+      "unit": "tokens",
+      "explain": {
+        "en": "A reserves 6,000 + 4,000 = 10,000, leaving 20,000 − 10,000 = 10,000 for B. Charging only the input (14,000 left) would let concurrent requests overshoot, because output cost is unknown until the call ends. When A finishes, the unused output tokens are refunded.",
+        "es": "A reserva 6.000 + 4.000 = 10.000, y quedan 20.000 − 10.000 = 10.000 para B. Cobrar solo la entrada (quedarían 14.000) dejaría que las solicitudes concurrentes se pasen del límite, porque el costo de salida se conoce recién al terminar la llamada. Cuando A termina, se devuelven los tokens de salida no usados."
+      }
+    },
+    {
+      "id": "rate-limiting.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "The Redis cluster behind your gateway's rate limiter goes down. What should the gateway do with incoming requests?",
+        "es": "Se cae el cluster de Redis que respalda el rate limiter de tu gateway. ¿Qué debe hacer el gateway con las solicitudes entrantes?"
+      },
+      "options": [
+        { "text": { "en": "Fail open to a conservative local limit on each replica", "es": "Fallar abierto con un límite local conservador en cada réplica" } },
+        { "text": { "en": "Reject every request until the limiter is healthy again", "es": "Rechazar todas las solicitudes hasta que el limitador vuelva a estar sano" },
+          "why": { "en": "Failing closed turns the limiter into the outage: every customer is blocked to protect against a few.", "es": "Fallar cerrado convierte al limitador en la caída: bloqueas a todos los clientes para protegerte de unos pocos." } },
+        { "text": { "en": "Admit everything with no limit until Redis comes back", "es": "Admitir todo sin límite hasta que vuelva Redis" },
+          "why": { "en": "One runaway tenant can then burn the shared provider quota and starve everyone else.", "es": "Así un solo tenant desbocado puede agotar la cuota compartida del proveedor y dejar sin servicio a los demás." } },
+        { "text": { "en": "Hold requests in a queue until the counters are back", "es": "Retener las solicitudes en una cola hasta que vuelvan los contadores" },
+          "why": { "en": "That is failing closed with extra latency: requests time out instead of being rejected.", "es": "Eso es fallar cerrado con latencia extra: las solicitudes vencen por timeout en vez de ser rechazadas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A limiter is a protection layer, so its own failure must degrade gently. A local per-replica limit, set low because N replicas multiply it, keeps the service up for everyone while still capping a noisy tenant.",
+        "es": "Un limitador es una capa de protección, así que su propia falla debe degradar con suavidad. Un límite local por réplica, bajo porque N réplicas lo multiplican, mantiene el servicio para todos y aun así frena a un tenant ruidoso."
+      }
+    },
+    {
+      "id": "rate-limiting.a4",
+      "type": "match",
+      "prompt": {
+        "en": "Match each rate-limiting algorithm to its behavior.",
+        "es": "Relaciona cada algoritmo de rate limiting con su comportamiento."
+      },
+      "pairs": [
+        { "left": { "en": "Token bucket", "es": "Token bucket" },
+          "right": { "en": "Bursts up to capacity B, sustained average rate r", "es": "Ráfagas hasta la capacidad B, tasa promedio sostenida r" } },
+        { "left": { "en": "Leaky bucket", "es": "Leaky bucket" },
+          "right": { "en": "A queue drained at a fixed rate: smooth output, no bursts", "es": "Una cola que se vacía a tasa fija: salida pareja, sin ráfagas" } },
+        { "left": { "en": "Fixed window", "es": "Ventana fija" },
+          "right": { "en": "One counter per minute: cheap, but up to 2× passes at a boundary", "es": "Un contador por minuto: barato, pero en el borde puede pasar hasta 2×" } },
+        { "left": { "en": "Sliding window log", "es": "Ventana deslizante con log" },
+          "right": { "en": "Stores every timestamp: exact, but memory grows with traffic", "es": "Guarda cada timestamp: exacto, pero la memoria crece con el tráfico" } }
+      ],
+      "explain": {
+        "en": "The algorithms trade burst tolerance, accuracy and memory. Token bucket is the default: two numbers per key, O(1), and a request can spend its LLM token count directly.",
+        "es": "Los algoritmos equilibran tolerancia a ráfagas, precisión y memoria. Token bucket es la opción por defecto: dos números por clave, O(1), y una solicitud puede gastar directamente su cantidad de tokens del LLM."
+      }
+    }
+  ]
+}

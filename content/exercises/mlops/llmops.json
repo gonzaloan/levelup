@@ -1,0 +1,81 @@
+{
+  "concept": "llmops",
+  "items": [
+    {
+      "id": "llmops.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "On Monday your support assistant starts answering in prose instead of the required JSON. Nobody deployed anything over the weekend, and the gateway config calls the model as `gpt-4o`. What's the root cause and the fix?",
+        "es": "El lunes tu asistente de soporte empieza a responder en prosa en lugar del JSON requerido. Nadie desplegó nada durante el fin de semana, y la configuración del gateway llama al modelo como `gpt-4o`. ¿Cuál es la causa raíz y la corrección?"
+      },
+      "options": [
+        { "text": { "en": "A floating alias moved to a new model; pin a dated snapshot", "es": "Un alias flotante pasó a otro modelo; fija un snapshot con fecha" },
+          "why": { "en": "With an alias, the provider can change your model's behavior without any deploy on your side.", "es": "Con un alias, el proveedor puede cambiar el comportamiento de tu modelo sin ningún despliegue de tu lado." } },
+        { "text": { "en": "Sampling is non-deterministic; set the temperature to 0", "es": "El muestreo no es determinista; pon la temperatura en 0" },
+          "why": { "en": "Randomness doesn't explain a sudden, consistent shift with no deploy; the model behind the alias changed.", "es": "La aleatoriedad no explica un cambio repentino y consistente sin despliegue; cambió el modelo detrás del alias." } },
+        { "text": { "en": "The prompt drifted; roll back to the previous prompt version", "es": "El prompt cambió; vuelve a la versión anterior del prompt" },
+          "why": { "en": "No prompt changed, since nothing was deployed. The model behind the floating alias did.", "es": "Ningún prompt cambió, porque no se desplegó nada. Lo que cambió fue el modelo detrás del alias flotante." } },
+        { "text": { "en": "The prompt lacks examples; add few-shot samples of the JSON", "es": "Al prompt le faltan ejemplos; agrega muestras few-shot del JSON" },
+          "why": { "en": "That may patch this symptom, but the next silent alias update can break something else. Pin the model.", "es": "Eso puede tapar este síntoma, pero la próxima actualización silenciosa del alias puede romper otra cosa. Fija el modelo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Your model is someone else's release. A floating alias lets the provider change behavior with no deploy on your side. Pin a dated snapshot in the release manifest and treat every model change, including a forced retirement, as a release: run the eval suite, canary, then flip the config.",
+        "es": "Tu modelo es el release de otra empresa. Un alias flotante deja que el proveedor cambie el comportamiento sin ningún despliegue tuyo. Fija un snapshot con fecha en el manifiesto de release y trata cada cambio de modelo, incluso un retiro forzado, como un release: corre la suite de evals, haz canary y luego cambia la configuración."
+      }
+    },
+    {
+      "id": "llmops.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "With 100 eval cases at a ~50% pass rate, the 95% confidence interval is about ±10 points. Roughly how many cases do you need to shrink it to ±5 points at the same pass rate?",
+        "es": "Con 100 casos de eval y un pass rate de ~50%, el intervalo de confianza del 95% es de unos ±10 puntos. ¿Aproximadamente cuántos casos necesitas para reducirlo a ±5 puntos con el mismo pass rate?"
+      },
+      "answer": 400,
+      "tolerance": 0.15,
+      "unit": "cases",
+      "explain": {
+        "en": "The interval's half-width shrinks with 1/√n (≈ 1.96·√(p(1−p)/n)). Halving it from ±10 to ±5 points needs 2² = 4× the cases: 100 × 4 = 400. Small eval sets can't see small regressions, so grow the suite from real failures.",
+        "es": "El semiancho del intervalo se reduce con 1/√n (≈ 1,96·√(p(1−p)/n)). Bajarlo a la mitad, de ±10 a ±5 puntos, requiere 2² = 4× los casos: 100 × 4 = 400. Un set de evals chico no ve regresiones chicas, así que haz crecer la suite con fallas reales."
+      }
+    },
+    {
+      "id": "llmops.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your team pins the model snapshot and versions prompts in Git. Then the knowledge base is re-embedded in place with a new embedding model. Answers get worse, and nobody can roll back. What was missing?",
+        "es": "Tu equipo fija el snapshot del modelo y versiona los prompts en Git. Después se regeneran en el mismo lugar los embeddings de la base de conocimiento con un nuevo modelo de embeddings. Las respuestas empeoran y nadie puede volver atrás. ¿Qué faltaba?"
+      },
+      "options": [
+        { "text": { "en": "The index and embedding model weren't pinned in the release", "es": "El índice y el modelo de embeddings no estaban fijados en el release" },
+          "why": { "en": "Retrieval changes behavior as much as the prompt; an immutable index snapshot makes rollback a config flip.", "es": "La recuperación cambia el comportamiento tanto como el prompt; un snapshot inmutable del índice hace que volver atrás sea cambiar una configuración." } },
+        { "text": { "en": "The LLM should have used a floating alias to track new embeddings", "es": "El LLM debió usar un alias flotante para seguir a los nuevos embeddings" },
+          "why": { "en": "The LLM didn't change. A floating alias would only add another silent change.", "es": "El LLM no cambió. Un alias flotante solo agregaría otro cambio silencioso." } },
+        { "text": { "en": "Prompts belong in a database so they can change with the index", "es": "Los prompts deben vivir en una base de datos para cambiar junto con el índice" },
+          "why": { "en": "Where prompts live isn't the issue; the unversioned index and embedding model are what changed.", "es": "Dónde viven los prompts no es el problema; lo que cambió fue el índice y el modelo de embeddings sin versionar." } },
+        { "text": { "en": "Only new documents should have been re-embedded, keeping old vectors", "es": "Solo debieron regenerarse los embeddings de documentos nuevos, conservando los vectores viejos" },
+          "why": { "en": "Vectors from two embedding models aren't comparable; a model change needs a full re-embed into a new snapshot.", "es": "Los vectores de dos modelos de embeddings no son comparables; cambiar de modelo exige regenerar todo en un snapshot nuevo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The LLMOps release unit is the whole bundle: model id, prompts, retrieval index (embedding model plus chunking), tool schemas, guardrails and decoding params. Any of them changes behavior. Make the index an immutable snapshot, so re-embedding creates a new one and rollback means pointing the gateway at the previous manifest.",
+        "es": "La unidad de release en LLMOps es el paquete completo: id del modelo, prompts, índice de recuperación (modelo de embeddings más chunking), esquemas de tools, guardrails y parámetros de decodificación. Cualquiera cambia el comportamiento. Haz del índice un snapshot inmutable, así regenerar embeddings crea uno nuevo y volver atrás es apuntar el gateway al manifiesto anterior."
+      }
+    },
+    {
+      "id": "llmops.a4",
+      "type": "numeric",
+      "prompt": {
+        "en": "A prompt edit makes answers more verbose: average output grows by 500 tokens per request. Output tokens cost $10 per 1M (Claude Sonnet 5.5, Nov 2026 list price). At 1M requests per month, how much does the monthly bill rise, in USD?",
+        "es": "Un cambio de prompt vuelve más largas las respuestas: la salida promedio crece 500 tokens por request. Los tokens de salida cuestan $10 por 1M (Claude Sonnet 5.5, precio de lista de nov. 2026). Con 1M de requests al mes, ¿cuánto sube la factura mensual, en USD?"
+      },
+      "answer": 5000,
+      "tolerance": 0.1,
+      "unit": "USD/month",
+      "explain": {
+        "en": "500 extra tokens × 1,000,000 requests = 500M output tokens; 500 × $10 = $5,000 per month. Per request it's only $0.005, which is why cost belongs on a per-request dashboard: a monthly bill reveals it weeks later. Output costs ~5× input on this model, so verbosity hurts most.",
+        "es": "500 tokens extra × 1.000.000 de requests = 500M tokens de salida; 500 × $10 = $5.000 al mes. Por request son solo $0,005, y por eso el costo va en un dashboard por request: la factura mensual lo muestra semanas después. En este modelo la salida cuesta ~5× la entrada, así que la verbosidad es lo que más pega."
+      }
+    }
+  ]
+}

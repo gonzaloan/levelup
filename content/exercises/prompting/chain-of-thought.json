@@ -1,0 +1,75 @@
+{
+  "concept": "chain-of-thought",
+  "items": [
+    {
+      "id": "chain-of-thought.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You move a multi-step pricing prompt from a small non-reasoning model to a reasoning model (o-series, or Claude with thinking). The prompt still ends with \"Let's think step by step\" and asks for reasoning in `<thinking>` tags. What do you change?",
+        "es": "Migras un prompt de precios con varios pasos de un modelo chico sin razonamiento a un modelo de razonamiento (serie o, o Claude con thinking). El prompt todavía termina con \"Let's think step by step\" y pide el razonamiento en etiquetas `<thinking>`. ¿Qué cambias?"
+      },
+      "options": [
+        { "text": { "en": "Drop the CoT instruction; set depth with the effort knob and state the goal and constraints", "es": "Quitar la instrucción de CoT; fijar la profundidad con el parámetro de esfuerzo y plantear objetivo y restricciones" },
+          "why": { "en": "The model already reasons natively; you steer depth with `reasoning_effort` or `effort` and spend the prompt on what a good answer must satisfy.", "es": "El modelo ya razona de forma nativa; controlas la profundidad con `reasoning_effort` o `effort` y usas el prompt para lo que debe cumplir una buena respuesta." } },
+        { "text": { "en": "Keep it: the explicit instruction stacks with native thinking for extra accuracy", "es": "Mantenerla: la instrucción explícita se suma al thinking nativo y da más precisión" },
+          "why": { "en": "Reasoning models are RL-trained to think before answering; the line is redundant and OpenAI advises against it.", "es": "Los modelos de razonamiento están entrenados con RL para pensar antes de responder; la frase es redundante y OpenAI desaconseja usarla." } },
+        { "text": { "en": "Add worked few-shot examples so it reasons exactly like the old model", "es": "Agregar ejemplos few-shot resueltos para que razone igual que el modelo anterior" },
+          "why": { "en": "Few-shot CoT is a trigger for non-reasoning models; reasoning models do it natively, and DeepSeek reported few-shot degraded R1.", "es": "El few-shot CoT es un disparador para modelos sin razonamiento; los de razonamiento lo hacen de forma nativa, y DeepSeek reportó que el few-shot degradaba a R1." } },
+        { "text": { "en": "Show users the `<thinking>` text so they can verify the price", "es": "Mostrar a los usuarios el texto de `<thinking>` para que verifiquen el precio" },
+          "why": { "en": "Raw reasoning can hold wrong turns or leaked instructions, and it is often unfaithful; log it, don't ship it.", "es": "El razonamiento crudo puede tener desvíos o instrucciones filtradas, y muchas veces no es fiel; regístralo en logs, no lo muestres." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "CoT prompting exists to make non-reasoning models spend tokens on intermediate steps. Reasoning models already do that, and their thinking tokens bill as output whether you see them or not. The lever moves from prompt phrases to an API knob for depth.",
+        "es": "El prompting CoT existe para que los modelos sin razonamiento gasten tokens en pasos intermedios. Los modelos de razonamiento ya lo hacen, y sus tokens de thinking se cobran como salida aunque no los veas. La palanca pasa de frases en el prompt a un parámetro de la API que fija la profundidad."
+      }
+    },
+    {
+      "id": "chain-of-thought.a2",
+      "type": "code",
+      "prompt": {
+        "en": "The model must reason inside `<thinking>` and then answer inside `<answer>`. Fill the gap so this works reliably.",
+        "es": "El modelo debe razonar dentro de `<thinking>` y después responder dentro de `<answer>`. Completa el hueco para que funcione de forma confiable."
+      },
+      "lang": "python",
+      "code": "PROMPT = \"\"\"{question}\n\nThink step by step inside <thinking> tags.\nThen give only the final result inside <answer> tags.\"\"\"\n\ndef solve(question: str) -> str:\n    r = client.messages.create(\n        model=MODEL,\n        ____\n        messages=[{\"role\": \"user\", \"content\": PROMPT.format(question=question)}],\n    )\n    text = r.content[0].text\n    answer = re.search(r\"<answer>(.*?)</answer>\", text, re.S)\n    if not answer:  # truncated or format ignored: never guess\n        raise ValueError(\"no <answer> block\")\n    log_reasoning(text)  # for debugging and evals, never the UI\n    return answer.group(1).strip()",
+      "options": [
+        { "text": "max_tokens=1500,  # headroom: the reasoning comes first" },
+        { "text": "max_tokens=16,  # the final answer is a single number",
+          "why": { "en": "The reasoning is generated first and eats the budget, so the output is cut off before `<answer>` appears.", "es": "El razonamiento se genera primero y se come el presupuesto, así que la salida se corta antes de que aparezca `<answer>`." } },
+        { "text": "max_tokens=1500, stop_sequences=[\"<answer>\"],",
+          "why": { "en": "Generation stops exactly where the answer would begin, so every call raises.", "es": "La generación se detiene justo donde empezaría la respuesta, así que cada llamada lanza el error." } },
+        { "text": "max_tokens=1500, system=\"Answer first, then explain.\",",
+          "why": { "en": "An explanation written after the answer is a rationalization: the answer was decoded with no reasoning to condition on.", "es": "Una explicación escrita después de la respuesta es una racionalización: la respuesta se generó sin razonamiento en el cual apoyarse." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "CoT only helps if the reasoning tokens come before the answer and the budget covers both. Size `max_tokens` for the trace plus the answer, parse only the `<answer>` block, and treat a missing block as a failure to retry or flag.",
+        "es": "El CoT solo ayuda si los tokens de razonamiento van antes de la respuesta y el presupuesto alcanza para ambos. Dimensiona `max_tokens` para el razonamiento más la respuesta, parsea solo el bloque `<answer>` y trata un bloque faltante como una falla que se reintenta o se marca."
+      }
+    },
+    {
+      "id": "chain-of-thought.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate's prompt asks a non-reasoning model for the verdict first, then \"explain your reasoning\". He says this gets CoT's accuracy gain while keeping the verdict easy to parse. What's wrong?",
+        "es": "El prompt de un compañero le pide a un modelo sin razonamiento primero el veredicto y después \"explica tu razonamiento\". Él dice que así obtiene la mejora de precisión del CoT y el veredicto queda fácil de parsear. ¿Qué está mal?"
+      },
+      "options": [
+        { "text": { "en": "The verdict is already committed; reasoning after it is a rationalization", "es": "El veredicto ya está decidido; el razonamiento posterior es una racionalización" },
+          "why": { "en": "Tokens can only condition on what came before them; the verdict was decoded before any reasoning existed.", "es": "Los tokens solo pueden apoyarse en lo que vino antes; el veredicto se generó antes de que existiera razonamiento." } },
+        { "text": { "en": "Nothing: the gain comes from generating reasoning tokens anywhere", "es": "Nada: la mejora viene de generar tokens de razonamiento en cualquier lugar" },
+          "why": { "en": "Extra tokens only help the tokens generated after them; the verdict cannot use reasoning that follows it.", "es": "Los tokens extra solo ayudan a los que se generan después; el veredicto no puede usar un razonamiento que viene detrás." } },
+        { "text": { "en": "The wording: it needs the exact phrase \"Let's think step by step\"", "es": "La redacción: necesita la frase exacta \"Let's think step by step\"" },
+          "why": { "en": "The trigger phrase is not the issue; with the verdict first, any phrasing still reasons too late.", "es": "La frase disparadora no es el problema; con el veredicto primero, cualquier redacción razona demasiado tarde." } },
+        { "text": { "en": "The explanation should go to users as the audit trail instead", "es": "La explicación debería mostrarse a los usuarios como registro de auditoría" },
+          "why": { "en": "CoT is often unfaithful to what drove the answer (Turpin et al. 2023), so it is not audit evidence.", "es": "El CoT muchas veces no refleja lo que realmente determinó la respuesta (Turpin et al. 2023), así que no sirve como evidencia de auditoría." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "CoT works because each generated token is extra computation later tokens can use. So reasoning must precede the answer: `<thinking>` then `<answer>` tags, or a `reasoning` field before `answer` in a schema. You still parse only the answer, so parsing stays just as easy.",
+        "es": "El CoT funciona porque cada token generado es cómputo extra que los tokens posteriores pueden usar. Por eso el razonamiento debe ir antes de la respuesta: etiquetas `<thinking>` y luego `<answer>`, o un campo `reasoning` antes de `answer` en un esquema. Igual parseas solo la respuesta, así que sigue siendo igual de fácil."
+      }
+    }
+  ]
+}

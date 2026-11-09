@@ -1,0 +1,64 @@
+{
+  "concept": "guardrails",
+  "items": [
+    {
+      "id": "guardrails.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your output guard scans each complete response for PII leaks, and the chat UI streams tokens as they are generated. Users report briefly seeing a customer's phone number that then vanished. What's the fix?",
+        "es": "Tu guard de salida revisa cada respuesta completa en busca de fugas de PII, y la UI del chat hace streaming de los tokens a medida que se generan. Usuarios reportan haber visto un momento el teléfono de un cliente, que luego desapareció. ¿Cuál es la corrección?"
+      },
+      "options": [
+        { "text": { "en": "Check buffered windows before display, or hold risky fields until checked", "es": "Revisar por ventanas en buffer antes de mostrar, o retener los campos riesgosos hasta revisarlos" } },
+        { "text": { "en": "Move the PII check to the input side so it runs before generation", "es": "Pasar el chequeo de PII a la entrada para que corra antes de la generación" },
+          "why": { "en": "The number came out of the model or retrieval, not the user's message; an input check never sees it.", "es": "El número salió del modelo o de la recuperación, no del mensaje del usuario; un chequeo de entrada nunca lo ve." } },
+        { "text": { "en": "Lower the guard's threshold so it flags PII earlier in the stream", "es": "Bajar el umbral del guard para que marque la PII más temprano en el stream" },
+          "why": { "en": "The threshold changes what gets flagged, not when the check runs. It still runs after the tokens are on screen.", "es": "El umbral cambia qué se marca, no cuándo corre el chequeo. Sigue corriendo después de que los tokens ya están en pantalla." } },
+        { "text": { "en": "Skip the output guard on streamed replies to avoid the flicker", "es": "Omitir el guard de salida en las respuestas con streaming para evitar el parpadeo" },
+          "why": { "en": "That hides the symptom and makes every leak permanent instead of brief.", "es": "Eso oculta el síntoma y hace que cada fuga sea permanente en vez de breve." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "An output guard only protects what it sees before the user does. With streaming, the leak is on screen before the full-response check finishes, so check buffered windows as they stream, or hold back risky fields until they pass.",
+        "es": "Un guard de salida solo protege lo que ve antes que el usuario. Con streaming, la fuga ya está en pantalla antes de que termine el chequeo de la respuesta completa, así que revisa ventanas en buffer mientras se transmiten, o retén los campos riesgosos hasta que pasen."
+      }
+    },
+    {
+      "id": "guardrails.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Happy path for a support bot: the main model call takes ~800 ms. An LLM-based input guard (~400 ms) runs **in parallel** with it. An LLM-based output guard (~500 ms) checks the complete draft before display. Ignoring network overhead, what is the end-to-end latency?",
+        "es": "Camino feliz de un bot de soporte: la llamada principal al modelo tarda ~800 ms. Un guard de entrada basado en LLM (~400 ms) corre **en paralelo** con ella. Un guard de salida basado en LLM (~500 ms) revisa el borrador completo antes de mostrarlo. Sin contar la red, ¿cuál es la latencia de punta a punta?"
+      },
+      "answer": 1300,
+      "tolerance": 0.1,
+      "unit": "ms",
+      "explain": {
+        "en": "Parallel stage: max(800, 400) = 800 ms. The output guard needs the finished draft, so it runs in series: 800 + 500 = 1,300 ms. Running the input guard in series too would cost 1,700 ms, which is why input checks run in parallel and cancel the main call on a hit.",
+        "es": "Etapa en paralelo: max(800, 400) = 800 ms. El guard de salida necesita el borrador terminado, así que corre en serie: 800 + 500 = 1,300 ms. Si el guard de entrada también corriera en serie serían 1,700 ms; por eso los chequeos de entrada van en paralelo y cancelan la llamada principal si hay alerta."
+      }
+    },
+    {
+      "id": "guardrails.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "An accounts-payable agent can call `pay_invoice`. It already has input moderation, an injection classifier and an output PII scan. Which addition actually **bounds** the worst case if an injection gets through?",
+        "es": "Un agente de cuentas por pagar puede llamar a `pay_invoice`. Ya tiene moderación de entrada, un clasificador de inyección y un escaneo de PII en la salida. ¿Qué agregado realmente **acota** el peor caso si una inyección pasa?"
+      },
+      "options": [
+        { "text": { "en": "Server-side checks on `pay_invoice`: known vendor, amount cap, human approval above it", "es": "Chequeos en el servidor sobre `pay_invoice`: proveedor conocido, tope de monto y aprobación humana por encima" } },
+        { "text": { "en": "Add Llama Guard in series as a second, stronger input classifier", "es": "Agregar Llama Guard en serie como un segundo clasificador de entrada más fuerte" },
+          "why": { "en": "Another probabilistic layer an adversary can iterate against, plus hundreds of ms of latency. It lowers the rate, not the worst case.", "es": "Otra capa probabilística contra la que un adversario puede iterar, más cientos de ms de latencia. Baja la tasa, no el peor caso." } },
+        { "text": { "en": "A system prompt rule: never pay more than the approved amount", "es": "Una regla en el system prompt: nunca pagar más que el monto aprobado" },
+          "why": { "en": "It's a request to the model, not a control, and it's exactly what an injection overrides.", "es": "Es un pedido al modelo, no un control, y es justo lo que una inyección anula." } },
+        { "text": { "en": "Tighten the injection classifier's threshold until red-team attacks stop", "es": "Endurecer el umbral del clasificador de inyección hasta que los ataques del red team dejen de pasar" },
+          "why": { "en": "Known attacks stop, novel ones don't, and false positives on real users climb.", "es": "Los ataques conocidos se frenan, los nuevos no, y suben los falsos positivos sobre usuarios reales." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Input and output guardrails are probabilistic: they cut how often bad things happen. The action layer is deterministic: allowlists, argument validation and approval the model cannot argue past. That is the layer that decides how bad a miss can get.",
+        "es": "Los guardrails de entrada y salida son probabilísticos: bajan la frecuencia de los eventos malos. La capa de acción es determinista: allowlists, validación de argumentos y aprobaciones que el modelo no puede saltarse argumentando. Esa capa decide qué tan grave puede ser un fallo."
+      }
+    }
+  ]
+}

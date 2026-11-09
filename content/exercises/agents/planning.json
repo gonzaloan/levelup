@@ -1,0 +1,76 @@
+{
+  "concept": "planning",
+  "items": [
+    {
+      "id": "planning.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A pure-ReAct agent on a frontier model reconciles 12 invoices per run: ~45 calls, each re-reading a growing transcript, and it sometimes re-checks the same invoice. The ops lead also wants to approve what happens before any payment is touched. Best redesign?",
+        "es": "Un agente ReAct puro sobre un modelo frontier concilia 12 facturas por ejecución: ~45 llamadas, cada una releyendo un historial creciente, y a veces revisa dos veces la misma factura. Además, el responsable de operaciones quiere aprobar lo que pasará antes de tocar cualquier pago. ¿Cuál es el mejor rediseño?"
+      },
+      "options": [
+        { "text": { "en": "Frontier model writes the plan once; a mini model runs each step with a small, fresh context", "es": "El modelo frontier escribe el plan una vez; uno mini ejecuta cada paso con un contexto pequeño y limpio" },
+          "why": { "en": "Few big-model calls, bounded per-step context, and a visible plan the ops lead can approve before side effects.", "es": "Pocas llamadas al modelo grande, contexto acotado por paso y un plan visible que el responsable aprueba antes de los efectos secundarios." } },
+        { "text": { "en": "Keep the ReAct loop but swap the frontier model for a cheaper mini model on every call", "es": "Mantener el ciclo ReAct pero cambiar el modelo frontier por uno mini más barato en cada llamada" },
+          "why": { "en": "Cheaper per call, but still ~45 calls over a growing transcript, weaker reasoning, and no plan to approve.", "es": "Cada llamada sale más barata, pero siguen siendo ~45 sobre un historial creciente, con peor razonamiento y sin plan que aprobar." } },
+        { "text": { "en": "Keep the ReAct loop and move to a frontier model with a much larger context window", "es": "Mantener el ciclo ReAct y pasar a un modelo frontier con una ventana de contexto mucho más grande" },
+          "why": { "en": "The transcript already fits; the cost is paying a full-context call per step, which a bigger window doesn't reduce.", "es": "El historial ya cabe; el costo viene de pagar una llamada con todo el contexto por paso, y una ventana más grande no lo reduce." } },
+        { "text": { "en": "Have the frontier model rewrite the whole plan from scratch after every tool call", "es": "Hacer que el modelo frontier reescriba todo el plan desde cero tras cada llamada a herramienta" },
+          "why": { "en": "That is ReAct with extra overhead: maximum expensive calls and never a stable plan for anyone to approve.", "es": "Es ReAct con más overhead: el máximo de llamadas caras y nunca un plan estable que alguien pueda aprobar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Plan-and-execute fits tasks with a predictable shape: the expensive model plans (and rarely replans), a cheap model runs bounded steps, and the plan doubles as a human approval checkpoint. In the concept's example this cut cost from ~$1.80 to ~$0.35 per run.",
+        "es": "Plan-and-execute encaja en tareas con forma predecible: el modelo caro planifica (y rara vez replanifica), uno barato ejecuta pasos acotados y el plan sirve además como punto de aprobación humana. En el ejemplo del concepto, el costo bajó de ~$1.80 a ~$0.35 por ejecución."
+      }
+    },
+    {
+      "id": "planning.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the failure branch so the agent replans from **evidence** and **keeps finished work** instead of starting over.",
+        "es": "Completa la rama de falla para que el agente replanifique a partir de la **evidencia** y **conserve el trabajo terminado** en vez de empezar de cero."
+      },
+      "lang": "python",
+      "code": "def run(goal: str) -> list[str]:\n    done: list[str] = []\n    plan = make_plan(goal)  # make_plan(goal, progress=\"\")\n    for _ in range(MAX_REPLANS + 1):\n        for step in plan.steps:\n            out = execute_step(EXECUTOR, step, done)\n            if not out.ok:\n                ____\n                break\n            done.append(f\"{step.action} -> {out.summary}\")\n        else:\n            return done\n    raise RuntimeError(\"Still failing after replans: escalate to a human\")",
+      "options": [
+        { "text": "plan = make_plan(goal, \"\\n\".join(done) + f\"\\nFAILED {step.action}: {out.error}\")" },
+        { "text": "plan = make_plan(goal)",
+          "why": { "en": "Replans from scratch: the planner sees neither the error nor the finished steps, so it can repeat work and fail the same way.", "es": "Replanifica desde cero: el planner no ve ni el error ni los pasos terminados, así que puede repetir trabajo y fallar igual." } },
+        { "text": "plan = make_plan(goal, f\"FAILED {step.action}: {out.error}\")",
+          "why": { "en": "The planner sees the error but not the finished work, so the new plan redoes completed steps.", "es": "El planner ve el error pero no el trabajo terminado, así que el plan nuevo repite pasos ya completados." } },
+        { "text": "continue",
+          "why": { "en": "Skips the failed step and keeps executing a stale plan; later steps run on assumptions that are already false.", "es": "Salta el paso fallido y sigue ejecutando un plan obsoleto; los pasos siguientes corren sobre supuestos que ya son falsos." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Good replanning is incremental: pass the planner what is done plus what failed and why, so it revises only the remaining steps. The outer loop caps replans, then escalates to a human instead of burning tokens.",
+        "es": "Una buena replanificación es incremental: le pasas al planner lo que ya está hecho más lo que falló y por qué, para que solo corrija los pasos restantes. El ciclo externo limita las replanificaciones y luego escala a una persona en vez de quemar tokens."
+      }
+    },
+    {
+      "id": "planning.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about plan-and-execute and its variants are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre plan-and-execute y sus variantes son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "ReWOO workers fill placeholders like `#E1` without calling the LLM again", "es": "Los workers de ReWOO resuelven variables como `#E1` sin volver a llamar al LLM" } },
+        { "text": { "en": "LLMCompiler runs independent tool calls in parallel because the plan is a DAG", "es": "LLMCompiler ejecuta en paralelo las llamadas independientes porque el plan es un DAG" } },
+        { "text": { "en": "A coding agent's to-do list is a living plan the model rewrites as it goes", "es": "La lista de pendientes de un agente de código es un plan vivo que el modelo reescribe sobre la marcha" } },
+        { "text": { "en": "ReWOO calls the planner once per step, just like ReAct does", "es": "ReWOO llama al planner una vez por paso, igual que ReAct" },
+          "why": { "en": "ReWOO's point is one planning call for the whole task instead of one per step.", "es": "La gracia de ReWOO es una sola llamada de planificación para toda la tarea en vez de una por paso." } },
+        { "text": { "en": "Plan-and-execute adapts after every observation, exactly like ReAct", "es": "Plan-and-execute se adapta después de cada observación, igual que ReAct" },
+          "why": { "en": "It commits to a route and adapts at checkpoints, when a step fails or reveals something new.", "es": "Se compromete con una ruta y se adapta en puntos de control, cuando un paso falla o revela algo nuevo." } },
+        { "text": { "en": "More steps always help: a 25-step plan beats a 3-step one", "es": "Más pasos siempre ayudan: un plan de 25 pasos le gana a uno de 3" },
+          "why": { "en": "Over-planning fills the plan with steps the planner cannot know yet; aim for 3–10 steps with exit checks.", "es": "Sobreplanificar llena el plan de pasos que el planner todavía no puede conocer; apunta a 3–10 pasos con verificaciones de salida." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Every variant trades adaptivity for fewer expensive calls: ReWOO plans once with placeholders, LLMCompiler parallelizes a DAG, to-do lists stay editable. The risk they share is a plan that goes stale, so replanning happens at step boundaries.",
+        "es": "Todas las variantes cambian adaptabilidad por menos llamadas caras: ReWOO planifica una vez con variables, LLMCompiler paraleliza un DAG y las listas de pendientes siguen editables. El riesgo común es un plan que queda obsoleto, por eso se replanifica entre pasos."
+      }
+    }
+  ]
+}

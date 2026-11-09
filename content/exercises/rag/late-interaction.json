@@ -1,0 +1,110 @@
+{
+  "concept": "late-interaction",
+  "items": [
+    {
+      "id": "late-interaction.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Hybrid search gives you a good top 200, but the right page for queries with exact error codes like `E1043` rarely reaches the top 10. A cross-encoder over 200 pairs blows your latency budget. Best next step?",
+        "es": "La búsqueda híbrida te da un buen top 200, pero la página correcta para consultas con códigos de error exactos como `E1043` casi nunca llega al top 10. Un cross-encoder sobre 200 pares revienta tu presupuesto de latencia. ¿Cuál es el mejor siguiente paso?"
+      },
+      "options": [
+        {
+          "text": { "en": "Rerank the 200 with ColBERT MaxSim over precomputed token vectors", "es": "Reordenar los 200 con MaxSim de ColBERT sobre vectores por token precalculados" },
+          "why": { "en": "Token-level matching catches the code, and query time is one short encoder pass plus 200 small matrix products.", "es": "La coincidencia por token atrapa el código, y al consultar solo hay una pasada corta del encoder más 200 productos de matrices pequeños." }
+        },
+        {
+          "text": { "en": "Rerank with a larger single-vector embedder of 3,072 dims", "es": "Reordenar con un embedder de un solo vector más grande, de 3,072 dims" },
+          "why": { "en": "Still one vector per passage: a rare token keeps getting averaged into the passage's overall meaning.", "es": "Sigue siendo un vector por pasaje: un token raro se sigue diluyendo en el significado promedio del pasaje." }
+        },
+        {
+          "text": { "en": "Keep the cross-encoder over 200 pairs and buy a bigger GPU", "es": "Mantener el cross-encoder sobre 200 pares y comprar una GPU más grande" },
+          "why": { "en": "Nothing can be precomputed for a cross-encoder: it's still 200 full transformer passes on every query.", "es": "Con un cross-encoder no se puede precalcular nada: siguen siendo 200 pasadas completas del transformer en cada consulta." }
+        },
+        {
+          "text": { "en": "Drop hybrid search and brute-force MaxSim over the whole corpus", "es": "Quitar la búsqueda híbrida y calcular MaxSim por fuerza bruta sobre todo el corpus" },
+          "why": { "en": "Brute-force MaxSim over every document is the classic pitfall; use a PLAID-style engine or rerank a first-stage pool.", "es": "MaxSim por fuerza bruta sobre todos los documentos es la trampa clásica; usa un motor tipo PLAID o reordena el pool de la primera etapa." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Late interaction is the middle ground: document token vectors are built offline like a bi-encoder, yet scoring is token by token, so exact identifiers survive. Used as a reranker on a first-stage pool, it gets most of the precision at a fraction of cross-encoder latency.",
+        "es": "Late interaction es el punto medio: los vectores por token del documento se arman offline como en un bi-encoder, pero el puntaje es token por token, así que los identificadores exactos sobreviven. Como reranker sobre el pool de la primera etapa, logra casi toda la precisión con una fracción de la latencia de un cross-encoder."
+      }
+    },
+    {
+      "id": "late-interaction.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size a ColBERT index: 10M chunks of 300 tokens each, one 128-dim vector per token, stored **uncompressed** in fp16 (2 bytes). Ignoring index overhead, how many GB (10⁹ bytes) of vectors?",
+        "es": "Dimensiona un índice ColBERT: 10M chunks de 300 tokens cada uno, un vector de 128 dims por token, guardado **sin comprimir** en fp16 (2 bytes). Sin contar el overhead del índice, ¿cuántos GB (10⁹ bytes) de vectores son?"
+      },
+      "answer": 768,
+      "tolerance": 0.1,
+      "unit": "GB",
+      "explain": {
+        "en": "300 × 128 × 2 = 76,800 bytes ≈ 77 KB per chunk; × 10M ≈ 768 GB. One 1,024-dim fp32 vector per chunk is ~4 KB, ~41 GB in total: about 19× less. ColBERTv2's residual compression (6–10× smaller) is what makes this affordable.",
+        "es": "300 × 128 × 2 = 76,800 bytes ≈ 77 KB por chunk; × 10M ≈ 768 GB. Un vector fp32 de 1,024 dims por chunk pesa ~4 KB, ~41 GB en total: unas 19× menos. La compresión residual de ColBERTv2 (6–10× más chico) es lo que lo vuelve costeable."
+      }
+    },
+    {
+      "id": "late-interaction.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the **MaxSim** score between a query and a document.",
+        "es": "Completa el puntaje **MaxSim** entre una consulta y un documento."
+      },
+      "lang": "python",
+      "code": "def maxsim(q, d):\n    \"\"\"q: (n_q, 128) query token vectors; d: (n_d, 128) doc token vectors.\"\"\"\n    sims = q @ d.T  # shape (n_q, n_d): every query token vs every doc token\n    ____",
+      "options": [
+        { "text": "return float(sims.max(axis=1).sum())" },
+        {
+          "text": "return float(sims.max(axis=0).sum())",
+          "why": { "en": "Best query token per document token: long documents score higher just by having more tokens.", "es": "El mejor token de la consulta por cada token del documento: los documentos largos suman más solo por tener más tokens." }
+        },
+        {
+          "text": "return float(sims.mean())",
+          "why": { "en": "Averaging every pair drowns a rare exact match, the same blur a single vector has.", "es": "Promediar todos los pares ahoga una coincidencia exacta rara, el mismo difuminado que tiene un solo vector." }
+        },
+        {
+          "text": "return float(sims.max())",
+          "why": { "en": "One best token pair decides the score; the rest of the query is ignored.", "es": "Un solo par de tokens decide el puntaje; el resto de la consulta se ignora." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "MaxSim: for each query token (row), take its best-matching document token (max over columns), then sum over the query. Every query term must find support somewhere in the document, and document length doesn't inflate the score.",
+        "es": "MaxSim: para cada token de la consulta (fila) toma el token del documento que mejor coincide (máximo sobre las columnas) y luego suma sobre la consulta. Cada término de la consulta tiene que encontrar respaldo en el documento, y el largo del documento no infla el puntaje."
+      }
+    },
+    {
+      "id": "late-interaction.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about late interaction (ColBERT) are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre late interaction (ColBERT) son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Document token vectors are computed offline, like a bi-encoder", "es": "Los vectores por token del documento se calculan offline, como en un bi-encoder" } },
+        {
+          "text": { "en": "Query and document attend to each other inside the encoder", "es": "La consulta y el documento se atienden mutuamente dentro del encoder" },
+          "why": { "en": "That's a cross-encoder. ColBERT encodes them separately and only interacts at scoring time, which is why documents can be precomputed.", "es": "Eso es un cross-encoder. ColBERT los codifica por separado y solo interactúan al puntuar; por eso los documentos se pueden precalcular." }
+        },
+        { "text": { "en": "Each chunk still costs hundreds of vectors, even after compression", "es": "Cada chunk sigue costando cientos de vectores, incluso después de comprimir" } },
+        {
+          "text": { "en": "It beats a strong cross-encoder on the hardest relevance judgments", "es": "Supera a un buen cross-encoder en los juicios de relevancia más difíciles" },
+          "why": { "en": "It gets close, but full joint attention still wins on the hardest cases.", "es": "Se acerca, pero la atención conjunta completa sigue ganando en los casos más difíciles." }
+        },
+        {
+          "text": { "en": "An English MS MARCO checkpoint transfers fine to multilingual data", "es": "Un checkpoint de MS MARCO en inglés sirve sin problema para datos multilingües" },
+          "why": { "en": "A classic pitfall: evaluate on your own data, or pick a multilingual model.", "es": "Una trampa clásica: evalúa con tus propios datos, o elige un modelo multilingüe." }
+        }
+      ],
+      "answers": [0, 2],
+      "explain": {
+        "en": "Late interaction moves cost from query time to storage. You keep offline document encoding and token-level precision, but you pay in vectors per chunk, a less standard index, and you still sit just below a cross-encoder.",
+        "es": "Late interaction mueve el costo del momento de la consulta al almacenamiento. Conservas la codificación offline de documentos y la precisión por token, pero pagas en vectores por chunk, un índice menos estándar, y sigues apenas por debajo de un cross-encoder."
+      }
+    }
+  ]
+}

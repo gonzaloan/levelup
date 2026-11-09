@@ -1,0 +1,73 @@
+{
+  "concept": "streaming",
+  "items": [
+    {
+      "id": "streaming.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your SSE chat endpoint streams token by token on your laptop. In production behind nginx, the whole answer appears at once after ~7 s. TTFT measured at the app server is ~400 ms. Most likely cause?",
+        "es": "Tu endpoint de chat con SSE transmite token por token en tu laptop. En producción, detrás de nginx, la respuesta completa aparece de golpe después de ~7 s. El TTFT medido en el servidor de la app es de ~400 ms. ¿Causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "A proxy buffers the response; turn buffering off for the stream", "es": "Un proxy hace buffering de la respuesta; desactívalo para el stream" } },
+        { "text": { "en": "SSE doesn't survive proxies; switch to WebSockets", "es": "SSE no sobrevive a los proxies; cambia a WebSockets" },
+          "why": { "en": "SSE is plain HTTP and works through proxies once buffering is off; WebSockets are for two-way traffic such as voice.", "es": "SSE es HTTP simple y funciona a través de proxies sin buffering; los WebSockets son para tráfico bidireccional, como voz." } },
+        { "text": { "en": "Prefill is slow under production load", "es": "El prefill es lento con la carga de producción" },
+          "why": { "en": "The server sees the first token at ~400 ms; slow TTFT would delay the first word, not batch the whole answer.", "es": "El servidor ve el primer token a los ~400 ms; un TTFT lento retrasaría la primera palabra, no juntaría toda la respuesta." } },
+        { "text": { "en": "The production client calls the model without stream=True", "es": "El cliente de producción llama al modelo sin stream=True" },
+          "why": { "en": "Same code streams locally, and the server sees tokens early: something between server and browser holds them.", "es": "El mismo código transmite en local y el servidor ve tokens temprano: algo entre el servidor y el navegador los retiene." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Works locally, arrives all at once in production: suspect buffering in nginx, a CDN, a load balancer or gzip middleware. Fix it with `proxy_buffering off` or the `X-Accel-Buffering: no` response header, then verify end to end, not only at the app server.",
+        "es": "Funciona en local y llega de golpe en producción: sospecha del buffering en nginx, un CDN, un balanceador o un middleware de gzip. Corrígelo con `proxy_buffering off` o el header de respuesta `X-Accel-Buffering: no`, y verifica de punta a punta, no solo en el servidor de la app."
+      }
+    },
+    {
+      "id": "streaming.a2",
+      "type": "code",
+      "prompt": {
+        "en": "The upstream model call can fail mid-answer, after your SSE response has started. Complete the `except` branch so the browser learns what happened.",
+        "es": "La llamada al modelo puede fallar a mitad de la respuesta, cuando tu respuesta SSE ya empezó. Completa la rama `except` para que el navegador sepa qué pasó."
+      },
+      "lang": "python",
+      "code": "async def events():\n    stream = None\n    try:\n        stream = await client.chat.completions.create(\n            model=MODEL, messages=body[\"messages\"], stream=True)\n        async for chunk in stream:\n            if await req.is_disconnected():\n                break\n            delta = chunk.choices[0].delta.content if chunk.choices else None\n            if delta:\n                yield sse({\"text\": delta})\n        yield sse({}, \"done\")\n    except Exception:\n        ____\n    finally:\n        if stream:\n            await stream.close()",
+      "options": [
+        { "text": "yield sse({\"msg\": \"upstream failed\"}, \"error\")" },
+        { "text": "raise HTTPException(status_code=502)",
+          "why": { "en": "The 200 status and headers are already sent; a status code can't change mid-stream, so the client only sees a cut connection.", "es": "El status 200 y los headers ya se enviaron; un código de estado no puede cambiar a mitad del stream, así que el cliente solo ve una conexión cortada." } },
+        { "text": "pass",
+          "why": { "en": "The stream just ends without `done` or a reason: the user sees a truncated answer with nothing to act on.", "es": "El stream termina sin `done` ni motivo: el usuario ve una respuesta truncada sin nada que hacer." } },
+        { "text": "yield sse({\"text\": \"upstream failed\"})",
+          "why": { "en": "Sent as an ordinary text event, the error gets appended to the answer as if the model wrote it.", "es": "Enviado como un evento de texto normal, el error se agrega a la respuesta como si lo hubiera escrito el modelo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Once streaming starts, the HTTP status is fixed at 200, so errors must travel in-band as their own event type that the client handles separately. The `finally` still closes the upstream connection so you stop paying for tokens.",
+        "es": "Una vez que empieza el streaming, el status HTTP queda fijo en 200, así que los errores deben viajar dentro del stream como un tipo de evento propio que el cliente maneja aparte. El `finally` igual cierra la conexión upstream para que dejes de pagar tokens."
+      }
+    },
+    {
+      "id": "streaming.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your backend relays an upstream LLM stream to the browser over SSE. A user closes the tab mid-answer, and your code never checks for disconnects. What happens upstream?",
+        "es": "Tu backend reenvía al navegador, por SSE, un stream de un LLM upstream. Un usuario cierra la pestaña a mitad de la respuesta, y tu código nunca revisa desconexiones. ¿Qué pasa upstream?"
+      },
+      "options": [
+        { "text": { "en": "Generation continues, and you pay for tokens nobody reads", "es": "La generación sigue, y pagas tokens que nadie lee" } },
+        { "text": { "en": "The provider sees the tab close and stops billing", "es": "El proveedor ve que se cerró la pestaña y deja de cobrar" },
+          "why": { "en": "The provider only sees your server's connection, which is still open and reading.", "es": "El proveedor solo ve la conexión de tu servidor, que sigue abierta y leyendo." } },
+        { "text": { "en": "It stops, because SSE closes end to end", "es": "Se detiene, porque SSE se cierra de punta a punta" },
+          "why": { "en": "Browser-to-server and server-to-provider are separate connections; closing one doesn't close the other.", "es": "Navegador–servidor y servidor–proveedor son conexiones separadas; cerrar una no cierra la otra." } },
+        { "text": { "en": "It stops once the proxy's idle timeout fires", "es": "Se detiene cuando vence el idle timeout del proxy" },
+          "why": { "en": "Tokens keep flowing on the upstream connection, so it never goes idle.", "es": "Los tokens siguen fluyendo por la conexión upstream, así que nunca queda inactiva." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Cancellation doesn't propagate on its own. Check for client disconnects inside the stream loop and close the upstream call. Wiring the Stop button the same way also stops billing for answers users already abandoned.",
+        "es": "La cancelación no se propaga sola. Revisa si el cliente se desconectó dentro del loop del stream y cierra la llamada upstream. Conectar el botón Stop de la misma forma también deja de cobrar respuestas que los usuarios ya abandonaron."
+      }
+    }
+  ]
+}

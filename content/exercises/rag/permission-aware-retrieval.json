@@ -1,0 +1,89 @@
+{
+  "concept": "permission-aware-retrieval",
+  "items": [
+    {
+      "id": "permission-aware-retrieval.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "At 9:00 a manager removes a contractor from a Drive folder. At 15:00 the contractor's RAG assistant still quotes that folder. Chunks carry `allowed_groups`, and ACLs are re-synced by a nightly batch. Best fix?",
+        "es": "A las 9:00 una gerente quita a un contratista de una carpeta de Drive. A las 15:00 el asistente RAG del contratista todavía cita esa carpeta. Los chunks llevan `allowed_groups` y las ACL se resincronizan con un batch nocturno. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Sync ACLs from source webhooks, reconcile periodically, re-check final chunks", "es": "Sincronizar ACL con webhooks de la fuente, reconciliar periódicamente y revalidar los chunks finales" },
+          "why": { "en": "Event-driven sync shrinks the revocation window to minutes; the final check against the source of truth closes it.", "es": "La sincronización por eventos reduce la ventana de revocación a minutos; la revalidación contra la fuente de verdad la cierra." } },
+        { "text": { "en": "Re-embed the whole corpus nightly so vectors reflect new permissions", "es": "Re-generar los embeddings de todo el corpus cada noche para reflejar los permisos nuevos" },
+          "why": { "en": "Permissions live in chunk metadata, not in the vectors. Re-embedding is expensive and still runs on a nightly cadence.", "es": "Los permisos viven en los metadatos del chunk, no en los vectores. Re-generar embeddings es caro y sigue siendo nocturno." } },
+        { "text": { "en": "Add a system-prompt rule telling the model to skip revoked documents", "es": "Agregar una regla en el system prompt para que el modelo ignore documentos revocados" },
+          "why": { "en": "The text is already in the window. Prompting is not access control, and prompt injection can get it out.", "es": "El texto ya está en la ventana. Un prompt no es control de acceso, y una prompt injection puede sacarlo." } },
+        { "text": { "en": "Store each reader's user id on chunks instead of group ids", "es": "Guardar el user id de cada lector en los chunks en lugar de ids de grupo" },
+          "why": { "en": "User ids on chunks force a re-index on every membership change, which makes staleness worse, not better.", "es": "Los user ids en los chunks obligan a reindexar con cada cambio de membresía, lo que empeora la desactualización." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Revocation delay equals your ACL sync interval: a nightly batch can keep serving revoked access for up to ~24 h. Webhooks from the source system cut that to minutes, a periodic full reconciliation catches missed events, and re-checking the final chunks against the source of truth covers the rest when staleness matters.",
+        "es": "La demora de revocación es igual a tu intervalo de sincronización de ACL: un batch nocturno puede seguir sirviendo accesos revocados hasta ~24 h. Los webhooks del sistema fuente la bajan a minutos, una reconciliación completa periódica atrapa eventos perdidos y revalidar los chunks finales contra la fuente de verdad cubre el resto cuando la desactualización importa."
+      }
+    },
+    {
+      "id": "permission-aware-retrieval.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Your engine **post-filters**: it fetches the top k chunks by similarity, then drops those the user can't read. A contractor can read ~0.5% of the corpus, spread uniformly. How large must k be for ~10 readable chunks to survive the filter?",
+        "es": "Tu motor hace **post-filtrado**: trae los k chunks más similares y luego descarta los que el usuario no puede leer. Un contratista puede leer ~0,5% del corpus, distribuido de forma uniforme. ¿Qué tan grande debe ser k para que sobrevivan ~10 chunks legibles?"
+      },
+      "answer": 2000,
+      "tolerance": 0.15,
+      "unit": "chunks",
+      "explain": {
+        "en": "A user who can read a fraction p keeps ~p·k of k hits, so k = 10 / 0.005 = 2,000: about 100× the ~20 you would normally fetch. And relevant restricted docs often cluster, so reality is worse. That is why pre-filtering inside the search, which returns k allowed results, is the default.",
+        "es": "Un usuario que puede leer una fracción p conserva ~p·k de k resultados, así que k = 10 / 0,005 = 2.000: unas 100× los ~20 que traerías normalmente. Y los documentos restringidos relevantes suelen agruparse, así que en la práctica es peor. Por eso el default es pre-filtrar dentro de la búsqueda, que devuelve k resultados permitidos."
+      }
+    },
+    {
+      "id": "permission-aware-retrieval.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the Qdrant query so the ACL is enforced **inside** the search and relevance filters (date, doc type) narrow it further. `acl_conditions(user)` is built from the verified session.",
+        "es": "Completa la consulta a Qdrant para que la ACL se aplique **dentro** de la búsqueda y los filtros de relevancia (fecha, tipo de documento) la acoten aún más. `acl_conditions(user)` se construye desde la sesión verificada."
+      },
+      "lang": "python",
+      "code": "def retrieve(user, query: str, k: int = 20, extra=()) -> list:\n    hits = client.query_points(\n        collection_name=\"chunks\",\n        query=embed(query),\n        ____,\n        limit=k,\n    ).points\n    return [h for h in hits if acl_service.can_read(user, h.payload[\"doc_id\"])]",
+      "options": [
+        { "text": "query_filter=models.Filter(must=[*acl_conditions(user), *extra])" },
+        { "text": "query_filter=models.Filter(should=[*acl_conditions(user), *extra])",
+          "why": { "en": "`should` is an OR: a chunk matching only the date filter, or only the tenant, gets through without the group check.", "es": "`should` es un OR: un chunk que cumple solo el filtro de fecha, o solo el tenant, pasa sin el chequeo de grupos." } },
+        { "text": "query_filter=models.Filter(must=[*extra])",
+          "why": { "en": "Relevance filters replace the ACL instead of being AND-ed with it, so authorization is gone.", "es": "Los filtros de relevancia reemplazan la ACL en vez de sumarse con AND, así que la autorización desaparece." } },
+        { "text": "query_filter=models.Filter(must=acl_from(tool_args[\"groups\"]))",
+          "why": { "en": "Groups come from LLM tool arguments, which prompt injection can set to anything. Build it from the session.", "es": "Los grupos salen de los argumentos de una tool del LLM, que una prompt injection puede fijar a cualquier valor. Constrúyelo desde la sesión." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Authorization and relevance share one mechanism but not one role: the ACL is mandatory and always AND-ed (`must`), relevance filters only narrow it further. The identity comes from the authenticated session, never from the prompt or tool arguments. The final `can_read` check is defense in depth.",
+        "es": "Autorización y relevancia comparten mecanismo pero no rol: la ACL es obligatoria y siempre va con AND (`must`); los filtros de relevancia solo la acotan. La identidad sale de la sesión autenticada, nunca del prompt ni de los argumentos de una tool. El `can_read` final es defensa en profundidad."
+      }
+    },
+    {
+      "id": "permission-aware-retrieval.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Your retriever pre-filters correctly by ACL. Which of these can **still** leak restricted content? Select all that apply.",
+        "es": "Tu retriever pre-filtra correctamente por ACL. ¿Cuáles de estos pueden filtrar contenido restringido **de todos modos**? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A semantic cache shared across all users", "es": "Una caché semántica compartida entre todos los usuarios" } },
+        { "text": { "en": "Debug logs and eval traces that store retrieved chunks", "es": "Logs de depuración y trazas de evaluación que guardan los chunks recuperados" } },
+        { "text": { "en": "A stale ACL sync after access was revoked", "es": "Una sincronización de ACL desactualizada después de revocar un acceso" } },
+        { "text": { "en": "A user asking the bot to ignore its instructions", "es": "Un usuario que le pide al bot ignorar sus instrucciones" },
+          "why": { "en": "With a correct pre-filter, forbidden text never enters the window, so there is nothing for a jailbreak to reveal.", "es": "Con un pre-filtro correcto, el texto prohibido nunca entra en la ventana, así que un jailbreak no tiene nada que revelar." } },
+        { "text": { "en": "Relevance filters extracted from the user's query", "es": "Filtros de relevancia extraídos de la consulta del usuario" },
+          "why": { "en": "They are AND-ed with the ACL, so they can only narrow the allowed set, never widen it.", "es": "Se combinan con AND con la ACL, así que solo pueden acotar el conjunto permitido, nunca ampliarlo." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "A correct filter protects the prompt, not the whole system. Leaks move to side channels: caches keyed without the user, logs and traces readers can open, and an ACL copy that lags the source. Scope caches and logs per user and keep the revocation window short.",
+        "es": "Un filtro correcto protege el prompt, no todo el sistema. Las fugas se mueven a canales laterales: cachés sin el usuario en la clave, logs y trazas que otros pueden abrir, y una copia de la ACL que va atrasada respecto de la fuente. Limita cachés y logs por usuario y mantén corta la ventana de revocación."
+      }
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "concept": "batch-vs-realtime",
+  "items": [
+    {
+      "id": "batch-vs-realtime.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "An e-commerce site recomputes 'recommended for you' nightly for 20M users. A shopper who just bought a tent keeps seeing tents all morning. What's the best fix?",
+        "es": "Un e-commerce recalcula cada noche 'recomendado para ti' para 20M de usuarios. Alguien que acaba de comprar una carpa sigue viendo carpas toda la mañana. ¿Cuál es la mejor solución?"
+      },
+      "options": [
+        { "text": { "en": "Keep nightly candidates, stream events into fresh features, and re-rank per request", "es": "Mantener los candidatos nocturnos, enviar eventos por streaming a features frescas y reordenar en cada request" },
+          "why": { "en": "Hybrid: the session changes the answer, but only the cheap final step needs to run per request.", "es": "Híbrido: la sesión cambia la respuesta, pero solo el paso final, que es barato, tiene que correr en cada request." } },
+        { "text": { "en": "Score the full catalog online for every request instead of batch", "es": "Puntuar el catálogo completo online en cada request en lugar de usar batch" },
+          "why": { "en": "Throws away the cheap batch stage and blows the latency budget; hybrid gets most of the freshness at near-batch cost.", "es": "Descarta la etapa batch, que es barata, y revienta el presupuesto de latencia; el híbrido logra casi toda la frescura a un costo cercano al batch." } },
+        { "text": { "en": "Run the batch job every 15 minutes for all 20M users", "es": "Correr el job batch cada 15 minutos para los 20M de usuarios" },
+          "why": { "en": "Multiplies the compute spent on users who never show up, and it's still minutes stale.", "es": "Multiplica el cómputo gastado en usuarios que nunca aparecen, y sigue desactualizado por minutos." } },
+        { "text": { "en": "Move the nightly job onto faster hardware so it finishes sooner", "es": "Pasar el job nocturno a hardware más rápido para que termine antes" },
+          "why": { "en": "It still runs once a night; staleness comes from the schedule, not from how long the job takes.", "es": "Sigue corriendo una vez por noche; la desactualización viene del calendario, no de cuánto tarda el job." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Choose by freshness need × cost, and usually mix: batch precomputes the expensive part (candidates), streaming keeps session features fresh, and an online ranker uses both. Only active users trigger the ranker, so cost stays close to batch.",
+        "es": "Elige según necesidad de frescura × costo, y casi siempre combina: batch precalcula lo caro (candidatos), streaming mantiene frescas las features de sesión y un ranker online usa ambos. Solo los usuarios activos disparan el ranker, así que el costo queda cerca del batch."
+      }
+    },
+    {
+      "id": "batch-vs-realtime.a2",
+      "type": "code",
+      "prompt": {
+        "en": "The online ranker sometimes exceeds its 40 ms budget. Complete the `except` branch.",
+        "es": "El ranker online a veces excede su presupuesto de 40 ms. Completa la rama `except`."
+      },
+      "lang": "python",
+      "code": "@app.get(\"/recs/{user_id}\")\ndef recs(user_id: str, k: int = 10):\n    # Batch: ~500 candidates precomputed nightly\n    cands = kv.lrange(f\"cands:{user_id}\", 0, 499) or popular_fallback()\n    # Streaming: session features updated seconds after each click\n    fresh = online_features(user_id, [\"last_5_clicks\", \"session_len\"])\n    try:\n        scores = rank_with_timeout(user_id, cands, fresh, timeout_ms=40)\n    except TimeoutError:\n        ____\n    ranked = sorted(zip(scores, cands), reverse=True)\n    return [item for _, item in ranked[:k]]",
+      "options": [
+        { "text": "return cands[:k]" },
+        { "text": "raise HTTPException(status_code=503)",
+          "why": { "en": "Turns a slow ranker into an outage. A slightly stale list beats an error page.", "es": "Convierte un ranker lento en una caída del servicio. Una lista algo desactualizada es mejor que una página de error." } },
+        { "text": "scores = rank_with_timeout(user_id, cands, fresh, timeout_ms=400)",
+          "why": { "en": "A 10× longer retry blows the page's ~100–200 ms end-to-end budget on exactly the slowest requests.", "es": "Un reintento 10× más largo revienta el presupuesto de ~100–200 ms de la página justo en los requests más lentos." } },
+        { "text": "return []",
+          "why": { "en": "An empty module wastes the slot, and the batch candidates are already in hand.", "es": "Un módulo vacío desperdicia el espacio, y los candidatos batch ya están a mano." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Design the online path to degrade, not fail: on timeout, serve the batch order (or a popularity list). The batch stage doubles as the fallback, one more reason most systems end up hybrid.",
+        "es": "Diseña el camino online para degradarse, no para fallar: ante un timeout, sirve el orden batch (o una lista de populares). La etapa batch sirve también de fallback, una razón más por la que casi todos los sistemas terminan siendo híbridos."
+      }
+    },
+    {
+      "id": "batch-vs-realtime.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Churn scores are computed nightly for a retention team that calls customers within the week. A PM wants real-time streaming scores 'because fresher is always better'. What do you do first?",
+        "es": "Los scores de churn se calculan cada noche para un equipo de retención que llama a los clientes durante la semana. Un PM quiere scores en tiempo real con streaming 'porque más fresco siempre es mejor'. ¿Qué haces primero?"
+      },
+      "options": [
+        { "text": { "en": "Replay logs to measure whether fresher scores would move the retention metric", "es": "Reproducir logs para medir si scores más frescos moverían la métrica de retención" },
+          "why": { "en": "Freshness is worth building only if it measurably changes the outcome; replay tells you before you pay for it.", "es": "La frescura vale la pena solo si cambia el resultado de forma medible; reproducir logs te lo dice antes de pagar por ella." } },
+        { "text": { "en": "Build the Kafka and Flink pipeline, since fresher predictions are always more accurate", "es": "Construir el pipeline de Kafka y Flink, porque las predicciones más frescas siempre son más precisas" },
+          "why": { "en": "Freshness matters only if the decision uses it; streaming adds Kafka/Flink operations and is a classic source of skew.", "es": "La frescura solo importa si la decisión la aprovecha; streaming suma operar Kafka/Flink y es una fuente clásica de skew." } },
+        { "text": { "en": "Switch to online inference per request, keeping the nightly job as a backup", "es": "Pasar a inferencia online por request, dejando el job nocturno como respaldo" },
+          "why": { "en": "Inputs are enumerable customers and the action takes days; online adds a 24/7 service for no proven gain.", "es": "Las entradas son clientes enumerables y la acción tarda días; online suma un servicio 24/7 sin una ganancia demostrada." } },
+        { "text": { "en": "Run the batch job hourly as a compromise between the two", "es": "Correr el job batch cada hora como punto medio entre ambos" },
+          "why": { "en": "Still a guess: 24× the compute with no evidence that hour-fresh scores change who gets called.", "es": "Sigue siendo una apuesta: 24× el cómputo sin evidencia de que scores de hace una hora cambien a quién se llama." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Real-time and streaming aren't upgrades by default. Batch fits when inputs are enumerable and hours-old answers are fine. Measure the uplift of fresher predictions by replaying logs, and build the extra system only if the metric moves.",
+        "es": "Tiempo real y streaming no son mejoras por defecto. Batch encaja cuando las entradas se pueden enumerar y sirven respuestas de hace horas. Mide cuánto aportan predicciones más frescas reproduciendo logs, y construye el sistema extra solo si la métrica se mueve."
+      }
+    }
+  ]
+}

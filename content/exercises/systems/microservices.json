@@ -1,0 +1,66 @@
+{
+  "concept": "microservices",
+  "items": [
+    {
+      "id": "microservices.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your 25-engineer team runs a Django monolith. To add AI summaries, a 7B model now loads inside every web worker: every pod needs a GPU, deploys take 10+ minutes, and CUDA out-of-memory errors crash checkout requests. What do you do?",
+        "es": "Tu equipo de 25 ingenieros opera un monolito Django. Para sumar resúmenes con IA, un modelo de 7B ahora se carga dentro de cada worker web: cada pod necesita GPU, los deploys tardan más de 10 minutos y los errores de memoria de CUDA tiran requests de checkout. ¿Qué haces?"
+      },
+      "options": [
+        { "text": { "en": "Extract only inference into a GPU service called with a timeout and fallback", "es": "Extraer solo la inferencia a un servicio con GPU, llamado con timeout y fallback" },
+          "why": { "en": "Inference differs in hardware, scaling, deploy cadence and failure modes: the textbook extraction. The rest stays modular.", "es": "La inferencia difiere en hardware, escalado, ritmo de deploy y modos de falla: la extracción de manual. El resto queda modular." } },
+        { "text": { "en": "Split the whole monolith into one microservice per module", "es": "Partir todo el monolito en un microservicio por módulo" },
+          "why": { "en": "Pays network hops and distributed data everywhere to fix one part with a different scaling profile.", "es": "Paga saltos de red y datos distribuidos en todos lados para arreglar una sola parte con otro perfil de escalado." } },
+        { "text": { "en": "Give every web pod a larger GPU so the model fits", "es": "Darle a cada pod web una GPU más grande para que el modelo entre" },
+          "why": { "en": "Deploys and blast radius stay coupled, and you pay GPU prices for CPU-bound web traffic.", "es": "Los deploys y el radio de impacto siguen acoplados, y pagas precio de GPU por tráfico web que solo usa CPU." } },
+        { "text": { "en": "Run inference in a background thread inside each web worker", "es": "Correr la inferencia en un thread de fondo dentro de cada worker web" },
+          "why": { "en": "Same process, same GPU memory: an out-of-memory error still takes checkout down with it.", "es": "Mismo proceso, misma memoria de GPU: un error de memoria sigue tirando checkout junto con todo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Split along the seam where requirements really differ. GPU inference has its own hardware, scaling, deploy cadence and failure modes, so it earns a service; checkout and tickets don't. The new network hop needs a timeout and a degraded path ('summary unavailable'), or you trade a crash for a hang.",
+        "es": "Divide por la costura donde los requisitos realmente difieren. La inferencia en GPU tiene su propio hardware, escalado, ritmo de deploy y modos de falla, así que merece un servicio; checkout y tickets no. El nuevo salto de red necesita timeout y un camino degradado ('resumen no disponible'), o cambias una caída por un cuelgue."
+      }
+    },
+    {
+      "id": "microservices.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A checkout request calls 8 services in a synchronous chain. Each is 99.9% available, they fail independently, and there are no fallbacks. Roughly what percentage of checkout requests fail end to end?",
+        "es": "Un request de checkout llama a 8 servicios en una cadena síncrona. Cada uno tiene 99.9% de disponibilidad, fallan de forma independiente y no hay fallbacks. ¿Qué porcentaje de los requests de checkout falla de punta a punta, aproximadamente?"
+      },
+      "answer": 0.8,
+      "tolerance": 0.15,
+      "unit": "%",
+      "explain": {
+        "en": "Availability multiplies along a synchronous chain: 0.999^8 ≈ 0.992, so ~0.8% of requests fail, 8× the failure rate of any single service. Summing the small failure rates (8 × 0.1%) is a fine approximation. Fewer hops, async calls or fallbacks are what bring it down.",
+        "es": "La disponibilidad se multiplica a lo largo de una cadena síncrona: 0.999^8 ≈ 0.992, así que falla ~0.8% de los requests, 8× la tasa de falla de cualquier servicio solo. Sumar las tasas de falla chicas (8 × 0.1%) es una buena aproximación. Lo que la baja son menos saltos, llamadas asíncronas o fallbacks."
+      }
+    },
+    {
+      "id": "microservices.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Checkout is now its own service and calls recommendations synchronously, with no timeout. A teammate says a recommendations outage can't hurt checkout anymore, since they're separate services. What actually happens when recommendations hangs?",
+        "es": "Checkout ahora es un servicio propio y llama a recomendaciones de forma síncrona, sin timeout. Un compañero dice que una caída de recomendaciones ya no puede afectar a checkout porque son servicios separados. ¿Qué pasa en realidad cuando recomendaciones se cuelga?"
+      },
+      "options": [
+        { "text": { "en": "Checkout requests hang waiting, so the outage spreads to checkout", "es": "Los requests de checkout quedan esperando, así que la caída se propaga a checkout" },
+          "why": { "en": "Fault isolation comes from timeouts and fallbacks in the caller, not from a separate deploy.", "es": "El aislamiento de fallas viene de timeouts y fallbacks en quien llama, no de un deploy separado." } },
+        { "text": { "en": "Checkout keeps working, since each service runs in its own process", "es": "Checkout sigue funcionando, porque cada servicio corre en su propio proceso" },
+          "why": { "en": "Separate processes isolate crashes, not waiting: a caller with no timeout blocks on the hung dependency.", "es": "Procesos separados aíslan caídas, no esperas: quien llama sin timeout se bloquea en la dependencia colgada." } },
+        { "text": { "en": "Checkout fails fast with an error, since the network call errors out", "es": "Checkout falla rápido con un error, porque la llamada de red falla" },
+          "why": { "en": "A hung service often accepts the connection and never answers; without a timeout the call just waits.", "es": "Un servicio colgado suele aceptar la conexión y nunca responder; sin timeout, la llamada solo espera." } },
+        { "text": { "en": "Health checks route checkout's calls to healthy recommendation replicas", "es": "Los health checks mandan las llamadas de checkout a réplicas sanas de recomendaciones" },
+          "why": { "en": "In a full outage there is no healthy replica to route to, and checkout still waits.", "es": "En una caída completa no hay réplica sana a la cual enrutar, y checkout sigue esperando." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A separate deploy shrinks the blast radius only if callers defend themselves: timeouts, a fallback (render checkout without recommendations) and retries with backoff for transient errors. Without them, a synchronous dependency's outage becomes the caller's outage, often worse, as blocked requests pile up.",
+        "es": "Un deploy separado achica el radio de impacto solo si quien llama se defiende: timeouts, un fallback (mostrar checkout sin recomendaciones) y reintentos con backoff para errores transitorios. Sin eso, la caída de una dependencia síncrona se vuelve la caída de quien llama, a menudo peor, porque se acumulan requests bloqueados."
+      }
+    }
+  ]
+}

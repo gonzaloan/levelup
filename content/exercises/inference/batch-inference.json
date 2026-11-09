@@ -1,0 +1,82 @@
+{
+  "concept": "batch-inference",
+  "items": [
+    {
+      "id": "batch-inference.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A 10M-item classification job ran through a provider batch API. One batch came back `expired`, and the outputs hold ~9.6M results in total. A teammate proposes resubmitting the whole job. What do you do?",
+        "es": "Un job de clasificación de 10M ítems corrió por la batch API de un proveedor. Un batch volvió como `expired` y en total las salidas tienen ~9.6M resultados. Un compañero propone reenviar todo el job. ¿Qué haces?"
+      },
+      "options": [
+        { "text": { "en": "Diff input `custom_id`s against outputs and resubmit only the gaps", "es": "Comparar los `custom_id` de entrada contra las salidas y reenviar solo lo que falta" } },
+        { "text": { "en": "Resubmit all 10M items, since an expired batch has no usable output", "es": "Reenviar los 10M ítems, porque un batch expirado no deja salida útil" },
+          "why": { "en": "Expired batches keep their partial output; rerunning everything pays twice for 9.6M finished items.", "es": "Los batches expirados conservan su salida parcial; re-ejecutar todo paga dos veces por 9.6M ítems ya terminados." } },
+        { "text": { "en": "Resubmit everything with fresh custom_ids to avoid collisions", "es": "Reenviar todo con custom_ids nuevos para evitar colisiones" },
+          "why": { "en": "Fresh ids break idempotency: you pay again for finished work and duplicate rows on write.", "es": "Ids nuevos rompen la idempotencia: vuelves a pagar trabajo terminado y duplicas filas al escribir." } },
+        { "text": { "en": "Mark the job done, since a ~4% gap is within noise", "es": "Dar el job por terminado, porque un hueco de ~4% está dentro del ruido" },
+          "why": { "en": "That silently drops ~400k items. Batches return per-item errors and can expire unfinished, so always reconcile.", "es": "Eso descarta en silencio ~400k ítems. Los batches devuelven errores por ítem y pueden expirar sin terminar, así que siempre concilia." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Batch jobs fail partially, not all-or-nothing. A stable `custom_id` per item plus a checkpoint log lets you reconcile input against output, resubmit only errors and expirations, and upsert results so a rerun never duplicates rows.",
+        "es": "Los jobs batch fallan de forma parcial, no todo o nada. Un `custom_id` estable por ítem más un log de checkpoints te permiten comparar entrada contra salida, reenviar solo errores y expirados, y hacer upsert de los resultados para que una re-ejecución nunca duplique filas."
+      }
+    },
+    {
+      "id": "batch-inference.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Extract fields from **2M** documents: ~**1,000** input and ~**200** output tokens each. Assume illustrative real-time prices of **$0.40/M** input and **$1.60/M** output tokens, and a **50%** batch discount. What does the batch run cost, in dollars?",
+        "es": "Extraer campos de **2M** documentos: ~**1,000** tokens de entrada y ~**200** de salida cada uno. Supón precios ilustrativos en tiempo real de **$0.40/M** por token de entrada y **$1.60/M** de salida, y un descuento batch de **50%**. ¿Cuánto cuesta la corrida batch, en dólares?"
+      },
+      "answer": 720,
+      "tolerance": 0.1,
+      "unit": "USD",
+      "explain": {
+        "en": "Input: 2M × 1,000 = 2B tokens × $0.40/M = $800. Output: 2M × 200 = 400M × $1.60/M = $640. Real time is $1,440; × 0.5 = $720. Output is ~17% of the tokens but ~44% of the bill, so never leave it out.",
+        "es": "Entrada: 2M × 1,000 = 2B tokens × $0.40/M = $800. Salida: 2M × 200 = 400M × $1.60/M = $640. En tiempo real son $1,440; × 0.5 = $720. La salida es ~17% de los tokens pero ~44% de la factura, así que nunca la dejes fuera."
+      }
+    },
+    {
+      "id": "batch-inference.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put a safe provider batch-API pipeline in order.",
+        "es": "Ordena un pipeline seguro con la batch API de un proveedor."
+      },
+      "steps": [
+        { "en": "Validate the prompt on a ~1k pilot with an eval", "es": "Validar el prompt con un piloto de ~1k ítems y un eval" },
+        { "en": "Shard into JSONL files with a stable custom_id per item", "es": "Dividir en archivos JSONL con un custom_id estable por ítem" },
+        { "en": "Submit each shard and record its batch id in a checkpoint log", "es": "Enviar cada shard y registrar su batch id en un log de checkpoints" },
+        { "en": "Download results and upsert them by custom_id", "es": "Descargar los resultados y hacer upsert por custom_id" },
+        { "en": "Diff input ids against output ids and resubmit the gaps", "es": "Comparar los ids de entrada contra los de salida y reenviar lo que falta" }
+      ],
+      "explain": {
+        "en": "Feedback is slow, so catch prompt bugs on a small pilot before paying for millions of items. Then treat it as a data pipeline: stable ids, checkpoints so a crash costs one shard, idempotent writes, and reconciliation at the end.",
+        "es": "El feedback es lento, así que atrapa los bugs del prompt con un piloto chico antes de pagar millones de ítems. Después trátalo como un pipeline de datos: ids estables, checkpoints para que una caída cueste un solo shard, escrituras idempotentes y conciliación al final."
+      }
+    },
+    {
+      "id": "batch-inference.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about batch inference are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la inferencia batch son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Provider batch APIs use limits separate from your real-time quota", "es": "Las batch APIs de los proveedores usan límites separados de tu cuota en tiempo real" } },
+        { "text": { "en": "Batch APIs suit agent loops where each step depends on the last", "es": "Las batch APIs sirven para loops de agentes donde cada paso depende del anterior" },
+          "why": { "en": "Each batch can take up to 24 h, so every dependent step would wait hours.", "es": "Cada batch puede tardar hasta 24 h, así que cada paso dependiente esperaría horas." } },
+        { "text": { "en": "Self-hosted offline runs can push batch sizes past what a latency SLO allows", "es": "Las corridas offline self-hosted pueden subir el batch más allá de lo que permite un SLO de latencia" } },
+        { "text": { "en": "Without a latency SLO, small batches give the best tokens per GPU-dollar", "es": "Sin SLO de latencia, los batches chicos dan más tokens por dólar de GPU" },
+          "why": { "en": "It's the opposite: tokens per GPU-dollar peak at large batches, once decode stops being memory-bound.", "es": "Es al revés: los tokens por dólar de GPU llegan a su máximo con batches grandes, cuando el decode deja de estar limitado por memoria." } }
+      ],
+      "answers": [0, 2],
+      "explain": {
+        "en": "Batch inference trades latency for cost and throughput. Provider APIs give ~50% off on a separate quota, so backfills don't starve production; self-hosted runs drop the SLO and fill the GPUs. Neither fits work where someone, or the next agent step, waits on one answer.",
+        "es": "La inferencia batch cambia latencia por costo y throughput. Las APIs de los proveedores dan ~50% de descuento con una cuota aparte, para que los backfills no dejen sin capacidad a producción; en self-hosted quitas el SLO y llenas las GPUs. Ninguna sirve cuando alguien, o el siguiente paso de un agente, espera una respuesta puntual."
+      }
+    }
+  ]
+}

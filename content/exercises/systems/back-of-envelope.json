@@ -1,0 +1,101 @@
+{
+  "concept": "back-of-envelope",
+  "items": [
+    {
+      "id": "back-of-envelope.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your chat feature runs well at ~300 peak QPS with ~200-token prompts. A new RAG feature expects the same QPS, so the capacity plan reuses the chat GPU fleet as is. RAG prompts are ~20k tokens. What's wrong with the plan?",
+        "es": "Tu función de chat funciona bien con ~300 QPS pico y prompts de ~200 tokens. Una nueva función RAG espera los mismos QPS, así que el plan de capacidad reutiliza tal cual la flota de GPU del chat. Los prompts de RAG son de ~20k tokens. ¿Qué falla en el plan?"
+      },
+      "options": [
+        {
+          "text": { "en": "It counts requests, not tokens: prefill is ~100× per request", "es": "Cuenta requests, no tokens: el prefill es ~100× por request" },
+          "why": { "en": "Same QPS, 100× the input tokens: prefill must be sized separately from decode.", "es": "Mismos QPS, 100× los tokens de entrada: el prefill se dimensiona aparte del decode." }
+        },
+        {
+          "text": { "en": "Nothing: decode dominates, so prompt length barely matters", "es": "Nada: domina el decode, así que el largo del prompt casi no importa" },
+          "why": { "en": "Decode is usually the bottleneck in chat, but a 100× jump in input tokens can make prefill the bottleneck.", "es": "En un chat el decode suele ser el cuello de botella, pero un salto de 100× en tokens de entrada puede volver al prefill el cuello de botella." }
+        },
+        {
+          "text": { "en": "It sizes for peak; average QPS is what GPUs must handle", "es": "Dimensiona para el pico; las GPU deben atender el QPS promedio" },
+          "why": { "en": "Backwards: sizing for the average day leaves you short during peaks that run 2–5× higher.", "es": "Al revés: dimensionar para el día promedio te deja corto en picos que son 2–5× más altos." }
+        },
+        {
+          "text": { "en": "Only storage changes: longer prompts mean bigger logs", "es": "Solo cambia el almacenamiento: prompts más largos implican logs más grandes" },
+          "why": { "en": "Logs grow too, but storage is cheap; the GPU compute per request is what moves by 100×.", "es": "Los logs también crecen, pero el almacenamiento es barato; lo que se mueve 100× es el cómputo de GPU por request." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "For LLM systems, count tokens, not requests. Peak tokens/s = peak QPS × tokens per request, with prefill (input) and decode (output) sized separately. A 20k-token prompt is ~100× the prefill work of a 200-token turn at the same QPS.",
+        "es": "En sistemas con LLM, cuenta tokens, no requests. Tokens/s pico = QPS pico × tokens por request, con el prefill (entrada) y el decode (salida) dimensionados por separado. Un prompt de 20k tokens es ~100× el trabajo de prefill de un turno de 200 tokens con los mismos QPS."
+      }
+    },
+    {
+      "id": "back-of-envelope.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size a chat fleet: **500k DAU**, 8 messages each per day, peak = 3× average, ~400 output tokens per reply. A load test shows **2,000 output tokens/s per GPU** within your p95 latency target, and you plan for 70% utilization. How many GPUs?",
+        "es": "Dimensiona una flota de chat: **500k DAU**, 8 mensajes por persona al día, pico = 3× el promedio, ~400 tokens de salida por respuesta. Una prueba de carga muestra **2,000 tokens de salida/s por GPU** dentro de tu objetivo de latencia p95, y planeas un 70% de utilización. ¿Cuántas GPU?"
+      },
+      "answer": 40,
+      "tolerance": 0.2,
+      "unit": "GPUs",
+      "explain": {
+        "en": "4M requests/day ÷ 86,400 ≈ 46 QPS average → ~139 at peak. × 400 tokens ≈ 56k output tokens/s. Each GPU gives 2,000 × 0.7 = 1,400 usable tokens/s → 56k ÷ 1,400 ≈ 40 GPUs, before redundancy across zones. Decode is the bottleneck, so size on output tokens/s.",
+        "es": "4M requests/día ÷ 86,400 ≈ 46 QPS promedio → ~139 en el pico. × 400 tokens ≈ 56k tokens de salida/s. Cada GPU da 2,000 × 0.7 = 1,400 tokens/s útiles → 56k ÷ 1,400 ≈ 40 GPU, antes de la redundancia entre zonas. El decode es el cuello de botella, así que dimensiona por tokens de salida/s."
+      }
+    },
+    {
+      "id": "back-of-envelope.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Order these operations from fastest to slowest.",
+        "es": "Ordena estas operaciones de la más rápida a la más lenta."
+      },
+      "steps": [
+        { "en": "L1 cache reference", "es": "Referencia a la cache L1" },
+        { "en": "Main memory reference", "es": "Referencia a memoria principal" },
+        { "en": "SSD random read", "es": "Lectura aleatoria en SSD" },
+        { "en": "Round trip inside one datacenter", "es": "Ida y vuelta dentro de un mismo datacenter" },
+        { "en": "Round trip California ↔ Netherlands", "es": "Ida y vuelta California ↔ Países Bajos" }
+      ],
+      "explain": {
+        "en": "~1 ns, ~100 ns, ~16–100 µs, ~0.5 ms, ~150 ms: the ladder spans about eight orders of magnitude. Counting the slow hops on the critical path tells you where the time goes before any profiler does.",
+        "es": "~1 ns, ~100 ns, ~16–100 µs, ~0.5 ms, ~150 ms: la escalera abarca unos ocho órdenes de magnitud. Contar los saltos lentos del camino crítico te dice dónde se va el tiempo antes que cualquier profiler."
+      }
+    },
+    {
+      "id": "back-of-envelope.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate sizes chat-log storage: 10M turns/day × 2 KB × 365 days ≈ **7.3 TB/year**, and provisions 8 TB. What did they miss?",
+        "es": "Un colega dimensiona el almacenamiento de logs del chat: 10M turnos/día × 2 KB × 365 días ≈ **7.3 TB/año**, y aprovisiona 8 TB. ¿Qué se le pasó?"
+      },
+      "options": [
+        {
+          "text": { "en": "Replication: ×3 for replicas alone, so ~22 TB", "es": "La replicación: ×3 solo por réplicas, o sea ~22 TB" },
+          "why": { "en": "Stored bytes are a multiple of raw bytes; indexes and backups add more on top.", "es": "Los bytes almacenados son un múltiplo de los bytes crudos; los índices y backups suman todavía más." }
+        },
+        {
+          "text": { "en": "Bits vs bytes: multiply by 8 for stored size", "es": "Bits vs bytes: multiplicar por 8 para el tamaño almacenado" },
+          "why": { "en": "The ×8 trap applies to bandwidth quoted in bits/s; stored sizes are already in bytes.", "es": "La trampa del ×8 aplica al ancho de banda en bits/s; los tamaños almacenados ya están en bytes." }
+        },
+        {
+          "text": { "en": "The 2–5× peak factor on the stored total", "es": "El factor de pico de 2–5× sobre el total almacenado" },
+          "why": { "en": "Peaks change throughput, not how many bytes accumulate over a year.", "es": "Los picos cambian el throughput, no cuántos bytes se acumulan en un año." }
+        },
+        {
+          "text": { "en": "1 KB is 1,024 bytes, so it's ~2% too low", "es": "1 KB son 1,024 bytes, así que queda ~2% corto" },
+          "why": { "en": "Technically true but noise at order-of-magnitude level; the real miss is ×3.", "es": "Técnicamente cierto, pero es ruido a nivel de orden de magnitud; el error real es ×3." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Storage = items/day × bytes × retention × replication factor. Forgetting replicas, indexes and backups is the classic miss: 7.3 TB raw × 3 replicas ≈ 22 TB, nearly 3× what was provisioned. Get the power of ten right first; 2% corrections don't matter.",
+        "es": "Almacenamiento = ítems/día × bytes × retención × factor de replicación. Olvidar réplicas, índices y backups es el error clásico: 7.3 TB crudos × 3 réplicas ≈ 22 TB, casi 3× lo aprovisionado. Primero acierta la potencia de diez; las correcciones de 2% no importan."
+      }
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "concept": "rag-evaluation",
+  "items": [
+    {
+      "id": "rag-evaluation.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your split eval shows: **hit rate@50 = 0.80**, faithfulness 0.97, answer correctness 70%. The top 50 go to a reranker, which keeps 5 for the prompt. The team proposes a bigger generator model. Where should the effort go?",
+        "es": "Tu evaluación separada muestra: **hit rate@50 = 0.80**, faithfulness de 0.97 y corrección de 70%. El top 50 pasa por un reranker, que deja 5 para el prompt. El equipo propone un modelo generador más grande. ¿Dónde debe ir el esfuerzo?"
+      },
+      "options": [
+        { "text": { "en": "First-stage retrieval: chunking, embeddings or hybrid search", "es": "La recuperación de primera etapa: chunking, embeddings o búsqueda híbrida" },
+          "why": { "en": "~20% of questions never get a relevant doc in the 50 candidates; that's the ceiling for everything downstream.", "es": "~20% de las preguntas nunca tiene un documento relevante entre los 50 candidatos; ese es el techo de todo lo que viene después." } },
+        { "text": { "en": "A larger, stronger generator model, as the team proposes", "es": "Un modelo generador más grande y potente, como propone el equipo" },
+          "why": { "en": "No generator can answer from evidence it never receives.", "es": "Ningún generador puede responder con evidencia que nunca recibe." } },
+        { "text": { "en": "A stronger cross-encoder reranker over the same top 50", "es": "Un reranker cross-encoder más potente sobre el mismo top 50" },
+          "why": { "en": "A reranker reorders the 50 candidates; it can't surface docs that aren't among them.", "es": "Un reranker reordena los 50 candidatos; no puede traer documentos que no estén entre ellos." } },
+        { "text": { "en": "Prompt changes that push faithfulness even higher", "es": "Cambios en el prompt que suban todavía más la faithfulness" },
+          "why": { "en": "At 0.97 the model already sticks to its context; the context is what's missing.", "es": "Con 0.97 el modelo ya se apega a su contexto; lo que falta es el contexto." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Read the split metrics as a funnel. Hit rate@50 caps what reranking can rank, and both cap what generation can answer. High faithfulness with a low retrieval ceiling means the model is faithfully answering from the wrong evidence, so fix the earliest broken stage first.",
+        "es": "Lee las métricas separadas como un embudo. El hit rate@50 limita lo que el reranking puede ordenar, y ambos limitan lo que la generación puede responder. Una faithfulness alta con un techo de recuperación bajo significa que el modelo responde fielmente con la evidencia equivocada, así que arregla primero la etapa rota más temprana."
+      }
+    },
+    {
+      "id": "rag-evaluation.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "An eval run has 5 questions. The **first** relevant doc appears at rank 1, rank 2, rank 5, not at all, and rank 1. What is the MRR?",
+        "es": "Una corrida de evaluación tiene 5 preguntas. El **primer** documento relevante aparece en el puesto 1, el puesto 2, el puesto 5, en ninguno y en el puesto 1. ¿Cuál es el MRR?"
+      },
+      "answer": 0.54,
+      "tolerance": 0.05,
+      "explain": {
+        "en": "Reciprocal ranks: 1 + 0.5 + 0.2 + 0 + 1 = 2.7; divide by all 5 questions = 0.54. A miss counts as 0 and stays in the denominator; dropping it gives 0.675 and flatters the system. MRR rewards putting the first relevant doc near the top.",
+        "es": "Rangos recíprocos: 1 + 0.5 + 0.2 + 0 + 1 = 2.7; dividido entre las 5 preguntas = 0.54. Un fallo cuenta como 0 y se queda en el denominador; si lo quitas, da 0.675 y favorece al sistema. El MRR premia poner el primer documento relevante cerca de la cima."
+      }
+    },
+    {
+      "id": "rag-evaluation.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete `recall_at_k` so it returns the share of the relevant docs that appear in the top k.",
+        "es": "Completa `recall_at_k` para que devuelva la proporción de documentos relevantes que aparecen en el top k."
+      },
+      "lang": "python",
+      "code": "def recall_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:\n    \"\"\"Multi-hop item with 2 relevant docs, 1 of them in the top k -> 0.5\"\"\"\n    ____",
+      "options": [
+        { "text": "return len(set(retrieved[:k]) & relevant) / len(relevant)" },
+        { "text": "return len(set(retrieved[:k]) & relevant) / k",
+          "why": { "en": "That's precision@k: the share of the top k that is relevant, not of the relevant docs found.", "es": "Eso es precision@k: la proporción del top k que es relevante, no de los relevantes encontrados." } },
+        { "text": "return float(bool(set(retrieved[:k]) & relevant))",
+          "why": { "en": "That's hit rate: one relevant doc counts as full marks, so the multi-hop item scores 1.0.", "es": "Eso es hit rate: un solo documento relevante cuenta como acierto completo, así que el ítem multi-hop saca 1.0." } },
+        { "text": "return len(set(retrieved) & relevant) / len(relevant)",
+          "why": { "en": "Ignores k: it counts everything retrieved, not what fits in the top k you actually send.", "es": "Ignora k: cuenta todo lo recuperado, no lo que cabe en el top k que de verdad envías." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Recall, precision and hit rate share the same intersection and differ only in the denominator: relevant docs, k, or \"any hit at all\". Recall@k is the ceiling for generation; precision@k is the noise you pay for in the prompt; hit rate hides multi-hop gaps.",
+        "es": "Recall, precision y hit rate comparten la misma intersección y solo cambia el denominador: documentos relevantes, k o \"algún acierto\". El recall@k es el techo de la generación; la precision@k es el ruido que pagas en el prompt; el hit rate esconde los huecos multi-hop."
+      }
+    },
+    {
+      "id": "rag-evaluation.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your team labeled the relevant **chunk ids** for 300 eval questions. Next sprint they switch from 512- to 1,024-token chunks, and recall@10 collapses to near zero overnight. Most likely explanation?",
+        "es": "Tu equipo etiquetó los **ids de chunks** relevantes para 300 preguntas de evaluación. En el siguiente sprint pasan de chunks de 512 a 1,024 tokens, y el recall@10 se desploma casi a cero de un día para otro. ¿Explicación más probable?"
+      },
+      "options": [
+        { "text": { "en": "The labels point to chunk ids that no longer exist", "es": "Las etiquetas apuntan a ids de chunks que ya no existen" },
+          "why": { "en": "Re-chunking creates new ids, so every label misses. Label doc ids or text spans instead.", "es": "Cambiar el chunking crea ids nuevos, así que todas las etiquetas fallan. Etiqueta ids de documentos o fragmentos de texto." } },
+        { "text": { "en": "Larger chunks dilute the embeddings and wreck retrieval", "es": "Los chunks más grandes diluyen los embeddings y arruinan la recuperación" },
+          "why": { "en": "Dilution can cost some points, not a collapse to near zero overnight.", "es": "La dilución puede costar algunos puntos, no un desplome casi a cero de un día para otro." } },
+        { "text": { "en": "The LLM judge grows stricter with longer contexts", "es": "El LLM juez se vuelve más estricto con contextos más largos" },
+          "why": { "en": "Recall@k compares ids against labels; no judge is involved in retrieval metrics.", "es": "El recall@k compara ids contra etiquetas; en las métricas de recuperación no interviene ningún juez." } },
+        { "text": { "en": "Recall@k is noisy, so a rerun will recover it", "es": "El recall@k es ruidoso, así que una nueva corrida lo recuperará" },
+          "why": { "en": "Retrieval metrics are deterministic: a rerun gives the same number.", "es": "Las métricas de recuperación son deterministas: otra corrida da el mismo número." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The eval set is the real asset, so its labels must outlive your pipeline choices. Label doc ids or text spans, then collapse retrieved chunks to doc ids at scoring time; that way you can compare chunking strategies on the same set instead of relabeling for each one.",
+        "es": "El set de evaluación es el activo real, así que sus etiquetas deben sobrevivir a las decisiones del pipeline. Etiqueta ids de documentos o fragmentos de texto y, al puntuar, convierte los chunks recuperados en ids de documento; así comparas estrategias de chunking sobre el mismo set en vez de reetiquetar para cada una."
+      }
+    }
+  ]
+}

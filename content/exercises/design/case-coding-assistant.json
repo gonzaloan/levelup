@@ -1,0 +1,101 @@
+{
+  "concept": "case-coding-assistant",
+  "items": [
+    {
+      "id": "case-coding-assistant.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your inline-completion fleet is GPU-saturated at peak, yet most suggestions it generates are never displayed. The IDE plugin debounces 75 ms and aborts the in-flight request on every keystroke. Most likely cause and fix?",
+        "es": "Tu flota de autocompletado está saturada de GPU en el pico, pero la mayoría de las sugerencias que genera nunca se muestran. El plugin del IDE aplica un debounce de 75 ms y aborta la petición en curso con cada tecla. ¿Causa más probable y corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "The abort stops at the client; propagate it so the GPU stops decoding", "es": "El abort se queda en el cliente; propágalo para que la GPU deje de decodificar" },
+          "why": { "en": "Cancelling in the IDE only hides the result; the server keeps generating stale suggestions.", "es": "Cancelar en el IDE solo oculta el resultado; el servidor sigue generando sugerencias viejas." }
+        },
+        {
+          "text": { "en": "The debounce is too short; raise it to ~500 ms", "es": "El debounce es muy corto; súbelo a ~500 ms" },
+          "why": { "en": "That alone blows the ~300 ms budget: suggestions arrive after the user has typed past them.", "es": "Eso solo ya rompe el presupuesto de ~300 ms: las sugerencias llegan cuando el usuario ya siguió escribiendo." }
+        },
+        {
+          "text": { "en": "Use a larger model so suggestions are worth showing", "es": "Usar un modelo más grande para que valga la pena mostrarlas" },
+          "why": { "en": "Wrong direction: it raises latency and cost per request, and the waste is stale decoding, not quality.", "es": "Dirección equivocada: sube la latencia y el costo por petición, y el desperdicio es decodificar de más, no la calidad." }
+        },
+        {
+          "text": { "en": "Add GPUs to the fleet in the nearest region", "es": "Agregar GPUs a la flota en la región más cercana" },
+          "why": { "en": "Buys capacity to decode tokens nobody will see; it treats the symptom, not the waste.", "es": "Compra capacidad para decodificar tokens que nadie verá; trata el síntoma, no el desperdicio." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "At keystroke rates most completion requests die young. Debounce and client abort are only half the job: unless the disconnect reaches the inference server, the GPU keeps decoding stale requests and a large share of the fleet works for nothing. It's the cheapest capacity you'll ever add.",
+        "es": "Al ritmo de las teclas, la mayoría de las peticiones de autocompletado muere joven. El debounce y el abort en el cliente son solo la mitad: si la desconexión no llega al servidor de inferencia, la GPU sigue decodificando peticiones viejas y buena parte de la flota trabaja para nada. Es la capacidad más barata que vas a sumar."
+      }
+    },
+    {
+      "id": "case-coding-assistant.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Peak completion load: **100k seats**, **40%** typing at peak, each sending **1 request per ~4 s** after debounce. Each request carries **~2.6k input tokens** and returns ~20. How many **prefill (input) tokens per second** must the fleet process?",
+        "es": "Carga de autocompletado en el pico: **100k asientos**, **40%** escribiendo, cada uno manda **1 petición cada ~4 s** tras el debounce. Cada petición lleva **~2.6k tokens de entrada** y devuelve ~20. ¿Cuántos **tokens de prefill (entrada) por segundo** debe procesar la flota?"
+      },
+      "answer": 26000000,
+      "tolerance": 0.15,
+      "unit": "tokens/s",
+      "explain": {
+        "en": "100k × 0.4 ÷ 4 s = 10k QPS. 10k × 2.6k = 26M prefill tokens/s, versus 10k × 20 = 200k output tokens/s, ~130× less. Completion is prefill-bound, so automatic prefix caching across consecutive keystrokes matters more than decode speed.",
+        "es": "100k × 0.4 ÷ 4 s = 10k QPS. 10k × 2.6k = 26M tokens de prefill/s, frente a 10k × 20 = 200k tokens de salida/s, ~130× menos. El autocompletado está dominado por el prefill, así que el prefix caching automático entre teclas consecutivas importa más que la velocidad de decode."
+      }
+    },
+    {
+      "id": "case-coding-assistant.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the inline-completion hot path in order, from keystroke to measurement.",
+        "es": "Ordena la ruta caliente del autocompletado, desde la tecla hasta la medición."
+      },
+      "steps": [
+        { "en": "A keystroke aborts the stale request and restarts the debounce timer", "es": "Una tecla aborta la petición vieja y reinicia el temporizador de debounce" },
+        { "en": "The plugin builds a FIM prompt locally from prefix, suffix and open-tab snippets", "es": "El plugin arma localmente un prompt FIM con prefijo, sufijo y fragmentos de pestañas abiertas" },
+        { "en": "The gateway checks a prefix cache, then calls the small FIM model", "es": "El gateway revisa una caché por prefijo y luego llama al modelo FIM chico" },
+        { "en": "A few lines stream back and appear as ghost text", "es": "Unas pocas líneas vuelven en streaming y aparecen como sugerencia en gris" },
+        { "en": "Telemetry logs the accept and checks retention at 30 s and 10 min", "es": "La telemetría registra la aceptación y revisa la retención a los 30 s y a los 10 min" }
+      ],
+      "explain": {
+        "en": "Most requests should die before they cost GPU time: cancel and debounce on the client, build context locally from free IDE state, and try caches before the model. The loop closes with retention, which measures what survives rather than what was accepted.",
+        "es": "La mayoría de las peticiones debería morir antes de costar tiempo de GPU: cancelar y aplicar debounce en el cliente, armar el contexto localmente con el estado gratuito del IDE y probar las cachés antes que el modelo. El ciclo cierra con la retención, que mide lo que sobrevive y no lo que se aceptó."
+      }
+    },
+    {
+      "id": "case-coding-assistant.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A new completion model writes longer, bolder suggestions, and the A/B (split by user) shows a clear jump in **acceptance rate**. The PM wants to ship today. What do you say?",
+        "es": "Un nuevo modelo de autocompletado escribe sugerencias más largas y audaces, y el A/B (dividido por usuario) muestra un salto claro en la **tasa de aceptación**. El PM quiere lanzar hoy. ¿Qué le dices?"
+      },
+      "options": [
+        {
+          "text": { "en": "Wait for retention at 30 s and 10 min to hold up", "es": "Esperar a que la retención a 30 s y 10 min se sostenga" },
+          "why": { "en": "Accept-then-delete is a false positive that only retention and post-accept edits reveal.", "es": "Aceptar y luego borrar es un falso positivo que solo revelan la retención y las ediciones posteriores." }
+        },
+        {
+          "text": { "en": "Ship it: acceptance best predicts perceived productivity", "es": "Lanzarlo: la aceptación es el mejor predictor de productividad percibida" },
+          "why": { "en": "True in GitHub's study, but bolder suggestions game it: accepted, then deleted.", "es": "Es cierto en el estudio de GitHub, pero las sugerencias audaces lo inflan: se aceptan y luego se borran." }
+        },
+        {
+          "text": { "en": "Confirm on HumanEval pass@1 before shipping", "es": "Confirmar con pass@1 en HumanEval antes de lanzar" },
+          "why": { "en": "Public sets like HumanEval are saturated and say little about your users' repos.", "es": "Los sets públicos como HumanEval están saturados y dicen poco sobre los repos de tus usuarios." }
+        },
+        {
+          "text": { "en": "Re-split the A/B per request for more statistical power", "es": "Rehacer el A/B por petición para tener más poder estadístico" },
+          "why": { "en": "Per-request splits flip users between models mid-session; A/B by user.", "es": "Dividir por petición hace saltar al usuario entre modelos a mitad de sesión; el A/B va por usuario." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Acceptance rate is the right headline metric but easy to game: longer suggestions get accepted more often and then rewritten. Pair it with retention (accepted characters still present after 30 s and 10 min) and post-accept edit distance before calling a model better.",
+        "es": "La tasa de aceptación es la métrica principal correcta, pero es fácil de inflar: las sugerencias más largas se aceptan más y luego se reescriben. Acompáñala con la retención (caracteres aceptados que siguen ahí a los 30 s y 10 min) y la distancia de edición posterior antes de declarar mejor un modelo."
+      }
+    }
+  ]
+}

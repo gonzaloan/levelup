@@ -1,0 +1,76 @@
+{
+  "concept": "structured-outputs",
+  "items": [
+    {
+      "id": "structured-outputs.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You moved ticket extraction from \"reply in JSON\" to a strict schema with `order_id: str`. Parse errors are gone, but records now carry an `order_id` even when the ticket mentions none. Most likely cause and fix?",
+        "es": "Pasaste la extracción de tickets de \"responde en JSON\" a un esquema estricto con `order_id: str`. Ya no hay errores de parseo, pero los registros traen un `order_id` aunque el ticket no mencione ninguno. ¿Causa y corrección más probables?"
+      },
+      "options": [
+        { "text": { "en": "The field is required with no null option, so the model invents one; make it nullable", "es": "El campo es obligatorio y no admite null, así que el modelo inventa uno; hazlo nullable" },
+          "why": { "en": "Strict mode must emit a string for every required key; when the data is absent, the only valid output is an invented one.", "es": "El modo estricto debe emitir un string por cada campo obligatorio; si el dato no existe, la única salida válida es una inventada." } },
+        { "text": { "en": "Strict mode distorts values; switch back to JSON mode to get correct ids", "es": "El modo estricto distorsiona los valores; vuelve a JSON mode para tener ids correctos" },
+          "why": { "en": "JSON mode guarantees braces, not keys or values; you'd lose the shape guarantee and still have no null option.", "es": "JSON mode garantiza llaves, no campos ni valores; perderías la garantía de forma y seguirías sin opción null." } },
+        { "text": { "en": "The model is misreading the tickets; move to a larger model", "es": "El modelo lee mal los tickets; cambia a un modelo más grande" },
+          "why": { "en": "There is no id to read; the schema demands one, and any model forced to fill it will invent it.", "es": "No hay ningún id que leer; el esquema exige uno, y cualquier modelo obligado a llenarlo lo va a inventar." } },
+        { "text": { "en": "Temperature is too high; set it to 0 so the model stops guessing ids", "es": "La temperatura es muy alta; ponla en 0 para que el modelo deje de adivinar ids" },
+          "why": { "en": "The constraint is unchanged at temperature 0: the schema still demands a string, so the most likely fake id wins.", "es": "Con temperatura 0 la restricción sigue igual: el esquema exige un string, así que gana el id falso más probable." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Constrained decoding guarantees the shape you asked for, including a value for every required key. If data can be absent and the schema allows no null, you have asked for a fabrication. Make optional fields nullable, then validate values in code and retry or route to review.",
+        "es": "La decodificación restringida garantiza la forma que pediste, incluido un valor para cada campo obligatorio. Si el dato puede faltar y el esquema no admite null, pediste algo inventado. Haz nullable los campos opcionales, valida los valores en código y reintenta o manda a revisión."
+      }
+    },
+    {
+      "id": "structured-outputs.a2",
+      "type": "code",
+      "prompt": {
+        "en": "A router sends each ticket to the queue named by `category`, and the five labels are fixed. Fill the gap so the model can never emit a label outside the set.",
+        "es": "Un router manda cada ticket a la cola que indica `category`, y las cinco etiquetas son fijas. Completa el hueco para que el modelo nunca pueda emitir una etiqueta fuera del conjunto."
+      },
+      "lang": "python",
+      "code": "class Triage(BaseModel):\n    # Keys are generated in order: gather evidence first, decide second\n    reasoning: str = Field(description=\"1-3 sentences of evidence from the ticket\")\n    ____\n    priority: Literal[\"P1\", \"P2\", \"P3\"]\n    order_id: str | None  # strict mode needs every key: optional means nullable\n\nr = client.chat.completions.parse(model=MODEL, messages=msgs, response_format=Triage)\nroute_to_queue(r.choices[0].message.parsed.category)",
+      "options": [
+        { "text": "category: Literal[\"billing\", \"bug\", \"how_to\", \"account\", \"other\"]" },
+        { "text": "category: str = Field(description=\"billing, bug, how_to, account or other\")",
+          "why": { "en": "A description is a hint, not a constraint: the grammar allows any string, so labels can still be invented.", "es": "Una descripción es una pista, no una restricción: la gramática acepta cualquier string, así que igual se pueden inventar etiquetas." } },
+        { "text": "category: str | None  # null when unsure, router picks a default",
+          "why": { "en": "Nullable fits data that can be absent, not a decision the router needs; and any non-null string is still unconstrained.", "es": "Nullable sirve para datos que pueden faltar, no para una decisión que el router necesita; y cualquier string no nulo sigue sin restricción." } },
+        { "text": "category: list[str]  # every label that might apply",
+          "why": { "en": "The router expects exactly one label, and a list of free strings constrains nothing.", "es": "El router espera exactamente una etiqueta, y una lista de strings libres no restringe nada." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Constrained decoding only masks what the schema forbids. A `Literal` becomes an enum in the grammar, so tokens outside the five labels are never sampled: classification turns into a closed set. Descriptions and comments only steer the model; they don't constrain it.",
+        "es": "La decodificación restringida solo enmascara lo que el esquema prohíbe. Un `Literal` se vuelve un enum en la gramática, así que los tokens fuera de las cinco etiquetas nunca se muestrean: la clasificación se vuelve un conjunto cerrado. Las descripciones y los comentarios solo orientan al modelo; no lo restringen."
+      }
+    },
+    {
+      "id": "structured-outputs.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "With a strict schema (constrained decoding), which of these are guaranteed? Select all that apply.",
+        "es": "Con un esquema estricto (decodificación restringida), ¿cuáles de estas cosas están garantizadas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A completed response parses as JSON", "es": "Una respuesta completa se parsea como JSON" } },
+        { "text": { "en": "Every required key is present", "es": "Todos los campos obligatorios están presentes" } },
+        { "text": { "en": "Enum fields hold one of the allowed values", "es": "Los campos enum tienen uno de los valores permitidos" } },
+        { "text": { "en": "Extracted totals match the source document", "es": "Los totales extraídos coinciden con el documento fuente" },
+          "why": { "en": "Shape, not truth: a schema-valid invoice can carry a misread or hallucinated total.", "es": "Forma, no verdad: una factura válida según el esquema puede traer un total mal leído o alucinado." } },
+        { "text": { "en": "Every call returns your object, never a refusal", "es": "Cada llamada devuelve tu objeto, nunca un rechazo" },
+          "why": { "en": "Safety refusals come back as text, not as your schema; check for them.", "es": "Los rechazos por seguridad vuelven como texto, no con tu esquema; tienes que revisarlos." } },
+        { "text": { "en": "Output stays whole even when `max_tokens` is hit", "es": "La salida queda completa aunque se alcance `max_tokens`" },
+          "why": { "en": "Truncation cuts the JSON off mid-object; handle it like any other failure.", "es": "El truncamiento corta el JSON a mitad del objeto; manéjalo como cualquier otra falla." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "The grammar masks tokens that would break the schema, so shape is guaranteed while generation runs to completion. Values, refusals and truncation sit outside that guarantee: validate semantics in code (e.g. line items sum to the total), retry with the error, and route repeat failures to review.",
+        "es": "La gramática enmascara los tokens que romperían el esquema, así que la forma está garantizada mientras la generación termine. Los valores, los rechazos y el truncamiento quedan fuera de esa garantía: valida la semántica en código (por ejemplo, que las líneas sumen el total), reintenta con el error y manda a revisión las fallas repetidas."
+      }
+    }
+  ]
+}

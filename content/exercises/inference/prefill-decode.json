@@ -1,0 +1,64 @@
+{
+  "concept": "prefill-decode",
+  "items": [
+    {
+      "id": "prefill-decode.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A few-GPU vLLM deployment decodes ~60 chat streams at ~25 ms per token. Whenever a user pastes a 32k-token contract, every stream freezes and p99 inter-token latency jumps past 1 s. Best fix?",
+        "es": "Un despliegue de vLLM con pocas GPUs decodifica ~60 streams de chat a ~25 ms por token. Cada vez que un usuario pega un contrato de 32k tokens, todos los streams se congelan y el p99 de latencia entre tokens supera 1 s. ¿Mejor solución?"
+      },
+      "options": [
+        { "text": { "en": "Chunked prefill, so the long prompt rides along with decode steps", "es": "Prefill por chunks, para que el prompt largo viaje junto con los pasos de decode" } },
+        { "text": { "en": "Speculative decoding, to cut the number of decode steps", "es": "Decodificación especulativa, para reducir los pasos de decode" },
+          "why": { "en": "It speeds up decode, but the freeze comes from one huge prefill occupying the step.", "es": "Acelera el decode, pero el congelamiento viene de un prefill enorme que ocupa el paso." } },
+        { "text": { "en": "Quantize the weights to relieve memory bandwidth", "es": "Cuantizar los pesos para aliviar el ancho de banda de memoria" },
+          "why": { "en": "That helps bandwidth-bound decode, not a compute-bound prefill that blocks everyone for ~1 s.", "es": "Eso ayuda al decode, limitado por ancho de banda, no a un prefill limitado por cómputo que bloquea a todos ~1 s." } },
+        { "text": { "en": "Separate GPU pools for prefill and decode", "es": "Pools de GPU separados para prefill y decode" },
+          "why": { "en": "It removes interference too, but on a few GPUs the KV transfer and second pool cost more than they save.", "es": "También elimina la interferencia, pero con pocas GPUs la transferencia de KV y el segundo pool cuestan más de lo que ahorran." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A 32k-token prefill is ~1 s of compute; done in one step, no decode runs meanwhile. Chunked prefill (e.g., 2,048 tokens per step) spreads it over many steps that also carry decode tokens, so streams slow slightly instead of stalling. Disaggregation pays off only at large scale.",
+        "es": "Un prefill de 32k tokens es ~1 s de cómputo; hecho en un solo paso, mientras tanto no corre ningún decode. El prefill por chunks (p. ej., 2.048 tokens por paso) lo reparte en muchos pasos que también llevan tokens de decode, así que los streams se frenan un poco en vez de detenerse. La desagregación solo compensa a gran escala."
+      }
+    },
+    {
+      "id": "prefill-decode.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "In BF16, decode at batch B does about B FLOPs per byte of weights read (ignore KV-cache reads). An H100 SXM offers 989 TFLOPS dense BF16 and 3.35 TB/s of HBM bandwidth. Roughly what batch size makes decode compute-bound?",
+        "es": "En BF16, el decode con batch B hace cerca de B FLOPs por byte de pesos leídos (ignora las lecturas de KV cache). Una H100 SXM ofrece 989 TFLOPS densos en BF16 y 3,35 TB/s de ancho de banda HBM. ¿Con qué tamaño de batch, aproximadamente, el decode queda limitado por cómputo?"
+      },
+      "answer": 295,
+      "tolerance": 0.15,
+      "unit": "sequences",
+      "explain": {
+        "en": "The ridge point is 989e12 ÷ 3.35e12 ≈ 295 FLOPs per byte. Below that batch, every step waits on HBM: for an 8B model, batch 64 takes the same ~4.8 ms per step as batch 1 but yields 64 tokens. Batching is the whole economics of decode, and KV reads push the ridge even further out.",
+        "es": "El punto de quiebre es 989e12 ÷ 3,35e12 ≈ 295 FLOPs por byte. Con un batch menor, cada paso espera a la HBM: en un modelo de 8B, batch 64 tarda los mismos ~4,8 ms por paso que batch 1, pero produce 64 tokens. El batching es toda la economía del decode, y las lecturas de KV alejan todavía más ese punto."
+      }
+    },
+    {
+      "id": "prefill-decode.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "You move an 8B chat model served at small batch sizes to a GPU with **2× the FLOPs but the same memory bandwidth**. Long prompts are common. What happens to latency?",
+        "es": "Mueves un modelo de chat de 8B, servido con batches chicos, a una GPU con **2× los FLOPs pero el mismo ancho de banda de memoria**. Los prompts largos son comunes. ¿Qué pasa con la latencia?"
+      },
+      "options": [
+        { "text": { "en": "TTFT on long prompts drops; TPOT barely moves", "es": "El TTFT en prompts largos baja; el TPOT casi no cambia" } },
+        { "text": { "en": "TPOT roughly halves; TTFT barely moves", "es": "El TPOT baja casi a la mitad; el TTFT casi no cambia" },
+          "why": { "en": "Backwards: decode is bandwidth-bound (~1 FLOP per byte at batch 1); prefill is the compute-bound phase.", "es": "Al revés: el decode está limitado por ancho de banda (~1 FLOP por byte con batch 1); el prefill es la fase limitada por cómputo." } },
+        { "text": { "en": "Both TTFT and TPOT roughly halve", "es": "Tanto el TTFT como el TPOT bajan casi a la mitad" },
+          "why": { "en": "Only compute-bound work speeds up with FLOPs; decode keeps waiting on HBM.", "es": "Solo el trabajo limitado por cómputo se acelera con más FLOPs; el decode sigue esperando a la HBM." } },
+        { "text": { "en": "Neither moves; only batch size sets latency", "es": "Ninguno cambia; solo el tamaño del batch define la latencia" },
+          "why": { "en": "Prefill is compute-bound, so more FLOPs do shorten it, especially on long prompts.", "es": "El prefill está limitado por cómputo, así que más FLOPs sí lo acortan, sobre todo con prompts largos." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Match the knob to the bottleneck. Prefill is matrix–matrix work, so FLOPs shorten it and TTFT with it. Decode streams every weight per step for ~1 FLOP per byte, so TPOT follows bandwidth, smaller weights (quantization) or fewer steps (speculative decoding).",
+        "es": "Asocia cada perilla con su cuello de botella. El prefill es trabajo matriz–matriz, así que más FLOPs lo acortan, y con él el TTFT. El decode lee todos los pesos en cada paso para ~1 FLOP por byte, así que el TPOT depende del ancho de banda, de pesos más chicos (cuantización) o de menos pasos (decodificación especulativa)."
+      }
+    }
+  ]
+}

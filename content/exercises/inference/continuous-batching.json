@@ -1,0 +1,67 @@
+{
+  "concept": "continuous-batching",
+  "items": [
+    {
+      "id": "continuous-batching.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "An internal chat API wraps Hugging Face `generate()` in FastAPI with fixed batches of 16. Answers range from 20 to 1,500 tokens. `nvidia-smi` shows the GPU busy, throughput is poor and p95 TTFT is ~6 s. A teammate wants more GPUs. What do you do first?",
+        "es": "Una API de chat interna envuelve `generate()` de Hugging Face en FastAPI con batches fijos de 16. Las respuestas van de 20 a 1,500 tokens. `nvidia-smi` muestra la GPU ocupada, el throughput es malo y el TTFT p95 ronda los 6 s. Un compañero quiere más GPUs. ¿Qué haces primero?"
+      },
+      "options": [
+        { "text": { "en": "Move to an engine with continuous batching, like vLLM, on the same GPU", "es": "Pasar a un motor con continuous batching, como vLLM, en la misma GPU" },
+          "why": { "en": "Slots freed by short answers get refilled every step, and new requests join at the next step instead of waiting.", "es": "Los lugares que liberan las respuestas cortas se rellenan en cada paso, y los requests nuevos entran en el paso siguiente en vez de esperar." } },
+        { "text": { "en": "Add GPUs, since the busy GPU shows you're out of capacity", "es": "Agregar GPUs, ya que la GPU ocupada muestra que no hay más capacidad" },
+          "why": { "en": "Busy isn't useful: finished rows keep generating padding while the longest answer runs.", "es": "Ocupada no significa útil: las filas terminadas siguen generando padding mientras corre la respuesta más larga." } },
+        { "text": { "en": "Raise the fixed batch size from 16 to 64 to fill the GPU", "es": "Subir el tamaño fijo del batch de 16 a 64 para llenar la GPU" },
+          "why": { "en": "Each batch still lasts as long as its longest member, so more slots idle and new requests wait longer.", "es": "Cada batch sigue durando lo que su miembro más largo, así que más lugares quedan ociosos y los requests nuevos esperan más." } },
+        { "text": { "en": "Quantize the model to INT4 so each decode step runs faster", "es": "Cuantizar el modelo a INT4 para que cada paso de decode sea más rápido" },
+          "why": { "en": "Faster steps help a little, but idle slots and requests waiting for the batch to drain remain.", "es": "Pasos más rápidos ayudan un poco, pero siguen los lugares ociosos y los requests que esperan a que se vacíe el batch." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "With static batches, a batch costs its longest sequence × batch size, and arrivals queue behind it, so TTFT includes someone else's generation. Re-forming the batch every iteration fixes both on the same hardware, with no client changes. Fix utilization before buying capacity.",
+        "es": "Con batches estáticos, un batch cuesta su secuencia más larga × el tamaño del batch, y los que llegan esperan detrás, así que su TTFT incluye la generación de otro. Rearmar el batch en cada iteración arregla ambas cosas con el mismo hardware y sin cambios en los clientes. Arregla la utilización antes de comprar capacidad."
+      }
+    },
+    {
+      "id": "continuous-batching.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A **static** batch of 8 requests: one answer needs **1,000** tokens, the other seven need **50** tokens each. Counting one slot-step per sequence per decode step, what percentage of slot-steps produce a useful token?",
+        "es": "Un batch **estático** de 8 requests: una respuesta necesita **1,000** tokens y las otras siete, **50** tokens cada una. Contando un slot-step por secuencia en cada paso de decode, ¿qué porcentaje de los slot-steps produce un token útil?"
+      },
+      "answer": 16.9,
+      "tolerance": 0.1,
+      "unit": "%",
+      "explain": {
+        "en": "The batch runs 1,000 steps × 8 slots = 8,000 slot-steps. Useful tokens: 1,000 + 7 × 50 = 1,350. 1,350 ÷ 8,000 ≈ 16.9%. Each short answer wastes ~95% of its slot; continuous batching hands those 950 idle steps to queued requests.",
+        "es": "El batch corre 1,000 pasos × 8 lugares = 8,000 slot-steps. Tokens útiles: 1,000 + 7 × 50 = 1,350. 1,350 ÷ 8,000 ≈ 16.9%. Cada respuesta corta desperdicia ~95% de su lugar; el continuous batching les da esos 950 pasos ociosos a los requests en cola."
+      }
+    },
+    {
+      "id": "continuous-batching.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about continuous batching are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre el continuous batching son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A waiting request is admitted only if there is KV memory for it", "es": "Un request en espera solo se admite si hay memoria de KV para él" } },
+        { "text": { "en": "Per-user TPOT grows with batch size, so cap concurrency at the SLO", "es": "El TPOT por usuario crece con el tamaño del batch, así que limita la concurrencia según el SLO" } },
+        { "text": { "en": "Benchmarks with identical output lengths hide the static-batching penalty", "es": "Los benchmarks con salidas de longitud idéntica esconden la penalización del static batching" } },
+        { "text": { "en": "It speeds up a single local user running at batch 1", "es": "Acelera a un solo usuario local que corre con batch 1" },
+          "why": { "en": "With one sequence there's no slot to refill; it buys nothing at batch 1.", "es": "Con una sola secuencia no hay lugar que rellenar; con batch 1 no aporta nada." } },
+        { "text": { "en": "At temperature 0, outputs are always bitwise identical across runs", "es": "Con temperature 0, las salidas siempre son idénticas bit a bit entre corridas" },
+          "why": { "en": "Batch composition changes every step, so outputs can vary slightly unless kernels are batch-invariant.", "es": "La composición del batch cambia en cada paso, así que las salidas pueden variar un poco salvo que los kernels sean invariantes al batch." } },
+        { "text": { "en": "Each extra sequence slows every step proportionally, since decode is compute-bound", "es": "Cada secuencia extra frena cada paso en proporción, porque el decode está limitado por cómputo" },
+          "why": { "en": "Decode is bandwidth-bound: an extra sequence costs little until compute or memory runs out.", "es": "El decode está limitado por ancho de banda: una secuencia extra cuesta poco hasta que se acaba el cómputo o la memoria." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Continuous batching turns the bandwidth-bound nature of decode into throughput by keeping slots full. Its limits are KV memory (admission and preemption) and latency (bigger batches raise TPOT), so you tune its caps against your SLO and benchmark with a real length distribution.",
+        "es": "El continuous batching convierte en throughput el hecho de que el decode esté limitado por ancho de banda, manteniendo los lugares llenos. Sus límites son la memoria de KV (admisión y preemption) y la latencia (batches más grandes suben el TPOT), así que ajustas sus límites según tu SLO y haces benchmarks con una distribución real de longitudes."
+      }
+    }
+  ]
+}

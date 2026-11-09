@@ -1,0 +1,66 @@
+{
+  "concept": "transformer",
+  "items": [
+    {
+      "id": "transformer.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Llama 3 8B in bf16 serves a single user on an H100 (~3.35 TB/s). Decode tops out near ~200 tokens/s while the GPU's compute units sit mostly idle. What is the bottleneck?",
+        "es": "Llama 3 8B en bf16 atiende a un solo usuario en una H100 (~3.35 TB/s). El decode se estanca cerca de ~200 tokens/s mientras las unidades de cómputo de la GPU están casi ociosas. ¿Cuál es el cuello de botella?"
+      },
+      "options": [
+        { "text": { "en": "Each output token's pass reads all ~16 GB of weights from memory", "es": "La pasada de cada token de salida lee de memoria los ~16 GB de pesos" },
+          "why": { "en": "One token per forward pass, and every pass streams all the weights: memory bandwidth, not math, sets the pace.", "es": "Un token por pasada, y cada pasada lee todos los pesos: el ritmo lo marca el ancho de banda de memoria, no el cálculo." } },
+        { "text": { "en": "Quadratic attention needs more FLOPs per token than the GPU has", "es": "La atención cuadrática pide más FLOPs por token de los que tiene la GPU" },
+          "why": { "en": "Idle compute units rule out a FLOPs limit: the GPU is waiting on memory, not on math.", "es": "Si las unidades de cómputo están ociosas, no es un límite de FLOPs: la GPU espera a la memoria, no al cálculo." } },
+        { "text": { "en": "The prompt is re-run through all 32 blocks for every new token", "es": "El prompt se vuelve a pasar por los 32 bloques en cada token nuevo" },
+          "why": { "en": "Prefill runs once; the KV cache keeps earlier keys and values, so each decode step only processes the new token.", "es": "El prefill corre una sola vez; el KV cache guarda las keys y values anteriores, así que cada paso de decode solo procesa el token nuevo." } },
+        { "text": { "en": "The model drafts the whole answer, then streams it out slowly", "es": "El modelo redacta toda la respuesta y luego la transmite despacio" },
+          "why": { "en": "There is no draft: each token depends on the one before and needs its own forward pass.", "es": "No hay borrador: cada token depende del anterior y necesita su propia pasada." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Decode is memory-bandwidth-bound: ~16 GB ÷ ~3.35 TB/s ≈ 4.8 ms per pass, so ~200 tokens/s per stream at best. Batching helps because one read of the weights then serves many streams at once.",
+        "es": "El decode está limitado por el ancho de banda de memoria: ~16 GB ÷ ~3.35 TB/s ≈ 4.8 ms por pasada, o sea ~200 tokens/s por stream como máximo. El batching ayuda porque una sola lectura de los pesos atiende muchos streams a la vez."
+      }
+    },
+    {
+      "id": "transformer.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Use the classic estimate params ≈ 12 × layers × d_model², ignoring embeddings. A model has 24 layers and d_model = 2,048. How many parameters, in billions?",
+        "es": "Usa la estimación clásica params ≈ 12 × capas × d_model², sin contar embeddings. Un modelo tiene 24 capas y d_model = 2,048. ¿Cuántos parámetros tiene, en miles de millones?"
+      },
+      "answer": 1.21,
+      "tolerance": 0.1,
+      "unit": "B params",
+      "explain": {
+        "en": "2,048² ≈ 4.19M, and 12 × 24 = 288, so 288 × 4.19M ≈ 1.21B. The 12 is 4d² for attention (Q, K, V, O) plus 8d² for an MLP that expands 4×, which is why MLPs classically hold two-thirds of each block.",
+        "es": "2,048² ≈ 4.19M, y 12 × 24 = 288, así que 288 × 4.19M ≈ 1,210 millones. El 12 sale de 4d² para la atención (Q, K, V, O) más 8d² para un MLP que expande 4×; por eso los MLPs tienen clásicamente dos tercios de cada bloque."
+      }
+    },
+    {
+      "id": "transformer.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about decoder-only transformers are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los transformers decoder-only son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Training predicts every position of a sequence in parallel", "es": "El entrenamiento predice todas las posiciones de una secuencia en paralelo" } },
+        { "text": { "en": "Prefill processes all prompt tokens in one parallel pass", "es": "El prefill procesa todos los tokens del prompt en una pasada en paralelo" } },
+        { "text": { "en": "Most of each block's parameters live in attention", "es": "La mayoría de los parámetros de cada bloque está en la atención" },
+          "why": { "en": "The MLP holds ~2/3 classically and ~81% in Llama 3 8B; that's the part MoE replaces.", "es": "El MLP tiene ~2/3 clásicamente y ~81% en Llama 3 8B; es la parte que reemplaza MoE." } },
+        { "text": { "en": "GPU memory for serving is roughly the weights alone", "es": "La memoria de GPU para servir es más o menos solo la de los pesos" },
+          "why": { "en": "KV cache grows with context length × batch size, plus activations; sizing from weights alone runs out of memory.", "es": "El KV cache crece con largo de contexto × tamaño de batch, más las activaciones; dimensionar solo con los pesos se queda sin memoria." } },
+        { "text": { "en": "Generation emits several tokens per forward pass", "es": "La generación emite varios tokens por cada pasada" },
+          "why": { "en": "One forward pass yields one next-token distribution; every output token is its own pass.", "es": "Una pasada produce una sola distribución para el siguiente token; cada token de salida es su propia pasada." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "The causal mask lets training and prefill run all positions at once, which is why transformers beat RNNs on GPUs. Generation stays sequential, and the dominant costs are MLP weights plus a KV cache that grows with every token.",
+        "es": "La máscara causal permite que el entrenamiento y el prefill procesen todas las posiciones a la vez; por eso los transformers le ganaron a las RNNs en GPU. La generación sigue siendo secuencial, y los costos dominantes son los pesos del MLP más un KV cache que crece con cada token."
+      }
+    }
+  ]
+}

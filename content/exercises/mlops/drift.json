@@ -1,0 +1,97 @@
+{
+  "concept": "drift",
+  "items": [
+    {
+      "id": "drift.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A credit model has tracked weekly PSI on every input for a year: all features stay below 0.05. Meanwhile 60-day default rates rose from 2.1% to 3.4% as interest rates climbed. What's the best explanation?",
+        "es": "Un modelo de crédito lleva un año midiendo el PSI semanal de cada entrada: todas las features siguen por debajo de 0.05. Mientras tanto, la morosidad a 60 días subió de 2.1% a 3.4% junto con las tasas de interés. ¿Cuál es la mejor explicación?"
+      },
+      "options": [
+        { "text": { "en": "Concept drift: similar applicants now default more, so P(Y|X) changed", "es": "Concept drift: solicitantes parecidos ahora caen más en mora, así que cambió P(Y|X)" },
+          "why": { "en": "Inputs look the same but the right answer changed; only outcomes reveal it.", "es": "Las entradas se ven iguales, pero cambió la respuesta correcta; solo los resultados lo revelan." } },
+        { "text": { "en": "Data drift: the applicant mix shifted in ways PSI is too coarse to see", "es": "Data drift: la mezcla de solicitantes cambió de formas que el PSI no alcanza a ver" },
+          "why": { "en": "PSI under 0.05 on every feature says P(X) is stable; what changed is the outcome for the same inputs.", "es": "Un PSI menor a 0.05 en todas las features dice que P(X) está estable; lo que cambió es el resultado para las mismas entradas." } },
+        { "text": { "en": "PSI thresholds are too lax; at 0.1 instead of 0.25 it would have fired", "es": "Los umbrales de PSI son muy laxos; con 0.1 en vez de 0.25 habría alertado" },
+          "why": { "en": "Every feature sits below 0.05, under any sensible threshold. Input monitors are blind to a change in P(Y|X).", "es": "Todas las features están por debajo de 0.05, bajo cualquier umbral razonable. Los monitores de entradas no ven un cambio en P(Y|X)." } },
+        { "text": { "en": "Nothing to act on yet: wait until input drift confirms the change", "es": "Nada que hacer aún: esperar a que el drift de entradas confirme el cambio" },
+          "why": { "en": "Input drift may never appear here. Rising defaults are measured harm, and outcomes are what decide retraining.", "es": "Aquí el drift de entradas puede no aparecer nunca. La morosidad en alza es un daño medido, y los resultados son los que deciden reentrenar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Data drift moves P(X) and shows up on feature monitors; concept drift moves P(Y|X) and shows up only in outcomes, which arrive late. That's why you track the real metric as labels land, not just input drift.",
+        "es": "El data drift mueve P(X) y aparece en los monitores de features; el concept drift mueve P(Y|X) y solo aparece en los resultados, que llegan tarde. Por eso sigues la métrica real a medida que llegan las etiquetas, no solo el drift de entradas."
+      }
+    },
+    {
+      "id": "drift.a2",
+      "type": "match",
+      "prompt": {
+        "en": "Match each drift detector to what defines it.",
+        "es": "Relaciona cada detector de drift con lo que lo define."
+      },
+      "pairs": [
+        { "left": { "en": "PSI", "es": "PSI" },
+          "right": { "en": "Bins the reference into deciles and sums (a−e)·ln(a/e) across bins", "es": "Divide la referencia en deciles y suma (a−e)·ln(a/e) sobre los bins" } },
+        { "left": { "en": "KS test", "es": "Test KS" },
+          "right": { "en": "Maximum gap between two CDFs; at large n, threshold the statistic, not the p-value", "es": "Distancia máxima entre dos CDFs; con n grande, pon el umbral sobre el estadístico, no sobre el p-value" } },
+        { "left": { "en": "JS divergence", "es": "Divergencia JS" },
+          "right": { "en": "Symmetric and bounded in [0, 1] with log base 2", "es": "Simétrica y acotada en [0, 1] con logaritmo en base 2" } },
+        { "left": { "en": "Domain classifier", "es": "Clasificador de dominio" },
+          "right": { "en": "Separates reference from live data; AUC ≈ 0.5 means no drift", "es": "Separa la referencia de los datos en vivo; un AUC ≈ 0.5 significa que no hay drift" } }
+      ],
+      "explain": {
+        "en": "All four compare a live window with a fixed reference. PSI and KS work per feature; JS is easier to alert on than KL because it's bounded and symmetric; the domain classifier gives one score for free text or many features at once.",
+        "es": "Los cuatro comparan una ventana en vivo con una referencia fija. PSI y KS trabajan por feature; JS es más fácil para alertar que KL porque es acotada y simétrica; el clasificador de dominio da un solo puntaje para texto libre o muchas features a la vez."
+      }
+    },
+    {
+      "id": "drift.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the PSI function so scores stay comparable from one run to the next.",
+        "es": "Completa la función de PSI para que los puntajes sean comparables de una corrida a la siguiente."
+      },
+      "lang": "python",
+      "code": "import numpy as np\n\ndef psi(expected, actual, bins=10):\n    # expected = training reference, actual = live window\n    ____\n    edges[0], edges[-1] = -np.inf, np.inf\n    e = np.histogram(expected, edges)[0] / len(expected)\n    a = np.histogram(actual, edges)[0] / len(actual)\n    e, a = np.clip(e, 1e-6, None), np.clip(a, 1e-6, None)  # avoid log(0)\n    return float(np.sum((a - e) * np.log(a / e)))",
+      "options": [
+        { "text": "edges = np.quantile(expected, np.linspace(0, 1, bins + 1))" },
+        { "text": "edges = np.quantile(actual, np.linspace(0, 1, bins + 1))",
+          "why": { "en": "Edges from the live window move every run, so the score tracks the binning, not the data.", "es": "Los bordes de la ventana en vivo cambian en cada corrida, así que el puntaje sigue a los bins y no a los datos." } },
+        { "text": "edges = np.quantile(np.r_[expected, actual], np.linspace(0, 1, bins + 1))",
+          "why": { "en": "Pooling mixes live data into the bins, so they shift with every window and runs stop being comparable.", "es": "Mezclar los datos en vivo en los bins hace que cambien con cada ventana, y las corridas dejan de ser comparables." } },
+        { "text": "edges = np.linspace(0, 1, bins + 1)",
+          "why": { "en": "Assumes the feature lives in [0, 1]: a feature like income lands entirely in the last bin, so PSI reads ~0 whatever happens.", "es": "Asume que la feature vive en [0, 1]: una feature como el ingreso cae entera en el último bin, así que el PSI da ~0 pase lo que pase." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Bin edges come from the reference (usually deciles) and stay fixed; then both windows are counted into the same bins. Change the binning between runs and a PSI move may reflect the bins, not the data.",
+        "es": "Los bordes de los bins salen de la referencia (casi siempre deciles) y quedan fijos; después ambas ventanas se cuentan en los mismos bins. Si cambias los bins entre corridas, un movimiento del PSI puede reflejar los bins y no los datos."
+      }
+    },
+    {
+      "id": "drift.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your nightly job runs a two-sample KS test on 2 million rows per feature. 40 of 60 features come out at p < 0.001. A teammate wants to retrain now. What do you say?",
+        "es": "Tu job nocturno corre un test KS de dos muestras con 2 millones de filas por feature. 40 de 60 features salen con p < 0.001. Un compañero quiere reentrenar ya. ¿Qué le dices?"
+      },
+      "options": [
+        { "text": { "en": "At this n almost any gap is significant; threshold the KS statistic and check impact", "es": "Con este n casi cualquier diferencia es significativa; pon el umbral sobre el estadístico KS y revisa el impacto" },
+          "why": { "en": "Huge samples make tiny, harmless shifts significant; effect size and outcomes decide.", "es": "Las muestras enormes vuelven significativos cambios mínimos e inofensivos; deciden el tamaño del efecto y los resultados." } },
+        { "text": { "en": "Agree: 40 significant features is overwhelming evidence of harmful drift", "es": "De acuerdo: 40 features significativas son evidencia contundente de drift dañino" },
+          "why": { "en": "Significance isn't harm. With millions of rows everything comes out significant, and most drift doesn't hurt the model.", "es": "Significancia no es daño. Con millones de filas todo sale significativo, y casi todo el drift no le hace daño al modelo." } },
+        { "text": { "en": "Lower the threshold to p < 0.0001 so only real drift alerts", "es": "Bajar el umbral a p < 0.0001 para que solo alerte el drift real" },
+          "why": { "en": "Still a p-value at huge n: the test keeps flagging trivial gaps. Threshold the statistic or use PSI.", "es": "Sigue siendo un p-value con n enorme: el test seguirá marcando diferencias triviales. Pon el umbral sobre el estadístico o usa PSI." } },
+        { "text": { "en": "Switch the reference to last week so fewer features differ", "es": "Cambiar la referencia a la semana pasada para que difieran menos features" },
+          "why": { "en": "A moving baseline lets slow drift creep in unnoticed; the reference should stay fixed, usually the training data.", "es": "Una línea base que se mueve deja que el drift lento se cuele sin que lo notes; la referencia debe quedar fija, casi siempre los datos de entrenamiento." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "At large n, p-values measure sample size more than shift size. Use effect-size measures (the KS statistic, PSI), weight by feature importance, and confirm impact on predictions or outcomes before retraining.",
+        "es": "Con n grande, los p-values miden más el tamaño de muestra que el tamaño del cambio. Usa medidas de efecto (el estadístico KS, el PSI), pondera por la importancia de cada feature y confirma el impacto en predicciones o resultados antes de reentrenar."
+      }
+    }
+  ]
+}

@@ -1,0 +1,168 @@
+{
+  "concept": "case-inference-platform",
+  "items": [
+    {
+      "id": "case-inference-platform.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your LLM serving fleet autoscales when GPU utilization exceeds 80%. Overnight, at a fraction of peak traffic, every replica still reads ~95% and the fleet never scales down. At peak, p95 TTFT blows through the SLO. Which signal should drive scaling?",
+        "es": "Tu flota de serving de LLM escala cuando el uso de GPU pasa del 80%. De noche, con una fracción del tráfico pico, cada réplica sigue marcando ~95% y la flota nunca baja. En el pico, el TTFT p95 rompe el SLO. ¿Qué señal debería guiar el escalado?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Waiting requests and KV-cache usage per replica",
+            "es": "Solicitudes en espera y uso del KV cache por réplica"
+          },
+          "why": {
+            "en": "They measure saturation directly: queueing and memory pressure rise before TTFT does.",
+            "es": "Miden la saturación directamente: la cola y la presión de memoria suben antes que el TTFT."
+          }
+        },
+        {
+          "text": {
+            "en": "GPU utilization, with the threshold lowered to 60%",
+            "es": "El uso de GPU, bajando el umbral al 60%"
+          },
+          "why": {
+            "en": "The signal is the problem, not the threshold: GPU util reads ~100% even at batch 1.",
+            "es": "El problema es la señal, no el umbral: el uso de GPU marca ~100% incluso con batch 1."
+          }
+        },
+        {
+          "text": {
+            "en": "Requests per second handled by each replica",
+            "es": "Las solicitudes por segundo que atiende cada réplica"
+          },
+          "why": {
+            "en": "LLM requests differ ~100× in cost; one long prompt can saturate a replica at low RPS.",
+            "es": "Las solicitudes a un LLM difieren ~100× en costo; un prompt largo puede saturar una réplica con pocas RPS."
+          }
+        },
+        {
+          "text": {
+            "en": "Pod CPU usage, the default autoscaler metric",
+            "es": "El uso de CPU del pod, la métrica por defecto del autoscaler"
+          },
+          "why": {
+            "en": "The work is on the GPU; CPU barely moves when KV memory or the batch queue saturates.",
+            "es": "El trabajo ocurre en la GPU; la CPU apenas se mueve cuando se saturan la memoria KV o la cola del batch."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Scale on saturation, not activity: a GPU kernel running a batch of 1 looks as busy as one running a full batch. Scale up fast on waiting requests and KV usage, down slowly to avoid flapping, and alert on p95 TTFT burn. Keep warm replicas, because a cold start takes minutes.",
+        "es": "Escala por saturación, no por actividad: una GPU que corre un batch de 1 parece tan ocupada como una con el batch lleno. Sube rápido según solicitudes en espera y uso de KV, baja despacio para no oscilar y alerta por el consumo del presupuesto de TTFT p95. Mantén réplicas tibias, porque un arranque en frío toma minutos."
+      }
+    },
+    {
+      "id": "case-inference-platform.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "An H100 decodes ~**1,500 output tokens/s** at your TPOT SLO and costs an assumed **$2.50/GPU-hour**. Your fleet averages **40% busy**. What is the cost per **million output tokens**, in USD?",
+        "es": "Una H100 decodifica ~**1,500 tokens de salida/s** dentro de tu SLO de TPOT y cuesta, como supuesto, **$2.50 por GPU-hora**. Tu flota está ocupada el **40%** del tiempo en promedio. ¿Cuál es el costo por **millón de tokens de salida**, en USD?"
+      },
+      "answer": 1.16,
+      "tolerance": 0.1,
+      "unit": "USD per M tokens",
+      "explain": {
+        "en": "1,500 × 3,600 s = 5.4M tokens per GPU-hour at 100% busy, so $2.50 ÷ 5.4 ≈ $0.46/M. At 40% busy you also pay for idle time: $0.46 ÷ 0.4 ≈ $1.16/M. Utilization is the biggest cost lever, which is why batch work and preemptible GPUs fill the troughs.",
+        "es": "1,500 × 3,600 s = 5.4M de tokens por GPU-hora al 100% de ocupación, así que $2.50 ÷ 5.4 ≈ $0.46/M. Al 40% pagas también el tiempo ocioso: $0.46 ÷ 0.4 ≈ $1.16/M. La utilización es la mayor palanca de costo; por eso el trabajo batch y las GPUs preemptibles llenan los valles."
+      }
+    },
+    {
+      "id": "case-inference-platform.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the path of one interactive request through the multi-tenant inference platform in order.",
+        "es": "Ordena el camino de una solicitud interactiva a través de la plataforma de inferencia multi-tenant."
+      },
+      "steps": [
+        {
+          "en": "Gateway maps the API key to a tenant and tier",
+          "es": "El gateway asocia la API key a un tenant y un nivel"
+        },
+        {
+          "en": "Count prompt tokens and reserve prompt + max_tokens from the bucket",
+          "es": "Contar los tokens del prompt y reservar prompt + max_tokens del bucket"
+        },
+        {
+          "en": "Wait in the interactive tier's queue",
+          "es": "Esperar en la cola del nivel interactivo"
+        },
+        {
+          "en": "Router scores replicas on cached prefix, loaded adapter and load",
+          "es": "El router puntúa réplicas por prefijo en cache, adaptador cargado y carga"
+        },
+        {
+          "en": "Replica prefills only the uncached tokens, then streams decode",
+          "es": "La réplica hace prefill solo de los tokens sin cache y luego transmite el decode"
+        },
+        {
+          "en": "Emit a usage event and refund unused tokens to the bucket",
+          "es": "Emitir un evento de uso y devolver al bucket los tokens no usados"
+        }
+      ],
+      "explain": {
+        "en": "Admission reserves the worst case (prompt + max_tokens) before any GPU work, so a burst can't overrun capacity; routing then exploits cache and adapter locality; metering settles the real bill afterwards from the usage block, with cached and uncached input counted separately.",
+        "es": "La admisión reserva el peor caso (prompt + max_tokens) antes de cualquier trabajo en GPU, para que una ráfaga no desborde la capacidad; después el ruteo aprovecha la localidad de cache y de adaptadores; la medición liquida la cuenta real al final con el bloque de uso, separando la entrada en cache de la que no lo está."
+      }
+    },
+    {
+      "id": "case-inference-platform.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "To maximize prefix-cache hits, a teammate makes the router always pick the replica holding the longest cached prefix, ignoring load. What happens at peak?",
+        "es": "Para maximizar los aciertos del prefix cache, un compañero hace que el router siempre elija la réplica con el prefijo en cache más largo, sin mirar la carga. ¿Qué pasa en el pico?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Hot tenants pile onto a few replicas and requests fail",
+            "es": "Los tenants calientes se amontonan en pocas réplicas y fallan solicitudes"
+          },
+          "why": {
+            "en": "In llm-d's benchmark a prefix-only scorer completed ~55% of requests at high load; prefix plus load, 100%.",
+            "es": "En el benchmark de llm-d, un scorer solo de prefijo completó ~55% de las solicitudes con carga alta; prefijo más carga, el 100%."
+          }
+        },
+        {
+          "text": {
+            "en": "Throughput rises, since most prefill is now skipped",
+            "es": "El throughput sube, porque ahora se salta casi todo el prefill"
+          },
+          "why": {
+            "en": "Skipped prefill doesn't help when the chosen replica's queue and KV cache are full.",
+            "es": "Saltarse el prefill no ayuda si la cola y el KV cache de la réplica elegida están llenos."
+          }
+        },
+        {
+          "text": {
+            "en": "Nothing: continuous batching absorbs the skew",
+            "es": "Nada: el continuous batching absorbe el desbalance"
+          },
+          "why": {
+            "en": "Batching packs one replica's queue; it can't move work to idle replicas.",
+            "es": "El batching llena la cola de una réplica; no puede mover trabajo a réplicas ociosas."
+          }
+        },
+        {
+          "text": {
+            "en": "Cached prefixes start leaking across tenants",
+            "es": "Los prefijos en cache empiezan a filtrarse entre tenants"
+          },
+          "why": {
+            "en": "That timing leak comes from unsalted cache keys under any routing policy; salt per tenant.",
+            "es": "Esa fuga por tiempos viene de claves de cache sin salt, con cualquier política de ruteo; agrega un salt por tenant."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Cache affinity and load balance pull in opposite directions. Round-robin scatters shared prefixes and every request pays full prefill; pure affinity concentrates hot tenants. Score replicas on prefix hit, loaded adapter and load together, and let affinity yield once a replica's queue or KV usage climbs.",
+        "es": "La afinidad de cache y el balance de carga tiran en direcciones opuestas. El round-robin dispersa los prefijos compartidos y cada solicitud paga el prefill completo; la afinidad pura concentra a los tenants calientes. Puntúa las réplicas por acierto de prefijo, adaptador cargado y carga a la vez, y deja que la afinidad ceda cuando suben la cola o el uso de KV de una réplica."
+      }
+    }
+  ]
+}

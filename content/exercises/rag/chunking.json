@@ -1,0 +1,75 @@
+{
+  "concept": "chunking",
+  "items": [
+    {
+      "id": "chunking.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You re-chunked a policy wiki from 2,000 to ~400 tokens. Factoid questions improved a lot, but *\"Summarize the on-call policy\"* now gets disconnected fragments. Best next step?",
+        "es": "Volviste a dividir una wiki de políticas de 2,000 a ~400 tokens. Las preguntas puntuales mejoraron mucho, pero *\"Resume la política de guardias\"* ahora recibe fragmentos sueltos. ¿Cuál es el mejor siguiente paso?"
+      },
+      "options": [
+        { "text": { "en": "Match on the small chunks, send their parent section to the LLM", "es": "Buscar sobre los chunks chicos y enviarle al LLM su sección padre" },
+          "why": { "en": "Parent-child keeps sharp matching and restores the full context for summaries.", "es": "Padre-hijo conserva la coincidencia precisa y recupera el contexto completo para los resúmenes." } },
+        { "text": { "en": "Go back to 2,000-token chunks, since summaries matter more", "es": "Volver a chunks de 2,000 tokens, porque los resúmenes importan más" },
+          "why": { "en": "Brings back the diluted vectors that buried one-line facts: you trade one failure for another.", "es": "Trae de vuelta los vectores diluidos que enterraban los datos de una línea: cambias una falla por otra." } },
+        { "text": { "en": "Raise overlap to 50% so neighboring chunks share more text", "es": "Subir el solapamiento a 50% para que los chunks vecinos compartan más texto" },
+          "why": { "en": "More duplicated text and index size, yet each chunk still holds only a fragment of the section.", "es": "Más texto duplicado y un índice más grande, pero cada chunk sigue teniendo solo un fragmento de la sección." } },
+        { "text": { "en": "Retrieve the top 30 small chunks so the policy is covered", "es": "Recuperar los 30 mejores chunks chicos para cubrir la política" },
+          "why": { "en": "Scattered pieces from many sections, plus noise and cost; nothing guarantees the whole policy, in order.", "es": "Pedazos sueltos de muchas secciones, más ruido y costo; nada garantiza la política completa y en orden." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Chunk size trades match precision against context. Parent-child (small-to-big) decouples the two: small children give precise vectors to match on, and the parent section gives the LLM enough context to answer broad questions.",
+        "es": "El tamaño del chunk enfrenta la precisión de la coincidencia con el contexto. Padre-hijo (small-to-big) separa ambas cosas: los hijos chicos dan vectores precisos para buscar y la sección padre le da al LLM contexto suficiente para preguntas amplias."
+      }
+    },
+    {
+      "id": "chunking.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete `add_overlap` so each chunk starts with the **last** `overlap` **tokens** of the previous chunk.",
+        "es": "Completa `add_overlap` para que cada chunk empiece con los **últimos** `overlap` **tokens** del chunk anterior."
+      },
+      "lang": "python",
+      "code": "import tiktoken\n\nenc = tiktoken.get_encoding(\"cl100k_base\")  # your embedding model's tokenizer\n\ndef add_overlap(chunks: list[str], overlap: int = 75) -> list[str]:\n    # Carry the previous chunk's tail forward so boundary sentences survive\n    ____\n    return chunks[:1] + [t + \" \" + c for t, c in zip(tails, chunks[1:])]",
+      "options": [
+        { "text": "tails = [enc.decode(enc.encode(c)[-overlap:]) for c in chunks[:-1]]" },
+        { "text": "tails = [c[-overlap:] for c in chunks[:-1]]",
+          "why": { "en": "Slices characters, not tokens: 75 characters is a fraction of the intended overlap.", "es": "Corta caracteres, no tokens: 75 caracteres son una fracción del solapamiento buscado." } },
+        { "text": "tails = [enc.decode(enc.encode(c)[:overlap]) for c in chunks[:-1]]",
+          "why": { "en": "Takes each chunk's first tokens, not its tail, so the boundary sentence isn't carried over.", "es": "Toma los primeros tokens de cada chunk, no el final, así que la oración del borde no pasa al siguiente." } },
+        { "text": "tails = [enc.decode(enc.encode(c)[-overlap:]) for c in chunks[1:]]",
+          "why": { "en": "Off by one: zip pairs each chunk with its own tail, duplicating text instead of bridging the boundary.", "es": "Desfasado por uno: zip empareja cada chunk con su propio final, y duplica texto en vez de unir el borde." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Overlap exists so a sentence cut at a boundary survives whole in one chunk, so you carry the previous tail forward. Count it in tokens of the embedding model's tokenizer: that's the unit of its input limit and of your chunk budget.",
+        "es": "El solapamiento existe para que una oración cortada en el borde quede completa en algún chunk, así que arrastras el final del anterior. Cuéntalo en tokens del tokenizador del modelo de embeddings: es la unidad de su límite de entrada y de tu presupuesto por chunk."
+      }
+    },
+    {
+      "id": "chunking.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about chunking are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre el chunking son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A chunk mixing many topics gets one vector that matches none of them well", "es": "Un chunk que mezcla muchos temas tiene un solo vector que no representa bien a ninguno" } },
+        { "text": { "en": "Text past an embedding model's input limit is often silently truncated", "es": "El texto que pasa el límite de entrada de un modelo de embeddings suele truncarse sin aviso" } },
+        { "text": { "en": "Semantic chunking reliably beats fixed-size splitting, so make it the default", "es": "El chunking semántico le gana siempre al tamaño fijo, así que conviene usarlo por defecto" },
+          "why": { "en": "Reported gains over fixed-size are inconsistent and it adds compute; recursive splitting is the sensible default.", "es": "Las mejoras reportadas frente al tamaño fijo son inconsistentes y suma cómputo; el splitter recursivo es el default sensato." } },
+        { "text": { "en": "A chunk size that worked in a popular blog post will transfer to your corpus", "es": "Un tamaño de chunk que funcionó en un blog popular va a funcionar en tu corpus" },
+          "why": { "en": "The optimum depends on your documents, queries and embedding model: sweep 2–3 sizes on your eval set.", "es": "El óptimo depende de tus documentos, tus consultas y tu modelo de embeddings: prueba 2–3 tamaños con tu set de evaluación." } },
+        { "text": { "en": "Short FAQ entries should be split further so each sentence gets a vector", "es": "Las entradas cortas de FAQ conviene dividirlas más para que cada oración tenga su vector" },
+          "why": { "en": "Short self-contained items are already natural chunks: index each one whole.", "es": "Los elementos cortos y autocontenidos ya son chunks naturales: indexa cada uno completo." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Every chunk becomes one vector, so the unit you choose decides what can be matched. There is no universal size or strategy: start recursive and structure-aware, then let recall@k on your own questions pick.",
+        "es": "Cada chunk se convierte en un solo vector, así que la unidad que eliges decide qué se puede encontrar. No hay un tamaño ni una estrategia universal: empieza con un splitter recursivo y por estructura, y deja que el recall@k sobre tus propias preguntas decida."
+      }
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "concept": "llm-resilience",
+  "items": [
+    {
+      "id": "llm-resilience.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your primary LLM provider goes down. The breaker opens and traffic fails over to Provider B as designed, but the downstream parser starts crashing: B's answers break your JSON schema. What should have prevented this?",
+        "es": "Tu proveedor principal de LLM se cae. El breaker se abre y el tráfico pasa al Proveedor B como estaba diseñado, pero el parser de abajo empieza a fallar: las respuestas de B rompen tu schema JSON. ¿Qué debió evitarlo?"
+      },
+      "options": [
+        { "text": { "en": "A B-specific prompt, re-run on the golden set on a schedule", "es": "Un prompt propio para B, corrido contra el golden set de forma periódica" },
+          "why": { "en": "A prompt tuned for one model can break the schema on another; only regular evals catch it before the outage.", "es": "Un prompt ajustado para un modelo puede romper el schema en otro; solo evals periódicas lo detectan antes de la caída." } },
+        { "text": { "en": "Retrying B until it returns valid JSON", "es": "Reintentar con B hasta que devuelva JSON válido" },
+          "why": { "en": "The mismatch is systematic, not transient: retries burn tokens and latency on the same broken output.", "es": "El desajuste es sistemático, no transitorio: los reintentos queman tokens y latencia en la misma salida rota." } },
+        { "text": { "en": "Failing over only between regions of the primary provider", "es": "Hacer failover solo entre regiones del proveedor principal" },
+          "why": { "en": "Helps in a regional outage, but a provider-wide outage then leaves you with nothing.", "es": "Ayuda en una caída regional, pero ante una caída de todo el proveedor te deja sin nada." } },
+        { "text": { "en": "A lower breaker threshold so failover starts sooner", "es": "Un umbral más bajo en el breaker para que el failover empiece antes" },
+          "why": { "en": "You just fail over faster to a backup that still breaks the schema.", "es": "Solo haces failover más rápido a un backup que sigue rompiendo el schema." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A fallback you never test is a fallback that fails on the worst day. Every rung of the degradation ladder needs its own prompt and evals, run on a schedule (e.g. weekly on the golden set), plus an alert on fallback share so you notice when it is carrying traffic.",
+        "es": "Un fallback que nunca pruebas es un fallback que falla el peor día. Cada escalón de la escalera de degradación necesita su propio prompt y sus evals, corridos de forma periódica (por ejemplo, cada semana contra el golden set), más una alerta sobre la proporción de fallback para notar cuándo está cargando tráfico."
+      }
+    },
+    {
+      "id": "llm-resilience.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "During a provider overload, every call fails. The SDK makes up to 3 attempts per call, the gateway wraps the SDK with up to 3 attempts, and the app wraps the gateway with up to 3 more. How many provider calls does one user request generate?",
+        "es": "Durante una sobrecarga del proveedor, toda llamada falla. El SDK hace hasta 3 intentos por llamada, el gateway envuelve al SDK con hasta 3 intentos y la app envuelve al gateway con hasta 3 más. ¿Cuántas llamadas al proveedor genera un solo request de usuario?"
+      },
+      "answer": 27,
+      "tolerance": 0.1,
+      "unit": "calls",
+      "explain": {
+        "en": "Nested retries multiply: 3 × 3 × 3 = 27 calls per user request, aimed at a provider that is already overloaded. Retry in one layer only, for transient errors, with backoff, jitter and a retry budget (Google SRE: at most 3 attempts, retries under ~10% of traffic), and let the breaker shed traffic entirely.",
+        "es": "Los reintentos anidados se multiplican: 3 × 3 × 3 = 27 llamadas por request de usuario, contra un proveedor que ya está sobrecargado. Reintenta en una sola capa, solo ante errores transitorios, con backoff, jitter y un presupuesto de reintentos (Google SRE: máximo 3 intentos y reintentos bajo ~10% del tráfico), y deja que el breaker corte el tráfico del todo."
+      }
+    },
+    {
+      "id": "llm-resilience.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about LLM resilience are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre resiliencia de LLMs son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Hedged requests add load, so naive hedging can amplify an overload", "es": "Los hedged requests suman carga, así que usarlos sin cuidado puede agravar una sobrecarga" } },
+        { "text": { "en": "An HTTP 200 from the provider means answer quality is unchanged", "es": "Un HTTP 200 del proveedor significa que la calidad de las respuestas no cambió" },
+          "why": { "en": "Silent regressions return 200: in Sep 2025 an Anthropic routing bug degraded up to 16% of Sonnet 4 requests in the worst hour, with no errors.", "es": "Las regresiones silenciosas devuelven 200: en sep. 2025 un bug de ruteo de Anthropic degradó hasta el 16% de los requests a Sonnet 4 en la peor hora, sin errores." } },
+        { "text": { "en": "Failing over to another provider can break data-residency commitments", "es": "Hacer failover a otro proveedor puede romper compromisos de residencia de datos" } },
+        { "text": { "en": "Retry every failed call, including 400 validation errors", "es": "Reintentar toda llamada fallida, incluidos los errores 400 de validación" },
+          "why": { "en": "Retry transient errors only (429, 529, 5xx, timeouts); a bad request fails the same way every time.", "es": "Reintenta solo errores transitorios (429, 529, 5xx, timeouts); un request mal formado falla igual cada vez." } },
+        { "text": { "en": "Timeouts should cover TTFT and total time, not just the connection", "es": "Los timeouts deben cubrir el TTFT y el tiempo total, no solo la conexión" } },
+        { "text": { "en": "An open circuit breaker keeps full traffic flowing to probe recovery", "es": "Un circuit breaker abierto mantiene todo el tráfico para sondear la recuperación" },
+          "why": { "en": "Open means stop sending traffic; after a cooldown, a few probe calls test whether it recovered.", "es": "Abierto significa dejar de mandar tráfico; tras un cooldown, unas pocas llamadas de prueba verifican si se recuperó." } }
+      ],
+      "answers": [0, 2, 4],
+      "explain": {
+        "en": "Resilience patterns have costs and edges: hedges and retries add load, failover can cross compliance lines, and HTTP status says nothing about quality. Bound every call with TTFT and total timeouts, retry only transient errors, let breakers shed traffic, and watch an online quality score alongside errors.",
+        "es": "Los patrones de resiliencia tienen costos y límites: los hedges y los reintentos suman carga, el failover puede cruzar líneas de cumplimiento y el status HTTP no dice nada de la calidad. Acota cada llamada con timeouts de TTFT y total, reintenta solo errores transitorios, deja que los breakers corten tráfico y mira un puntaje de calidad online junto a los errores."
+      }
+    }
+  ]
+}

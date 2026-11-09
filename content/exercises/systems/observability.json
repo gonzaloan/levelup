@@ -1,0 +1,87 @@
+{
+  "concept": "observability",
+  "items": [
+    {
+      "id": "observability.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A RAG assistant's p95 latency jumps from 3 s to 9 s overnight. On the RED dashboard, rate and errors are flat; only duration rose. What's your next move?",
+        "es": "El p95 de latencia de un asistente RAG salta de 3 s a 9 s de un día para otro. En el dashboard RED, el rate y los errores están planos; solo subió la duración. ¿Cuál es tu siguiente paso?"
+      },
+      "options": [
+        { "text": { "en": "Open a slow trace and compare each span's duration and attributes", "es": "Abrir una traza lenta y comparar la duración y los atributos de cada span" },
+          "why": { "en": "Metrics said it's slow; the trace shows which step grew, and attributes like token counts hint at why.", "es": "Las métricas dicen que está lento; la traza muestra qué paso creció, y atributos como los tokens sugieren por qué." } },
+        { "text": { "en": "Search the logs for errors around when it started", "es": "Buscar errores en los logs de cuando empezó" },
+          "why": { "en": "Errors are flat: something is slow, not broken, so error logs won't point at it.", "es": "Los errores están planos: algo está lento, no roto, así que los logs de error no lo van a señalar." } },
+        { "text": { "en": "Open a ticket with the model provider, the usual cause of LLM latency", "es": "Abrir un ticket con el proveedor del modelo, la causa habitual de latencia en LLMs" },
+          "why": { "en": "A guess: retrieval, a bigger prompt or your own code could be the cause. Find where the time went first.", "es": "Es una suposición: la causa puede ser el retrieval, un prompt más grande o tu propio código. Primero averigua dónde se fue el tiempo." } },
+        { "text": { "en": "Add a `user_id` label to the latency histogram to see who's affected", "es": "Agregar una label `user_id` al histograma de latencia para ver a quién afecta" },
+          "why": { "en": "A cardinality explosion: one series per user. Per-request detail belongs on spans and logs.", "es": "Una explosión de cardinalidad: una serie por usuario. El detalle por request va en spans y logs." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Metrics tell you that something is wrong, traces where, logs why. Flat errors with rising duration means slow, not broken, so go to a slow trace: a span per step (retrieve, rerank, each model call) carrying token counts shows which step grew, e.g. a `chat` span with ~28k input tokens instead of ~6k.",
+        "es": "Las métricas dicen que algo anda mal, las trazas dónde y los logs por qué. Errores planos con duración en alza significa lento, no roto, así que ve a una traza lenta: un span por paso (retrieve, rerank, cada llamada al modelo) con conteo de tokens muestra qué paso creció, por ejemplo un span `chat` con ~28k tokens de entrada en vez de ~6k."
+      }
+    },
+    {
+      "id": "observability.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A latency metric has labels `route` (40 values), `status` (5) and `pod` (30). A teammate adds `tenant_id`, with 2,000 tenants. How many time series does the metric have now? Assume every combination occurs; count label combinations only and ignore histogram buckets.",
+        "es": "Una métrica de latencia tiene las labels `route` (40 valores), `status` (5) y `pod` (30). Un compañero agrega `tenant_id`, con 2000 tenants. ¿Cuántas series temporales tiene ahora la métrica? Supón que aparece cada combinación; cuenta solo combinaciones de labels e ignora los buckets del histograma."
+      },
+      "answer": 12000000,
+      "tolerance": 0.1,
+      "unit": "series",
+      "explain": {
+        "en": "Series count is the product of label values: 40 × 5 × 30 = 6,000 before, × 2,000 tenants = 12 million after. Labels multiply, they don't add, which is why one careless label can blow up a metrics bill. Keep `tenant_id` on spans and logs.",
+        "es": "La cantidad de series es el producto de los valores de cada label: 40 × 5 × 30 = 6000 antes, × 2000 tenants = 12 millones después. Las labels se multiplican, no se suman, y por eso una sola label descuidada dispara la factura de métricas. Guarda `tenant_id` en spans y logs."
+      }
+    },
+    {
+      "id": "observability.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which practices keep observability useful and affordable? Select all that apply.",
+        "es": "¿Qué prácticas mantienen la observabilidad útil y asequible? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Alert on p95/p99 from histograms instead of mean latency", "es": "Alertar sobre p95/p99 de histogramas en lugar de la latencia promedio" } },
+        { "text": { "en": "Head-sample 100% of traces at high volume so nothing rare is missed", "es": "Hacer head sampling del 100% de las trazas a alto volumen para no perder nada raro" },
+          "why": { "en": "Too expensive at scale. Head-sample ~1–10% and tail-sample to keep every error and slow request.", "es": "Demasiado caro a escala. Haz head sampling de ~1–10% y tail sampling para conservar todos los errores y requests lentos." } },
+        { "text": { "en": "Inject `traceparent` into queue messages so async workers join the trace", "es": "Inyectar `traceparent` en los mensajes de la cola para que los workers asíncronos se sumen a la traza" } },
+        { "text": { "en": "Log free-text lines, since structured JSON is overhead you don't need", "es": "Loguear líneas de texto libre, porque el JSON estructurado es un costo que no necesitas" },
+          "why": { "en": "Without fields like `trace_id` you can't join a log to its request; you're back to grepping.", "es": "Sin campos como `trace_id` no puedes unir un log con su request; vuelves a hacer grep." } },
+        { "text": { "en": "Record token counts and cost as span attributes on each model call", "es": "Registrar tokens y costo como atributos del span en cada llamada al modelo" } }
+      ],
+      "answers": [0, 2, 4],
+      "explain": {
+        "en": "Spend telemetry where it answers questions: percentiles for the tail users feel, propagated context so traces survive queues, structured logs that join on `trace_id`, rich per-request detail on spans. Control cost by sampling smartly (keep errors and slow traces) and keeping metric labels low-cardinality.",
+        "es": "Gasta la telemetría donde responde preguntas: percentiles para los peores casos que sienten los usuarios, contexto propagado para que las trazas crucen las colas de mensajes, logs estructurados que se unen por `trace_id` y detalle por request en los spans. Controla el costo muestreando con criterio (conserva errores y trazas lentas) y con labels de métricas de baja cardinalidad."
+      }
+    },
+    {
+      "id": "observability.a4",
+      "type": "match",
+      "prompt": {
+        "en": "Match each telemetry signal to what it tells you.",
+        "es": "Une cada señal de telemetría con lo que te dice."
+      },
+      "pairs": [
+        { "left": { "en": "Metrics", "es": "Métricas" },
+          "right": { "en": "That something is wrong: cheap aggregated time series for alerts", "es": "Que algo anda mal: series temporales agregadas y baratas para alertar" } },
+        { "left": { "en": "Traces", "es": "Trazas" },
+          "right": { "en": "Where: one request's path across services, as spans", "es": "Dónde: el camino de un request entre servicios, en spans" } },
+        { "left": { "en": "Logs", "es": "Logs" },
+          "right": { "en": "Why: discrete structured events tied to a `trace_id`", "es": "Por qué: eventos estructurados discretos ligados a un `trace_id`" } },
+        { "left": { "en": "Profiles", "es": "Perfiles" },
+          "right": { "en": "Which code burns CPU and memory, sampled continuously", "es": "Qué código consume CPU y memoria, muestreado de forma continua" } }
+      ],
+      "explain": {
+        "en": "Use them together: an alert on a metric says something is wrong, a trace narrows it to one span in one service, and the logs carrying that `trace_id` explain why. OpenTelemetry covers metrics, traces and logs with one SDK and Collector, and is adding profiles as a fourth signal.",
+        "es": "Úsalas juntas: una alerta sobre una métrica dice que algo anda mal, una traza lo acota a un span en un servicio, y los logs con ese `trace_id` explican por qué. OpenTelemetry cubre métricas, trazas y logs con un solo SDK y Collector, y está sumando los perfiles como cuarta señal."
+      }
+    }
+  ]
+}

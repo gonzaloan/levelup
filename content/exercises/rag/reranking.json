@@ -1,0 +1,92 @@
+{
+  "concept": "reranking",
+  "items": [
+    {
+      "id": "reranking.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your RAG bot gives wrong answers. Tracing shows the right chunk ranks **#14** of the top-50 candidates, but only the top 5 reach the LLM. Highest-leverage fix?",
+        "es": "Tu bot RAG responde mal. Las trazas muestran que el chunk correcto queda **#14** entre los 50 candidatos, pero solo el top 5 llega al LLM. ¿Cuál es la corrección de mayor impacto?"
+      },
+      "options": [
+        { "text": { "en": "Add a cross-encoder reranker over the top 50", "es": "Agregar un reranker cross-encoder sobre el top 50" },
+          "why": { "en": "Recall is fine (it's in the 50); ranking is the problem, and that's exactly what a reranker fixes.", "es": "El recall está bien (está entre los 50); falla el ranking, y eso es justo lo que arregla un reranker." } },
+        { "text": { "en": "Switch to a larger, smarter LLM", "es": "Cambiar a un LLM más grande e inteligente" },
+          "why": { "en": "The chunk never reaches the prompt: no model can use text it never sees.", "es": "El chunk nunca llega al prompt: ningún modelo puede usar un texto que no ve." } },
+        { "text": { "en": "Double the chunk size so more text fits", "es": "Duplicar el tamaño de los chunks para que quepa más texto" },
+          "why": { "en": "Bigger chunks dilute embeddings and usually hurt ranking further.", "es": "Chunks más grandes diluyen los embeddings y suelen empeorar el ranking." } },
+        { "text": { "en": "Send all 50 chunks to the LLM every time", "es": "Enviar los 50 chunks al LLM siempre" },
+          "why": { "en": "Sometimes works, but costs ~10× the tokens and buries the answer in the middle of the context.", "es": "A veces funciona, pero cuesta ~10× los tokens y entierra la respuesta en medio del contexto." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Split retrieval failures in two: recall (is it in the candidates?) and ranking (does it make the cut?). Here recall@50 works and ranking fails, so a reranker is the cheapest, most direct fix.",
+        "es": "Separa las fallas de recuperación en dos: recall (¿está entre los candidatos?) y ranking (¿pasa el corte?). Aquí el recall@50 funciona y el ranking falla, así que un reranker es la corrección más barata y directa."
+      }
+    },
+    {
+      "id": "reranking.a2",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about bi-encoders vs cross-encoders are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre bi-encoders y cross-encoders son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A cross-encoder reads the query and document together", "es": "Un cross-encoder lee la consulta y el documento juntos" } },
+        { "text": { "en": "Bi-encoder document vectors can be computed offline", "es": "Los vectores de documentos de un bi-encoder se pueden calcular offline" } },
+        { "text": { "en": "A reranker can recover a chunk stage 1 never retrieved", "es": "Un reranker puede recuperar un chunk que la etapa 1 nunca trajo" },
+          "why": { "en": "It only reorders the candidates it is given.", "es": "Solo reordena los candidatos que recibe." } },
+        { "text": { "en": "Cross-encoders are cheaper than ANN search over millions of docs", "es": "Los cross-encoders son más baratos que una búsqueda ANN sobre millones de documentos" },
+          "why": { "en": "They need one forward pass per (query, doc) pair at query time.", "es": "Necesitan una pasada del modelo por cada par (consulta, documento) en tiempo de consulta." } },
+        { "text": { "en": "Reranking ~50 pairs adds tens to hundreds of ms", "es": "Reordenar ~50 pares agrega decenas a cientos de ms" } }
+      ],
+      "answers": [0, 1, 4],
+      "explain": {
+        "en": "That asymmetry is the whole design: precompute cheap vectors for recall, then spend the expensive joint model only on a short list.",
+        "es": "Esa asimetría es todo el diseño: precalcula vectores baratos para el recall y gasta el modelo conjunto, que es caro, solo en una lista corta."
+      }
+    },
+    {
+      "id": "reranking.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the reranker so it keeps the **best** `keep` chunks.",
+        "es": "Completa el reranker para que conserve los **mejores** `keep` chunks."
+      },
+      "lang": "python",
+      "code": "def rerank(query, chunks, keep=5):\n    scores = reranker.predict([(query, c) for c in chunks])\n    ____\n    return [c for _, c in ranked[:keep]]",
+      "options": [
+        { "text": "ranked = sorted(zip(scores, chunks), reverse=True)" },
+        { "text": "ranked = sorted(zip(scores, chunks))",
+          "why": { "en": "Ascending order: you'd keep the five worst chunks.", "es": "Orden ascendente: te quedarías con los cinco peores chunks." } },
+        { "text": "ranked = list(zip(scores, chunks))",
+          "why": { "en": "Never sorted: you keep the first five in retrieval order.", "es": "Nunca se ordena: te quedas con los primeros cinco en el orden de recuperación." } },
+        { "text": "ranked = sorted(zip(chunks, scores), reverse=True)",
+          "why": { "en": "Sorts by chunk text, not score, and the return unpacks the wrong field.", "es": "Ordena por el texto del chunk, no por el puntaje, y el return desempaqueta el campo equivocado." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Pair each score with its chunk, sort by score descending, slice the top `keep`. Watch tuple order: Python sorts tuples by their first element.",
+        "es": "Empareja cada puntaje con su chunk, ordena por puntaje descendente y corta el top `keep`. Ojo con el orden de la tupla: Python ordena tuplas por su primer elemento."
+      }
+    },
+    {
+      "id": "reranking.a4",
+      "type": "order",
+      "prompt": {
+        "en": "Put the online path of a two-stage retrieval system in order.",
+        "es": "Ordena el camino online de un sistema de recuperación en dos etapas."
+      },
+      "steps": [
+        { "en": "Hybrid search returns the top ~50 candidates", "es": "La búsqueda híbrida devuelve los ~50 mejores candidatos" },
+        { "en": "Cross-encoder scores every (query, chunk) pair", "es": "El cross-encoder puntúa cada par (consulta, chunk)" },
+        { "en": "Keep the top 5 by reranker score", "es": "Conservar el top 5 según el puntaje del reranker" },
+        { "en": "LLM answers with citations to those chunks", "es": "El LLM responde citando esos chunks" }
+      ],
+      "explain": {
+        "en": "Cheap and wide first (recall), expensive and narrow second (precision), then generation on the short list.",
+        "es": "Primero barato y amplio (recall), después caro y estrecho (precisión), y al final la generación sobre la lista corta."
+      }
+    }
+  ]
+}

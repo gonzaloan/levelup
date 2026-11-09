@@ -1,0 +1,73 @@
+{
+  "concept": "prompt-anatomy",
+  "items": [
+    {
+      "id": "prompt-anatomy.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A high-volume endpoint sends the same system prompt and the same 30K-token contract on every call, yet the prompt-cache hit rate is near zero. The system prompt opens with `Today is {timestamp}. User: {name}.` Best fix?",
+        "es": "Un endpoint de alto volumen envía el mismo system prompt y el mismo contrato de 30K tokens en cada llamada, pero la tasa de aciertos del prompt cache es casi cero. El system prompt empieza con `Today is {timestamp}. User: {name}.` ¿Mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Move the timestamp and user name to the end of the user message", "es": "Mover la fecha y el nombre del usuario al final del mensaje del usuario" },
+          "why": { "en": "Caching is prefix-only: a value that changes at the top invalidates everything after it.", "es": "El caching es solo de prefijo: un valor que cambia al principio invalida todo lo que viene después." } },
+        { "text": { "en": "Trim the system prompt below 1,024 tokens so it caches faster", "es": "Recortar el system prompt a menos de 1,024 tokens para que cachee más rápido" },
+          "why": { "en": "OpenAI only caches prompts from 1,024 tokens up; a shorter prefix gives you less to cache, not more hits.", "es": "OpenAI solo cachea prompts desde 1,024 tokens; un prefijo más corto te deja menos que cachear, no más aciertos." } },
+        { "text": { "en": "Put the question before the contract so the model reads it first", "es": "Poner la pregunta antes del contrato para que el modelo la lea primero" },
+          "why": { "en": "Long documents belong on top and the question last for quality, and the timestamp still sits at the very start.", "es": "Por calidad, los documentos largos van arriba y la pregunta al final, y la fecha sigue quedando al principio de todo." } },
+        { "text": { "en": "Switch to a provider whose prompt caching is automatic", "es": "Cambiar a un proveedor cuyo prompt caching sea automático" },
+          "why": { "en": "OpenAI caches automatically but also prefix-only: the timestamp at the top still makes every request a miss.", "es": "OpenAI cachea automáticamente, pero también solo por prefijo: la fecha al principio sigue haciendo que cada request falle." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Message order sets cost as well as quality. Caches reuse an identical prefix, so lay prompts out stable-first: system rules, tools, fixed documents, then per-request data and the question. Anything volatile (dates, names, request ids) goes at the end, where it invalidates nothing.",
+        "es": "El orden de los mensajes define el costo además de la calidad. Los caches reutilizan un prefijo idéntico, así que arma los prompts con lo estable primero: reglas del system, herramientas, documentos fijos, y después los datos de cada request y la pregunta. Todo lo volátil (fechas, nombres, ids de request) va al final, donde no invalida nada."
+      }
+    },
+    {
+      "id": "prompt-anatomy.a2",
+      "type": "match",
+      "prompt": {
+        "en": "Match each message role to what it should carry.",
+        "es": "Relaciona cada rol de mensaje con lo que debe contener."
+      },
+      "pairs": [
+        { "left": { "en": "System", "es": "System" },
+          "right": { "en": "Stable role, rules, constraints and output contract", "es": "Rol, reglas, restricciones y contrato de salida estables" } },
+        { "left": { "en": "User", "es": "User" },
+          "right": { "en": "This call's documents, data and the question", "es": "Los documentos, los datos y la pregunta de esta llamada" } },
+        { "left": { "en": "Assistant", "es": "Assistant" },
+          "right": { "en": "Earlier model turns, or a prefill that starts the reply", "es": "Turnos anteriores del modelo, o un prefill que inicia la respuesta" } },
+        { "left": { "en": "Tool", "es": "Tool" },
+          "right": { "en": "Results of tools your code executed", "es": "Resultados de las herramientas que ejecutó tu código" } }
+      ],
+      "explain": {
+        "en": "Keeping stable rules (system) apart from per-call data (user) lets you change one without touching the other and keeps the stable part cacheable. Mind provider differences: Anthropic takes system as a parameter and puts tool results in `tool_result` blocks inside a user turn.",
+        "es": "Separar las reglas estables (system) de los datos de cada llamada (user) te deja cambiar uno sin tocar el otro y mantiene cacheable la parte estable. Ojo con las diferencias entre proveedores: Anthropic recibe el system como parámetro y pone los resultados de herramientas en bloques `tool_result` dentro de un turno de usuario."
+      }
+    },
+    {
+      "id": "prompt-anatomy.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: \"Our rules live in the system prompt, so an instruction hidden in a retrieved document can't override them.\" Best response?",
+        "es": "Un compañero dice: \"Nuestras reglas están en el system prompt, así que una instrucción escondida en un documento recuperado no puede anularlas.\" ¿Mejor respuesta?"
+      },
+      "options": [
+        { "text": { "en": "Roles are a trained preference, not a security boundary; enforce permissions in code", "es": "Los roles son una preferencia entrenada, no una frontera de seguridad; aplica los permisos en código" },
+          "why": { "en": "Models are trained to weigh system text higher, but injected text can still win; only code enforces permissions.", "es": "Los modelos están entrenados para darle más peso al system, pero el texto inyectado igual puede ganar; solo el código aplica permisos." } },
+        { "text": { "en": "Right: the API keeps system text in a separate channel the model can't mix with data", "es": "Correcto: la API mantiene el system en un canal aparte que el modelo no puede mezclar con datos" },
+          "why": { "en": "The API flattens every message into one token sequence; roles are learned weighting, not isolation.", "es": "La API aplana todos los mensajes en una sola secuencia de tokens; los roles son un peso aprendido, no aislamiento." } },
+        { "text": { "en": "Right, as long as the rules are written in capitals with CRITICAL and MUST", "es": "Correcto, siempre que las reglas estén en mayúsculas con CRITICAL y MUST" },
+          "why": { "en": "Shouting creates no boundary, and recent models over-apply rules written in caps.", "es": "Gritar no crea ninguna frontera, y los modelos recientes aplican de más las reglas escritas en mayúsculas." } },
+        { "text": { "en": "Wrong, but repeating the rules below the document makes it safe", "es": "Incorrecto, pero repetir las reglas debajo del documento lo vuelve seguro" },
+          "why": { "en": "Instructions above and below long context improve quality (GPT-4.1 guide), not security; injected text can still win.", "es": "Las instrucciones arriba y abajo del contexto largo mejoran la calidad (guía de GPT-4.1), no la seguridad; el texto inyectado igual puede ganar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Everything the model sees becomes one token stream. Role tags and XML-style tags help it tell orders from data, which lowers injection success, but the instruction hierarchy is a habit, not an access control. Anything that must never happen is blocked in code, outside the model.",
+        "es": "Todo lo que ve el modelo se convierte en un solo flujo de tokens. Los roles y las etiquetas tipo XML le ayudan a distinguir órdenes de datos, lo que reduce el éxito de las inyecciones, pero la jerarquía de instrucciones es un hábito, no un control de acceso. Lo que nunca debe pasar se bloquea en código, fuera del modelo."
+      }
+    }
+  ]
+}

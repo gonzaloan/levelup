@@ -1,0 +1,66 @@
+{
+  "concept": "multi-tenancy",
+  "items": [
+    {
+      "id": "multi-tenancy.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your pooled SaaS enables Postgres row-level security on every table, filtering on `tenant_id`. A pen test still reads other tenants' rows through the app, which connects as the role that owns the tables. Most likely cause?",
+        "es": "Tu SaaS en modelo pool activa row-level security de Postgres en todas las tablas, filtrando por `tenant_id`. Un pen test igual lee filas de otros tenants a través de la app, que se conecta con el rol dueño de las tablas. ¿Causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "RLS skips the table owner unless `FORCE ROW LEVEL SECURITY` is set", "es": "RLS no aplica al dueño de la tabla salvo que se active `FORCE ROW LEVEL SECURITY`" },
+          "why": { "en": "Owners, superusers and `BYPASSRLS` roles skip policies. Serve traffic as a non-owner role, or force RLS.", "es": "El dueño, los superusuarios y los roles con `BYPASSRLS` se saltan las políticas. Atiende el tráfico con un rol que no sea dueño, o fuerza RLS." } },
+        { "text": { "en": "RLS needs one schema per tenant to take effect", "es": "RLS necesita un schema por tenant para funcionar" },
+          "why": { "en": "RLS is the pool model's tool: policies filter rows inside shared tables, no per-tenant schema needed.", "es": "RLS es la herramienta del modelo pool: las políticas filtran filas dentro de tablas compartidas, sin schema por tenant." } },
+        { "text": { "en": "The vector index lacks a per-tenant namespace", "es": "El índice vectorial no tiene namespace por tenant" },
+          "why": { "en": "That would leak through retrieval, but this test read rows straight from Postgres tables.", "es": "Eso filtraría por el retrieval, pero esta prueba leyó filas directo de tablas de Postgres." } },
+        { "text": { "en": "The policies need an index on `tenant_id` to take effect", "es": "Las políticas necesitan un índice en `tenant_id` para funcionar" },
+          "why": { "en": "Indexes change speed, not correctness: a policy filters with or without one.", "es": "Los índices cambian la velocidad, no la corrección: una política filtra con o sin índice." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "In the pool model, isolation must hold below app code, and RLS does that only for the roles it applies to: superusers, `BYPASSRLS` roles and, without `FORCE ROW LEVEL SECURITY`, the table owner skip every policy. Run migrations as the owner and serve traffic as a separate, non-owner role.",
+        "es": "En el modelo pool, el aislamiento debe sostenerse por debajo del código de la app, y RLS lo logra solo con los roles a los que aplica: los superusuarios, los roles con `BYPASSRLS` y, sin `FORCE ROW LEVEL SECURITY`, el dueño de la tabla se saltan toda política. Corre las migraciones como dueño y atiende el tráfico con otro rol que no sea dueño."
+      }
+    },
+    {
+      "id": "multi-tenancy.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A per-tenant token bucket allows 200,000 LLM tokens per minute, refilled continuously. A pro tenant's bucket is empty after a batch job. How many seconds until a 50,000-token request fits? Assume no other requests in between.",
+        "es": "Un token bucket por tenant permite 200 mil tokens de LLM por minuto, con recarga continua. El bucket de un tenant pro quedó vacío tras un batch. ¿En cuántos segundos entra un request de 50 mil tokens? Supón que no llegan otros requests mientras tanto."
+      },
+      "answer": 15,
+      "tolerance": 0.1,
+      "unit": "s",
+      "explain": {
+        "en": "Refill rate = 200,000 / 60 ≈ 3,333 tokens/s, so 50,000 tokens take 50,000 / 3,333 = 15 s. That's the `Retry-After` the gateway can send with its 429: only this tenant waits, and everyone else keeps their throughput.",
+        "es": "Tasa de recarga = 200 mil / 60 ≈ 3333 tokens/s, así que 50 mil tokens tardan 50 mil / 3333 = 15 s. Ese es el `Retry-After` que el gateway puede mandar con su 429: solo este tenant espera y el resto conserva su throughput."
+      }
+    },
+    {
+      "id": "multi-tenancy.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about the silo, pool and bridge models are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los modelos silo, pool y bridge son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "You choose the model per layer: pooled compute can sit on a dedicated database", "es": "El modelo se elige por capa: un cómputo compartido puede usar una base de datos dedicada" } },
+        { "text": { "en": "A silo per tenant is the safe default, even for hundreds of small customers", "es": "Un silo por tenant es el default seguro, incluso con cientos de clientes chicos" },
+          "why": { "en": "Cost and toil grow linearly: N migrations, N dashboards, N on-call surfaces for tenants who don't pay for it.", "es": "El costo y el trabajo crecen linealmente: N migraciones, N dashboards, N superficies de on-call para tenants que no lo pagan." } },
+        { "text": { "en": "With a tenant catalog, moving a tenant to a silo is a data copy plus one catalog update", "es": "Con un catálogo de tenants, mover un tenant a un silo es copiar datos y actualizar el catálogo" } },
+        { "text": { "en": "Per-tenant rate limits keep one tenant from reading another's data", "es": "Los rate limits por tenant evitan que un tenant lea los datos de otro" },
+          "why": { "en": "Quotas contain noisy neighbors, a performance problem. Data isolation needs RLS, namespaces or separate stores.", "es": "Las cuotas contienen a los noisy neighbors, un problema de rendimiento. El aislamiento de datos necesita RLS, namespaces o almacenes separados." } },
+        { "text": { "en": "The pool model gives the strongest isolation at the lowest cost per tenant", "es": "El modelo pool da el aislamiento más fuerte al menor costo por tenant" },
+          "why": { "en": "Pool is cheapest but weakest: one enforcement gap is a cross-tenant leak. Silo isolates best.", "es": "Pool es el más barato pero el más débil: una sola falla de control es una fuga entre tenants. Silo aísla mejor." } }
+      ],
+      "answers": [0, 2],
+      "explain": {
+        "en": "Multi-tenancy is a per-layer, per-tier decision, not one switch: pool where cost matters, silo where isolation or residency is required, bridge to map pricing tiers to isolation tiers. A catalog keeps placement in one place; quotas give performance isolation, while RLS and namespaces give data isolation.",
+        "es": "La multi-tenancy es una decisión por capa y por tier, no un único interruptor: pool donde importa el costo, silo donde se exige aislamiento o residencia, y bridge para mapear tiers de precio a tiers de aislamiento. Un catálogo concentra la ubicación en un solo lugar; las cuotas dan aislamiento de rendimiento, y RLS y los namespaces, aislamiento de datos."
+      }
+    }
+  ]
+}

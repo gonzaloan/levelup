@@ -1,0 +1,102 @@
+{
+  "concept": "case-chat-assistant",
+  "items": [
+    {
+      "id": "case-chat-assistant.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your assistant's long chats show almost **zero cached input tokens**. The context builder sends a summary plus the last 20 turns, and both slide forward by one turn on every message. Cheapest fix?",
+        "es": "Los chats largos de tu asistente casi no tienen **tokens de entrada en caché**. El constructor de contexto manda un resumen más los últimos 20 turnos, y ambos avanzan un turno con cada mensaje. ¿Cuál es la corrección más barata?"
+      },
+      "options": [
+        {
+          "text": { "en": "Absorb old turns into the summary in blocks of ~10", "es": "Absorber los turnos viejos en el resumen en bloques de ~10" },
+          "why": { "en": "The prefix stays byte-identical between refreshes, so the cache covers everything but the newest turns.", "es": "El prefijo queda idéntico entre refrescos, así que la caché cubre todo salvo los turnos más nuevos." }
+        },
+        {
+          "text": { "en": "Shrink the verbatim window to the last 5 turns", "es": "Reducir la ventana textual a los últimos 5 turnos" },
+          "why": { "en": "A smaller window still slides by one, so the prefix still changes every turn, and you lose context too.", "es": "Una ventana más chica igual se desliza de a uno: el prefijo sigue cambiando en cada turno y además pierdes contexto." }
+        },
+        {
+          "text": { "en": "Put the newest turns first in the prompt", "es": "Poner los turnos más nuevos al inicio del prompt" },
+          "why": { "en": "Backwards: the most volatile text first means nothing after it can ever be a cache hit.", "es": "Al revés: si lo más cambiante va primero, nada de lo que viene después puede ser un hit de caché." }
+        },
+        {
+          "text": { "en": "Write the summary with the larger model", "es": "Escribir el resumen con el modelo grande" },
+          "why": { "en": "Summary quality isn't the issue; a summary rewritten every turn breaks the prefix whoever writes it.", "es": "La calidad del resumen no es el problema; un resumen reescrito en cada turno rompe el prefijo, lo escriba quien lo escriba." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Prefix caching only pays when the start of the prompt repeats exactly. Order context most-stable-first (system prompt, pinned memories, summary, recent turns, file chunks) and change the stable part rarely: a summary refreshed in blocks keeps the prefix cacheable, a one-turn sliding window misses every time.",
+        "es": "El prefix caching solo rinde cuando el inicio del prompt se repite exacto. Ordena el contexto de lo más estable a lo menos (system prompt, memorias fijadas, resumen, turnos recientes, chunks de archivos) y cambia rara vez la parte estable: un resumen que se refresca en bloques mantiene el prefijo cacheable; una ventana que avanza de a un turno falla siempre."
+      }
+    },
+    {
+      "id": "case-chat-assistant.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size the streaming tier: **10M DAU × 15 messages/day**, a **3×** peak-to-average ratio, and each streamed answer keeps its SSE connection open **~6 s**. How many SSE streams are open at once at peak?",
+        "es": "Dimensiona la capa de streaming: **10M DAU × 15 mensajes/día**, una relación pico/promedio de **3×** y cada respuesta mantiene su conexión SSE abierta **~6 s**. ¿Cuántos streams SSE hay abiertos a la vez en el pico?"
+      },
+      "answer": 30000,
+      "tolerance": 0.15,
+      "unit": "streams",
+      "explain": {
+        "en": "150M messages/day ÷ 86,400 s ≈ 1.7k msg/s; ×3 at peak ≈ 5k msg/s. Little's law: concurrency = arrival rate × time in system = 5k × 6 s ≈ 30k open streams. That number, not QPS, is what drives load-balancer connection limits and graceful draining on deploys.",
+        "es": "150M mensajes/día ÷ 86,400 s ≈ 1.7k msg/s; ×3 en el pico ≈ 5k msg/s. Ley de Little: concurrencia = tasa de llegada × tiempo en el sistema = 5k × 6 s ≈ 30k streams abiertos. Ese número, no el QPS, es el que define los límites de conexiones del balanceador y el drenado ordenado en cada deploy."
+      }
+    },
+    {
+      "id": "case-chat-assistant.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the online path of one chat message in order (the input safety check runs in parallel and is left out).",
+        "es": "Ordena la ruta online de un mensaje de chat (el chequeo de seguridad de entrada corre en paralelo y queda fuera)."
+      },
+      "steps": [
+        { "en": "Gateway authenticates and checks rate limit and token quota", "es": "El gateway autentica y revisa el rate limit y la cuota de tokens" },
+        { "en": "Chat service loads recent turns from Redis and the rest from the store", "es": "El servicio de chat carga los turnos recientes desde Redis y el resto desde el almacén" },
+        { "en": "Context builder assembles the prompt under a token budget", "es": "El constructor de contexto arma el prompt bajo un presupuesto de tokens" },
+        { "en": "Router sends it to the small model or escalates", "es": "El router lo manda al modelo chico o lo escala" },
+        { "en": "Tokens stream back through output moderation", "es": "Los tokens vuelven en streaming a través de la moderación de salida" },
+        { "en": "Persist the message and debit its token counts", "es": "Guardar el mensaje y descontar sus conteos de tokens" }
+      ],
+      "explain": {
+        "en": "Cheap rejections first (auth, limits), then build the context the router needs to judge difficulty, then generate and moderate while streaming. Persisting and metering come last because only then are the real token counts known; summaries and memory go to the async queue.",
+        "es": "Primero los rechazos baratos (auth, límites), luego el contexto que el router necesita para juzgar la dificultad, y después generar y moderar mientras se transmite. Guardar y medir va al final porque recién ahí se conocen los tokens reales; resúmenes y memoria van a la cola asíncrona."
+      }
+    },
+    {
+      "id": "case-chat-assistant.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Free-tier spend is far over budget, yet every free user stays under **20 messages/min** and a daily message cap. Most of the cost comes from a few accounts. What's the design flaw?",
+        "es": "El gasto del plan gratuito está muy por encima del presupuesto, aunque todo usuario gratuito se mantiene bajo **20 mensajes/min** y un tope diario de mensajes. Casi todo el costo viene de unas pocas cuentas. ¿Cuál es la falla de diseño?"
+      },
+      "options": [
+        {
+          "text": { "en": "The quota counts messages instead of tokens", "es": "La cuota cuenta mensajes en vez de tokens" },
+          "why": { "en": "One question over a 100k-token PDF costs as much as ~50 short chats; only a token quota bounds spend.", "es": "Una pregunta sobre un PDF de 100k tokens cuesta lo mismo que ~50 chats cortos; solo una cuota de tokens acota el gasto." }
+        },
+        {
+          "text": { "en": "The rate limit window should be per second", "es": "La ventana del rate limit debería ser por segundo" },
+          "why": { "en": "Rate limits protect capacity, not budget; a finer window still lets each message be huge.", "es": "Los rate limits protegen la capacidad, no el presupuesto; una ventana más fina igual deja que cada mensaje sea enorme." }
+        },
+        {
+          "text": { "en": "The router escalates too few prompts to large", "es": "El router escala muy pocos prompts al modelo grande" },
+          "why": { "en": "Escalating more would raise cost: large is ~15% of traffic but ~75% of spend.", "es": "Escalar más subiría el costo: el grande es ~15% del tráfico pero ~75% del gasto." }
+        },
+        {
+          "text": { "en": "Output moderation runs on every few hundred tokens", "es": "La moderación de salida corre cada pocos cientos de tokens" },
+          "why": { "en": "A small classifier on output is cheap; it doesn't explain a few accounts dominating spend.", "es": "Un clasificador chico sobre la salida es barato; no explica que unas pocas cuentas dominen el gasto." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Two layers, two jobs: rate limits protect capacity, quotas protect budget. Cost scales with tokens, so meter tokens, reserve the worst case (input + `max_tokens`) before the call and settle the actual after, so parallel tabs can't overspend.",
+        "es": "Dos capas, dos trabajos: los rate limits protegen la capacidad y las cuotas, el presupuesto. El costo escala con los tokens, así que mide tokens, reserva el peor caso (entrada + `max_tokens`) antes de la llamada y liquida lo real después, para que varias pestañas en paralelo no gasten de más."
+      }
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "concept": "speculative-decoding",
+  "items": [
+    {
+      "id": "speculative-decoding.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Speculative decoding cut latency **2.5×** in your batch-1 benchmark. In production at peak load (batch 64) the gain is only ~1.1×, and acceptance rate is unchanged. Best next step?",
+        "es": "El speculative decoding bajó la latencia **2.5×** en tu benchmark con batch 1. En producción, en el pico de carga (batch 64), la ganancia es apenas ~1.1× y la tasa de aceptación no cambió. ¿Mejor siguiente paso?"
+      },
+      "options": [
+        { "text": { "en": "Disable speculation above a batch-size threshold", "es": "Desactivar la speculation por encima de cierto tamaño de batch" } },
+        { "text": { "en": "Raise k so each target pass yields more tokens", "es": "Subir k para que cada pasada del objetivo rinda más tokens" },
+          "why": { "en": "At high batch the verify pass is no longer free; a bigger k burns more compute on rejected tokens.", "es": "Con batch grande la pasada de verificación ya no es gratis; un k mayor quema más cómputo en tokens rechazados." } },
+        { "text": { "en": "Swap in a larger draft model to raise acceptance", "es": "Usar un borrador más grande para subir la aceptación" },
+          "why": { "en": "Acceptance didn't change, so it isn't the problem; a bigger draft only adds cost per round.", "es": "La aceptación no cambió, así que no es el problema; un borrador más grande solo suma costo por ronda." } },
+        { "text": { "en": "Switch to n-gram prompt lookup for all traffic", "es": "Pasar a prompt lookup con n-gramas para todo el tráfico" },
+          "why": { "en": "A cheaper draft doesn't fix it: at batch 64 the GPU is compute-bound, so verification itself costs real FLOPs.", "es": "Un borrador más barato no lo arregla: con batch 64 la GPU está limitada por cómputo, así que la verificación misma cuesta FLOPs reales." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Speculation spends idle compute to buy latency. At batch 1 decode is memory-bound, so verifying k tokens costs about one pass; at batch 64 the GPU is compute-bound and every rejected token steals FLOPs from other requests. Gate it on batch size and judge it at real load.",
+        "es": "La speculation gasta cómputo ocioso para comprar latencia. Con batch 1 el decode está limitado por memoria, así que verificar k tokens cuesta más o menos una pasada; con batch 64 la GPU está limitada por cómputo y cada token rechazado le quita FLOPs a otras requests. Actívala según el tamaño de batch y evalúala con carga real."
+      }
+    },
+    {
+      "id": "speculative-decoding.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Acceptance rate α = **0.7**, and the draft proposes k = **5** tokens per round. With expected tokens per target pass = (1 − α^(k+1)) / (1 − α), how many tokens does each target forward pass yield on average?",
+        "es": "Tasa de aceptación α = **0.7**, y el borrador propone k = **5** tokens por ronda. Con tokens esperados por pasada del objetivo = (1 − α^(k+1)) / (1 − α), ¿cuántos tokens rinde en promedio cada pasada del objetivo?"
+      },
+      "answer": 2.94,
+      "tolerance": 0.05,
+      "unit": "tokens",
+      "explain": {
+        "en": "0.7⁶ ≈ 0.118, so (1 − 0.118) ÷ 0.3 ≈ 2.94 tokens per pass, versus 1 without speculation. Draft cost eats part of it: a coding assistant with ~2.9 tokens per pass went from ~30 to 70 tok/s, about 2.3×.",
+        "es": "0.7⁶ ≈ 0.118, así que (1 − 0.118) ÷ 0.3 ≈ 2.94 tokens por pasada, contra 1 sin speculation. El costo del borrador se come una parte: un asistente de código con ~2.9 tokens por pasada pasó de ~30 a 70 tok/s, unas 2.3×."
+      }
+    },
+    {
+      "id": "speculative-decoding.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put one round of speculative decoding in order.",
+        "es": "Ordena una ronda de speculative decoding."
+      },
+      "steps": [
+        { "en": "The draft proposes k tokens one by one", "es": "El borrador propone k tokens uno por uno" },
+        { "en": "The target scores all k positions in one forward pass", "es": "El objetivo evalúa las k posiciones en una sola pasada" },
+        { "en": "Accept draft tokens left to right with probability min(1, p_target / p_draft)", "es": "Aceptar los tokens del borrador de izquierda a derecha con probabilidad min(1, p_objetivo / p_borrador)" },
+        { "en": "At the first rejection, resample from the leftover distribution and discard the rest", "es": "En el primer rechazo, muestrear de la distribución residual y descartar el resto" }
+      ],
+      "explain": {
+        "en": "Sequential and cheap first (the draft), then parallel and expensive once (the target), then the rejection rule decides how much to keep. If all k pass, the target adds a bonus token, so every round yields at least one target-quality token.",
+        "es": "Primero lo secuencial y barato (el borrador), después lo paralelo y caro una sola vez (el objetivo), y la regla de rechazo decide cuánto conservar. Si los k pasan, el objetivo agrega un token extra, así que cada ronda rinde al menos un token con la calidad del objetivo."
+      }
+    },
+    {
+      "id": "speculative-decoding.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A reviewer fears that adding a 1B draft model to your 70B target will degrade answer quality. Which statement is accurate?",
+        "es": "Un revisor teme que agregar un borrador de 1B a tu modelo objetivo de 70B empeore la calidad de las respuestas. ¿Qué afirmación es correcta?"
+      },
+      "options": [
+        { "text": { "en": "Output follows the 70B's distribution; the draft only affects speed", "es": "La salida sigue la distribución del 70B; el borrador solo afecta la velocidad" } },
+        { "text": { "en": "Outputs will be bit-identical to the 70B running alone", "es": "Las salidas serán idénticas bit a bit a las del 70B solo" },
+          "why": { "en": "Lossless is distributional: batched verification changes numerics, so exact-string tests can flake.", "es": "Sin pérdida es a nivel de distribución: la verificación en batch cambia la numérica, así que los tests de string exacto pueden fallar." } },
+        { "text": { "en": "Quality is preserved only with greedy decoding, not sampling", "es": "La calidad se preserva solo con decoding greedy, no con muestreo" },
+          "why": { "en": "The min(1, p_target / p_draft) rule plus resampling from the residual keeps sampled output exact too.", "es": "La regla min(1, p_objetivo / p_borrador) más el remuestreo del residuo mantiene exacta también la salida muestreada." } },
+        { "text": { "en": "Quality degrades in proportion to the draft's rejection rate", "es": "La calidad empeora en proporción a la tasa de rechazo del borrador" },
+          "why": { "en": "Rejections cost speed, not quality: a rejected token is replaced by a sample from the target's correction.", "es": "Los rechazos cuestan velocidad, no calidad: un token rechazado se reemplaza con una muestra corregida por el objetivo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The rejection-sampling rule makes speculative decoding lossless: the output distribution is exactly the target's. A bad draft only lowers acceptance, and low acceptance can make it slower than no speculation, so the metric to watch is acceptance rate, not quality.",
+        "es": "La regla de muestreo por rechazo hace que el speculative decoding sea sin pérdida: la distribución de salida es exactamente la del objetivo. Un mal borrador solo baja la aceptación, y con baja aceptación puede ser más lento que no especular, así que la métrica a vigilar es la tasa de aceptación, no la calidad."
+      }
+    }
+  ]
+}

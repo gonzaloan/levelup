@@ -1,0 +1,90 @@
+{
+  "concept": "contrastive-learning",
+  "items": [
+    {
+      "id": "contrastive-learning.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You upgrade the CLIP **text** encoder that embeds search queries to a newer checkpoint. Overnight, text-to-image search returns near-random photos. The 5M image vectors in the index were left as they were. What's the cause?",
+        "es": "Actualizas a un checkpoint más nuevo el encoder de **texto** de CLIP que genera los embeddings de las búsquedas. De un día para otro, la búsqueda texto-imagen devuelve fotos casi al azar. Los 5M de vectores de imágenes del índice quedaron como estaban. ¿Cuál es la causa?"
+      },
+      "options": [
+        { "text": { "en": "Query and image vectors now come from unaligned embedding spaces", "es": "Los vectores de consulta y de imagen ahora vienen de espacios de embedding no alineados" },
+          "why": { "en": "Contrastive training aligns one text encoder with one image encoder; swap either side and distances stop meaning anything.", "es": "El entrenamiento contrastivo alinea un encoder de texto con un encoder de imagen; si cambias uno de los dos, las distancias dejan de significar algo." } },
+        { "text": { "en": "The ANN index needs a rebuild with new HNSW parameters", "es": "El índice ANN necesita reconstruirse con nuevos parámetros de HNSW" },
+          "why": { "en": "Index parameters trade recall for speed; they can't make vectors from two different models comparable.", "es": "Los parámetros del índice cambian recall por velocidad; no pueden volver comparables vectores de dos modelos distintos." } },
+        { "text": { "en": "The new checkpoint learned a different temperature, so cosines shifted", "es": "El checkpoint nuevo aprendió otra temperatura, así que los cosenos cambiaron" },
+          "why": { "en": "Temperature scales logits during training; a scale change alone doesn't reorder cosine rankings.", "es": "La temperatura escala los logits durante el entrenamiento; un cambio de escala por sí solo no reordena un ranking por coseno." } },
+        { "text": { "en": "Queries now need the 'a photo of a {label}' prompt template", "es": "Las consultas ahora necesitan el template 'a photo of a {label}'" },
+          "why": { "en": "Prompt templates nudge zero-shot accuracy; they can't explain near-random retrieval.", "es": "Los templates de prompt mejoran un poco la precisión zero-shot; no explican una recuperación casi al azar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Vectors from different models or versions don't share a space, even with the same dimension. Treat an encoder upgrade like a schema migration: re-embed the whole corpus with the matching encoder pair into a new index, then switch queries over at once.",
+        "es": "Los vectores de modelos o versiones distintos no comparten espacio, aunque tengan la misma dimensión. Trata la actualización de un encoder como una migración de esquema: vuelve a generar los embeddings de todo el corpus con el par de encoders correspondiente en un índice nuevo y luego cambia las consultas de una sola vez."
+      }
+    },
+    {
+      "id": "contrastive-learning.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "You index **12M** product photos with a CLIP ViT-B/32 image encoder (512-dimensional embeddings) stored as float32. How much raw vector storage do you need, in GB, before any index overhead?",
+        "es": "Indexas **12M** de fotos de productos con un encoder de imagen CLIP ViT-B/32 (embeddings de 512 dimensiones) guardados en float32. ¿Cuánto almacenamiento crudo de vectores necesitas, en GB, sin contar el overhead del índice?"
+      },
+      "answer": 24.6,
+      "tolerance": 0.1,
+      "unit": "GB",
+      "explain": {
+        "en": "12,000,000 × 512 dimensions × 4 bytes = 24,576,000,000 bytes ≈ 24.6 GB. Every photo is embedded once offline, so this cost is paid one time; queries only embed a short text and search the index.",
+        "es": "12.000.000 × 512 dimensiones × 4 bytes = 24.576.000.000 bytes ≈ 24,6 GB. Cada foto se convierte en embedding una sola vez offline, así que ese costo se paga una vez; cada consulta solo genera el embedding de un texto corto y busca en el índice."
+      }
+    },
+    {
+      "id": "contrastive-learning.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A PM reads a CLIP cosine similarity of 0.82 as 'an 82% chance this photo matches the query' and wants one global cutoff of 0.8 for every category. What do you tell them?",
+        "es": "Una PM interpreta una similitud coseno de CLIP de 0,82 como 'un 82% de probabilidad de que la foto coincida con la consulta' y quiere un único corte global de 0,8 para todas las categorías. ¿Qué le dices?"
+      },
+      "options": [
+        { "text": { "en": "Cosine isn't a probability; tune thresholds per use case on labeled pairs", "es": "El coseno no es una probabilidad; ajusta umbrales por caso de uso con pares etiquetados" },
+          "why": { "en": "Absolute cosine levels shift with model, temperature and domain; only labeled examples tell you where a cutoff belongs.", "es": "Los niveles absolutos de coseno cambian con el modelo, la temperatura y el dominio; solo ejemplos etiquetados te dicen dónde va el corte." } },
+        { "text": { "en": "That's right, because normalized embeddings make cosine a probability", "es": "Es correcto, porque los embeddings normalizados vuelven el coseno una probabilidad" },
+          "why": { "en": "Normalization bounds cosine to [−1, 1]; it doesn't turn it into a calibrated chance of a match.", "es": "Normalizar acota el coseno a [−1, 1]; no lo convierte en una probabilidad calibrada de coincidencia." } },
+        { "text": { "en": "Right idea, but square the cosine first to get a probability", "es": "La idea es correcta, pero eleva el coseno al cuadrado para obtener una probabilidad" },
+          "why": { "en": "Squaring is just another uncalibrated transform; the score's meaning still varies by model and domain.", "es": "Elevar al cuadrado es otra transformación sin calibrar; el significado del puntaje sigue variando por modelo y dominio." } },
+        { "text": { "en": "Use the zero-shot softmax instead, since its outputs are calibrated", "es": "Usa mejor el softmax zero-shot, porque sus salidas están calibradas" },
+          "why": { "en": "That softmax only compares the prompts you supplied, and its sharpness comes from the learned scale; it isn't calibrated either.", "es": "Ese softmax solo compara los prompts que le diste, y su nitidez viene de la escala aprendida; tampoco está calibrado." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Contrastive training only shapes relative geometry: positives closer than in-batch negatives. Absolute similarity levels are a by-product, so 0.82 can mean a near-duplicate in one catalog and a loose match in another. Set thresholds per use case from labeled pairs, or calibrate the score.",
+        "es": "El entrenamiento contrastivo solo moldea la geometría relativa: los positivos más cerca que los negativos del batch. Los niveles absolutos de similitud son un subproducto, así que 0,82 puede ser un casi duplicado en un catálogo y una coincidencia floja en otro. Define umbrales por caso de uso con pares etiquetados, o calibra el puntaje."
+      }
+    },
+    {
+      "id": "contrastive-learning.a4",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the CLIP-style InfoNCE loss, where `a[i]` and `b[i]` are a positive pair.",
+        "es": "Completa la loss InfoNCE al estilo CLIP, donde `a[i]` y `b[i]` son un par positivo."
+      },
+      "lang": "python",
+      "code": "def info_nce(a, b, logit_scale):\n    a, b = F.normalize(a, dim=-1), F.normalize(b, dim=-1)\n    logits = logit_scale.exp() * a @ b.T          # (N, N) similarities / tau\n    ____\n    return (F.cross_entropy(logits, targets) +\n            F.cross_entropy(logits.T, targets)) / 2",
+      "options": [
+        { "text": "targets = torch.arange(len(a), device=a.device)" },
+        { "text": "targets = torch.zeros(len(a), dtype=torch.long, device=a.device)",
+          "why": { "en": "That's the MoCo layout, where the positive is concatenated first. Here positives sit on the diagonal, not in column 0.", "es": "Ese es el formato de MoCo, donde el positivo se concatena primero. Aquí los positivos están en la diagonal, no en la columna 0." } },
+        { "text": "targets = torch.ones(len(a), dtype=torch.long, device=a.device)",
+          "why": { "en": "Reads like a binary 'match = 1' label, but cross_entropy takes class indices: every row's positive becomes column 1.", "es": "Parece una etiqueta binaria 'coincide = 1', pero cross_entropy recibe índices de clase: el positivo de cada fila pasa a ser la columna 1." } },
+        { "text": "targets = logits.argmax(dim=-1)",
+          "why": { "en": "Uses the model's own guesses as labels, so it reinforces whatever it already predicts and learns nothing.", "es": "Usa las propias predicciones del modelo como etiquetas, así que refuerza lo que ya predice y no aprende nada." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Each row of the N×N matrix is an N-way classification: the matching item sits at the same index (the diagonal), and the other N−1 items in the batch are free negatives. The symmetric loss does the same for columns, so both encoders learn.",
+        "es": "Cada fila de la matriz N×N es una clasificación de N clases: el ítem que coincide está en el mismo índice (la diagonal), y los otros N−1 ítems del batch son negativos gratis. La loss simétrica hace lo mismo con las columnas, así que aprenden ambos encoders."
+      }
+    }
+  ]
+}

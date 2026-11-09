@@ -1,0 +1,66 @@
+{
+  "concept": "experiment-tracking",
+  "items": [
+    {
+      "id": "experiment-tracking.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You rerun last quarter's churn training: same git commit, image digest, config, seeds and frozen eval set. AUC is 0.84 instead of 0.87, far beyond seed variance. The run logged its data as `s3://bucket/train/`. Most likely cause?",
+        "es": "Vuelves a correr el entrenamiento de churn del trimestre pasado: mismo commit, digest de imagen, configuración, semillas y eval set congelado. El AUC da 0.84 en vez de 0.87, muy por encima de la variación entre semillas. La corrida registró sus datos como `s3://bucket/train/`. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "The data under that path changed; a path is a pointer, not a version", "es": "Cambiaron los datos bajo esa ruta; una ruta es un puntero, no una versión" },
+          "why": { "en": "It's the only input that wasn't pinned to an immutable identifier.", "es": "Es la única entrada que no quedó fijada con un identificador inmutable." } },
+        { "text": { "en": "GPU kernels are nondeterministic, so a gap like this is expected", "es": "Los kernels de GPU no son deterministas, así que una diferencia así es esperable" },
+          "why": { "en": "Nondeterminism gives statistically equivalent results, within seed variance, not a gap far beyond it.", "es": "El no determinismo da resultados estadísticamente equivalentes, dentro de la variación entre semillas, no una diferencia muy por encima." } },
+        { "text": { "en": "The original 0.87 was a lucky run that the rerun corrected", "es": "El 0.87 original fue una corrida con suerte que la repetición corrigió" },
+          "why": { "en": "Luck would show up as seed variance; a gap far beyond it with identical code, config and seeds means an input changed.", "es": "La suerte se vería como variación entre semillas; una diferencia muy por encima, con el mismo código, configuración y semillas, significa que cambió una entrada." } },
+        { "text": { "en": "The tracking server recorded the original metric incorrectly", "es": "El servidor de tracking registró mal la métrica original" },
+          "why": { "en": "Possible but rare, and it wouldn't explain why you can't rebuild the model; the unpinned input is the obvious suspect.", "es": "Es posible pero raro, y no explicaría por qué no puedes reconstruir el modelo; la entrada sin fijar es la sospechosa obvia." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A reproducible run pins four inputs: code commit, an immutable data snapshot (DVC hash, lakeFS commit or table version), environment digest and config with seeds. A path like `s3://bucket/train/` can be overwritten or backfilled, so log the version, not the location.",
+        "es": "Una corrida reproducible fija cuatro entradas: commit del código, un snapshot inmutable de datos (hash de DVC, commit de lakeFS o versión de tabla), digest del entorno y configuración con semillas. Una ruta como `s3://bucket/train/` se puede sobrescribir o recalcular, así que registra la versión, no la ubicación."
+      }
+    },
+    {
+      "id": "experiment-tracking.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "With 100 eval examples at ~80% accuracy, the 95% confidence interval is about **±8 points**. You grow the eval set to **400** examples and accuracy stays ~80%. What is the new half-width, in percentage points?",
+        "es": "Con 100 ejemplos de eval y ~80% de exactitud, el intervalo de confianza del 95% es de unos **±8 puntos**. Amplías el eval set a **400** ejemplos y la exactitud sigue en ~80%. ¿Cuál es el nuevo semiancho, en puntos porcentuales?"
+      },
+      "answer": 4,
+      "tolerance": 0.15,
+      "unit": "pp",
+      "explain": {
+        "en": "The half-width scales with 1/√n: 1.96·√(0.8·0.2/n). Four times the data halves it: 8 ÷ √4 = **±4 points** (exactly 1.96·0.02 ≈ 3.9). A 2-point 'win' is noise at n=100 and still inside the noise band at n=400.",
+        "es": "El semiancho escala con 1/√n: 1.96·√(0.8·0.2/n). Cuatro veces más datos lo reducen a la mitad: 8 ÷ √4 = **±4 puntos** (exacto: 1.96·0.02 ≈ 3.9). Una 'mejora' de 2 puntos es ruido con n=100 y sigue dentro de la banda de ruido con n=400."
+      }
+    },
+    {
+      "id": "experiment-tracking.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "After 200 tuned runs, you pick the one with the best score on the test set you used to rank them all. It beats the baseline by 1.5 points. What is the honest read?",
+        "es": "Tras 200 corridas de ajuste, eliges la de mejor puntaje en el test set que usaste para ordenarlas todas. Supera al baseline por 1.5 puntos. ¿Cuál es la lectura honesta?"
+      },
+      "options": [
+        { "text": { "en": "The score is optimistic; confirm the gain on a held-out set you rarely touch", "es": "El puntaje es optimista; confirma la mejora en un set reservado que casi nunca tocas" },
+          "why": { "en": "Selecting on the test set makes it part of your tuning loop; only an untouched set gives an unbiased read.", "es": "Elegir con el test set lo vuelve parte de tu ciclo de ajuste; solo un set sin tocar da una lectura sin sesgo." } },
+        { "text": { "en": "It's reliable: the model never saw the test set during training", "es": "Es confiable: el modelo nunca vio el test set durante el entrenamiento" },
+          "why": { "en": "Picking the max of 200 scores on one set overfits the leaderboard, even without training on it.", "es": "Elegir el máximo de 200 puntajes sobre un mismo set sobreajusta el ranking, aunque nunca hayas entrenado con él." } },
+        { "text": { "en": "It's reliable because 200 runs average out the run-to-run noise", "es": "Es confiable porque 200 corridas promedian el ruido entre corridas" },
+          "why": { "en": "You took the maximum, not the mean: more runs make a lucky winner more likely, not less.", "es": "Tomaste el máximo, no el promedio: más corridas hacen más probable un ganador con suerte, no menos." } },
+        { "text": { "en": "Rerun the winning config with the same seed to confirm the gain", "es": "Repetir la configuración ganadora con la misma semilla para confirmar la mejora" },
+          "why": { "en": "Same seed, same data, same set: you reproduce the same selection bias. Use new seeds and an untouched set.", "es": "Misma semilla, mismos datos, mismo set: reproduces el mismo sesgo de selección. Usa semillas nuevas y un set sin tocar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Choosing among many runs by test score turns the test set into a tuning signal. Expect regression to the mean: keep a held-out set you rarely touch, and compare changes across 3–5 seeds, reporting mean ± std.",
+        "es": "Elegir entre muchas corridas por el puntaje de test convierte al test set en una señal de ajuste. Espera una regresión a la media: guarda un set reservado que casi nunca toques y compara los cambios con 3–5 semillas, reportando media ± desviación estándar."
+      }
+    }
+  ]
+}

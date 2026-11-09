@@ -1,0 +1,89 @@
+{
+  "concept": "deterministic-graders",
+  "items": [
+    {
+      "id": "deterministic-graders.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your refund agent's eval passes whenever the tool arguments are valid JSON matching the `Refund` schema, and it scores 99%. Users report refunds for the wrong amount. What's missing?",
+        "es": "El eval de tu agente de reembolsos aprueba siempre que los argumentos de la herramienta sean JSON válido según el esquema `Refund`, y saca 99%. Los usuarios reportan reembolsos por el monto equivocado. ¿Qué falta?"
+      },
+      "options": [
+        { "text": { "en": "Assert each field's value against the expected one", "es": "Verificar el valor de cada campo contra el esperado" },
+          "why": { "en": "Schema-valid output can still carry wrong values; compare `order_id` and `amount` with the case.", "es": "Una salida válida según el esquema igual puede traer valores equivocados; compara `order_id` y `amount` con el caso." } },
+        { "text": { "en": "An LLM judge rating how correct each refund looks", "es": "Un LLM juez que califique qué tan correcto se ve cada reembolso" },
+          "why": { "en": "The amount is checkable by code: free, instant and with no grader variance. A judge only adds cost and noise.", "es": "El monto se puede verificar con código: gratis, instantáneo y sin varianza del grader. Un juez solo suma costo y ruido." } },
+        { "text": { "en": "A stricter JSON Schema with more required fields", "es": "Un JSON Schema más estricto con más campos obligatorios" },
+          "why": { "en": "More structure is still structure: a perfectly shaped refund can carry the wrong amount.", "es": "Más estructura sigue siendo estructura: un reembolso con forma perfecta puede traer el monto equivocado." } },
+        { "text": { "en": "More cases, since 99% may just be sampling noise", "es": "Más casos, porque el 99% puede ser solo ruido de muestreo" },
+          "why": { "en": "This is a systematic blind spot, not noise; more cases graded the same way would still pass.", "es": "Es un punto ciego sistemático, no ruido; más casos calificados de la misma forma seguirían pasando." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Validity is the floor, not the test. Deterministic graders shine when they check the values that matter: the right tool, the right arguments, amounts within a tolerance. Stopping at \"parses as JSON\" measures format while the real failure ships.",
+        "es": "La validez es el piso, no la prueba. Los graders deterministas brillan cuando verifican los valores que importan: la herramienta correcta, los argumentos correctos, montos dentro de una tolerancia. Quedarse en \"parsea como JSON\" mide el formato mientras la falla real sale a producción."
+      }
+    },
+    {
+      "id": "deterministic-graders.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the grader for a text-to-SQL case whose question does **not** ask for any ordering.",
+        "es": "Completa el grader para un caso de texto a SQL cuya pregunta **no** pide ningún orden."
+      },
+      "lang": "python",
+      "code": "import sqlite3\nimport pytest\n\n@pytest.mark.parametrize(\"case\", SQL_CASES, ids=lambda c: c[\"id\"])\ndef test_sql_result_matches(case):\n    # fixed snapshot, opened read-only\n    db = sqlite3.connect(\"file:fixtures/shop.db?mode=ro\", uri=True)\n    sql = generate_sql(case[\"question\"])          # system under test\n    got = db.execute(sql).fetchall()\n    want = db.execute(case[\"reference_sql\"]).fetchall()\n    ____",
+      "options": [
+        { "text": "assert sorted(got) == sorted(want)" },
+        { "text": "assert got == want",
+          "why": { "en": "Asserts a row order the question never asked for, so correct queries fail at random.", "es": "Exige un orden de filas que la pregunta nunca pidió, así que consultas correctas fallan al azar." } },
+        { "text": "assert sql == case[\"reference_sql\"]",
+          "why": { "en": "Compares SQL text: many correct queries look different, so valid answers get marked wrong.", "es": "Compara el texto SQL: muchas consultas correctas se ven distintas, así que respuestas válidas se marcan como incorrectas." } },
+        { "text": "assert len(got) == len(want)",
+          "why": { "en": "The right row count with wrong values passes, like summing gross instead of net.", "es": "Pasa con la cantidad correcta de filas y valores equivocados, como sumar bruto en vez de neto." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Grade SQL by execution: run both queries on a fixed snapshot and compare result sets. Text comparison underrates correct alternatives, a judge overrates plausible wrong joins, and comparing results gets both right. Sort only when order isn't part of the answer.",
+        "es": "Califica el SQL ejecutándolo: corre ambas consultas sobre un snapshot fijo y compara los resultados. Comparar texto subestima alternativas correctas, un juez sobrestima joins equivocados que se ven bien, y comparar resultados acierta en ambos casos. Ordena solo cuando el orden no forma parte de la respuesta."
+      }
+    },
+    {
+      "id": "deterministic-graders.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which criteria can a deterministic, code-based grader check? Select all that apply.",
+        "es": "¿Qué criterios puede verificar un grader determinista basado en código? Marca todos los que correspondan."
+      },
+      "options": [
+        { "text": { "en": "The right tool was called with the expected arguments", "es": "Se llamó a la herramienta correcta con los argumentos esperados" } },
+        { "text": { "en": "Generated code passes the repo's unit tests", "es": "El código generado pasa los tests unitarios del repo" } },
+        { "text": { "en": "The reply cites a doc id that was actually retrieved", "es": "La respuesta cita un id de documento que realmente se recuperó" } },
+        { "text": { "en": "The reply's tone suits an upset customer", "es": "El tono de la respuesta es adecuado para un cliente molesto" },
+          "why": { "en": "Tone is nuance: it needs an LLM judge or a human.", "es": "El tono es un matiz: necesita un LLM juez o una persona." } },
+        { "text": { "en": "The cited doc actually supports the claim", "es": "El documento citado realmente respalda la afirmación" },
+          "why": { "en": "Faithfulness needs language understanding; that's the residue left for a judge.", "es": "La fidelidad requiere entender el lenguaje; ese es el residuo que le queda al juez." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "More is checkable than people assume: tool calls, tests, retrieved ids. The Staff move is to decompose a fuzzy criterion like \"well grounded\" into a code check (cites a retrieved id) plus a narrow judge for the residue (the doc supports the claim).",
+        "es": "Se puede verificar más de lo que la gente cree: llamadas a herramientas, tests, ids recuperados. La jugada de nivel Staff es descomponer un criterio difuso como \"bien fundamentado\" en una verificación en código (cita un id recuperado) más un juez acotado para el residuo (el documento respalda la afirmación)."
+      }
+    },
+    {
+      "id": "deterministic-graders.a4",
+      "type": "numeric",
+      "prompt": {
+        "en": "You sample n = 10 solutions to a coding problem and c = 2 pass the unit tests. Using the unbiased estimator pass@k = 1 − C(n−c, k) / C(n, k), what's pass@3 for this problem, in percent?",
+        "es": "Generas n = 10 soluciones para un problema de código y c = 2 pasan los tests unitarios. Con el estimador insesgado pass@k = 1 − C(n−c, k) / C(n, k), ¿cuánto vale pass@3 para este problema, en porcentaje?"
+      },
+      "answer": 53.3,
+      "tolerance": 0.05,
+      "unit": "%",
+      "explain": {
+        "en": "C(8, 3) = 56 and C(10, 3) = 120, so pass@3 = 1 − 56/120 ≈ 0.533, about 53%: the chance that at least one of 3 samples drawn from the 10 passes. The naive 2/10 = 20% is pass@1, and 1 − 0.8³ ≈ 49% wrongly assumes sampling with replacement.",
+        "es": "C(8, 3) = 56 y C(10, 3) = 120, así que pass@3 = 1 − 56/120 ≈ 0.533, cerca de 53%: la probabilidad de que al menos una de 3 muestras tomadas de las 10 pase. El 2/10 = 20% ingenuo es pass@1, y 1 − 0.8³ ≈ 49% supone por error un muestreo con reemplazo."
+      }
+    }
+  ]
+}

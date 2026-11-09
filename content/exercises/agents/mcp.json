@@ -1,0 +1,73 @@
+{
+  "concept": "mcp",
+  "items": [
+    {
+      "id": "mcp.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your coding agent connects to 5 MCP servers (GitHub, Slack, Sentry, Grafana, Splunk) exposing 58 tools. Before the user types anything, ~55k tokens of tool definitions fill the context, and the model often picks the wrong one of several overlapping tools. Best first move?",
+        "es": "Tu agente de código se conecta a 5 servidores MCP (GitHub, Slack, Sentry, Grafana, Splunk) que exponen 58 tools. Antes de que el usuario escriba nada, ~55k tokens de definiciones de tools llenan el contexto, y el modelo suele elegir la equivocada entre varias tools parecidas. ¿Cuál es el mejor primer paso?"
+      },
+      "options": [
+        { "text": { "en": "Load only the servers and tools each task needs, not all of them by default", "es": "Cargar solo los servidores y tools que necesita cada tarea, no todos por defecto" },
+          "why": { "en": "Fewer schemas means less context spent per call and fewer look-alike tools to choose between.", "es": "Menos schemas implica menos contexto gastado por llamada y menos tools parecidas entre las que elegir." } },
+        { "text": { "en": "Move the servers from stdio to Streamable HTTP to shrink the payload", "es": "Pasar los servidores de stdio a Streamable HTTP para achicar el payload" },
+          "why": { "en": "Transport changes how messages travel, not how many tool schemas the host puts in the model's context.", "es": "El transporte cambia cómo viajan los mensajes, no cuántos schemas de tools pone el host en el contexto del modelo." } },
+        { "text": { "en": "Upgrade to the stateless 2026-07-28 spec, which drops the initialize step", "es": "Actualizar a la spec stateless 2026-07-28, que elimina el paso de initialize" },
+          "why": { "en": "Removing the handshake changes protocol plumbing; the host still lists every tool to the model.", "es": "Quitar el handshake cambia la plomería del protocolo; el host sigue listándole todas las tools al modelo." } },
+        { "text": { "en": "Split each server's tools into finer-grained ones so choices get clearer", "es": "Dividir las tools de cada servidor en otras más granulares para que la elección sea más clara" },
+          "why": { "en": "More, thinner tools mean more overlap and more definitions: the wrap-every-endpoint trap.", "es": "Más tools y más delgadas implican más solapamiento y más definiciones: la trampa de envolver cada endpoint." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Every connected server's schemas are re-sent on every call, and overlapping tools hurt selection. MCP standardizes the connection, not tool design or your context budget. Scope servers and tools per task and consolidate overlaps; Anthropic also cut one workflow from ~150k to ~2k tokens by calling MCP tools from code execution.",
+        "es": "Los schemas de cada servidor conectado se reenvían en cada llamada, y las tools solapadas empeoran la elección. MCP estandariza la conexión, no el diseño de tools ni tu presupuesto de contexto. Limita servidores y tools por tarea y consolida los solapamientos; Anthropic además bajó un workflow de ~150k a ~2k tokens llamando tools MCP desde ejecución de código."
+      }
+    },
+    {
+      "id": "mcp.a2",
+      "type": "match",
+      "prompt": {
+        "en": "Match each MCP primitive to who drives it and what it does.",
+        "es": "Relaciona cada primitiva de MCP con quién la controla y qué hace."
+      },
+      "pairs": [
+        { "left": { "en": "Tools", "es": "Tools" },
+          "right": { "en": "Actions the model decides to call, like `create_issue`", "es": "Acciones que el modelo decide llamar, como `create_issue`" } },
+        { "left": { "en": "Resources", "es": "Resources" },
+          "right": { "en": "Data the host app attaches by URI, like a file", "es": "Datos que la app host adjunta por URI, como un archivo" } },
+        { "left": { "en": "Prompts", "es": "Prompts" },
+          "right": { "en": "Templates the user picks from a menu", "es": "Plantillas que el usuario elige de un menú" } },
+        { "left": { "en": "Elicitation", "es": "Elicitation" },
+          "right": { "en": "The server asks the user a question through the client", "es": "El servidor le hace una pregunta al usuario a través del cliente" } }
+      ],
+      "explain": {
+        "en": "The split is about control: the model chooses tools, the application chooses which resources to attach, and the user chooses prompts. Elicitation runs the other way, a client capability that lets a server ask the user for input. Knowing who is in control tells you where to put confirmation and policy.",
+        "es": "La división es de control: el modelo elige las tools, la aplicación decide qué resources adjuntar y el usuario elige los prompts. Elicitation va en sentido contrario: una capacidad del cliente que permite al servidor pedirle datos al usuario. Saber quién controla cada una te dice dónde poner confirmaciones y políticas."
+      }
+    },
+    {
+      "id": "mcp.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: \"All our MCP servers are built in-house and reviewed, so prompt injection through MCP isn't a risk for us.\" What's the flaw?",
+        "es": "Un compañero dice: \"Todos nuestros servidores MCP son internos y revisados, así que la prompt injection vía MCP no es un riesgo para nosotros\". ¿Cuál es el error?"
+      },
+      "options": [
+        { "text": { "en": "Tool results carry outside content, like web pages or issue comments, into context", "es": "Los resultados de las tools traen contenido externo, como páginas web o comentarios de issues, al contexto" },
+          "why": { "en": "An in-house `get_issue` still returns whatever a stranger wrote, straight into the model's context.", "es": "Un `get_issue` interno igual devuelve lo que haya escrito un desconocido, directo al contexto del modelo." } },
+        { "text": { "en": "Nothing: injection via MCP comes only from third-party tool descriptions", "es": "Nada: la injection vía MCP solo llega desde descripciones de tools de terceros" },
+          "why": { "en": "Descriptions are one channel; results are another, and your own tools return content anyone can write.", "es": "Las descripciones son un canal; los resultados son otro, y tus propias tools devuelven contenido que cualquiera puede escribir." } },
+        { "text": { "en": "Nothing: JSON-RPC framing escapes tool results before the model reads them", "es": "Nada: el formato JSON-RPC escapa los resultados antes de que el modelo los lea" },
+          "why": { "en": "Framing is transport. The host puts the result text into the model's context as-is.", "es": "El formato es transporte. El host pone el texto del resultado en el contexto del modelo tal cual." } },
+        { "text": { "en": "The risk exists only over stdio; remote servers use OAuth, which blocks injection", "es": "El riesgo existe solo con stdio; los servidores remotos usan OAuth, que bloquea la injection" },
+          "why": { "en": "OAuth decides who may connect; it says nothing about what text a result carries into the model.", "es": "OAuth decide quién puede conectarse; no dice nada sobre qué texto lleva un resultado al modelo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "MCP standardizes the plumbing, not the trust. Vetting servers removes poisoned descriptions, but results still flow untrusted content into context. Treat every tool result as untrusted input: least-privilege scopes, confirmation on side effects, and no session that mixes private data, untrusted content and an exfiltration channel.",
+        "es": "MCP estandariza la plomería, no la confianza. Revisar los servidores elimina descripciones envenenadas, pero los resultados igual meten contenido no confiable en el contexto. Trata cada resultado de tool como input no confiable: scopes de mínimo privilegio, confirmación en acciones con efectos y ninguna sesión que combine datos privados, contenido no confiable y un canal de exfiltración."
+      }
+    }
+  ]
+}

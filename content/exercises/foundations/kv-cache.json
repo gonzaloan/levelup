@@ -1,0 +1,66 @@
+{
+  "concept": "kv-cache",
+  "items": [
+    {
+      "id": "kv-cache.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Every request shares a 6k-token system prompt, and prefix caching kept time-to-first-token low. After a release that adds `Current time: <timestamp>` as the prompt's first line, cache hits drop to ~0 and TTFT jumps. Why?",
+        "es": "Todas las solicitudes comparten un system prompt de 6k tokens, y el prefix caching mantenía bajo el time-to-first-token. Tras un release que agrega `Current time: <timestamp>` como primera línea del prompt, los aciertos de cache caen a ~0 y el TTFT se dispara. ¿Por qué?"
+      },
+      "options": [
+        { "text": { "en": "The prefix now differs on every request, so no cached KV matches", "es": "El prefijo ahora cambia en cada solicitud, así que ningún KV en cache coincide" },
+          "why": { "en": "Only an identical prefix hits; one changed token invalidates the KV of everything after it.", "es": "Solo un prefijo idéntico acierta; un token distinto invalida el KV de todo lo que viene después." } },
+        { "text": { "en": "The longer prompt overflowed the KV cache and forced evictions", "es": "El prompt más largo desbordó el KV cache y forzó desalojos" },
+          "why": { "en": "A few extra tokens barely change memory; the hit rate fell because the prefix stopped matching.", "es": "Unos pocos tokens más casi no cambian la memoria; los aciertos cayeron porque el prefijo dejó de coincidir." } },
+        { "text": { "en": "Prefix caching only reuses KV for requests at temperature 0", "es": "El prefix caching solo reutiliza el KV de solicitudes con temperatura 0" },
+          "why": { "en": "The prompt's keys and values don't depend on sampling settings, which only affect the output.", "es": "Las keys y values del prompt no dependen de la configuración de muestreo, que solo afecta la salida." } },
+        { "text": { "en": "GQA models keep KV heads private to each request", "es": "Los modelos con GQA mantienen los KV heads privados para cada solicitud" },
+          "why": { "en": "GQA shares KV heads across query heads to shrink the cache; it doesn't block reuse across requests.", "es": "GQA comparte KV heads entre query heads para achicar el cache; no impide reutilizarlo entre solicitudes." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Prefix caching reuses the KV of an exactly identical token prefix and skips its prefill. Put stable content first (system prompt, tools, shared documents) and volatile content such as timestamps or user IDs last.",
+        "es": "El prefix caching reutiliza el KV de un prefijo de tokens exactamente idéntico y se salta su prefill. Pon primero lo estable (system prompt, herramientas, documentos compartidos) y al final lo variable, como timestamps o IDs de usuario."
+      }
+    },
+    {
+      "id": "kv-cache.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A model has 40 layers, 64 query heads, 8 KV heads and head_dim 128, with a bf16 KV cache (2 bytes per value). How many GiB of KV cache do 20 concurrent sequences of 16,384 tokens need?",
+        "es": "Un modelo tiene 40 capas, 64 query heads, 8 KV heads y head_dim 128, con KV cache en bf16 (2 bytes por valor). ¿Cuántos GiB de KV cache necesitan 20 secuencias concurrentes de 16,384 tokens?"
+      },
+      "answer": 50,
+      "tolerance": 0.1,
+      "unit": "GiB",
+      "explain": {
+        "en": "Per token: 2 (K and V) × 40 × 8 × 128 × 2 bytes = 163,840 bytes = 160 KiB. × 16,384 tokens = 2.5 GiB per sequence; × 20 = 50 GiB. Using the 64 query heads instead of the 8 KV heads overestimates 8×, to 400 GiB.",
+        "es": "Por token: 2 (K y V) × 40 × 8 × 128 × 2 bytes = 163,840 bytes = 160 KiB. × 16,384 tokens = 2.5 GiB por secuencia; × 20 = 50 GiB. Usar las 64 query heads en vez de las 8 KV heads sobrestima 8×, hasta 400 GiB."
+      }
+    },
+    {
+      "id": "kv-cache.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about the KV cache are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre el KV cache son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Unless quantized, it leaves the model's outputs unchanged", "es": "Si no se cuantiza, no cambia las salidas del modelo" } },
+        { "text": { "en": "Its memory grows linearly with context length × concurrent sequences", "es": "Su memoria crece de forma lineal con largo de contexto × secuencias concurrentes" } },
+        { "text": { "en": "Each decode step recomputes K and V for the whole prefix", "es": "Cada paso de decode recalcula K y V para todo el prefijo" },
+          "why": { "en": "That's what the cache avoids: past K and V never change in a causal model, so only the new token is computed.", "es": "Eso es justo lo que evita el cache: en un modelo causal, K y V pasados no cambian, así que solo se calcula el token nuevo." } },
+        { "text": { "en": "At long context, weights still dwarf the KV cache in GPU memory", "es": "Con contexto largo, los pesos siguen siendo mucho más grandes que el KV cache en la GPU" },
+          "why": { "en": "One 128k sequence on Llama-3.1-8B holds ~16 GiB of KV, about its weights; with concurrency, KV is the bigger number.", "es": "Una secuencia de 128k en Llama-3.1-8B ocupa ~16 GiB de KV, más o menos lo de sus pesos; con concurrencia, el KV es el número mayor." } },
+        { "text": { "en": "Embedding models and rerankers need one for their single pass", "es": "Los modelos de embeddings y los rerankers lo necesitan para su única pasada" },
+          "why": { "en": "With no token-by-token generation there's nothing to reuse; the cache only pays off in decoding.", "es": "Sin generación token a token no hay nada que reutilizar; el cache solo sirve al decodificar." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "The KV cache is a pure systems trade: compute saved on every decode step, paid for in GPU memory per token per sequence. That memory, not the weights, usually sets batch size and throughput at long context.",
+        "es": "El KV cache es un intercambio puro de sistemas: ahorra cómputo en cada paso de decode y lo paga con memoria de GPU por token y por secuencia. Esa memoria, no los pesos, suele fijar el tamaño del batch y el throughput con contexto largo."
+      }
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "concept": "event-driven",
+  "items": [
+    {
+      "id": "event-driven.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You fix a bug in a projection and rebuild it by replaying the event log. Minutes later, support reports that customers got every old order-confirmation email again. Root cause?",
+        "es": "Corriges un bug en una proyección y la reconstruyes reproduciendo el log de eventos. Minutos después, soporte reporta que los clientes recibieron de nuevo todos los emails viejos de confirmación de pedido. ¿Cuál es la causa raíz?"
+      },
+      "options": [
+        { "text": { "en": "The projection sends emails, so the replay re-ran every side effect", "es": "La proyección envía emails, así que el replay volvió a ejecutar cada efecto secundario" } },
+        { "text": { "en": "Optimistic concurrency failed and the log now holds duplicate events", "es": "Falló la concurrencia optimista y el log ahora tiene eventos duplicados" },
+          "why": { "en": "A unique (stream, version) constraint rejects concurrent appends. The log is fine; each event triggered its email a second time.", "es": "Una restricción única (stream, versión) rechaza los appends concurrentes. El log está bien; cada evento disparó su email por segunda vez." } },
+        { "text": { "en": "Snapshots were missing, so the rebuild processed too many events", "es": "Faltaban snapshots, así que la reconstrucción procesó demasiados eventos" },
+          "why": { "en": "Snapshots bound load time. They don't decide whether a handler talks to the outside world.", "es": "Los snapshots acotan el tiempo de carga. No deciden si un handler habla con el mundo exterior." } },
+        { "text": { "en": "The read model lagged behind the log, as eventual consistency allows", "es": "El read model iba atrasado respecto del log, como permite la consistencia eventual" },
+          "why": { "en": "Projection lag delays what users read; it never sends anything.", "es": "El atraso de una proyección demora lo que leen los usuarios; nunca envía nada." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Replay is the superpower of event sourcing, and it only works if projections are pure: they rebuild state, they don't act. Keep side effects (emails, charges) in idempotent handlers that run once per new event and never during a rebuild.",
+        "es": "El replay es el superpoder del event sourcing, y solo funciona si las proyecciones son puras: reconstruyen estado, no actúan. Deja los efectos secundarios (emails, cobros) en handlers idempotentes que corren una vez por evento nuevo y nunca durante una reconstrucción."
+      }
+    },
+    {
+      "id": "event-driven.a2",
+      "type": "code",
+      "prompt": {
+        "en": "`load` returns the run's state and its version (the number of events read). Complete `append` so new events go right after that version and a concurrent writer gets a conflict, not a fork.",
+        "es": "`load` devuelve el estado de la ejecución y su versión (la cantidad de eventos leídos). Completa `append` para que los eventos nuevos queden justo después de esa versión y un escritor concurrente reciba un conflicto, no un fork."
+      },
+      "lang": "python",
+      "code": "def append(conn, run_id: str, expected: int, events: list[tuple[str, dict]]) -> None:\n    # UNIQUE (stream_id, version): a concurrent writer gets a conflict, not a fork\n    with conn.transaction():\n        ____\n            conn.execute(\"INSERT INTO events (stream_id, version, type, data) \"\n                         \"VALUES (%s, %s, %s, %s)\", (run_id, v, type_, Jsonb(data)))",
+      "options": [
+        { "text": "for v, (type_, data) in enumerate(events, start=expected + 1):" },
+        { "text": "for v, (type_, data) in enumerate(events, start=expected):",
+          "why": { "en": "The first insert reuses the last existing version, so every append conflicts, even with no other writer.", "es": "El primer insert reutiliza la última versión existente, así que todo append choca, aunque no haya otro escritor." } },
+        { "text": "for v, (type_, data) in enumerate(events):",
+          "why": { "en": "Versions restart at 0 and collide with history; nothing ties the append to the version you read.", "es": "Las versiones reinician en 0 y chocan con el historial; nada ata el append a la versión que leíste." } },
+        { "text": "for v, (type_, data) in enumerate(events, start=latest_version(conn, run_id) + 1):",
+          "why": { "en": "Re-reading the latest version at write time almost never conflicts: you append on top of events you never saw, the fork this check exists to prevent.", "es": "Releer la última versión al escribir casi nunca choca: agregas encima de eventos que nunca viste, justo el fork que este control debe evitar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Optimistic concurrency: append only if the stream is still at the version you read. Numbering from `expected + 1` plus the unique constraint turns a lost race into an error you retry by reloading, deciding again and appending.",
+        "es": "Concurrencia optimista: agregas solo si el stream sigue en la versión que leíste. Numerar desde `expected + 1` más la restricción única convierte una carrera perdida en un error que reintentas recargando, decidiendo de nuevo y agregando."
+      }
+    },
+    {
+      "id": "event-driven.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate proposes storing agent-run events in a Kafka topic with **log compaction** enabled, keyed by run id, as the system's event store. What's wrong with it?",
+        "es": "Un compañero propone guardar los eventos de cada ejecución de agente en un topic de Kafka con **log compaction** activado, con el run id como clave, como event store del sistema. ¿Qué tiene de malo?"
+      },
+      "options": [
+        { "text": { "en": "Compaction keeps only the latest event per key and deletes history", "es": "La compaction conserva solo el último evento por clave y borra el historial" } },
+        { "text": { "en": "Kafka can't keep events with the same key in order", "es": "Kafka no puede mantener en orden los eventos con la misma clave" },
+          "why": { "en": "Same key means same partition, and a partition is ordered. Ordering is the part that works.", "es": "Misma clave significa misma partición, y una partición está ordenada. El orden es justo lo que funciona." } },
+        { "text": { "en": "Compaction reorders old events, so replays come out nondeterministic", "es": "La compaction reordena eventos viejos, así que los replays salen no deterministas" },
+          "why": { "en": "It doesn't reorder; it drops older events per key. The problem is silent loss, not order.", "es": "No reordena; descarta los eventos viejos de cada clave. El problema es la pérdida silenciosa, no el orden." } },
+        { "text": { "en": "Nothing: compaction only saves disk and keeps every event", "es": "Nada: la compaction solo ahorra disco y conserva todos los eventos" },
+          "why": { "en": "It saves disk precisely by deleting superseded events, which is fatal when the history is the source of truth.", "es": "Ahorra disco justamente borrando los eventos reemplazados, algo fatal cuando el historial es la fuente de verdad." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "In event sourcing the log is the source of truth: state is a fold over every event. Compaction suits \"latest value per key\" topics, not history. An event store also needs retention set to forever; Kafka's default is 7 days.",
+        "es": "En event sourcing el log es la fuente de verdad: el estado es un fold sobre todos los eventos. La compaction sirve para topics de \"último valor por clave\", no para historial. Un event store además necesita retención infinita; la de Kafka por defecto es de 7 días."
+      }
+    }
+  ]
+}

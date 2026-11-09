@@ -7,6 +7,8 @@ import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
 import { SearchButton } from "@/components/SearchButton";
 import { ProgressMeter } from "@/components/Mastered";
+import { ContinueCard } from "@/components/Continue";
+import { getPath } from "@/lib/content";
 
 const HOT = ["llm-reference-architecture", "rag", "reranking", "agents-vs-workflows", "mcp", "prompt-injection", "llm-as-judge", "kv-cache", "prompt-caching", "model-routing", "ai-tradeoff-triangle", "llm-resilience", "hallucinations", "design-framework", "case-feed-ranking"];
 
@@ -20,7 +22,7 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
   const L = (k: Parameters<typeof m>[0]) => m(k, locale);
   const domains = getDomains();
   const concepts = allConcepts();
-  const first = domains[0]?.concepts[0];
+  const order = getPath().flatMap((p) => p.modules.flatMap((m) => m.concepts.map((id) => ({ id, t: t(getConcept(id)!.title, locale), m: t(m.title, locale) }))));
   const stats = [
     [concepts.length, L("concepts")],
     [concepts.filter((c) => c.diagram).length, locale === "es" ? "diagramas" : "diagrams"],
@@ -37,7 +39,7 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
         <p className="hero-sub">{L("heroSub")}</p>
         <SearchButton big label={L("search")} placeholder={L("searchPlaceholder")} />
         <div className="hero-ctas">
-          {first && <Link className="btn btn-primary" href={`/${locale}/c/${first}/`}>{L("startHere")} <Icon name="right" size={16} /></Link>}
+          <Link className="btn btn-primary" href={`/${locale}/path/`}>{L("startHere")} <Icon name="right" size={16} /></Link>
           <Link className="btn" href={`/${locale}/map/`}><Icon name="map" size={16} /> {L("openMap")}</Link>
           <Link className="btn" href={`/${locale}/cheatsheet/`}><Icon name="list" size={16} /> {L("openCheatsheet")}</Link>
           <Link className="btn" href={`/${locale}/practice/`}><Icon name="cards" size={16} /> {L("practiceQuestions")}</Link>
@@ -46,6 +48,8 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
           {stats.map(([n, label]) => <li key={label}><strong>{n}</strong> {label}</li>)}
         </ul>
       </section>
+
+      <ContinueCard order={order} locale={locale} />
 
       {hot.length > 0 && (
         <section className="hot">
@@ -67,7 +71,7 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
               </div>
               <h3>{t(d.title, locale)}</h3>
               <p>{t(d.tagline, locale)}</p>
-              <ProgressMeter ids={d.concepts} label={L("mastered")} />
+              <ProgressMeter ids={d.concepts} label={locale === "es" ? "estudiados" : "studied"} />
             </Link>
           ))}
         </div>

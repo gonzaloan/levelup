@@ -1,0 +1,112 @@
+{
+  "concept": "agentic-rag",
+  "items": [
+    {
+      "id": "agentic-rag.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your support widget answers most questions well with one-shot RAG at ~2 s. Error analysis shows a small tail of **multi-hop** questions failing. A teammate proposes making every request agentic. What do you do?",
+        "es": "Tu widget de soporte responde bien la mayoría de las preguntas con RAG de una pasada en ~2 s. El análisis de errores muestra una cola pequeña de preguntas **multi-hop** que fallan. Un compañero propone volver agéntica cada petición. ¿Qué haces?"
+      },
+      "options": [
+        {
+          "text": { "en": "Add a router: simple questions stay one-shot, hard ones enter a capped loop", "es": "Agregar un router: las simples siguen en una pasada y las difíciles entran a un loop acotado" },
+          "why": { "en": "The bulk keeps ~1–3 s latency; multi-step cost is spent only on the tail that needs it.", "es": "La mayoría conserva ~1–3 s de latencia; el costo de varios pasos se gasta solo en la cola que lo necesita." }
+        },
+        {
+          "text": { "en": "Make every request agentic, with a 6-step cap to bound the cost", "es": "Volver agéntica cada petición, con un límite de 6 pasos para acotar el costo" },
+          "why": { "en": "The cap bounds the worst case, but every simple question still pays multi-step latency and tokens it doesn't need.", "es": "El límite acota el peor caso, pero cada pregunta simple sigue pagando latencia y tokens de varios pasos que no necesita." }
+        },
+        {
+          "text": { "en": "Raise top-k from 5 to 50 so all the evidence lands in one pass", "es": "Subir el top-k de 5 a 50 para que toda la evidencia llegue en una pasada" },
+          "why": { "en": "In multi-hop questions the second query depends on what the first found; a bigger single retrieval can't write that query.", "es": "En preguntas multi-hop la segunda consulta depende de lo que encontró la primera; una recuperación única más grande no puede escribir esa consulta." }
+        },
+        {
+          "text": { "en": "Swap in a larger LLM to reason across the retrieved chunks", "es": "Cambiar a un LLM más grande para razonar sobre los chunks recuperados" },
+          "why": { "en": "The second-hop evidence was never retrieved; no model can reason over text it never sees.", "es": "La evidencia del segundo salto nunca se recuperó; ningún modelo puede razonar sobre un texto que no ve." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Agentic RAG buys accuracy on hard questions with latency, tokens and predictability. Pay that price only where it buys something: route the hard tail to a bounded loop (step cap, token budget, abstain path) and keep the high-volume path one-shot.",
+        "es": "Agentic RAG compra precisión en preguntas difíciles con latencia, tokens y previsibilidad. Paga ese precio solo donde rinde: enruta la cola difícil a un loop acotado (límite de pasos, presupuesto de tokens, salida para abstenerse) y deja el camino de alto volumen en una sola pasada."
+      }
+    },
+    {
+      "id": "agentic-rag.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "An agent's first LLM call sends 500 input tokens (system + question). Each tool call appends a 1,000-token result to the transcript, and every call re-sends the whole transcript. The agent makes 5 LLM calls: 4 that call a tool, then the answer. Ignoring output tokens, how many input tokens in total?",
+        "es": "La primera llamada al LLM de un agente envía 500 tokens de entrada (system + pregunta). Cada llamada a herramienta agrega un resultado de 1,000 tokens a la conversación, y cada llamada reenvía la conversación completa. El agente hace 5 llamadas al LLM: 4 que usan una herramienta y luego la respuesta. Sin contar tokens de salida, ¿cuántos tokens de entrada hay en total?"
+      },
+      "answer": 12500,
+      "tolerance": 0.1,
+      "unit": "tokens",
+      "explain": {
+        "en": "Call k sends 500 + 1,000×(k−1): 500 + 1,500 + 2,500 + 3,500 + 4,500 = 12,500. Five one-shot-sized calls (1,500 each) would be 7,500. Re-sending the growing transcript is why N steps cost more than N× one-shot tokens, and why you cap steps.",
+        "es": "La llamada k envía 500 + 1,000×(k−1): 500 + 1,500 + 2,500 + 3,500 + 4,500 = 12,500. Cinco llamadas del tamaño de una pasada (1,500 cada una) serían 7,500. Reenviar la conversación que crece es la razón por la que N pasos cuestan más que N× los tokens de una pasada, y por la que limitas los pasos."
+      }
+    },
+    {
+      "id": "agentic-rag.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Fill the gap so the loop can take several retrieval hops but stays **bounded** and can abstain.",
+        "es": "Completa el hueco para que el loop pueda hacer varios saltos de recuperación pero quede **acotado** y pueda abstenerse."
+      },
+      "lang": "python",
+      "code": "def agentic_rag(question, max_steps=6):\n    msgs = [SYSTEM, {\"role\": \"user\", \"content\": question}]\n    ____\n        msg = llm(msgs, tools=TOOLS)\n        if not msg.tool_calls:\n            return msg.content  # evidence is enough\n        msgs.append(msg)\n        for call in msg.tool_calls:\n            msgs.append(run_tool(call))\n    return \"I couldn't find enough evidence within the step budget.\"",
+      "options": [
+        { "text": "for _ in range(max_steps):" },
+        {
+          "text": "while True:",
+          "why": { "en": "No cap: a confused agent fires search after search at an unanswerable question, and the abstain line is unreachable.", "es": "Sin límite: un agente confundido lanza búsqueda tras búsqueda ante una pregunta sin respuesta, y la línea de abstención nunca se alcanza." }
+        },
+        {
+          "text": "for _ in range(len(TOOLS)):",
+          "why": { "en": "Caps steps at the number of tools: a multi-hop question that needs the same tool twice runs out of budget.", "es": "Limita los pasos a la cantidad de herramientas: una pregunta multi-hop que necesita la misma herramienta dos veces se queda sin presupuesto." }
+        },
+        {
+          "text": "if max_steps > 0:",
+          "why": { "en": "Runs the model once: no iteration, so a second search that depends on the first result never happens.", "es": "Ejecuta el modelo una sola vez: no hay iteración, así que una segunda búsqueda que depende del primer resultado nunca ocurre." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A hard step cap bounds latency and cost, and the line after the loop gives an explicit abstain path instead of a guess. The model ends early by answering without a tool call.",
+        "es": "Un límite duro de pasos acota la latencia y el costo, y la línea después del loop da una salida explícita para abstenerse en vez de adivinar. El modelo termina antes respondiendo sin llamar a una herramienta."
+      }
+    },
+    {
+      "id": "agentic-rag.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Error analysis of your RAG failures: tables split mid-row by chunking, and exact product codes the vector index never matches. A colleague says: \"Switch to agentic RAG, it will reformulate around this.\" Your answer?",
+        "es": "Análisis de errores de tu RAG: tablas cortadas a mitad de fila por el chunking y códigos de producto exactos que el índice vectorial nunca encuentra. Un colega dice: \"Pasemos a agentic RAG, va a reformular y esquivar eso\". ¿Qué respondes?"
+      },
+      "options": [
+        {
+          "text": { "en": "Fix chunking and add lexical search first; agents can't fix a broken retriever", "es": "Arreglar el chunking y agregar búsqueda léxica primero; un agente no arregla un recuperador roto" },
+          "why": { "en": "These are retriever failures; no query the agent writes can return a chunk that was split wrong or a code the index can't match.", "es": "Son fallas del recuperador; ninguna consulta que escriba el agente puede devolver un chunk mal cortado o un código que el índice no encuentra." }
+        },
+        {
+          "text": { "en": "Agree: reformulated queries will eventually surface the right chunks", "es": "Estar de acuerdo: las consultas reformuladas terminarán sacando los chunks correctos" },
+          "why": { "en": "Rewording hits the same broken chunks and the same index; you add latency and tokens without new evidence.", "es": "Reformular choca con los mismos chunks rotos y el mismo índice; sumas latencia y tokens sin evidencia nueva." }
+        },
+        {
+          "text": { "en": "Agree, and raise max_steps so the agent gets more retries", "es": "Estar de acuerdo y subir max_steps para que el agente tenga más reintentos" },
+          "why": { "en": "More retries against the same retriever multiply cost; this is how agents end up firing 20 searches.", "es": "Más reintentos contra el mismo recuperador multiplican el costo; así es como los agentes terminan lanzando 20 búsquedas." }
+        },
+        {
+          "text": { "en": "Add Self-RAG reflection tokens so the model detects bad evidence", "es": "Agregar tokens de reflexión de Self-RAG para que el modelo detecte evidencia mala" },
+          "why": { "en": "Detecting weak evidence lets it abstain, but it still can't produce the good evidence the retriever never returns.", "es": "Detectar evidencia débil le permite abstenerse, pero igual no puede producir la evidencia buena que el recuperador nunca devuelve." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Agentic RAG fixes failures one retrieval can't solve: multi-hop, multi-source, comparisons. Bad chunks and missing lexical match are retriever bugs. Fix the one-shot pipeline first; an agent on top of a broken retriever just loops on it.",
+        "es": "Agentic RAG arregla fallas que una sola recuperación no resuelve: multi-hop, varias fuentes, comparaciones. Los chunks malos y la falta de coincidencia léxica son bugs del recuperador. Arregla primero el pipeline de una pasada; un agente encima de un recuperador roto solo da vueltas sobre él."
+      }
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "concept": "retries-backoff",
+  "items": [
+    {
+      "id": "retries-backoff.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Logs show an LLM call failing with **400** because the prompt exceeds the context window. Your client retries it 3 times with exponential backoff, adding seconds before the user sees an error. Best change?",
+        "es": "Los logs muestran una llamada al LLM que falla con **400** porque el prompt excede la ventana de contexto. Tu cliente la reintenta 3 veces con backoff exponencial y suma segundos antes de que el usuario vea el error. ¿Cuál es el mejor cambio?"
+      },
+      "options": [
+        { "text": { "en": "Treat 400 as permanent: fail fast and fix the input instead", "es": "Tratar el 400 como permanente: fallar rápido y corregir la entrada" } },
+        { "text": { "en": "Add full jitter so the retries spread out over time", "es": "Agregar full jitter para que los reintentos se repartan en el tiempo" },
+          "why": { "en": "Jitter de-synchronizes clients; it can't make an oversized prompt fit. Every attempt fails the same way.", "es": "El jitter desincroniza a los clientes; no puede hacer que un prompt demasiado grande quepa. Cada intento falla igual." } },
+        { "text": { "en": "Raise the limit to 5 attempts so one gets through", "es": "Subir el límite a 5 intentos para que alguno pase" },
+          "why": { "en": "A permanent error fails identically every time. More attempts only add latency and load.", "es": "Un error permanente falla igual cada vez. Más intentos solo agregan latencia y carga." } },
+        { "text": { "en": "Wrap the call in a circuit breaker to stop the retries", "es": "Envolver la llamada en un circuit breaker para cortar los reintentos" },
+          "why": { "en": "A breaker is for a dependency that is down. The provider is healthy; the request is bad.", "es": "Un breaker es para una dependencia caída. El proveedor está sano; la solicitud es la que está mal." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Classify before retrying. Transient errors (timeouts, connection resets, 429, 5xx, 529 overloaded) may succeed next time. Permanent ones (400, 401, 403, context too long) fail identically, so retrying them only burns latency and budget.",
+        "es": "Clasifica antes de reintentar. Los errores transitorios (timeouts, conexiones reiniciadas, 429, 5xx, 529 overloaded) pueden funcionar la próxima vez. Los permanentes (400, 401, 403, contexto demasiado largo) fallan igual, así que reintentarlos solo quema latencia y presupuesto."
+      }
+    },
+    {
+      "id": "retries-backoff.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A request passes through 3 layers: mobile app → gateway → service, which calls the LLM provider. Each layer uses an SDK default of 1 call + 2 retries (**3 attempts**). If the provider fails every call, how many calls reach it for one user action, worst case?",
+        "es": "Una solicitud pasa por 3 capas: app móvil → gateway → servicio, que llama al proveedor del LLM. Cada capa usa el default de un SDK: 1 llamada + 2 reintentos (**3 intentos**). Si el proveedor falla todas las llamadas, ¿cuántas le llegan por una acción del usuario, en el peor caso?"
+      },
+      "answer": 27,
+      "tolerance": 0.1,
+      "unit": "calls",
+      "explain": {
+        "en": "Attempts multiply across layers: 3 × 3 × 3 = 3³ = 27, not 3 + 3 + 3 = 9. The storm lands on the weakest service exactly when it's failing. Retry at one layer only and set `max_retries=0` everywhere else.",
+        "es": "Los intentos se multiplican entre capas: 3 × 3 × 3 = 3³ = 27, no 3 + 3 + 3 = 9. La tormenta cae sobre el servicio más débil justo cuando está fallando. Reintenta en una sola capa y pon `max_retries=0` en todas las demás."
+      }
+    },
+    {
+      "id": "retries-backoff.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the backoff so clients that failed together **don't** retry together, waits grow with each attempt, and no wait exceeds `cap`.",
+        "es": "Completa el backoff para que los clientes que fallaron juntos **no** reintenten juntos, la espera crezca con cada intento y ninguna supere `cap`."
+      },
+      "lang": "python",
+      "code": "import random, time\n\ndef backoff(attempt: int, base: float = 0.5, cap: float = 20.0) -> float:\n    ____\n\ndef ask(attempts: int = 3):\n    for n in range(attempts):\n        try:\n            return call_llm()\n        except TransientError:\n            time.sleep(backoff(n))\n    raise RuntimeError(\"out of attempts\")",
+      "options": [
+        { "text": "return random.uniform(0, min(cap, base * 2 ** attempt))" },
+        { "text": "return min(cap, base * 2 ** attempt)",
+          "why": { "en": "No jitter: every client that failed in the same second sleeps the same time and retries in a synchronized wave.", "es": "Sin jitter: todos los clientes que fallaron en el mismo segundo duermen lo mismo y reintentan en una ola sincronizada." } },
+        { "text": "return random.uniform(0, cap)",
+          "why": { "en": "Ignores the attempt number: waits no longer grow, so a struggling dependency gets no extra room as failures continue.", "es": "Ignora el número de intento: la espera ya no crece, así que una dependencia en problemas no gana margen mientras siguen las fallas." } },
+        { "text": "return base * 2 ** attempt + random.uniform(0, 1)",
+          "why": { "en": "No cap, so late attempts wait minutes, and ±1 s of jitter barely spreads clients once waits are long.", "es": "Sin tope, así que los últimos intentos esperan minutos, y ±1 s de jitter casi no reparte a los clientes cuando las esperas son largas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Full jitter: sleep a uniform random time between 0 and `min(cap, base × 2^attempt)`. The exponent backs off, the cap bounds latency, and the randomness turns a synchronized wave of retries into a spread-out trickle. If the server sends Retry-After, obey that instead.",
+        "es": "Full jitter: duerme un tiempo aleatorio uniforme entre 0 y `min(cap, base × 2^attempt)`. El exponente hace el backoff, el tope acota la latencia y el azar convierte una ola sincronizada de reintentos en un goteo repartido. Si el servidor envía Retry-After, respeta ese valor."
+      }
+    },
+    {
+      "id": "retries-backoff.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Streaming answers from your LLM provider sometimes run 90 s and are fine; other times the stream hangs and no tokens arrive. Which timeout policy fits?",
+        "es": "Las respuestas en streaming de tu proveedor de LLM a veces duran 90 s y están bien; otras veces el stream se cuelga y no llega ningún token. ¿Qué política de timeouts conviene?"
+      },
+      "options": [
+        { "text": { "en": "Time out on the first token and on idle gaps between chunks", "es": "Timeout para el primer token y para las pausas entre chunks" } },
+        { "text": { "en": "One total timeout of 30 s on every streaming call", "es": "Un timeout total de 30 s en cada llamada en streaming" },
+          "why": { "en": "It kills the long answers that were perfectly valid.", "es": "Corta las respuestas largas que eran perfectamente válidas." } },
+        { "text": { "en": "One total timeout of 5 minutes to cover the longest answer", "es": "Un timeout total de 5 minutos para cubrir la respuesta más larga" },
+          "why": { "en": "A hung stream then holds a worker for minutes before anyone notices.", "es": "Así un stream colgado retiene un worker durante minutos antes de que alguien lo note." } },
+        { "text": { "en": "No timeout; let the circuit breaker handle hung streams", "es": "Sin timeout; que el circuit breaker se encargue de los streams colgados" },
+          "why": { "en": "A breaker counts failures. A call that never fails never trips it, and the worker stays stuck.", "es": "Un breaker cuenta fallas. Una llamada que nunca falla nunca lo dispara, y el worker queda atascado." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Total duration is the wrong signal for streaming: a long answer is healthy as long as tokens keep coming. Time to first token and the gap between chunks detect a hung call quickly without punishing long outputs, all inside a per-request deadline.",
+        "es": "La duración total es la señal equivocada para streaming: una respuesta larga está sana mientras sigan llegando tokens. El tiempo al primer token y la pausa entre chunks detectan rápido una llamada colgada sin castigar las salidas largas, todo dentro de un deadline por solicitud."
+      }
+    }
+  ]
+}

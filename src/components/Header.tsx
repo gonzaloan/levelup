@@ -17,11 +17,12 @@ export function Header({ locale }: { locale: Locale }) {
           <span className="brand-sub">{L("brandShort")}</span>
         </Link>
         <nav className="main-nav" aria-label="main">
+          <Link href={`/${locale}/path/`}><Icon name="compass" size={17} /><span>{L("navPath")}</span></Link>
+          <Link href={`/${locale}/practice/`}><Icon name="cards" size={17} /><span>{L("navPractice")}</span></Link>
           <Link href={`/${locale}/`}><Icon name="book" size={17} /><span>{L("navDomains")}</span></Link>
           <Link href={`/${locale}/map/`}><Icon name="map" size={17} /><span>{L("navMap")}</span></Link>
-          <Link href={`/${locale}/cheatsheet/`}><Icon name="list" size={17} /><span>{L("navCheatsheet")}</span></Link>
           <Link href={`/${locale}/interview/`}><Icon name="mic" size={17} /><span>{L("navInterview")}</span></Link>
-          <Link href={`/${locale}/practice/`}><Icon name="cards" size={17} /><span>{L("navPractice")}</span></Link>
+          <Link href={`/${locale}/cheatsheet/`}><Icon name="list" size={17} /><span>{L("navCheatsheet")}</span></Link>
         </nav>
         <div className="header-tools">
           <SearchButton label={L("search")} placeholder={L("searchPlaceholder")} />

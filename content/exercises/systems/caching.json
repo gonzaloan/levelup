@@ -1,0 +1,86 @@
+{
+  "concept": "caching",
+  "items": [
+    {
+      "id": "caching.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your RAG app caches answers for 1 h, keyed by `hash(normalized question)`. You re-index updated docs and ship a new prompt version; an hour later users still get answers citing the old docs. Best fix?",
+        "es": "Tu app RAG cachea respuestas por 1 h, con clave `hash(pregunta normalizada)`. Reindexas documentos actualizados y publicas una nueva versión del prompt; una hora después los usuarios siguen recibiendo respuestas que citan los documentos viejos. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Add model, prompt version and index version to the cache key", "es": "Agregar el modelo, la versión del prompt y la del índice a la clave de cache" } },
+        { "text": { "en": "Cut the TTL from 1 hour to 1 minute so answers refresh sooner", "es": "Bajar el TTL de 1 hora a 1 minuto para que las respuestas se renueven antes" },
+          "why": { "en": "It shrinks the stale window but still serves old answers after every change, and it slashes the hit rate. The key is the root cause.", "es": "Achica la ventana de datos viejos pero sigue sirviendo respuestas antiguas tras cada cambio, y desploma el hit rate. La causa raíz es la clave." } },
+        { "text": { "en": "Switch eviction from LRU to LFU so stale entries get dropped", "es": "Cambiar la eviction de LRU a LFU para que se descarten las entradas viejas" },
+          "why": { "en": "Eviction decides what to drop when memory fills, not whether an entry is still correct.", "es": "La eviction decide qué descartar cuando se llena la memoria, no si una entrada sigue siendo correcta." } },
+        { "text": { "en": "Add the tenant id to the cache key so answers stay scoped", "es": "Agregar el id del tenant a la clave de cache para aislar las respuestas" },
+          "why": { "en": "That prevents cross-tenant leaks, a different bug. Every tenant would still get pre-reindex answers.", "es": "Eso evita fugas entre tenants, que es otro bug. Todos los tenants seguirían recibiendo respuestas previas al reindexado." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A cache key must include everything that changes the answer. With versions in the key, a deploy or re-index makes old entries unreachable at once: invalidation without a purge, and the old keys simply expire.",
+        "es": "Una clave de cache debe incluir todo lo que cambia la respuesta. Con las versiones en la clave, un deploy o un reindexado vuelve inalcanzables las entradas viejas al instante: invalidación sin purga, y las claves viejas simplemente expiran."
+      }
+    },
+    {
+      "id": "caching.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A cache hit costs **1 ms**; a miss goes to the database and costs **50 ms**. The hit rate is **95%**. What is the average read latency, in ms?",
+        "es": "Un hit de cache cuesta **1 ms**; un miss va a la base de datos y cuesta **50 ms**. El hit rate es **95%**. ¿Cuál es la latencia promedio de lectura, en ms?"
+      },
+      "answer": 3.45,
+      "tolerance": 0.1,
+      "unit": "ms",
+      "explain": {
+        "en": "Average = hit × cache + miss × origin = 0.95 × 1 + 0.05 × 50 = 0.95 + 2.5 ≈ 3.45 ms. The misses dominate: even at 95% hits, the 5% that reach the origin cost more than all the hits together. Origin load also scales with the miss rate.",
+        "es": "Promedio = hit × cache + miss × origen = 0,95 × 1 + 0,05 × 50 = 0,95 + 2,5 ≈ 3,45 ms. Dominan los misses: incluso con 95% de hits, el 5% que llega al origen cuesta más que todos los hits juntos. La carga del origen también escala con la tasa de misses."
+      }
+    },
+    {
+      "id": "caching.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "In a cache-aside setup, a teammate changes the update path from `r.delete(key)` to `r.set(key, new_value)` \"so the next read is a hit\". What can go wrong?",
+        "es": "En un esquema cache-aside, un compañero cambia el camino de actualización de `r.delete(key)` a `r.set(key, new_value)` \"para que la siguiente lectura sea un hit\". ¿Qué puede salir mal?"
+      },
+      "options": [
+        { "text": { "en": "Two racing writers can finish out of order and leave the older value cached", "es": "Dos escritores en carrera pueden terminar desordenados y dejar cacheado el valor más viejo" } },
+        { "text": { "en": "Redis `SET` is much slower than `DEL`, so writes slow down", "es": "El `SET` de Redis es mucho más lento que `DEL`, así que las escrituras se vuelven lentas" },
+          "why": { "en": "Both are simple sub-millisecond operations. The issue is correctness under concurrency, not speed.", "es": "Ambas son operaciones simples de menos de un milisegundo. El problema es la corrección bajo concurrencia, no la velocidad." } },
+        { "text": { "en": "Readers can see a half-written value while `SET` runs", "es": "Los lectores pueden ver un valor a medio escribir mientras corre el `SET`" },
+          "why": { "en": "A single Redis command is atomic: readers see the old value or the new one, never half.", "es": "Un comando de Redis es atómico: los lectores ven el valor viejo o el nuevo, nunca la mitad." } },
+        { "text": { "en": "It turns cache-aside into write-behind and risks losing data", "es": "Convierte el cache-aside en write-behind y arriesga perder datos" },
+          "why": { "en": "The DB is still written first and synchronously. Write-behind writes the cache first and flushes to the DB later.", "es": "La base de datos se sigue escribiendo primero y de forma síncrona. El write-behind escribe primero en la cache y luego vuelca a la base." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Writer A updates the DB, writer B updates it after, but B's `SET` lands before A's: the cache now holds A's stale value until the TTL. Deleting is order-independent: the next miss reloads whatever the DB holds.",
+        "es": "El escritor A actualiza la base, el B la actualiza después, pero el `SET` de B llega antes que el de A: la cache queda con el valor viejo de A hasta el TTL. Borrar no depende del orden: el siguiente miss recarga lo que tenga la base."
+      }
+    },
+    {
+      "id": "caching.a4",
+      "type": "match",
+      "prompt": {
+        "en": "Match each caching strategy to how data reaches the cache.",
+        "es": "Relaciona cada estrategia de cache con la forma en que los datos llegan a ella."
+      },
+      "pairs": [
+        { "left": { "en": "Cache-aside", "es": "Cache-aside" },
+          "right": { "en": "The app reads the cache; on a miss it loads from the DB and fills it", "es": "La app lee la cache; ante un miss carga desde la base y la llena" } },
+        { "left": { "en": "Read-through", "es": "Read-through" },
+          "right": { "en": "The cache layer itself loads from the DB on a miss", "es": "La propia capa de cache carga desde la base ante un miss" } },
+        { "left": { "en": "Write-through", "es": "Write-through" },
+          "right": { "en": "Each write updates DB and cache synchronously: fresh reads, slower writes", "es": "Cada escritura actualiza base y cache de forma síncrona: lecturas frescas, escrituras más lentas" } },
+        { "left": { "en": "Write-behind", "es": "Write-behind" },
+          "right": { "en": "Writes hit the cache and flush to the DB later: fast, but lossy if the cache dies", "es": "Las escrituras van a la cache y se vuelcan a la base después: rápido, pero pierde datos si la cache muere" } }
+      ],
+      "explain": {
+        "en": "Read strategies differ in who fills the cache on a miss; write strategies trade write latency against durability. Cache-aside is the default because the cache can die without losing any data.",
+        "es": "Las estrategias de lectura difieren en quién llena la cache ante un miss; las de escritura cambian latencia de escritura por durabilidad. Cache-aside es la opción por defecto porque la cache puede morir sin perder datos."
+      }
+    }
+  ]
+}

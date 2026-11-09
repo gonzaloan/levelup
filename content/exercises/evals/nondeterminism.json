@@ -1,0 +1,87 @@
+{
+  "concept": "nondeterminism",
+  "items": [
+    {
+      "id": "nondeterminism.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your eval has 100 tasks, each run 5 times. A teammate computes the 95% CI of the pass rate with **n = 500** and says v2's +4-point lead over v1 is significant. What's wrong?",
+        "es": "Tu evaluación tiene 100 tareas y corres cada una 5 veces. Un compañero calcula el IC del 95% de la tasa de acierto con **n = 500** y dice que la ventaja de +4 puntos de v2 sobre v1 es significativa. ¿Qué está mal?"
+      },
+      "options": [
+        { "text": { "en": "Trials of a task are correlated: compute the CI over the 100 tasks", "es": "Los intentos de una tarea están correlacionados: calcula el IC sobre las 100 tareas" },
+          "why": { "en": "Right: the task is the unit of independence. At ~50% and n=100 the interval is ±~10 points, which swallows a 4-point lead.", "es": "Correcto: la tarea es la unidad de independencia. Con ~50% y n=100 el intervalo es de ±~10 puntos, y eso se traga una ventaja de 4." } },
+        { "text": { "en": "Nothing: 5 trials per task give 500 independent samples", "es": "Nada: 5 intentos por tarea dan 500 muestras independientes" },
+          "why": { "en": "Repeats of one task share its difficulty, so they aren't independent draws. Pooling them makes the interval look tighter than it is.", "es": "Las repeticiones de una tarea comparten su dificultad, así que no son muestras independientes. Juntarlas hace que el intervalo parezca más estrecho de lo que es." } },
+        { "text": { "en": "The math is fine, but runs should use temperature 0 instead", "es": "La cuenta está bien, pero las corridas deberían usar temperatura 0" },
+          "why": { "en": "Temperature 0 isn't deterministic on batched GPUs, and it wouldn't fix the wrong n anyway.", "es": "Temperatura 0 no es determinista en GPUs con batching, y de todos modos no corregiría el n equivocado." } },
+        { "text": { "en": "They should report pass@5 instead, which needs no interval", "es": "Deberían reportar pass@5, que no necesita intervalo" },
+          "why": { "en": "pass@5 is also estimated from a sample of tasks: every score needs error bars.", "es": "pass@5 también se estima sobre una muestra de tareas: todo puntaje necesita barras de error." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Compute each task's success rate across its trials, then the CI over tasks (n=100), not over pooled trials. More trials sharpen each task's rate; only more tasks shrink the interval. For a v1-vs-v2 call, the CI of the paired per-task difference is the tighter, fair test.",
+        "es": "Calcula la tasa de acierto de cada tarea a través de sus intentos y luego el IC sobre las tareas (n=100), no sobre los intentos juntos. Más intentos afinan la tasa de cada tarea; solo más tareas angostan el intervalo. Para decidir entre v1 y v2, el IC de la diferencia pareada por tarea es la prueba justa y más estrecha."
+      }
+    },
+    {
+      "id": "nondeterminism.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "On 100 tasks at a ~50% pass rate, your 95% CI is ±~10 points. Assuming the rate stays ~50%, how many tasks do you need for ±~5 points?",
+        "es": "Con 100 tareas y una tasa de acierto de ~50%, tu IC del 95% es de ±~10 puntos. Suponiendo que la tasa sigue en ~50%, ¿cuántas tareas necesitas para ±~5 puntos?"
+      },
+      "answer": 400,
+      "tolerance": 0.15,
+      "unit": "tasks",
+      "explain": {
+        "en": "Half-width ≈ 1.96·√(p(1−p)/n) shrinks with √n, so halving it takes 4× the items: 100 × 4 = 400, and 1.96·√(0.25/400) ≈ 0.049. Doubling to 200 only gets you to ±~7 points.",
+        "es": "El semiancho ≈ 1,96·√(p(1−p)/n) se reduce con √n, así que reducirlo a la mitad exige 4× los ítems: 100 × 4 = 400, y 1,96·√(0,25/400) ≈ 0,049. Duplicar a 200 solo te deja en ±~7 puntos."
+      }
+    },
+    {
+      "id": "nondeterminism.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Across 5 trials, 23 of your 150 tasks sometimes pass and sometimes fail. A teammate proposes deleting them so the eval is \"stable\". What do you do?",
+        "es": "En 5 intentos, 23 de tus 150 tareas a veces pasan y a veces fallan. Un compañero propone borrarlas para que la evaluación sea \"estable\". ¿Qué haces?"
+      },
+      "options": [
+        { "text": { "en": "Read them first: flaky tasks often expose ambiguous specs", "es": "Leerlas primero: las tareas inestables suelen revelar especificaciones ambiguas" } },
+        { "text": { "en": "Delete them: noisy items only widen the interval", "es": "Borrarlas: los ítems ruidosos solo ensanchan el intervalo" },
+          "why": { "en": "Deleting hides the unreliability users will actually hit, and the spec problems behind it.", "es": "Borrarlas esconde la falta de confiabilidad que los usuarios sí van a sufrir, y los problemas de especificación detrás." } },
+        { "text": { "en": "Keep them, scoring each by its best trial", "es": "Conservarlas, puntuando cada una por su mejor intento" },
+          "why": { "en": "Best-of-trials is pass@k: it inflates the score of a system that gets one shot in production.", "es": "Quedarse con el mejor intento es pass@k: infla el puntaje de un sistema que en producción tiene un solo intento." } },
+        { "text": { "en": "Set temperature 0 so they stop flipping", "es": "Poner temperatura 0 para que dejen de cambiar" },
+          "why": { "en": "Temperature 0 isn't deterministic on shared GPUs, and it would hide the variance rather than fix its cause.", "es": "Temperatura 0 no es determinista en GPUs compartidas, y escondería la varianza en vez de corregir su causa." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Flakiness is information. A task that flips either has an ambiguous spec (fix the dataset) or reveals brittle behavior users will meet (measure it with pass^k). In the concept's booking-agent example, 14 of 23 flipping tasks had ambiguous instructions.",
+        "es": "La inestabilidad es información. Una tarea que cambia de resultado tiene una especificación ambigua (corrige el dataset) o revela un comportamiento frágil que los usuarios van a encontrar (mídelo con pass^k). En el ejemplo del agente de reservas, 14 de las 23 tareas inestables tenían instrucciones ambiguas."
+      }
+    },
+    {
+      "id": "nondeterminism.a4",
+      "type": "match",
+      "prompt": {
+        "en": "Match each eval-reporting tool to what it tells you.",
+        "es": "Relaciona cada herramienta de reporte de evaluaciones con lo que te dice."
+      },
+      "pairs": [
+        { "left": { "en": "pass@k", "es": "pass@k" },
+          "right": { "en": "At least one of k attempts succeeds: fits when tests or a user pick the winner", "es": "Al menos uno de k intentos acierta: sirve cuando tests o un usuario eligen al ganador" } },
+        { "left": { "en": "pass^k", "es": "pass^k" },
+          "right": { "en": "All k attempts succeed: the reliability an unattended agent needs", "es": "Los k intentos aciertan: la confiabilidad que necesita un agente desatendido" } },
+        { "left": { "en": "Wilson interval", "es": "Intervalo de Wilson" },
+          "right": { "en": "A CI for a rate that stays inside [0, 1] and behaves near 0% or 100%", "es": "Un IC para una tasa que se mantiene en [0, 1] y se comporta bien cerca de 0% o 100%" } },
+        { "left": { "en": "Paired difference CI", "es": "IC de la diferencia pareada" },
+          "right": { "en": "Compares two versions on the same items, cancelling item difficulty", "es": "Compara dos versiones sobre los mismos ítems y cancela la dificultad de cada uno" } }
+      ],
+      "explain": {
+        "en": "Pick the metric that matches real use. pass@k and pass^k diverge fast: at 90% per trial, pass^3 is only ~73%. Wilson keeps small-sample intervals sane, and pairing is what makes a version comparison tight enough to act on.",
+        "es": "Elige la métrica que coincide con el uso real. pass@k y pass^k se separan rápido: con 90% por intento, pass^3 es apenas ~73%. Wilson mantiene razonables los intervalos con muestras chicas, y el pareo es lo que hace que una comparación de versiones sea lo bastante estrecha para actuar."
+      }
+    }
+  ]
+}

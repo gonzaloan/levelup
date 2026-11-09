@@ -1,0 +1,106 @@
+{
+  "concept": "index-lifecycle",
+  "items": [
+    {
+      "id": "index-lifecycle.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Monday's deploy upgraded the **query** embedding model to a newer one. No errors anywhere, but retrieval turns near-random across every topic. Nobody touched the index. Most likely cause?",
+        "es": "El deploy del lunes actualizó el modelo de embeddings de las **consultas** a uno más nuevo. No hay errores en ningún lado, pero la recuperación se vuelve casi aleatoria en todos los temas. Nadie tocó el índice. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        {
+          "text": { "en": "Query vectors now live in a different space from the indexed vectors", "es": "Los vectores de consulta ahora viven en un espacio distinto al de los vectores indexados" },
+          "why": { "en": "Vectors from two models aren't comparable: similarity scores between them are meaningless, and nothing throws an error.", "es": "Los vectores de dos modelos no son comparables: la similitud entre ellos no significa nada, y nada lanza un error." }
+        },
+        {
+          "text": { "en": "Deleted chunks are only tombstoned and still crowd the results", "es": "Los chunks borrados solo están marcados como tombstones y siguen llenando los resultados" },
+          "why": { "en": "Tombstones affect deleted documents; they wouldn't scramble every topic right after a query-side deploy.", "es": "Los tombstones afectan a documentos borrados; no desordenarían todos los temas justo después de un deploy del lado de las consultas." }
+        },
+        {
+          "text": { "en": "A webhook was dropped, so the index is serving stale pages", "es": "Se perdió un webhook, así que el índice está sirviendo páginas desactualizadas" },
+          "why": { "en": "A dropped event leaves specific pages stale; it doesn't make every query return random results.", "es": "Un evento perdido deja páginas puntuales desactualizadas; no hace que todas las consultas devuelvan resultados aleatorios." }
+        },
+        {
+          "text": { "en": "Near-duplicate chunks are filling the top-k with copies of one page", "es": "Chunks casi duplicados llenan el top-k con copias de una misma página" },
+          "why": { "en": "Duplicates crowd results with copies of relevant pages; they don't make relevance random overnight.", "es": "Los duplicados llenan los resultados con copias de páginas relevantes; no vuelven aleatoria la relevancia de un día para otro." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The embedding model is part of the index contract: query embedding must be pinned to the model stored in each chunk's `embedding_model`. To upgrade, roll back the query side, build a green index with the new model, backfill, dual-write, evaluate, then swap the alias atomically.",
+        "es": "El modelo de embeddings es parte del contrato del índice: el embedding de las consultas debe estar fijado al modelo guardado en el `embedding_model` de cada chunk. Para actualizar, revierte el lado de las consultas, construye un índice green con el modelo nuevo, haz el backfill, escribe en ambos, evalúa y luego cambia el alias de forma atómica."
+      }
+    },
+    {
+      "id": "index-lifecycle.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "You re-embed 20M chunks averaging 500 tokens each with text-embedding-3-small at $0.02 per 1M tokens (list price as of 2026). What is the embedding bill, in USD?",
+        "es": "Vuelves a generar los embeddings de 20M chunks de 500 tokens en promedio con text-embedding-3-small a US$0.02 por millón de tokens (precio de lista a 2026). ¿Cuánto cuestan los embeddings, en USD?"
+      },
+      "answer": 200,
+      "tolerance": 0.1,
+      "unit": "USD",
+      "explain": {
+        "en": "20M × 500 = 10B tokens = 10,000 × 1M; × $0.02 = $200. The dollars are trivial. What actually limits a model migration is backfill throughput, rebuild time, double storage during blue/green, and the eval gate before the alias swap.",
+        "es": "20M × 500 = 10 mil millones de tokens = 10,000 × 1M; × US$0.02 = US$200. El dinero es trivial. Lo que de verdad limita una migración de modelo es el throughput del backfill, el tiempo de reconstrucción, el almacenamiento doble durante blue/green y la evaluación obligatoria antes del cambio de alias."
+      }
+    },
+    {
+      "id": "index-lifecycle.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Pick the chunk id that makes this sync **idempotent**: a retried event must overwrite chunks, never duplicate or clobber them.",
+        "es": "Elige el id de chunk que vuelve **idempotente** esta sincronización: un evento reintentado debe sobrescribir los chunks, nunca duplicarlos ni pisar otros."
+      },
+      "lang": "python",
+      "code": "def sync_document(coll, doc_id, version, text):\n    if text is not None:\n        chunks = chunk(text)\n        vectors = embed_cached(chunks, model=EMBED_MODEL)\n        client.upsert(coll, points=[models.PointStruct(\n            ____,\n            vector=v,\n            payload={\"doc_id\": doc_id, \"doc_version\": version, \"chunk_index\": i,\n                     \"embedding_model\": EMBED_MODEL, \"text\": c})\n            for i, (c, v) in enumerate(zip(chunks, vectors))])\n    # then delete every other version of doc_id (all of them if text is None)\n    stale = models.Filter(must=[match(\"doc_id\", doc_id)],\n                          must_not=None if text is None else [match(\"doc_version\", version)])\n    client.delete(coll, points_selector=models.FilterSelector(filter=stale))",
+      "options": [
+        { "text": "id=str(uuid.uuid5(uuid.NAMESPACE_URL, f\"{doc_id}:{version}:{i}\"))" },
+        {
+          "text": "id=str(uuid.uuid4())",
+          "why": { "en": "Random ids: a retried event or a reconciliation crawl inserts the same chunks again as duplicates.", "es": "Ids aleatorios: un evento reintentado o un rastreo de conciliación vuelve a insertar los mismos chunks como duplicados." }
+        },
+        {
+          "text": "id=str(uuid.uuid5(uuid.NAMESPACE_URL, f\"{doc_id}:{version}\"))",
+          "why": { "en": "Every chunk of the version gets the same id, so each one overwrites the last and only one chunk survives.", "es": "Todos los chunks de la versión reciben el mismo id, así que cada uno pisa al anterior y sobrevive un solo chunk." }
+        },
+        {
+          "text": "id=str(uuid.uuid5(uuid.NAMESPACE_URL, f\"{version}:{i}\"))",
+          "why": { "en": "No doc_id: chunk i of version 1 collides across documents, so documents overwrite each other.", "es": "Sin doc_id: el chunk i de la versión 1 choca entre documentos, así que unos documentos pisan a otros." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A deterministic id from (doc_id, version, chunk index) turns upsert into replace: retries and reconciliation crawls are harmless. The version-based delete then removes older versions, and `text=None` acts as a tombstone that removes every chunk of the document.",
+        "es": "Un id determinista a partir de (doc_id, versión, índice de chunk) convierte el upsert en un reemplazo: los reintentos y los rastreos de conciliación no hacen daño. Luego el borrado por versión elimina las versiones viejas, y `text=None` funciona como tombstone que elimina todos los chunks del documento."
+      }
+    },
+    {
+      "id": "index-lifecycle.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Your team says: \"Confluence webhooks feed the index, so it's always correct.\" Which statements are true? Select all that apply.",
+        "es": "Tu equipo dice: \"Los webhooks de Confluence alimentan el índice, así que siempre está correcto\". ¿Qué afirmaciones son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "One dropped event can leave a page stale until a reconciliation crawl", "es": "Un solo evento perdido puede dejar una página desactualizada hasta un rastreo de conciliación" } },
+        {
+          "text": { "en": "Vectors left behind after an erasure are safe: they can't be turned back into text", "es": "Los vectores que quedan tras una supresión son seguros: no se pueden convertir de nuevo en texto" },
+          "why": { "en": "Embedding inversion (vec2text) recovered 92% of 32-token inputs exactly; treat embeddings as personal data.", "es": "La inversión de embeddings (vec2text) recuperó exactamente el 92% de entradas de 32 tokens; trata los embeddings como datos personales." }
+        },
+        { "text": { "en": "Many ANN indexes only tombstone deletes until compaction runs", "es": "Muchos índices ANN solo marcan los borrados como tombstones hasta que corre la compactación" } },
+        {
+          "text": { "en": "Removing a document's chunks also clears answers cached from them", "es": "Eliminar los chunks de un documento también limpia las respuestas cacheadas a partir de ellos" },
+          "why": { "en": "Caches and semantic-cache entries are separate derived stores; the deletion has to reach them explicitly.", "es": "Los caches y las entradas de cache semántico son almacenes derivados aparte; el borrado tiene que llegar a ellos de forma explícita." }
+        }
+      ],
+      "answers": [0, 2],
+      "explain": {
+        "en": "An index is a replica, and change feeds are incomplete. Pair webhooks with periodic reconciliation, propagate deletions to every derived copy (indexes, caches, logs), check that the store really compacts, and measure the edit-to-searchable lag against an SLA.",
+        "es": "Un índice es una réplica, y los feeds de cambios son incompletos. Combina los webhooks con conciliaciones periódicas, propaga los borrados a cada copia derivada (índices, caches, logs), verifica que la base realmente compacte y mide el desfase de edición a búsqueda contra un SLA."
+      }
+    }
+  ]
+}

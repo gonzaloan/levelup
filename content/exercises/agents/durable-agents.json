@@ -1,0 +1,76 @@
+{
+  "concept": "durable-agents",
+  "items": [
+    {
+      "id": "durable-agents.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your agent runs as a Temporal workflow. After a routine worker restart, in-flight runs fail replay with non-determinism errors. The workflow code calls the LLM directly to choose each next step. What's the cause?",
+        "es": "Tu agente corre como un workflow de Temporal. Tras un reinicio rutinario de los workers, las corridas en curso fallan en el replay con errores de no determinismo. El código del workflow llama al LLM directamente para elegir cada paso. ¿Cuál es la causa?"
+      },
+      "options": [
+        { "text": { "en": "The LLM call isn't an activity, so replay calls it again and takes a different path", "es": "La llamada al LLM no es una actividad, así que el replay la repite y toma otro camino" },
+          "why": { "en": "Replay must reproduce recorded history; a fresh, non-deterministic LLM answer diverges from it.", "es": "El replay debe reproducir el historial registrado; una respuesta nueva y no determinista del LLM se desvía de él." } },
+        { "text": { "en": "The tool calls lack idempotency keys, so retries repeat their side effects", "es": "Las llamadas a herramientas no tienen claves de idempotencia, así que los reintentos repiten efectos" },
+          "why": { "en": "Missing keys cause duplicate refunds or emails, not replay divergence errors.", "es": "La falta de claves causa reembolsos o correos duplicados, no errores de desvío en el replay." } },
+        { "text": { "en": "The event history hit Temporal's 51,200-event cap during the restart", "es": "El historial de eventos llegó al tope de 51,200 eventos de Temporal durante el reinicio" },
+          "why": { "en": "That limit is about long runs (fixed with Continue-As-New), not something a restart triggers.", "es": "Ese límite tiene que ver con corridas largas (se resuelve con Continue-As-New), no con algo que dispare un reinicio." } },
+        { "text": { "en": "The activity timeout is too short, so steps are retried mid-call", "es": "El timeout de las actividades es muy corto, así que los pasos se reintentan a mitad de la llamada" },
+          "why": { "en": "Short timeouts cause retries of activities, which replay tolerates; they don't make history diverge.", "es": "Los timeouts cortos provocan reintentos de actividades, que el replay tolera; no hacen que el historial se desvíe." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Durable engines rebuild state by replaying workflow code against the event log. That only works if the workflow code is deterministic: LLM calls, clocks, randomness and I/O must live in activities, whose recorded results replay instead of re-running.",
+        "es": "Los motores durables reconstruyen el estado reproduciendo el código del workflow contra el log de eventos. Eso solo funciona si el código del workflow es determinista: llamadas al LLM, relojes, aleatoriedad e I/O deben vivir en actividades, cuyos resultados registrados se reproducen en vez de ejecutarse otra vez."
+      }
+    },
+    {
+      "id": "durable-agents.a2",
+      "type": "code",
+      "prompt": {
+        "en": "A refund call can succeed and then time out. Complete the key so the **retry is a no-op** and never collides with other runs.",
+        "es": "Una llamada de reembolso puede funcionar y después dar timeout. Completa la clave para que el **reintento no haga nada** y nunca choque con otras corridas."
+      },
+      "lang": "python",
+      "code": "@activity.defn\nasync def call_llm(history: list[dict]) -> dict:\n    return await llm_next_step(history)\n\n@activity.defn\nasync def run_tool(step: dict) -> str:\n    ____\n    return await execute_tool(step, idempotency_key=key)",
+      "options": [
+        { "text": "key = f\"{activity.info().workflow_id}:{step['id']}\"" },
+        { "text": "key = str(uuid.uuid4())",
+          "why": { "en": "A fresh key on every attempt: the API sees each retry as a new request and refunds twice.", "es": "Una clave nueva en cada intento: la API ve cada reintento como una solicitud nueva y reembolsa dos veces." } },
+        { "text": "key = f\"{step['id']}:{time.time()}\"",
+          "why": { "en": "The timestamp changes on every retry, so the key never matches the original request.", "es": "La marca de tiempo cambia en cada reintento, así que la clave nunca coincide con la solicitud original." } },
+        { "text": "key = str(step[\"id\"])",
+          "why": { "en": "Stable across retries, but step 8 of every run shares one key, so another run's refund returns this one's result.", "es": "Es estable entre reintentos, pero el paso 8 de todas las corridas comparte clave, así que el reembolso de otra corrida devuelve el resultado de esta." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "An idempotency key must be identical on every retry of the same step and unique across steps and runs. Deriving it from workflow id plus step id gives both, so a success-then-timeout retry returns the original result.",
+        "es": "Una clave de idempotencia debe ser idéntica en cada reintento del mismo paso y única entre pasos y corridas. Derivarla del id del workflow más el id del paso logra ambas cosas, así que un reintento tras éxito y timeout devuelve el resultado original."
+      }
+    },
+    {
+      "id": "durable-agents.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about durable execution for agents are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la ejecución durable para agentes son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "On restart, completed steps replay from the event history instead of re-executing", "es": "Al reiniciar, los pasos completados se reproducen desde el historial de eventos en vez de ejecutarse otra vez" } },
+        { "text": { "en": "A durable wait for human approval holds no worker or thread while it waits", "es": "Una espera durable por aprobación humana no ocupa ningún worker ni thread mientras espera" } },
+        { "text": { "en": "Long transcripts should live in external storage, passed to steps by reference", "es": "Las conversaciones largas deben vivir en un almacenamiento externo y pasarse a los pasos por referencia" } },
+        { "text": { "en": "An idempotency key guarantees exactly-once execution forever", "es": "Una clave de idempotencia garantiza ejecución exactamente una vez para siempre" },
+          "why": { "en": "Providers may drop keys (Stripe after 24 hours): it's a retry window, not a forever guarantee.", "es": "Los proveedores pueden borrar las claves (Stripe a las 24 horas): es una ventana de reintento, no una garantía eterna." } },
+        { "text": { "en": "Checkpointing once, at the end of the run, is enough", "es": "Hacer checkpoint una sola vez, al final de la corrida, alcanza" },
+          "why": { "en": "A crash at step 39 of 40 then loses everything; checkpoint after every step.", "es": "Así, una caída en el paso 39 de 40 pierde todo; haz checkpoint después de cada paso." } },
+        { "text": { "en": "Changed workflow code can ship under in-flight runs without versioning", "es": "Se puede desplegar código de workflow modificado con corridas en curso sin versionarlo" },
+          "why": { "en": "Old histories stop replaying against the new code path; version workflow changes.", "es": "Los historiales viejos dejan de reproducirse contra el nuevo camino del código; versiona los cambios del workflow." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Durability is event sourcing for agents: record every step, replay instead of re-run, and wait for days at zero compute. Its edges are real too: keys expire, histories and payloads have size caps, and replay demands deterministic, versioned workflow code.",
+        "es": "La durabilidad es event sourcing para agentes: registra cada paso, reproduce en vez de reejecutar y espera días sin gastar cómputo. También tiene límites reales: las claves expiran, los historiales y payloads tienen topes de tamaño, y el replay exige código de workflow determinista y versionado."
+      }
+    }
+  ]
+}

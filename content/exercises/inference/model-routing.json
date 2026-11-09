@@ -1,0 +1,89 @@
+{
+  "concept": "model-routing",
+  "items": [
+    {
+      "id": "model-routing.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your cascade accepts the small model's answer when the model reports `confidence >= 0.8`. Escalation is only 5% and costs fell sharply, but the golden-set score dropped 8 points. Best fix?",
+        "es": "Tu cascada acepta la respuesta del modelo chico cuando el modelo reporta `confidence >= 0.8`. El escalamiento es apenas 5% y los costos bajaron mucho, pero el puntaje en el golden set cayó 8 puntos. ¿Mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Gate on verifiable checks such as schema, tests or cited sources", "es": "Filtrar con verificaciones comprobables como esquema, tests o fuentes citadas" } },
+        { "text": { "en": "Raise the self-reported confidence threshold to 0.95", "es": "Subir el umbral de confianza autorreportada a 0.95" },
+          "why": { "en": "Self-reported confidence is poorly calibrated; a stricter threshold on a bad signal is still a bad gate.", "es": "La confianza autorreportada está mal calibrada; un umbral más estricto sobre una mala señal sigue siendo un mal filtro." } },
+        { "text": { "en": "Drop the cascade and send all traffic to the small model", "es": "Quitar la cascada y mandar todo el tráfico al modelo chico" },
+          "why": { "en": "That removes the safety net entirely; the loss came from the gate, not from having a cascade.", "es": "Eso elimina por completo la red de seguridad; la pérdida vino del filtro, no de tener una cascada." } },
+        { "text": { "en": "Add a fallback provider behind the small model", "es": "Agregar un proveedor de fallback detrás del modelo chico" },
+          "why": { "en": "Fallbacks handle 429s, 5xx and outages, not wrong answers that slip past the gate.", "es": "Los fallbacks cubren 429, 5xx y caídas, no respuestas incorrectas que pasan el filtro." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A cascade is only as good as its gate. Models' self-reported confidence is poorly calibrated, so wrong answers pass as confident and never escalate. Gate on checks you can verify (valid schema, passing tests, a cited policy that exists) or a trained router, and eval each route as a slice.",
+        "es": "Una cascada vale lo que vale su filtro. La confianza que el modelo reporta de sí mismo está mal calibrada, así que las respuestas incorrectas pasan como seguras y nunca escalan. Filtra con verificaciones comprobables (esquema válido, tests que pasan, una política citada que existe) o un router entrenado, y evalúa cada ruta como un segmento."
+      }
+    },
+    {
+      "id": "model-routing.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A cascade first calls a small model that costs **1/10** of the large model per request, and escalates **40%** of requests to the large model. Expected cost as a percentage of sending everything to the large model?",
+        "es": "Una cascada llama primero a un modelo chico que cuesta **1/10** del modelo grande por petición, y escala el **40%** de las peticiones al grande. ¿Costo esperado como porcentaje de mandar todo al modelo grande?"
+      },
+      "answer": 50,
+      "tolerance": 0.05,
+      "unit": "%",
+      "explain": {
+        "en": "Expected cost = small + P(escalate) × large = 0.10 + 0.40 × 1 = 0.50, so 50%. Every request pays for the small call, including the 40% that escalate and therefore pay twice. Forgetting that double payment gives 46%, which overstates the savings.",
+        "es": "Costo esperado = chico + P(escalar) × grande = 0.10 + 0.40 × 1 = 0.50, o sea 50%. Toda petición paga la llamada chica, incluido el 40% que escala y por lo tanto paga dos veces. Olvidar ese doble pago da 46%, lo que exagera el ahorro."
+      }
+    },
+    {
+      "id": "model-routing.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the cascade so the small model's draft is returned only when it should be trusted.",
+        "es": "Completa la cascada para que el borrador del modelo chico se devuelva solo cuando merece confianza."
+      },
+      "lang": "python",
+      "code": "def passes_check(d: Draft) -> bool:\n    # valid category, and any cited policy must exist in the KB\n    return d.category != \"other\" and (d.policy_id is None or kb_has(d.policy_id))\n\ndef route(ticket: str, tier: str) -> tuple[Draft, str]:\n    if tier == \"enterprise\" or len(ticket) > 6_000:\n        return ask(LARGE, ticket), \"rule:large\"\n    try:\n        d = ask(SMALL, ticket)\n        ____\n            return d, \"small\"\n    except Exception:  # invalid output or provider error\n        pass\n    return ask(LARGE, ticket), \"escalated\"",
+      "options": [
+        { "text": "if passes_check(d):" },
+        { "text": "if not passes_check(d):",
+          "why": { "en": "Inverted: you'd return the drafts that fail the check and escalate the good ones.", "es": "Invertido: devolverías los borradores que fallan la verificación y escalarías los buenos." } },
+        { "text": "if d is not None:",
+          "why": { "en": "Accepts every parsed draft, so wrong content never escalates; only exceptions would.", "es": "Acepta todo borrador parseado, así que el contenido incorrecto nunca escala; solo lo harían las excepciones." } },
+        { "text": "if d.category == \"other\":",
+          "why": { "en": "That's the failure case: \"other\" means the small model couldn't triage, so it should escalate.", "es": "Ese es el caso de falla: \"other\" significa que el modelo chico no pudo clasificar, así que debería escalar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The rule handles known-hard traffic up front; the cascade returns the cheap answer only when a deterministic check passes, and escalates on a failed check, invalid output or provider error. Returning the route label lets you eval each slice separately.",
+        "es": "La regla atiende de entrada el tráfico que ya sabes difícil; la cascada devuelve la respuesta barata solo si pasa una verificación determinista, y escala ante una verificación fallida, una salida inválida o un error del proveedor. Devolver la etiqueta de ruta te permite evaluar cada segmento por separado."
+      }
+    },
+    {
+      "id": "model-routing.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about routers and cascades are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre routers y cascadas son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A router decides before generating, so it never pays for two calls", "es": "Un router decide antes de generar, así que nunca paga dos llamadas" } },
+        { "text": { "en": "A cascade can base its decision on the small model's actual output", "es": "Una cascada puede decidir según la salida real del modelo chico" } },
+        { "text": { "en": "If blended golden-set quality holds, every route is fine", "es": "Si la calidad combinada en el golden set se mantiene, todas las rutas están bien" },
+          "why": { "en": "Averages hide slices: overall quality can hold while one segment, like refunds in Spanish, drops 6 points.", "es": "Los promedios esconden segmentos: la calidad general puede mantenerse mientras un segmento, como reembolsos en español, cae 6 puntos." } },
+        { "text": { "en": "A fallback model needs no eval, since it only runs during outages", "es": "Un modelo de fallback no necesita eval, porque solo corre durante caídas" },
+          "why": { "en": "A fallback is a deployment: prompts never tested on that model can break exactly when you rely on it.", "es": "Un fallback es un deploy: prompts nunca probados con ese modelo pueden fallar justo cuando dependes de él." } },
+        { "text": { "en": "Cascades cut latency on every request, since small models are faster", "es": "Las cascadas bajan la latencia de toda petición, porque los modelos chicos son más rápidos" },
+          "why": { "en": "Escalated requests wait for both calls, so their latency goes up.", "es": "Las peticiones escaladas esperan las dos llamadas, así que su latencia sube." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Routers predict difficulty from the input and never pay twice; cascades check the real output but pay twice, and wait longer, on every escalation. Either way, log the route on each request and evaluate each route and slice on its own, fallbacks included.",
+        "es": "Los routers predicen la dificultad con la entrada y nunca pagan dos veces; las cascadas revisan la salida real pero pagan dos veces, y esperan más, en cada escalamiento. En ambos casos registra la ruta en cada petición y evalúa cada ruta y segmento por separado, fallbacks incluidos."
+      }
+    }
+  ]
+}

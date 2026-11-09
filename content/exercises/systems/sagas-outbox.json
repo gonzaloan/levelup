@@ -1,0 +1,68 @@
+{
+  "concept": "sagas-outbox",
+  "items": [
+    {
+      "id": "sagas-outbox.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "An orchestrated order saga runs: reserve stock → charge card → create shipment. Shipment creation fails **permanently** (the carrier can't serve the address). What should the orchestrator do?",
+        "es": "Una saga de pedidos orquestada ejecuta: reservar stock → cobrar la tarjeta → crear el envío. La creación del envío falla de forma **permanente** (el transportista no llega a esa dirección). ¿Qué debe hacer el orquestador?"
+      },
+      "options": [
+        { "text": { "en": "Refund the charge, then release the stock: compensations in reverse order", "es": "Reembolsar el cobro y luego liberar el stock: compensaciones en orden inverso" } },
+        { "text": { "en": "Delete the order and payment rows so the charge never happened", "es": "Borrar las filas del pedido y del pago para que el cobro nunca haya existido" },
+          "why": { "en": "The money already moved at the card provider. A compensation undoes semantically (a refund); it doesn't erase records.", "es": "El dinero ya se movió en el proveedor de la tarjeta. Una compensación deshace semánticamente (un reembolso); no borra registros." } },
+        { "text": { "en": "Keep retrying shipment creation until the carrier accepts it", "es": "Seguir reintentando la creación del envío hasta que el transportista la acepte" },
+          "why": { "en": "Retries suit transient errors. A permanent failure is exactly what compensations are for.", "es": "Los reintentos sirven para errores transitorios. Una falla permanente es justo para lo que existen las compensaciones." } },
+        { "text": { "en": "Ask the coordinator to roll back the distributed transaction", "es": "Pedirle al coordinador que haga rollback de la transacción distribuida" },
+          "why": { "en": "There is none: each step already committed locally. Sagas exist because 2PC across services and external APIs is rarely available.", "es": "No existe: cada paso ya hizo commit localmente. Las sagas existen porque el 2PC entre servicios y APIs externas casi nunca está disponible." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A saga is a chain of local transactions, each paired with a compensating action. On failure, run the compensations of the completed steps in reverse order, retried until they succeed, so they must be idempotent. Some actions (a sent email) can't be undone: put them last.",
+        "es": "Una saga es una cadena de transacciones locales, cada una con su acción compensatoria. Ante una falla, ejecutas las compensaciones de los pasos completados en orden inverso, reintentándolas hasta que funcionen, así que deben ser idempotentes. Algunas acciones (un email enviado) no se pueden deshacer: ponlas al final."
+      }
+    },
+    {
+      "id": "sagas-outbox.a2",
+      "type": "order",
+      "prompt": {
+        "en": "Put the transactional outbox flow with a polling relay in order.",
+        "es": "Ordena el flujo del transactional outbox con un relay por polling."
+      },
+      "steps": [
+        { "en": "Insert the order row and its `OrderPlaced` outbox row in one local transaction", "es": "Insertar la fila del pedido y su fila `OrderPlaced` en el outbox en una sola transacción local" },
+        { "en": "Commit: both rows exist, or neither does", "es": "Commit: existen las dos filas o ninguna" },
+        { "en": "Relay selects pending outbox rows, locking them", "es": "El relay selecciona las filas pendientes del outbox y las bloquea" },
+        { "en": "Relay publishes them to the broker, keyed by order id, and flushes", "es": "El relay las publica en el broker, con el id del pedido como clave, y hace flush" },
+        { "en": "Relay deletes the published rows from the outbox", "es": "El relay borra del outbox las filas publicadas" }
+      ],
+      "explain": {
+        "en": "The business change and the event commit atomically, so neither can exist without the other. Publishing happens later, and a crash after flush but before delete re-publishes: delivery is at-least-once, so consumers dedupe by event id.",
+        "es": "El cambio de negocio y el evento hacen commit de forma atómica, así que ninguno existe sin el otro. La publicación ocurre después, y un crash tras el flush pero antes del delete vuelve a publicar: la entrega es at-least-once, así que los consumidores deduplican por id de evento."
+      }
+    },
+    {
+      "id": "sagas-outbox.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate's code commits the order, then calls `producer.send(\"orders\", event)` on the next line, and calls it \"our outbox\". What's the real problem?",
+        "es": "El código de un compañero hace commit del pedido, llama a `producer.send(\"orders\", event)` en la línea siguiente y lo llama \"nuestro outbox\". ¿Cuál es el problema real?"
+      },
+      "options": [
+        { "text": { "en": "It's still a dual write: a crash between commit and send loses the event", "es": "Sigue siendo una doble escritura: un crash entre el commit y el send pierde el evento" } },
+        { "text": { "en": "Nothing, as long as the producer retries failed sends", "es": "Nada, siempre que el producer reintente los envíos fallidos" },
+          "why": { "en": "Retries live in the process's memory; if the process crashes after commit, nobody is left to retry.", "es": "Los reintentos viven en la memoria del proceso; si el proceso se cae después del commit, no queda nadie para reintentar." } },
+        { "text": { "en": "It should publish first and commit only once the broker acks", "es": "Debería publicar primero y hacer commit solo cuando el broker confirme" },
+          "why": { "en": "Then a rollback means you announced an order that never existed. Either order is two non-atomic writes.", "es": "Entonces un rollback implica que anunciaste un pedido que nunca existió. En cualquier orden son dos escrituras no atómicas." } },
+        { "text": { "en": "Events can reach consumers out of order across partitions", "es": "Los eventos pueden llegar desordenados a los consumidores entre particiones" },
+          "why": { "en": "Ordering is a separate concern, fixed by keying events by order id. Losing the event entirely is the bug here.", "es": "El orden es otro tema y se resuelve usando el id del pedido como clave. El bug aquí es perder el evento por completo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "An outbox means the event is written to an `outbox` table inside the same transaction as the business row; a relay (poller or CDC tailing the WAL) publishes it later. One atomic write replaces two non-atomic ones.",
+        "es": "Un outbox significa que el evento se escribe en una tabla `outbox` dentro de la misma transacción que la fila de negocio; un relay (poller o CDC leyendo el WAL) lo publica después. Una escritura atómica reemplaza a dos no atómicas."
+      }
+    }
+  ]
+}

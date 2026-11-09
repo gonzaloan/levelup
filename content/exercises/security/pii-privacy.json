@@ -1,0 +1,71 @@
+{
+  "concept": "pii-privacy",
+  "items": [
+    {
+      "id": "pii-privacy.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your app pseudonymizes every prompt with Presidio before calling the LLM, and re-identifies only at the edge. A privacy audit still finds raw customer emails in your observability vendor's dashboards. Most likely cause?",
+        "es": "Tu app seudonimiza cada prompt con Presidio antes de llamar al LLM y reidentifica solo en el borde. Aun así, una auditoría de privacidad encuentra correos de clientes sin enmascarar en los dashboards de tu proveedor de observabilidad. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "The gateway or APM traces capture the raw request before masking runs", "es": "El gateway o las trazas de APM capturan el request crudo antes de que corra el enmascarado" } },
+        { "text": { "en": "The LLM provider re-identified the placeholders from the surrounding context", "es": "El proveedor del LLM reidentificó los marcadores a partir del contexto" },
+          "why": { "en": "The provider never saw the values, and the provider isn't your observability vendor anyway.", "es": "El proveedor nunca vio los valores y, de todos modos, no es tu proveedor de observabilidad." } },
+        { "text": { "en": "Presidio's NER missed the emails, since only a language model can detect them", "es": "El NER de Presidio no detectó los correos, porque solo un modelo de lenguaje puede detectarlos" },
+          "why": { "en": "Emails are structured: regex catches them reliably. NER is for names and addresses.", "es": "Los correos son estructurados: un regex los detecta bien. El NER es para nombres y direcciones." } },
+        { "text": { "en": "The provider kept the re-identified answers in its 30-day abuse logs", "es": "El proveedor guardó las respuestas reidentificadas en sus logs de abuso de 30 días" },
+          "why": { "en": "Re-identification happens at your edge, after the provider call, so the provider never holds the real values.", "es": "La reidentificación ocurre en tu borde, después de la llamada al proveedor, así que el proveedor nunca tiene los valores reales." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Masking only protects the copies made after it runs. Gateways, APM traces and error reports often record the raw request upstream of your pseudonymizer. Map every place a request is copied and redact one-way at each, not just in the prompt.",
+        "es": "El enmascarado solo protege las copias que se hacen después de que corre. Los gateways, las trazas de APM y los reportes de errores suelen registrar el request crudo antes de tu seudonimizador. Mapea cada lugar donde se copia un request y enmascara sin vuelta atrás en cada uno, no solo en el prompt."
+      }
+    },
+    {
+      "id": "pii-privacy.a2",
+      "type": "match",
+      "prompt": {
+        "en": "Match each privacy technique to the place it fits best.",
+        "es": "Relaciona cada técnica de privacidad con el lugar donde mejor encaja."
+      },
+      "pairs": [
+        { "left": { "en": "Reversible pseudonymization", "es": "Seudonimización reversible" },
+          "right": { "en": "The prompt sent to the provider, when the answer must include the real value", "es": "El prompt que se envía al proveedor, cuando la respuesta debe incluir el valor real" } },
+        { "left": { "en": "One-way redaction", "es": "Enmascarado sin vuelta atrás" },
+          "right": { "en": "Logs, traces and eval sets, which outlive the request", "es": "Logs, trazas y sets de evaluación, que viven más que el request" } },
+        { "left": { "en": "Zero-retention, in-region deployment", "es": "Deployment en la región con zero retention" },
+          "right": { "en": "The model needs the literal value, like extracting a name from a scanned ID", "es": "El modelo necesita el valor literal, como al extraer el nombre de un documento escaneado" } },
+        { "left": { "en": "Delete by metadata filter", "es": "Borrado por filtro de metadatos" },
+          "right": { "en": "Removing one person's chunks from the vector index after an erasure request", "es": "Quitar los chunks de una persona del índice vectorial tras una solicitud de supresión" } }
+      ],
+      "explain": {
+        "en": "Minimize what each store sees: placeholders for the provider when you need the value back, permanent redaction for anything long-lived, contract and residency controls when masking would break the task, and `user_id` metadata on chunks so erasure can find them.",
+        "es": "Minimiza lo que ve cada almacén: marcadores para el proveedor cuando necesitas recuperar el valor, enmascarado permanente para todo lo que vive mucho tiempo, controles de contrato y residencia cuando enmascarar rompería la tarea, y metadatos `user_id` en los chunks para que la supresión los encuentre."
+      }
+    },
+    {
+      "id": "pii-privacy.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: \"Our vector index stores only embeddings of support chats, not the text, so it's out of scope for GDPR erasure requests.\" Your response?",
+        "es": "Un compañero dice: \"Nuestro índice vectorial guarda solo embeddings de los chats de soporte, no el texto, así que queda fuera de las solicitudes de supresión del GDPR\". ¿Qué respondes?"
+      },
+      "options": [
+        { "text": { "en": "Disagree: embeddings can be inverted back to text, so delete them by metadata filter too", "es": "No: los embeddings se pueden invertir para recuperar el texto, así que también se borran por filtro de metadatos" } },
+        { "text": { "en": "Agree: an embedding is a one-way hash, so it cannot identify anyone", "es": "Sí: un embedding es un hash de una sola vía, así que no puede identificar a nadie" },
+          "why": { "en": "vec2text recovered 92% of 32-token inputs exactly from their embeddings. Treat embeddings as personal data.", "es": "vec2text recuperó exactamente el 92% de textos de 32 tokens a partir de sus embeddings. Trata los embeddings como datos personales." } },
+        { "text": { "en": "Agree, as long as the vector index is encrypted at rest", "es": "Sí, siempre que el índice vectorial esté cifrado en reposo" },
+          "why": { "en": "Encryption protects storage; it doesn't change whether the data is personal or must be erased.", "es": "El cifrado protege el almacenamiento; no cambia si el dato es personal ni si hay que borrarlo." } },
+        { "text": { "en": "Agree: erasure only has to reach the primary database of record", "es": "Sí: la supresión solo tiene que llegar a la base de datos principal" },
+          "why": { "en": "Erasure must reach every copy: vector index, semantic cache, logs, eval and fine-tuning sets.", "es": "La supresión debe llegar a cada copia: índice vectorial, cache semántica, logs y sets de evaluación y de fine-tuning." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Erasure is a data-lineage problem: every derived copy of someone's data is still their data. That's why each chunk should carry `user_id` metadata from day one, so you can delete by filter instead of rebuilding the index.",
+        "es": "La supresión es un problema de linaje de datos: cada copia derivada de los datos de alguien sigue siendo un dato suyo. Por eso cada chunk debería llevar el metadato `user_id` desde el primer día, para borrar por filtro en lugar de reconstruir el índice."
+      }
+    }
+  ]
+}

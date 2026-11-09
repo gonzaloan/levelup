@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
-import { LOCALES, m, t } from "@/lib/i18n";
+import { LOCALES, t } from "@/lib/i18n";
 import { conceptsOf, getDomain, getDomains, domainIndex } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
@@ -35,7 +35,7 @@ export default async function DomainPage({ params }: P) {
           <p className="eyebrow">{String(i + 1).padStart(2, "0")} / {String(all.length).padStart(2, "0")}</p>
           <h1>{t(d.title, locale)}</h1>
           <p className="page-sub">{t(d.tagline, locale)}</p>
-          <ProgressMeter ids={d.concepts} label={m("mastered", locale)} />
+          <ProgressMeter ids={d.concepts} label={locale === "es" ? "estudiados" : "studied"} />
         </div>
       </header>
       <div className="concept-grid">

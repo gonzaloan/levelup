@@ -1,35 +1,32 @@
 "use client";
-import { useEffect, useState } from "react";
-import { getMastered, setMastered, PROGRESS_EVENT } from "@/lib/progress";
+// Per-concept study status in lists and pages, read from the practice state (local-first).
+import Link from "next/link";
+import type { Locale } from "@/lib/types";
+import { m } from "@/lib/i18n";
+import { useStudyState } from "./practice/usePractice";
+import type { StudyState } from "@/lib/practice/store";
 import { Icon } from "./Icon";
 
-function useMastered() {
-  const [m, setM] = useState<Record<string, 1>>({});
-  useEffect(() => {
-    const sync = () => setM(getMastered());
-    sync();
-    window.addEventListener(PROGRESS_EVENT, sync);
-    window.addEventListener("storage", sync);
-    return () => { window.removeEventListener(PROGRESS_EVENT, sync); window.removeEventListener("storage", sync); };
-  }, []);
-  return m;
+type Status = "none" | "read" | "practiced" | "solid";
+export function statusOf(s: StudyState | null, id: string): Status {
+  if (!s) return "none";
+  const cards = Object.entries(s.cards).filter(([k]) => k.startsWith(id + ".") && !k.includes(".iq")).map(([, v]) => v);
+  if (cards.length >= 2 && cards.every((c) => c.stability >= 7)) return "solid";
+  if (cards.length) return "practiced";
+  return s.read[id] ? "read" : "none";
 }
 
-export function MasteredToggle({ id, label, doneLabel }: { id: string; label: string; doneLabel: string }) {
-  const m = useMastered();
-  const on = !!m[id];
-  return (
-    <button type="button" className={`mastered-btn${on ? " on" : ""}`} aria-pressed={on} onClick={() => setMastered(id, !on)}>
-      <Icon name="check" size={16} />
-      <span>{on ? doneLabel : label}</span>
-    </button>
-  );
+/** Dot in concept lists: empty → read → practiced → solid (stable ≥ 1 week). */
+export function MasteredDot({ id }: { id: string }) {
+  const [s] = useStudyState();
+  const st = statusOf(s, id);
+  return <span className={`dot st-${st}`} aria-hidden="true" />;
 }
 
-/** "3/15 mastered" + bar, for a set of concept ids. */
+/** "n/N studied" + bar for a set of concepts. */
 export function ProgressMeter({ ids, label }: { ids: string[]; label: string }) {
-  const m = useMastered();
-  const n = ids.filter((id) => m[id]).length;
+  const [s] = useStudyState();
+  const n = ids.filter((id) => statusOf(s, id) !== "none").length;
   const pct = ids.length ? Math.round((100 * n) / ids.length) : 0;
   return (
     <div className="meter" title={`${n}/${ids.length} ${label}`}>
@@ -39,8 +36,19 @@ export function ProgressMeter({ ids, label }: { ids: string[]; label: string }) 
   );
 }
 
-/** Small dot marking a mastered concept in lists. */
-export function MasteredDot({ id }: { id: string }) {
-  const m = useMastered();
-  return <span className={`dot${m[id] ? " on" : ""}`} aria-hidden="true" />;
+/** Concept page actions: practice it now, and mark it read (it enters the daily review). */
+export function MasteredToggle({ id, locale }: { id: string; locale: Locale; label?: string; doneLabel?: string }) {
+  const [s, update] = useStudyState();
+  const read = !!s?.read[id];
+  return (
+    <div className="concept-actions">
+      <a className="btn btn-primary" href={`/${locale}/practice/play/?mode=concept&id=${id}`}><Icon name="cards" size={16} /> {m("pPracticeConcept", locale)}</a>
+      <button type="button" className={`mastered-btn${read ? " on" : ""}`} aria-pressed={read}
+        onClick={() => update((st) => { if (st.read[id]) delete st.read[id]; else st.read[id] = Date.now(); })}>
+        <Icon name="check" size={16} />
+        <span>{read ? m("pIsRead", locale) : m("pMarkRead", locale)}</span>
+      </button>
+      <Link href={`/${locale}/practice/`} className="link-btn">{m("pHubTitle", locale)} →</Link>
+    </div>
+  );
 }

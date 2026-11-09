@@ -1,0 +1,76 @@
+{
+  "concept": "data-platform",
+  "items": [
+    {
+      "id": "data-platform.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your RAG assistant starts citing a discontinued pricing page. Root cause: the CMS team renamed `is_archived` to `status`, and ingestion read the missing field as 'live', re-embedding 1,200 archived pages. Which control would have stopped this **before the change shipped**?",
+        "es": "Tu asistente con RAG empieza a citar una página de precios descontinuada. Causa raíz: el equipo del CMS renombró `is_archived` a `status` y la ingesta leyó el campo faltante como 'vigente', volviendo a generar embeddings de 1,200 páginas archivadas. ¿Qué control lo habría frenado **antes de que el cambio saliera**?"
+      },
+      "options": [
+        { "text": { "en": "A data contract on the CMS schema, enforced in the CMS team's CI", "es": "Un contrato de datos sobre el esquema del CMS, validado en el CI de ese equipo" },
+          "why": { "en": "The rename breaks the producer's own build, so it never reaches your pipeline.", "es": "El cambio de nombre rompe el build del propio productor, así que nunca llega a tu pipeline." } },
+        { "text": { "en": "A null-rate quality test that gates your ingestion job", "es": "Una prueba de tasa de nulos que frena tu job de ingesta" },
+          "why": { "en": "A strong second line, but it runs in your pipeline after the rename has already shipped.", "es": "Una buena segunda línea, pero corre en tu pipeline cuando el cambio de nombre ya salió." } },
+        { "text": { "en": "Lineage from the CMS tables through to the vector index", "es": "Linaje desde las tablas del CMS hasta el índice vectorial" },
+          "why": { "en": "Lineage tells you which indexes and models to rebuild afterwards; it blocks nothing.", "es": "El linaje te dice qué índices y modelos reconstruir después; no bloquea nada." } },
+        { "text": { "en": "Time travel on the lakehouse table holding the documents", "es": "Time travel sobre la tabla del lakehouse que guarda los documentos" },
+          "why": { "en": "It lets you restore the last good version, but only once the damage is done.", "es": "Te deja restaurar la última versión buena, pero solo cuando el daño ya está hecho." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Defense in depth, ordered by where each control fires: contracts fail the producer's CI (before shipping), quality tests stop your ingestion (before indexing), lineage and time travel scope and repair the damage (after). Push checks as far left as you can.",
+        "es": "Defensa en profundidad, ordenada según dónde actúa cada control: los contratos hacen fallar el CI del productor (antes de salir), las pruebas de calidad frenan tu ingesta (antes de indexar), y el linaje y el time travel acotan y reparan el daño (después). Mueve los controles lo más a la izquierda que puedas."
+      }
+    },
+    {
+      "id": "data-platform.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Training must be reproducible months from now, and Delta's `VACUUM` keeps old files only 7 days by default. Fill in the snapshot step.",
+        "es": "El entrenamiento debe poder reproducirse dentro de meses, y el `VACUUM` de Delta conserva archivos viejos solo 7 días por defecto. Completa el paso del snapshot."
+      },
+      "lang": "sql",
+      "code": "-- Snapshot for the churn model, then a quality gate before training\n____\n\nSELECT\n  COUNT(*)                                             AS row_count,\n  AVG(CASE WHEN tenure_days IS NULL THEN 1 ELSE 0 END) AS null_rate_tenure,\n  COUNT(*) - COUNT(DISTINCT customer_id)               AS duplicate_ids\nFROM ml.churn_train_2026_11;\n-- orchestrator asserts the gate, then logs table + version 412 to the run",
+      "options": [
+        { "text": "CREATE TABLE ml.churn_train_2026_11 AS SELECT * FROM gold.customer_features VERSION AS OF 412;" },
+        { "text": "CREATE VIEW ml.churn_train_2026_11 AS SELECT * FROM gold.customer_features VERSION AS OF 412;",
+          "why": { "en": "Pinned but not materialized: once VACUUM deletes version 412's files, the view can't be read and the run can't be reproduced.", "es": "Fijada pero no materializada: cuando VACUUM borra los archivos de la versión 412, la vista ya no se puede leer y el run no se puede reproducir." } },
+        { "text": "CREATE VIEW ml.churn_train_2026_11 AS SELECT * FROM gold.customer_features;",
+          "why": { "en": "Reads whatever is there now: every rerun trains on different data.", "es": "Lee lo que haya en ese momento: cada reejecución entrena con datos distintos." } },
+        { "text": "CREATE VIEW ml.churn_train_2026_11 AS SELECT * FROM gold.customer_features WHERE updated_at < now();",
+          "why": { "en": "`now()` moves on every read, and rows updated since come back with new values.", "es": "`now()` cambia en cada lectura, y las filas actualizadas después vuelven con valores nuevos." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Pin a version **and** materialize it. Time travel is a short-term undo, bounded by VACUUM retention (7 days of files by default); a copied table survives it. Log the source table and version so the run can be traced back.",
+        "es": "Fija una versión **y** materialízala. El time travel es un deshacer de corto plazo, limitado por la retención de VACUUM (7 días de archivos por defecto); una tabla copiada sobrevive a eso. Registra la tabla de origen y la versión para que el run se pueda rastrear."
+      }
+    },
+    {
+      "id": "data-platform.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about a data platform for AI are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre una plataforma de datos para IA son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "One governed lakehouse copy can serve BI, training, RAG and evals", "es": "Una sola copia gobernada en el lakehouse puede servir a BI, entrenamiento, RAG y evals" } },
+        { "text": { "en": "Data contracts are checked in the consumer's pipeline, after ingestion", "es": "Los contratos de datos se validan en el pipeline del consumidor, después de la ingesta" },
+          "why": { "en": "They're enforced in the producer's CI, so a breaking change fails their build, not your model.", "es": "Se validan en el CI del productor, así que un cambio que rompe falla en su build y no en tu modelo." } },
+        { "text": { "en": "RAG ingestion must propagate deletes and ACL changes, not only new documents", "es": "La ingesta de RAG debe propagar borrados y cambios de ACL, no solo documentos nuevos" } },
+        { "text": { "en": "Thousands of tiny Parquet files are harmless on cheap object storage", "es": "Miles de archivos Parquet diminutos no hacen daño en un almacenamiento de objetos barato" },
+          "why": { "en": "They wreck scan speed; compaction targets files of ~512 MB (Iceberg) to 1 GB (Delta OPTIMIZE).", "es": "Arruinan la velocidad de lectura; la compactación apunta a archivos de ~512 MB (Iceberg) a 1 GB (OPTIMIZE de Delta)." } },
+        { "text": { "en": "Lineage should reach features, vector indexes and models, not stop at the warehouse", "es": "El linaje debe llegar a features, índices vectoriales y modelos, no detenerse en el warehouse" } },
+        { "text": { "en": "Quality tests at the end of the pipeline catch problems early enough", "es": "Las pruebas de calidad al final del pipeline detectan los problemas a tiempo" },
+          "why": { "en": "By then bad data has already fanned out to every consumer; gate each layer.", "es": "Para entonces los datos malos ya se propagaron a cada consumidor; pon compuertas en cada capa." } }
+      ],
+      "answers": [0, 2, 4],
+      "explain": {
+        "en": "The platform's value for AI is one governed copy whose changes, good and bad, are visible end to end: deletes and permissions flow into indexes, tests gate every layer, and lineage reaches all the way to predictions.",
+        "es": "El valor de la plataforma para la IA es una sola copia gobernada cuyos cambios, buenos y malos, se ven de punta a punta: borrados y permisos llegan a los índices, las pruebas frenan cada capa y el linaje llega hasta las predicciones."
+      }
+    }
+  ]
+}

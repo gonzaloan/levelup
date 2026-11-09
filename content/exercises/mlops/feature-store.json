@@ -1,0 +1,96 @@
+{
+  "concept": "feature-store",
+  "items": [
+    {
+      "id": "feature-store.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your company adopted a feature store. The offline store is filled by the platform's Spark job, but the app team fills the online store from its own Go service 'for speed'. The offline/online metric gap is still there. Most likely cause?",
+        "es": "Tu empresa adoptó un feature store. El store offline lo llena el job de Spark de la plataforma, pero el equipo de la app llena el store online con su propio servicio en Go 'por velocidad'. La brecha entre las métricas offline y online sigue ahí. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "Two pipelines compute the same feature, so training and serving still disagree", "es": "Dos pipelines calculan la misma feature, así que entrenamiento y serving siguen sin coincidir" },
+          "why": { "en": "One definition must materialize both stores; a second implementation brings the skew right back.", "es": "Una sola definición debe materializar ambos stores; una segunda implementación trae el skew de vuelta." } },
+        { "text": { "en": "The online store is too slow, so serving times out and uses defaults", "es": "El store online es demasiado lento, así que serving excede el timeout y usa defaults" },
+          "why": { "en": "Possible in general, but nothing here points to latency; the setup itself guarantees two versions of the logic.", "es": "Puede pasar en general, pero nada aquí apunta a la latencia; el propio diseño garantiza dos versiones de la lógica." } },
+        { "text": { "en": "The model is overfitting and needs stronger regularization", "es": "El modelo está sobreajustado y necesita más regularización" },
+          "why": { "en": "Blaming the model first is the classic mistake: the inputs differ between training and serving.", "es": "Culpar primero al modelo es el error clásico: las entradas son distintas entre entrenamiento y serving." } },
+        { "text": { "en": "The offline store keeps full history, which online lookups cannot match", "es": "El store offline guarda el historial completo, y las lecturas online no pueden igualarlo" },
+          "why": { "en": "That split is by design: history for point-in-time training joins, latest value for serving. Both come from one definition.", "es": "Esa separación es intencional: historial para los joins de entrenamiento y último valor para serving. Ambos salen de una sola definición." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A feature store kills skew only if one definition, computed once, writes both stores. Feeding the online store from a separate pipeline reintroduces two code paths, which is the exact bug the store exists to remove.",
+        "es": "Un feature store elimina el skew solo si una única definición, calculada una vez, escribe en ambos stores. Alimentar el store online con otro pipeline vuelve a crear dos caminos de código, justo el bug que el store debía eliminar."
+      }
+    },
+    {
+      "id": "feature-store.a2",
+      "type": "match",
+      "prompt": {
+        "en": "Match each part of a feature store to its job.",
+        "es": "Relaciona cada parte de un feature store con su función."
+      },
+      "pairs": [
+        { "left": { "en": "Registry", "es": "Registro" },
+          "right": { "en": "Versioned feature definitions: entity, source, transformation, owner, TTL", "es": "Definiciones de features versionadas: entidad, fuente, transformación, dueño, TTL" } },
+        { "left": { "en": "Offline store", "es": "Store offline" },
+          "right": { "en": "Full history in a warehouse or lake, for building training sets", "es": "Historial completo en un warehouse o lake, para armar sets de entrenamiento" } },
+        { "left": { "en": "Online store", "es": "Store online" },
+          "right": { "en": "Latest value per entity in a key-value store, read in milliseconds", "es": "Último valor por entidad en un almacén clave-valor, leído en milisegundos" } },
+        { "left": { "en": "Materialization", "es": "Materialización" },
+          "right": { "en": "Batch or streaming jobs that compute each feature once and write both stores", "es": "Jobs batch o de streaming que calculan cada feature una vez y escriben en ambos stores" } }
+      ],
+      "explain": {
+        "en": "Definitions live once in the registry; materialization turns them into two copies tuned for different reads: history for training, the latest value for inference. Same logic, two access patterns.",
+        "es": "Las definiciones viven una sola vez en el registro; la materialización las convierte en dos copias pensadas para lecturas distintas: historial para entrenar y último valor para inferir. Misma lógica, dos patrones de acceso."
+      }
+    },
+    {
+      "id": "feature-store.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Build a training row for **user 42 at 14:03**. The feature was written at 11:30 (2.5), 13:20 (3.1) and 14:20 (4.0). Its TTL is 1 hour. Which value does a correct point-in-time join use?",
+        "es": "Arma una fila de entrenamiento para **el usuario 42 a las 14:03**. La feature se escribió a las 11:30 (2.5), 13:20 (3.1) y 14:20 (4.0). Su TTL es de 1 hora. ¿Qué valor usa un point-in-time join correcto?"
+      },
+      "options": [
+        { "text": { "en": "3.1, the latest value at or before 14:03 within the TTL", "es": "3.1, el último valor a las 14:03 o antes, dentro del TTL" },
+          "why": { "en": "Written 43 minutes before the label time: the newest value that existed then, and still fresh.", "es": "Se escribió 43 minutos antes del momento de la etiqueta: el valor más nuevo que existía entonces, y todavía vigente." } },
+        { "text": { "en": "4.0, the most recent value the store holds", "es": "4.0, el valor más reciente que tiene el store" },
+          "why": { "en": "Written after 14:03: future information the model will never have at prediction time. A plain join on id does exactly this.", "es": "Se escribió después de las 14:03: información del futuro que el modelo nunca tendrá al predecir. Un join simple por id hace justo esto." } },
+        { "text": { "en": "2.5, since only values older than the TTL are safe", "es": "2.5, porque solo los valores más viejos que el TTL son seguros" },
+          "why": { "en": "Backwards: the TTL is a maximum age. The 11:30 value is over 2 hours old, so it counts as missing.", "es": "Es al revés: el TTL es una edad máxima. El valor de las 11:30 tiene más de 2 horas, así que cuenta como faltante." } },
+        { "text": { "en": "Missing, because nothing was written exactly at 14:03", "es": "Faltante, porque nada se escribió exactamente a las 14:03" },
+          "why": { "en": "Exact timestamp matches almost never happen; the join takes the latest earlier value if it's within the TTL.", "es": "Las coincidencias exactas de timestamp casi nunca ocurren; el join toma el último valor anterior si está dentro del TTL." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Point-in-time rule: the latest value with feature_ts ≤ label_ts, and only if it's within the TTL. That reproduces what the online store would have served at 14:03, so training sees what production will see.",
+        "es": "Regla del point-in-time: el último valor con feature_ts ≤ label_ts, y solo si está dentro del TTL. Eso reproduce lo que el store online habría servido a las 14:03, así el entrenamiento ve lo mismo que verá producción."
+      }
+    },
+    {
+      "id": "feature-store.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your team has **one** churn model, scored nightly in batch from warehouse tables. A vendor pitches a feature store 'to prevent training-serving skew'. Best advice?",
+        "es": "Tu equipo tiene **un solo** modelo de churn, que se calcula cada noche en batch desde tablas del warehouse. Un proveedor ofrece un feature store 'para evitar el training-serving skew'. ¿Cuál es el mejor consejo?"
+      },
+      "options": [
+        { "text": { "en": "Skip it for now: a well-modeled warehouse table and a shared library do the job", "es": "Esperar por ahora: una tabla bien modelada en el warehouse y una librería compartida bastan" },
+          "why": { "en": "One batch model with one pipeline has no second code path to drift from.", "es": "Un modelo batch con un solo pipeline no tiene un segundo camino de código del cual desviarse." } },
+        { "text": { "en": "Buy it now: every production model needs a feature store to avoid skew", "es": "Comprarlo ya: todo modelo en producción necesita un feature store para evitar el skew" },
+          "why": { "en": "Skew comes from two code paths; a batch-only model has one. The store costs two stores, materialization jobs and on-call.", "es": "El skew viene de tener dos caminos de código; un modelo solo batch tiene uno. El store cuesta dos stores, jobs de materialización y una guardia." } },
+        { "text": { "en": "Buy it only for the online store, to make nightly scoring faster", "es": "Comprarlo solo por el store online, para acelerar el scoring nocturno" },
+          "why": { "en": "Online stores serve millisecond lookups at inference; a nightly batch job reads warehouse tables directly and gains nothing.", "es": "Los stores online sirven lecturas en milisegundos al inferir; un job batch nocturno lee directo de las tablas del warehouse y no gana nada." } },
+        { "text": { "en": "Build an in-house feature store first, since vendors lock you in", "es": "Construir primero un feature store propio, porque los proveedores te atan" },
+          "why": { "en": "Same overkill with more work: the question is whether you need one, not who builds it.", "es": "Es el mismo exceso con más trabajo: la pregunta es si lo necesitas, no quién lo construye." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A feature store pays off when several models share entity features and at least one serves in real time under a tight latency budget. Before two models share a feature, it's infrastructure without a problem to solve.",
+        "es": "Un feature store se justifica cuando varios modelos comparten features de entidades y al menos uno sirve en tiempo real con un presupuesto de latencia ajustado. Antes de que dos modelos compartan una feature, es infraestructura sin un problema que resolver."
+      }
+    }
+  ]
+}

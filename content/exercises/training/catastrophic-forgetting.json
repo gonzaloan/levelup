@@ -1,0 +1,74 @@
+{
+  "concept": "catastrophic-forgetting",
+  "items": [
+    {
+      "id": "catastrophic-forgetting.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A full fine-tune (5 epochs) took claim-summary quality from 6.1 to 8.3, but broke JSON output on a shared endpoint and weakened refusals. The rerun (LoRA r=16, 2 epochs, 10% replay) scores 8.0 with general evals back near base. A stakeholder wants the 8.3 model. Your call?",
+        "es": "Un fine-tuning completo (5 épocas) subió la calidad de los resúmenes de siniestros de 6.1 a 8.3, pero rompió la salida JSON de un endpoint compartido y debilitó las negativas. La segunda corrida (LoRA r=16, 2 épocas, 10% de replay) saca 8.0 con las evals generales cerca del modelo base. Alguien pide el modelo de 8.3. ¿Qué decides?"
+      },
+      "options": [
+        { "text": { "en": "Ship the 8.0 model: the 0.3 points are the price of keeping everything else", "es": "Desplegar el de 8.0: los 0.3 puntos son el precio de conservar todo lo demás" },
+          "why": { "en": "Every mitigation trades some task gain for retention; the 8.3 model failed users the task metric never measured.", "es": "Toda mitigación cambia algo de ganancia en la tarea por retención; el modelo de 8.3 les falló a usuarios que la métrica de la tarea nunca midió." } },
+        { "text": { "en": "Ship the 8.3 model: the task metric is what the project was funded for", "es": "Desplegar el de 8.3: la métrica de la tarea es para lo que se financió el proyecto" },
+          "why": { "en": "The model also serves other endpoints and end users; broken JSON and weaker refusals are production failures, not side notes.", "es": "El modelo también atiende otros endpoints y usuarios finales; el JSON roto y las negativas más débiles son fallas de producción, no detalles." } },
+        { "text": { "en": "Ship the 8.3 model with a system prompt reminding it of JSON and refusals", "es": "Desplegar el de 8.3 con un system prompt que le recuerde el JSON y las negativas" },
+          "why": { "en": "Ignoring the system prompt is one of the symptoms; you can't prompt back skills the weights lost.", "es": "Ignorar el system prompt es uno de los síntomas; no puedes recuperar con un prompt habilidades que los pesos perdieron." } },
+        { "text": { "en": "Raise the LoRA rank to 256 and drop the replay to win back the 0.3", "es": "Subir el rango de LoRA a 256 y quitar el replay para recuperar los 0.3" },
+          "why": { "en": "More capacity and no replay push you back toward the setting that caused the forgetting.", "es": "Más capacidad y nada de replay te devuelven hacia la configuración que causó el olvido." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Forgetting is a trade-off, not a bug you fix for free: LoRA, replay and fewer epochs buy retention with a little task gain. Judge a candidate on the task plus general, format and safety evals, and pick the best model that regresses nothing.",
+        "es": "El olvido es un trade-off, no un bug que se arregla gratis: LoRA, replay y menos épocas compran retención con un poco de ganancia en la tarea. Juzga cada candidato por la tarea más evals generales, de formato y de seguridad, y elige el mejor modelo que no retroceda en nada."
+      }
+    },
+    {
+      "id": "catastrophic-forgetting.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the release gate: the fine-tune ships only if the task improves **and** no guard suite drops by more than 0.01.",
+        "es": "Completa el control de release: el fine-tuning sale solo si la tarea mejora **y** ninguna suite de protección cae más de 0.01."
+      },
+      "lang": "python",
+      "code": "GUARD = [\"mmlu\", \"ifeval\", \"refusals\"]  # skills you did NOT train on\n\nbefore = run_evals(BASE, [\"task\"] + GUARD)\nafter = run_evals(\"ft\", [\"task\"] + GUARD)\nassert after[\"task\"] > before[\"task\"]\nfor suite in GUARD:\n    ____",
+      "options": [
+        { "text": "assert after[suite] >= before[suite] - 0.01, f\"forgot: {suite}\"" },
+        { "text": "assert after[suite] > before[suite], f\"forgot: {suite}\"",
+          "why": { "en": "Demands that skills you never trained on improve; a model that kept them perfectly would fail.", "es": "Exige que mejoren habilidades que nunca entrenaste; un modelo que las conservó perfecto fallaría." } },
+        { "text": "assert after[suite] <= before[suite] + 0.01, f\"forgot: {suite}\"",
+          "why": { "en": "Inverted: it passes any regression, however large, and fails real improvements.", "es": "Invertido: deja pasar cualquier regresión, por grande que sea, y rechaza mejoras reales." } },
+        { "text": "assert after[\"task\"] >= before[\"task\"] - 0.01, f\"forgot: {suite}\"",
+          "why": { "en": "Re-checks the task metric, the one place forgetting is invisible; the guard suites are never read.", "es": "Vuelve a revisar la métrica de la tarea, justo donde el olvido es invisible; las suites de protección nunca se leen." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Forgetting never shows in the metric you optimized, so the gate must compare before and after on what you didn't train on: general skills, instruction following and refusals. Allow a small tolerance for eval noise, and block on any larger drop.",
+        "es": "El olvido nunca aparece en la métrica que optimizaste, así que el control debe comparar antes y después en lo que no entrenaste: habilidades generales, seguimiento de instrucciones y negativas. Permite una tolerancia pequeña por el ruido de la eval y bloquea ante cualquier caída mayor."
+      }
+    },
+    {
+      "id": "catastrophic-forgetting.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about catastrophic forgetting are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre el olvido catastrófico son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "It grows with learning rate, epochs and distance from the original data", "es": "Crece con el learning rate, las épocas y la distancia a los datos originales" } },
+        { "text": { "en": "Fine-tuning on benign data can still weaken refusals", "es": "Hacer fine-tuning con datos benignos igual puede debilitar las negativas" } },
+        { "text": { "en": "The task metric you optimized can't reveal it", "es": "La métrica de la tarea que optimizaste no lo puede revelar" } },
+        { "text": { "en": "With a small dataset, many epochs at a high LR are safe", "es": "Con un dataset pequeño, muchas épocas con learning rate alto son seguras" },
+          "why": { "en": "That is the forgetting recipe: few examples repeated many times at a high LR pull shared weights hard toward a narrow distribution.", "es": "Esa es justo la receta del olvido: pocos ejemplos repetidos muchas veces con learning rate alto empujan fuerte los pesos compartidos hacia una distribución estrecha." } },
+        { "text": { "en": "A single-purpose extractor that never sees open prompts needs heavy replay", "es": "Un extractor de un solo propósito que nunca ve prompts abiertos necesita mucho replay" },
+          "why": { "en": "There only the task metric matters; specializing on the task is the whole point.", "es": "Ahí solo importa la métrica de la tarea; especializarse en ella es justamente el objetivo." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Nothing in a narrow loss rewards keeping old skills, so gradient descent trades them away, faster with more LR, more epochs and more distant data. Guard against it whenever the model serves more than one task, talks to users or must stay safe.",
+        "es": "Nada en una pérdida acotada premia conservar las habilidades viejas, así que el descenso de gradiente las sacrifica, y más rápido con más learning rate, más épocas y datos más lejanos. Protégete siempre que el modelo atienda más de una tarea, hable con usuarios o deba seguir siendo seguro."
+      }
+    }
+  ]
+}

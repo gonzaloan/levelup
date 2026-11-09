@@ -1,0 +1,75 @@
+{
+  "concept": "citations-grounding",
+  "items": [
+    {
+      "id": "citations-grounding.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "In a multi-turn chat, users click **[S2]** in an earlier answer and land on an unrelated chunk. Each turn re-retrieves and labels the chunks S1–S5 in order. What's the fix?",
+        "es": "En un chat de varios turnos, los usuarios hacen clic en **[S2]** de una respuesta anterior y llegan a un chunk que no tiene relación. En cada turno se recupera de nuevo y los chunks se etiquetan S1–S5 en orden. ¿Cuál es la corrección?"
+      },
+      "options": [
+        { "text": { "en": "Use stable ids like `doc_id:chunk` instead of renumbering each turn", "es": "Usar ids estables como `doc_id:chunk` en vez de renumerar en cada turno" },
+          "why": { "en": "[S2] in the history now points at a different chunk; stable ids keep old citations resolvable.", "es": "El [S2] del historial ahora apunta a otro chunk; los ids estables mantienen válidas las citas anteriores." } },
+        { "text": { "en": "Add an entailment check so the model stops inventing [S2]", "es": "Agregar una verificación de implicación para que el modelo deje de inventar [S2]" },
+          "why": { "en": "S2 was real when it was cited; the label changed meaning afterwards.", "es": "S2 era real cuando se citó; fue la etiqueta la que cambió de significado después." } },
+        { "text": { "en": "Rerank after generation so citations match the final order", "es": "Reordenar después de generar para que las citas coincidan con el orden final" },
+          "why": { "en": "Reranking belongs before generation, and reordering labels is the problem, not the fix.", "es": "El reranking va antes de generar, y reordenar etiquetas es el problema, no la solución." } },
+        { "text": { "en": "Require verbatim quotes so each citation can be checked", "es": "Exigir citas literales para poder verificar cada referencia" },
+          "why": { "en": "Quotes verify a claim within one turn, but the link still resolves through a label that moved.", "es": "Las citas literales verifican una afirmación dentro de un turno, pero el enlace sigue resolviéndose con una etiqueta que se movió." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A citation is only as reliable as the id behind it. Give each chunk a stable id and keep its title, URL and span in your own lookup table, so a citation from turn 1 still resolves to the same chunk on turn 5.",
+        "es": "Una cita es tan confiable como el id que tiene detrás. Dale a cada chunk un id estable y guarda su título, URL y fragmento en tu propia tabla de consulta, para que una cita del turno 1 siga apuntando al mismo chunk en el turno 5."
+      }
+    },
+    {
+      "id": "citations-grounding.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the check so a claim survives only if its quote appears verbatim in **one of the chunks it cites**.",
+        "es": "Completa la verificación para que una afirmación sobreviva solo si su cita aparece literal en **alguno de los chunks que cita**."
+      },
+      "lang": "python",
+      "code": "def verify(ans: Answer, chunks: dict[str, str]) -> Answer:\n    # chunks = {\"S1\": text, ...} for THIS request only\n    norm = lambda s: \" \".join(s.split())  # whitespace-insensitive match\n    kept = [c for c in ans.claims\n            if c.source_ids and all(s in chunks for s in c.source_ids)  # no invented ids\n            and norm(c.quote)  # an empty quote would match any chunk\n            and ____]\n    return Answer(answerable=bool(kept), claims=kept)  # nothing verified -> abstain",
+      "options": [
+        { "text": "any(norm(c.quote) in norm(chunks[s]) for s in c.source_ids)" },
+        { "text": "any(norm(chunks[s]) in norm(c.quote) for s in c.source_ids)",
+          "why": { "en": "Reversed containment: it asks whether the whole chunk sits inside the quote, which almost never holds.", "es": "Contención invertida: pregunta si el chunk completo está dentro de la cita, lo que casi nunca ocurre." } },
+        { "text": "any(norm(c.quote) in norm(t) for t in chunks.values())",
+          "why": { "en": "Searches every chunk, so a claim citing S1 passes on S3's text: the citation itself goes unchecked.", "es": "Busca en todos los chunks, así que una afirmación que cita S1 pasa con el texto de S3: la cita en sí no se verifica." } },
+        { "text": "any(norm(c.text) in norm(chunks[s]) for s in c.source_ids)",
+          "why": { "en": "Matches the paraphrased claim, not the verbatim quote, so most valid claims fail.", "es": "Compara la afirmación parafraseada, no la cita literal, así que la mayoría de las afirmaciones válidas fallan." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Two cheap, deterministic checks: every cited id exists in this request, and the quote appears in a chunk it cites. They catch invented ids and fabricated quotes for free; whether the quote actually supports the claim still needs an entailment check.",
+        "es": "Dos verificaciones baratas y deterministas: cada id citado existe en esta solicitud y la cita aparece en un chunk que cita. Detectan ids inventados y citas fabricadas sin costo; para saber si la cita de verdad respalda la afirmación, todavía hace falta verificar la implicación."
+      }
+    },
+    {
+      "id": "citations-grounding.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about citations and grounding are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre citas y grounding son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Provider citation features guarantee a quote is real, not that it supports the claim", "es": "Las funciones de citas del proveedor garantizan que la cita es real, no que respalde la afirmación" } },
+        { "text": { "en": "Wrong abstentions usually point to retrieval gaps, not to the generator", "es": "Las abstenciones equivocadas suelen apuntar a huecos de recuperación, no al generador" } },
+        { "text": { "en": "A claim that cites a chunk present in the context is grounded", "es": "Una afirmación que cita un chunk presente en el contexto está fundamentada" },
+          "why": { "en": "The common failure is a real citation that doesn't support the claim; check quotes or entailment.", "es": "La falla común es una cita real que no respalda la afirmación; verifica con citas literales o implicación." } },
+        { "text": { "en": "A rising abstention rate means the system is broken; push it toward zero", "es": "Una tasa de abstención en aumento significa que el sistema está roto; hay que llevarla a cero" },
+          "why": { "en": "\"I don't know\" beats a fluent guess; tune strictness to the cost of a wrong answer versus none.", "es": "\"No sé\" es mejor que una suposición fluida; ajusta la exigencia según cuánto cuesta una respuesta errónea frente a ninguna." } },
+        { "text": { "en": "Entailment checks are cheap enough to run on every low-stakes answer", "es": "Las verificaciones de implicación son tan baratas que conviene correrlas en cada respuesta de bajo riesgo" },
+          "why": { "en": "They add a model call and latency; on low-stakes, latency-critical paths keep only the id check.", "es": "Agregan una llamada a un modelo y latencia; en flujos de bajo riesgo y latencia crítica, conserva solo la verificación de ids." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Grounding is layered: cheap code checks for ids and quotes, entailment where stakes justify the latency, and an explicit abstention path you measure. A citation proves where text came from, not that it supports the claim.",
+        "es": "El grounding se arma por capas: verificaciones baratas en código para ids y citas, implicación donde el riesgo justifica la latencia y un camino explícito de abstención que mides. Una cita prueba de dónde salió un texto, no que respalde la afirmación."
+      }
+    }
+  ]
+}

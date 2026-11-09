@@ -1,0 +1,91 @@
+{
+  "concept": "consistent-hashing",
+  "items": [
+    {
+      "id": "consistent-hashing.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "To reuse KV cache, you route LLM requests across 8 GPU replicas by a consistent hash of each prompt's first 2,000 tokens. After launch, one replica is at 100% and the other seven are idle. Most likely cause?",
+        "es": "Para reutilizar el KV cache, enrutas las peticiones al LLM entre 8 réplicas de GPU con un consistent hash de los primeros 2,000 tokens de cada prompt. Tras el lanzamiento, una réplica está al 100% y las otras siete ociosas. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "Every prompt starts with the same system prompt, so all requests share one key", "es": "Todos los prompts empiezan con el mismo system prompt, así que comparten una sola clave" },
+          "why": { "en": "Identical prefixes hash identically. Hash something per conversation and cap load per replica.", "es": "Prefijos idénticos dan el mismo hash. Aplica hash a algo propio de cada conversación y limita la carga por réplica." } },
+        { "text": { "en": "Too few vnodes per replica, so the ring's arcs are uneven", "es": "Muy pocos vnodes por réplica, así que los arcos del anillo son desiguales" },
+          "why": { "en": "Even with one point per node, the largest arc is ~2–3× the average, not all the traffic.", "es": "Incluso con un punto por nodo, el arco más grande es ~2–3× el promedio, no todo el tráfico." } },
+        { "text": { "en": "Routers use Python's salted `hash()`, so each builds a different ring", "es": "Los routers usan el `hash()` de Python con semilla, así que cada uno arma un anillo distinto" },
+          "why": { "en": "Different rings scatter the same key across replicas; they don't concentrate everything on one.", "es": "Anillos distintos dispersan la misma clave entre réplicas; no concentran todo en una." } },
+        { "text": { "en": "The ring needs a 9th replica before it can rebalance load", "es": "El anillo necesita una 9.ª réplica para poder rebalancear la carga" },
+          "why": { "en": "A new node takes ~1/N of keys; one key repeated by every request still maps to one place.", "es": "Un nodo nuevo toma ~1/N de las claves; una clave que repite cada petición sigue yendo a un solo lugar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Consistent hashing balances distinct keys, not traffic. If the key has low cardinality, like a shared system prompt, everything lands on one node. Choose a high-cardinality affinity key (conversation id) and add bounded loads to spill hot keys.",
+        "es": "El consistent hashing balancea claves distintas, no tráfico. Si la clave tiene baja cardinalidad, como un system prompt compartido, todo cae en un nodo. Elige una clave de afinidad de alta cardinalidad (id de conversación) y agrega carga acotada para desviar las claves calientes."
+      }
+    },
+    {
+      "id": "consistent-hashing.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete `add` so each node gets many well-spread points on the ring, identical in every worker process.",
+        "es": "Completa `add` para que cada nodo tenga muchos puntos bien repartidos en el anillo, idénticos en cada proceso worker."
+      },
+      "lang": "python",
+      "code": "import bisect, hashlib\n\ndef h(s: str) -> int:\n    return int.from_bytes(hashlib.md5(s.encode()).digest()[:8], \"big\")\n\nclass HashRing:\n    def __init__(self, nodes: list[str], vnodes: int = 128):\n        self.vnodes, self.ring = vnodes, []  # ring: sorted (token, node)\n        for n in nodes:\n            self.add(n)\n\n    def add(self, node: str) -> None:\n        for i in range(self.vnodes):\n            ____\n\n    def get(self, key: str) -> str:\n        i = bisect.bisect(self.ring, (h(key), \"\"))  # first token clockwise\n        return self.ring[i % len(self.ring)][1]     # wrap around the ring",
+      "options": [
+        { "text": "bisect.insort(self.ring, (h(f\"{node}#{i}\"), node))" },
+        { "text": "bisect.insort(self.ring, (h(node), node))",
+          "why": { "en": "Every vnode gets the same token: effectively one point per node, so arcs stay uneven.", "es": "Cada vnode recibe el mismo token: en la práctica, un punto por nodo, así que los arcos siguen desiguales." } },
+        { "text": "self.ring.append((h(f\"{node}#{i}\"), node))",
+          "why": { "en": "The ring stops being sorted, so the binary search in `get` returns wrong owners.", "es": "El anillo deja de estar ordenado, así que la búsqueda binaria de `get` devuelve dueños equivocados." } },
+        { "text": "bisect.insort(self.ring, (hash(f\"{node}#{i}\"), node))",
+          "why": { "en": "Python's built-in `hash()` is salted per process: each worker builds a different ring.", "es": "El `hash()` de Python tiene semilla por proceso: cada worker arma un anillo distinto." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Three properties in one line: a distinct token per vnode (`node#i`) for even arcs, a stable hash (md5, not `hash()`) so every process agrees, and `insort` to keep the ring sorted for the binary search.",
+        "es": "Tres propiedades en una línea: un token distinto por vnode (`node#i`) para arcos parejos, un hash estable (md5, no `hash()`) para que todos los procesos coincidan, e `insort` para mantener ordenado el anillo para la búsqueda binaria."
+      }
+    },
+    {
+      "id": "consistent-hashing.a3",
+      "type": "numeric",
+      "prompt": {
+        "en": "A cache cluster routes with `hash(key) % N` on **4** nodes. Autoscaling adds a 5th. Roughly what percentage of keys now map to a different node?",
+        "es": "Un clúster de caché enruta con `hash(key) % N` en **4** nodos. El autoscaling agrega un 5.º. ¿Qué porcentaje de las claves pasa a otro nodo, aproximadamente?"
+      },
+      "answer": 80,
+      "tolerance": 0.08,
+      "unit": "%",
+      "explain": {
+        "en": "A key stays only if `h % 4 == h % 5`, which holds for ~1/5 of keys, so ~4/5 = 80% move: in general N/(N+1). Consistent hashing would move ~1/(N+1) = 20%, so the cache stays mostly warm.",
+        "es": "Una clave se queda solo si `h % 4 == h % 5`, lo que pasa con ~1/5 de las claves, así que se mueve ~4/5 = 80%: en general, N/(N+1). Con consistent hashing se movería ~1/(N+1) = 20%, así que la caché sigue casi toda caliente."
+      }
+    },
+    {
+      "id": "consistent-hashing.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about consistent hashing are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre consistent hashing son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Vnodes spread a dead node's keys over many peers", "es": "Los vnodes reparten las claves de un nodo caído entre muchos pares" } },
+        { "text": { "en": "It keeps range scans cheap, like range partitioning", "es": "Mantiene baratos los range scans, como el particionamiento por rangos" },
+          "why": { "en": "Adjacent keys hash to unrelated points on the ring, so a range touches many nodes.", "es": "Claves adyacentes caen en puntos sin relación en el anillo, así que un rango toca muchos nodos." } },
+        { "text": { "en": "Enough vnodes make hot keys a non-issue", "es": "Con suficientes vnodes, las claves calientes dejan de ser un problema" },
+          "why": { "en": "Vnodes even out key counts; one hot key still maps to one node. Use bounded loads or split the key.", "es": "Los vnodes emparejan la cantidad de claves; una clave caliente sigue en un nodo. Usa carga acotada o divide la clave." } },
+        { "text": { "en": "Clients with different membership views route the same key differently", "es": "Clientes con vistas distintas de la membresía enrutan la misma clave a nodos distintos" } },
+        { "text": { "en": "Giving a bigger machine more vnodes gives it more load", "es": "Darle más vnodes a una máquina más grande le da más carga" } },
+        { "text": { "en": "Rendezvous hashing needs a ring of vnodes to work", "es": "El rendezvous hashing necesita un anillo de vnodes para funcionar" },
+          "why": { "en": "It scores `hash(key, node)` for every node and picks the highest: no ring at all.", "es": "Calcula `hash(key, node)` para cada nodo y elige el más alto: no usa anillo." } }
+      ],
+      "answers": [0, 3, 4],
+      "explain": {
+        "en": "Consistent hashing solves one problem, minimal movement on resize, plus balance via vnodes. It does nothing for hot keys or range scans, and it relies on every client sharing the same membership view.",
+        "es": "El consistent hashing resuelve un problema, mover lo mínimo al redimensionar, más el balance con vnodes. No hace nada por las claves calientes ni por los range scans, y depende de que todos los clientes compartan la misma vista de la membresía."
+      }
+    }
+  ]
+}

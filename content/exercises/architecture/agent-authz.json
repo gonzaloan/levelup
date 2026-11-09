@@ -1,0 +1,96 @@
+{
+  "concept": "agent-authz",
+  "items": [
+    {
+      "id": "agent-authz.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "In a design review, an agent forwards the user's SSO access token unchanged to the CRM, calendar and payments APIs. The team argues it's least privilege, since the agent can only do what the user can. Your main objection?",
+        "es": "En una revisión de diseño, un agente reenvía sin cambios el access token de SSO del usuario a las APIs de CRM, calendario y pagos. El equipo argumenta que es mínimo privilegio, porque el agente solo puede hacer lo que el usuario puede. ¿Cuál es tu objeción principal?"
+      },
+      "options": [
+        { "text": { "en": "No audience or actor: any API can replay it, and audits can't tell agent from user", "es": "Sin audiencia ni actor: cualquier API puede reutilizarlo, y la auditoría no distingue agente de usuario" },
+          "why": { "en": "That's why MCP forbids token passthrough. Exchange it for a short-lived, audience-bound token naming user and agent.", "es": "Por eso MCP prohíbe el token passthrough. Cámbialo por un token de vida corta, atado a una audiencia, que nombre al usuario y al agente." } },
+        { "text": { "en": "The agent should use one shared admin service account instead", "es": "El agente debería usar una cuenta de servicio admin compartida" },
+          "why": { "en": "Far worse: every prompt injection becomes an org-wide breach instead of one user's.", "es": "Mucho peor: cada prompt injection se vuelve una brecha de toda la organización en vez de la de un usuario." } },
+        { "text": { "en": "The agent should keep a long-lived refresh token to avoid re-login", "es": "El agente debería guardar un refresh token de larga vida para evitar re-logins" },
+          "why": { "en": "Long-lived tokens in agent memory, transcripts or logs widen the window for any leak.", "es": "Los tokens de larga vida en la memoria del agente, transcripts o logs amplían la ventana de cualquier filtración." } },
+        { "text": { "en": "It's fine, because the user's rights already cap the agent", "es": "Está bien, porque los derechos del usuario ya limitan al agente" },
+          "why": { "en": "The ceiling is right, but the agent gets all of it for every API, not what this task needs.", "es": "El techo es correcto, pero el agente recibe todo para cada API, no lo que necesita esta tarea." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The user's rights are the ceiling, not the grant. Effective access should be user rights ∩ agent scopes ∩ what the task needs. Token exchange (RFC 8693) yields a short-lived token per tool, bound to one audience, with the user as subject and the agent as actor, so each API can enforce it and audit both.",
+        "es": "Los derechos del usuario son el techo, no el permiso otorgado. El acceso efectivo debería ser derechos del usuario ∩ scopes del agente ∩ lo que la tarea necesita. El token exchange (RFC 8693) da un token de vida corta por herramienta, atado a una audiencia, con el usuario como sujeto y el agente como actor, para que cada API lo haga cumplir y audite a ambos."
+      }
+    },
+    {
+      "id": "agent-authz.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the tool's authorization check so a prompt-injected agent can't refund an order the user doesn't own.",
+        "es": "Completa el chequeo de autorización de la herramienta para que un agente con prompt injection no pueda reembolsar un pedido que no es del usuario."
+      },
+      "lang": "python",
+      "code": "def refund(order_id: str, amount: float, claims: dict) -> dict:\n    user, agent = claims[\"sub\"], claims[\"act\"][\"sub\"]   # who asked, who acts\n    if \"refunds:write\" not in claims[\"scope\"].split():\n        raise PermissionError(\"missing scope\")\n    ____\n        raise PermissionError(\"not your order\")\n    if amount > 100 and not approvals.verify(user, order_id, amount):\n        raise NeedsConfirmation(order_id, amount)\n    audit.log(user=user, agent=agent, tool=\"refund\", order=order_id, amount=amount)\n    return payments.refund(order_id, amount)",
+      "options": [
+        { "text": "if not owns_order(user, order_id):" },
+        { "text": "if not owns_order(agent, order_id):",
+          "why": { "en": "Checks the agent's authority instead of the user's: the confused deputy, acting with its own rights for someone else.", "es": "Verifica la autoridad del agente en vez de la del usuario: el confused deputy, que usa sus propios derechos para otro." } },
+        { "text": "if not is_authenticated(user):",
+          "why": { "en": "Authentication proves who asked, not which orders they may touch.", "es": "La autenticación prueba quién pidió, no qué pedidos puede tocar." } },
+        { "text": "if not llm_allows(user, order_id):",
+          "why": { "en": "Asks the model, which a prompt injection can steer. Authorization must be deterministic code.", "es": "Le pregunta al modelo, que una prompt injection puede manipular. La autorización debe ser código determinista." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The model only proposes a tool call; code at the tool decides. Check the token's scope, then the user's own rights on this specific resource (the `sub`, not the `act`), then require human confirmation above a risk threshold, and audit user, agent and arguments. None of it depends on what the prompt says.",
+        "es": "El modelo solo propone una llamada a la herramienta; decide el código en la herramienta. Verifica el scope del token, luego los derechos del propio usuario sobre este recurso (el `sub`, no el `act`), luego exige confirmación humana sobre un umbral de riesgo y audita usuario, agente y argumentos. Nada de eso depende de lo que diga el prompt."
+      }
+    },
+    {
+      "id": "agent-authz.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which of these actually limit what a prompt-injected agent can do? Select all that apply.",
+        "es": "¿Cuáles de estos controles limitan de verdad lo que puede hacer un agente con prompt injection? Marca todos los que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Short-lived delegated tokens with narrow scopes and one audience", "es": "Tokens delegados de vida corta, con scopes acotados y una sola audiencia" } },
+        { "text": { "en": "An authorization check inside each tool's code", "es": "Un chequeo de autorización dentro del código de cada herramienta" } },
+        { "text": { "en": "A system-prompt rule: 'never refund over $100'", "es": "Una regla en el system prompt: 'nunca reembolses más de $100'" },
+          "why": { "en": "An injection can rewrite the prompt, not your policy engine. The rule must live in code.", "es": "Una inyección puede reescribir el prompt, no tu motor de políticas. La regla tiene que vivir en el código." } },
+        { "text": { "en": "Human confirmation for payments, deletes and external messages", "es": "Confirmación humana para pagos, borrados y mensajes externos" } },
+        { "text": { "en": "Audit logs of every tool call", "es": "Logs de auditoría de cada llamada a herramientas" },
+          "why": { "en": "Essential for answering who did what, but they record actions after the fact; they don't block any.", "es": "Son clave para saber quién hizo qué, pero registran las acciones después; no bloquean ninguna." } }
+      ],
+      "answers": [0, 1, 3],
+      "explain": {
+        "en": "Controls that limit an agent sit outside the model: what the token allows, what the tool's code checks and what a human approves. Prompt rules can be overwritten by injected text, and audit logs only tell you afterwards. Layered, the real controls cap an injection's blast radius at what one user could already do.",
+        "es": "Los controles que limitan a un agente están fuera del modelo: lo que permite el token, lo que verifica el código de la herramienta y lo que aprueba un humano. Las reglas en el prompt pueden ser reescritas por texto inyectado, y los logs de auditoría solo te avisan después. En capas, los controles reales acotan el radio de impacto de una inyección a lo que un usuario ya podía hacer."
+      }
+    },
+    {
+      "id": "agent-authz.a4",
+      "type": "match",
+      "prompt": {
+        "en": "Match each part of an exchanged agent token to what it carries.",
+        "es": "Une cada parte de un token de agente obtenido por token exchange con lo que representa."
+      },
+      "pairs": [
+        { "left": { "en": "`sub` (subject)", "es": "`sub` (sujeto)" },
+          "right": { "en": "The human the agent acts for, whose rights are the ceiling", "es": "El humano por quien actúa el agente, cuyos derechos son el techo" } },
+        { "left": { "en": "`act` (actor)", "es": "`act` (actor)" },
+          "right": { "en": "The agent's own identity, recorded as who is acting", "es": "La identidad propia del agente, registrada como quien actúa" } },
+        { "left": { "en": "`aud` (audience)", "es": "`aud` (audiencia)" },
+          "right": { "en": "The one API where the token is valid", "es": "La única API donde el token es válido" } },
+        { "left": { "en": "`scope`", "es": "`scope`" },
+          "right": { "en": "The actions allowed, e.g. `refunds:write` and nothing more", "es": "Las acciones permitidas, por ejemplo `refunds:write` y nada más" } }
+      ],
+      "explain": {
+        "en": "Token exchange (RFC 8693) answers both questions on every call: who asked (`sub`) and who acts (`act`). Audience binding stops a token from being replayed at another API, and minimal scopes shrink what a leaked token can do. Keep lifetimes short, minutes to an hour.",
+        "es": "El token exchange (RFC 8693) responde las dos preguntas en cada llamada: quién pidió (`sub`) y quién actúa (`act`). Atar la audiencia evita que el token se reutilice en otra API, y los scopes mínimos achican lo que puede hacer un token filtrado. Mantén vidas cortas, de minutos a una hora."
+      }
+    }
+  ]
+}

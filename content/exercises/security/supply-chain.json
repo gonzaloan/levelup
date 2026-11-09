@@ -1,0 +1,75 @@
+{
+  "concept": "supply-chain",
+  "items": [
+    {
+      "id": "supply-chain.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A data scientist found a sentiment model from an unknown Hugging Face account. `torch.load` refused its pickled `.bin`, so they set `weights_only=False`, it loaded, and they ask you to approve it for production. Your call?",
+        "es": "Una científica de datos encontró un modelo de sentimiento de una cuenta desconocida de Hugging Face. `torch.load` rechazó su `.bin` en pickle, así que puso `weights_only=False`, cargó y te pide aprobarlo para producción. ¿Qué decides?"
+      },
+      "options": [
+        { "text": { "en": "Block it; import a vetted safetensors release through the internal registry", "es": "Bloquearlo; importar una versión revisada en safetensors a través del registro interno" },
+          "why": { "en": "Unpickling can run arbitrary code, and it may already have run on that laptop. Treat it as an incident, not a review.", "es": "Deserializar un pickle puede ejecutar código arbitrario, y quizá ya corrió en esa laptop. Trátalo como un incidente, no como una revisión." } },
+        { "text": { "en": "Approve it if its SHA-256 matches the hash on the model page", "es": "Aprobarlo si su SHA-256 coincide con el hash de la página del modelo" },
+          "why": { "en": "A hash proves you got the file the uploader published, not that the file is safe. A malicious pickle hashes fine.", "es": "Un hash prueba que recibiste el archivo que publicó quien lo subió, no que sea seguro. Un pickle malicioso tiene un hash perfectamente válido." } },
+        { "text": { "en": "Approve it once it passes your eval suite", "es": "Aprobarlo cuando pase tu suite de evals" },
+          "why": { "en": "The payload executes at load time, before any eval runs; evals check behavior, not code.", "es": "La carga maliciosa se ejecuta al cargar el modelo, antes de que corra cualquier eval; las evals revisan comportamiento, no código." } },
+        { "text": { "en": "Approve it if the repo has many downloads and likes", "es": "Aprobarlo si el repo tiene muchas descargas y likes" },
+          "why": { "en": "Popularity isn't provenance: JFrog found ~100 malicious models on Hugging Face in 2024.", "es": "La popularidad no es procedencia: JFrog encontró ~100 modelos maliciosos en Hugging Face en 2024." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "PyTorch `.bin`/`.pt` checkpoints are pickle, and unpickling can execute code, so the attack fires the moment you load, before hashes or evals can help. safetensors is a JSON header plus raw tensors: parsing it runs nothing.",
+        "es": "Los checkpoints `.bin`/`.pt` de PyTorch son pickle, y deserializar un pickle puede ejecutar código, así que el ataque se dispara apenas cargas, antes de que los hashes o las evals sirvan de algo. safetensors es un encabezado JSON más tensores crudos: leerlo no ejecuta nada."
+      }
+    },
+    {
+      "id": "supply-chain.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the call so that loading this approved model can't execute any code shipped in the repo.",
+        "es": "Completa la llamada para que cargar este modelo aprobado no pueda ejecutar ningún código que venga en el repo."
+      },
+      "lang": "python",
+      "code": "from transformers import AutoModelForCausalLM\n\n# HF_ENDPOINT points at the internal registry\nREPO = \"acme/support-llm-ft\"\nREVISION = \"9f2c1e7b4a...\"   # commit SHA recorded in the AI-BOM\n\nmodel = AutoModelForCausalLM.from_pretrained(\n    REPO,\n    revision=REVISION,\n    ____\n)",
+      "options": [
+        { "text": "use_safetensors=True, trust_remote_code=False," },
+        { "text": "use_safetensors=True, trust_remote_code=True,",
+          "why": { "en": "The weights are safe, but `trust_remote_code=True` runs the repo's own Python on your machine.", "es": "Los pesos son seguros, pero `trust_remote_code=True` ejecuta el Python del propio repo en tu máquina." } },
+        { "text": "use_safetensors=False, trust_remote_code=False,",
+          "why": { "en": "Allows pickle `.bin` weights, and unpickling can execute arbitrary code.", "es": "Permite pesos `.bin` en pickle, y deserializar un pickle puede ejecutar código arbitrario." } },
+        { "text": "use_safetensors=False, trust_remote_code=True,",
+          "why": { "en": "Both doors open: pickle weights and the repo's Python code.", "es": "Las dos puertas abiertas: pesos en pickle y el código Python del repo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Loading a model has two code-execution doors: pickle weights and repo-supplied Python. Close both, and pin the revision to a commit SHA, never a branch like `main`, so the files you load are the ones you reviewed.",
+        "es": "Cargar un modelo tiene dos puertas para ejecutar código: los pesos en pickle y el Python que trae el repo. Cierra ambas y fija la revisión a un commit SHA, nunca a una rama como `main`, para que los archivos que cargas sean los que revisaste."
+      }
+    },
+    {
+      "id": "supply-chain.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A model passed ModelScan, ships as safetensors only, is signed, and is pinned by commit SHA with its hash in the AI-BOM. Which risk do these controls still leave uncovered?",
+        "es": "Un modelo pasó ModelScan, viene solo en safetensors, está firmado y fijado por commit SHA con su hash en el AI-BOM. ¿Qué riesgo siguen sin cubrir estos controles?"
+      },
+      "options": [
+        { "text": { "en": "A backdoor in the weights that only fires on a trigger", "es": "Una puerta trasera en los pesos que solo se activa con un disparador" },
+          "why": { "en": "Scanners and signatures check code and integrity, not behavior; a backdoor lives in the weights themselves.", "es": "Los escáneres y las firmas revisan código e integridad, no comportamiento; una puerta trasera vive en los propios pesos." } },
+        { "text": { "en": "Code execution while the weights are loading", "es": "Ejecución de código mientras se cargan los pesos" },
+          "why": { "en": "Covered: safetensors stores only a JSON header and raw tensors, so loading runs no code.", "es": "Cubierto: safetensors guarda solo un encabezado JSON y tensores crudos, así que cargarlo no ejecuta código." } },
+        { "text": { "en": "The weights changing upstream after approval", "es": "Que los pesos cambien en el origen después de la aprobación" },
+          "why": { "en": "Covered: a commit SHA plus a recorded hash means changed weights fail verification.", "es": "Cubierto: un commit SHA más un hash registrado hacen que unos pesos modificados fallen la verificación." } },
+        { "text": { "en": "Tampering between the registry and the deploy", "es": "Una manipulación entre el registro y el deploy" },
+          "why": { "en": "Covered: verifying the signature at deploy catches an artifact altered in transit.", "es": "Cubierto: verificar la firma en el deploy detecta un artefacto alterado en el camino." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A clean scan is not proof of safety. Sleeper Agents showed backdoors surviving SFT, RLHF and adversarial training, so what remains is provenance (who trained it, on what data), evals and red teaming before traffic, and a small blast radius: least privilege and deterministic checks on outputs.",
+        "es": "Un escaneo limpio no prueba que el modelo sea seguro. Sleeper Agents mostró puertas traseras que sobreviven a SFT, RLHF y entrenamiento adversarial, así que lo que queda es la procedencia (quién lo entrenó y con qué datos), evals y red teaming antes de recibir tráfico, y un radio de impacto chico: mínimo privilegio y validaciones deterministas sobre las salidas."
+      }
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "concept": "ann-indexes",
+  "items": [
+    {
+      "id": "ann-indexes.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your RAG retrieves top-20 from an HNSW index, and answer quality is poor. The team wants to switch embedding models. You find the index runs with `efSearch = 8`. What do you do first?",
+        "es": "Tu RAG recupera el top 20 de un índice HNSW y la calidad de las respuestas es mala. El equipo quiere cambiar de modelo de embeddings. Descubres que el índice corre con `efSearch = 8`. ¿Qué haces primero?"
+      },
+      "options": [
+        { "text": { "en": "Set efSearch ≥ k and sweep it against brute-force recall@20", "es": "Poner efSearch ≥ k y barrerlo contra el recall@20 de la fuerza bruta" },
+          "why": { "en": "The candidate list is smaller than k, so the index truncates results before embeddings even matter.", "es": "La lista de candidatos es más chica que k, así que el índice recorta resultados antes de que importen los embeddings." } },
+        { "text": { "en": "Switch to a larger, better embedding model as proposed", "es": "Cambiar a un modelo de embeddings más grande y mejor, como se propuso" },
+          "why": { "en": "Classic misdiagnosis: blaming embeddings for a misconfigured index. Re-embedding the corpus won't fix efSearch < k.", "es": "Diagnóstico clásico equivocado: culpar a los embeddings por un índice mal configurado. Reprocesar el corpus no arregla efSearch < k." } },
+        { "text": { "en": "Add a cross-encoder reranker over the top 20 results", "es": "Agregar un reranker cross-encoder sobre el top 20 de resultados" },
+          "why": { "en": "A reranker reorders what the index returns; neighbors the index missed stay missed.", "es": "Un reranker reordena lo que devuelve el índice; los vecinos que el índice perdió siguen perdidos." } },
+        { "text": { "en": "Move to IVF-PQ so each query searches more of the corpus", "es": "Pasar a IVF-PQ para que cada consulta revise más del corpus" },
+          "why": { "en": "IVF-PQ compresses and approximates further: it trades recall for memory, not the other way.", "es": "IVF-PQ comprime y aproxima todavía más: cambia recall por memoria, no al revés." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Before blaming the model, check that the index returns what exact search would. efSearch is HNSW's query-time beam; it must be at least k, and the right value comes from a recall@k vs latency sweep on your real queries, measured against brute-force ground truth.",
+        "es": "Antes de culpar al modelo, verifica que el índice devuelva lo que daría la búsqueda exacta. efSearch es el haz de búsqueda de HNSW al consultar; debe ser al menos k, y el valor correcto sale de barrer recall@k contra latencia con tus consultas reales, medido contra la verdad de la fuerza bruta."
+      }
+    },
+    {
+      "id": "ann-indexes.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "You index 200M vectors of 1,536 dims (float32). With PQ at **1 byte per 16 dims**, how much memory do the PQ codes take? Ignore centroids, IDs and any graph or list overhead.",
+        "es": "Indexas 200M de vectores de 1,536 dimensiones (float32). Con PQ a **1 byte cada 16 dimensiones**, ¿cuánta memoria ocupan los códigos PQ? Ignora centroides, IDs y cualquier overhead de grafo o listas."
+      },
+      "answer": 19.2,
+      "tolerance": 0.1,
+      "unit": "GB",
+      "explain": {
+        "en": "1,536 / 16 = 96 bytes per vector; 200M × 96 B = 19.2 GB. Raw float32 would be 200M × 1,536 × 4 B ≈ 1.23 TB, so PQ is 64× smaller. The price is approximate distances, which is why production setups rescore a top ~100 with full vectors.",
+        "es": "1,536 / 16 = 96 bytes por vector; 200M × 96 B = 19.2 GB. En float32 serían 200M × 1,536 × 4 B ≈ 1.23 TB, así que PQ es 64× más chico. El precio son distancias aproximadas, por eso en producción se hace rescoring de un top ~100 con los vectores completos."
+      }
+    },
+    {
+      "id": "ann-indexes.a3",
+      "type": "match",
+      "prompt": {
+        "en": "Match each ANN index parameter to what it controls.",
+        "es": "Relaciona cada parámetro de índice ANN con lo que controla."
+      },
+      "pairs": [
+        { "left": { "en": "M (HNSW)", "es": "M (HNSW)" },
+          "right": { "en": "Links per node: more RAM, better recall", "es": "Enlaces por nodo: más RAM, mejor recall" } },
+        { "left": { "en": "efConstruction (HNSW)", "es": "efConstruction (HNSW)" },
+          "right": { "en": "Build effort, paid once when inserting vectors", "es": "Esfuerzo de construcción, se paga una vez al insertar vectores" } },
+        { "left": { "en": "efSearch (HNSW)", "es": "efSearch (HNSW)" },
+          "right": { "en": "Candidate list size at query time, the main recall/latency dial", "es": "Tamaño de la lista de candidatos al consultar, la perilla principal de recall contra latencia" } },
+        { "left": { "en": "nlist (IVF)", "es": "nlist (IVF)" },
+          "right": { "en": "Number of k-means clusters the vectors are split into", "es": "Cantidad de clústeres de k-means en que se reparten los vectores" } },
+        { "left": { "en": "nprobe (IVF)", "es": "nprobe (IVF)" },
+          "right": { "en": "Number of closest clusters scanned per query", "es": "Cantidad de clústeres más cercanos que se revisan por consulta" } }
+      ],
+      "explain": {
+        "en": "Build-time knobs (M, efConstruction, nlist) set the structure and need a rebuild or retrain to change. Query-time knobs (efSearch, nprobe) can change per request, so they're the ones you tune from a measured recall@k vs p95 curve.",
+        "es": "Las perillas de construcción (M, efConstruction, nlist) definen la estructura y cambiarlas exige reconstruir o reentrenar. Las de consulta (efSearch, nprobe) se pueden cambiar en cada request, así que son las que ajustas a partir de una curva medida de recall@k contra p95."
+      }
+    },
+    {
+      "id": "ann-indexes.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about ANN indexes are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los índices ANN son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "IVF can miss true neighbors sitting just across a cluster border", "es": "IVF puede perder vecinos reales que quedan justo del otro lado de la frontera de un clúster" } },
+        { "text": { "en": "Heavy deletes on HNSW degrade recall until you rebuild", "es": "Muchos borrados en HNSW degradan el recall hasta que reconstruyes" } },
+        { "text": { "en": "Recall measured on SIFT carries over to your own embeddings", "es": "El recall medido sobre SIFT se traslada a tus propios embeddings" },
+          "why": { "en": "Recall depends on the data distribution; measure against brute force on your own queries.", "es": "El recall depende de la distribución de los datos; mídelo contra fuerza bruta con tus propias consultas." } },
+        { "text": { "en": "PQ keeps distances exact and only shrinks memory", "es": "PQ mantiene las distancias exactas y solo reduce la memoria" },
+          "why": { "en": "PQ codes approximate distances; that's why IVF-PQ rescores candidates with full vectors.", "es": "Los códigos PQ aproximan las distancias; por eso IVF-PQ hace rescoring de los candidatos con los vectores completos." } },
+        { "text": { "en": "A 50k-vector corpus needs an ANN index to be fast enough", "es": "Un corpus de 50k vectores necesita un índice ANN para ser lo bastante rápido" },
+          "why": { "en": "Under ~100k vectors, brute force is simpler, exact and fast enough.", "es": "Con menos de ~100k vectores, la fuerza bruta es más simple, exacta y suficientemente rápida." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "ANN is a deliberate trade: you skip most of the corpus and accept silent misses. Every structure has its own way to miss (cluster borders, tombstones, compressed distances), so recall@k on your data is the only number that tells you where you are on the curve.",
+        "es": "ANN es un trade-off deliberado: te saltas casi todo el corpus y aceptas pérdidas silenciosas. Cada estructura tiene su forma de fallar (fronteras de clúster, marcas de borrado, distancias comprimidas), así que el recall@k sobre tus datos es el único número que te dice en qué punto de la curva estás."
+      }
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "concept": "model-migrations",
+  "items": [
+    {
+      "id": "model-migrations.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Nobody deployed anything, yet this week your extraction service's JSON parse failures doubled and answers got longer. The config says `model: \"<family>-latest\"`. Most likely cause and fix?",
+        "es": "Nadie desplegó nada, pero esta semana las fallas de parseo de JSON de tu servicio de extracción se duplicaron y las respuestas se alargaron. La configuración dice `model: \"<family>-latest\"`. ¿Causa más probable y corrección?"
+      },
+      "options": [
+        { "text": { "en": "The alias moved to a newer snapshot: pin a dated snapshot, then migrate through evals", "es": "El alias pasó a un snapshot más nuevo: fija un snapshot con fecha y migra pasando por evals" },
+          "why": { "en": "A floating alias changes behavior without a deploy, and your evals describe a model you no longer run.", "es": "Un alias flotante cambia el comportamiento sin deploy, y tus evals describen un modelo que ya no corres." } },
+        { "text": { "en": "The provider is overloaded: add retries with exponential backoff", "es": "El proveedor está saturado: agrega reintentos con backoff exponencial" },
+          "why": { "en": "Overload shows up as errors and latency, not as a fleet-wide change in output format and length.", "es": "La saturación se ve como errores y latencia, no como un cambio general en el formato y la longitud de las salidas." } },
+        { "text": { "en": "Users started injecting prompts: add an input classifier", "es": "Los usuarios empezaron a inyectar prompts: agrega un clasificador de entradas" },
+          "why": { "en": "Injection hits individual requests; a uniform shift across all traffic with no deploy points at the model changing.", "es": "La inyección afecta requests puntuales; un cambio uniforme en todo el tráfico y sin deploy apunta a que cambió el modelo." } },
+        { "text": { "en": "Sampling is too random: set temperature to 0 on every call", "es": "El sampling es demasiado aleatorio: pon temperature en 0 en cada llamada" },
+          "why": { "en": "You didn't change sampling, so it can't explain a sudden shift; and Claude 4.7+ returns a 400 on a non-default temperature.", "es": "No cambiaste el sampling, así que no explica un cambio repentino; además Claude 4.7+ devuelve un 400 con una temperature distinta del default." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Same name, different behavior is the classic drift trap. Pin dated snapshots in production so behavior only changes when you deploy, and treat every model change, forced or chosen, as a migration through offline gates, shadow and canary.",
+        "es": "Mismo nombre, otro comportamiento: es la trampa clásica de drift. Fija snapshots con fecha en producción para que el comportamiento cambie solo cuando despliegas, y trata cada cambio de modelo, forzado o elegido, como una migración con gates offline, shadow y canary."
+      }
+    },
+    {
+      "id": "model-migrations.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the eval gate so a candidate fails only when a metric moves in its **worse** direction by more than its tolerance.",
+        "es": "Completa el gate de evals para que un candidato falle solo cuando una métrica se mueve hacia su lado **peor** más allá de su tolerancia."
+      },
+      "lang": "python",
+      "code": "GATES = {\n    \"task_success\":    (\"higher\", 0.01),\n    \"json_valid\":      (\"higher\", 0.0),\n    \"refusal_rate\":    (\"lower\",  0.005),\n    \"p95_output_toks\": (\"lower\",  0.15),   # relative\n}\n\ndef gate(base: dict, cand: dict) -> list[str]:\n    fails = []\n    for m, (better, tol) in GATES.items():\n        delta = cand[m] - base[m]\n        if m == \"p95_output_toks\":\n            delta /= base[m]\n        ____\n        if regression > tol:\n            fails.append(m)\n    return fails",
+      "options": [
+        { "text": "regression = -delta if better == \"higher\" else delta" },
+        { "text": "regression = delta if better == \"higher\" else -delta",
+          "why": { "en": "Inverted: a candidate that improves task success counts as a regression, and one that loses it passes.", "es": "Invertido: un candidato que mejora el task success cuenta como regresión, y uno que lo empeora pasa." } },
+        { "text": "regression = abs(delta)",
+          "why": { "en": "Penalizes improvements too: a candidate that cuts refusals or verbosity would fail the gate.", "es": "Castiga también las mejoras: un candidato que reduce rechazos o verbosidad fallaría el gate." } },
+        { "text": "regression = -delta",
+          "why": { "en": "Treats every metric as higher-is-better: more refusals or longer outputs would sail through.", "es": "Trata todas las métricas como si más fuera mejor: más rechazos o salidas más largas pasarían sin problema." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A gate needs a direction per metric. For higher-is-better metrics a drop is the regression; for lower-is-better ones (refusals, verbosity, tool errors) a rise is. Zero tolerance on format validity encodes that format breaks are never acceptable.",
+        "es": "Un gate necesita una dirección por métrica. En las que más es mejor, la regresión es una caída; en las que menos es mejor (rechazos, verbosidad, errores de tools), es una subida. La tolerancia cero en formato válido expresa que romper el formato nunca es aceptable."
+      }
+    },
+    {
+      "id": "model-migrations.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about model deprecation and migration are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la deprecación y la migración de modelos son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A deprecated model still answers; a retired one returns errors", "es": "Un modelo deprecated sigue respondiendo; uno retirado devuelve errores" } },
+        { "text": { "en": "OpenAI serves a fine-tuned model only until its base model is deprecated", "es": "OpenAI sirve un modelo afinado solo hasta que su modelo base se depreca" } },
+        { "text": { "en": "If average accuracy holds on the golden set, the migration is safe", "es": "Si la exactitud promedio se mantiene en el golden set, la migración es segura" },
+          "why": { "en": "Format, refusal and verbosity regressions hide behind a flat average. Gate per behavior and per slice.", "es": "Las regresiones de formato, rechazos y verbosidad se esconden detrás de un promedio estable. Pon gates por comportamiento y por segmento." } },
+        { "text": { "en": "Providers give at least six months' notice before retiring any model", "es": "Los proveedores avisan con al menos seis meses antes de retirar cualquier modelo" },
+          "why": { "en": "Anthropic gives ≥60 days; OpenAI states ≥6 months only for GA models, and as little as ~2 weeks for previews.", "es": "Anthropic avisa con al menos 60 días; OpenAI declara 6 meses solo para modelos GA, y apenas ~2 semanas para los preview." } },
+        { "text": { "en": "Hard-coded sampling parameters carry over safely to newer models", "es": "Los parámetros de sampling fijos en el código pasan sin problema a modelos más nuevos" },
+          "why": { "en": "Claude 4.7 and later return a 400 on a non-default `temperature`, `top_p` or `top_k`.", "es": "Claude 4.7 y posteriores devuelven un 400 si mandas `temperature`, `top_p` o `top_k` distintos del default." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Retirement dates are set by someone else, and what breaks is rarely average quality: it's behavior drift, rejected parameters and orphaned fine-tunes. Inventory fine-tunes along with prompts, and gate on each behavior, not on one headline score.",
+        "es": "Las fechas de retiro las fija otro, y lo que se rompe casi nunca es la calidad promedio: es el drift de comportamiento, los parámetros rechazados y los fine-tunes que quedan huérfanos. Inventaría los fine-tunes junto con los prompts y pon gates por comportamiento, no por un solo puntaje general."
+      }
+    }
+  ]
+}

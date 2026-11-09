@@ -1,0 +1,67 @@
+{
+  "concept": "load-balancing",
+  "items": [
+    {
+      "id": "load-balancing.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You added prefix-aware routing to 8 LLM replicas. A launch puts one shared system prompt on ~70% of traffic: its home replica's queue explodes while the other 7 sit idle. Best fix?",
+        "es": "Agregaste ruteo por prefijo a 8 réplicas de LLM. Un lanzamiento pone un mismo system prompt en ~70% del tráfico: la cola de su réplica asignada explota mientras las otras 7 están ociosas. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Cap affinity: spill to a P2C pick when home exceeds its load slack", "es": "Limitar la afinidad: desbordar a una elección P2C si la réplica asignada supera su margen de carga" },
+          "why": { "en": "Keeps cache hits under normal load and lets a hot prefix overflow, exactly what the slack check in the picker does.", "es": "Conserva los aciertos de caché con carga normal y deja que un prefijo popular se desborde, justo lo que hace el chequeo de margen del selector." } },
+        { "text": { "en": "Go back to round robin across all 8 replicas", "es": "Volver al round robin entre las 8 réplicas" },
+          "why": { "en": "Spreads the hot prefix but throws away every cache hit, and round robin ignores mixed request costs.", "es": "Reparte el prefijo popular pero tira todos los aciertos de caché, y el round robin ignora que los requests cuestan distinto." } },
+        { "text": { "en": "Lower outlier-ejection thresholds so the hot replica gets ejected", "es": "Bajar los umbrales de outlier ejection para que expulse la réplica saturada" },
+          "why": { "en": "Ejection is for failing hosts. The prefix just rehashes to a new home, which starts cold and melts next.", "es": "La expulsión es para hosts que fallan. El prefijo solo se reasigna a otra réplica, que arranca sin caché y se satura después." } },
+        { "text": { "en": "Switch the prefix hash from rendezvous to hash mod N", "es": "Cambiar el hash del prefijo de rendezvous a hash mod N" },
+          "why": { "en": "Any hash still maps one prefix to one replica; the scheme only changes how many keys move on churn.", "es": "Cualquier hash sigue mandando un prefijo a una sola réplica; el esquema solo cambia cuántas claves se mueven al cambiar réplicas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Affinity and balance pull against each other. Treat prefix affinity as a preference, not a rule: route to the home replica while its load is within a slack factor of a random alternative, otherwise fall back to power of two choices. You keep most cache hits without letting one viral prompt melt a replica.",
+        "es": "La afinidad y el balance tiran en sentidos opuestos. Trata la afinidad de prefijo como una preferencia, no como una regla: enruta a la réplica asignada mientras su carga esté dentro de un margen respecto de una alternativa al azar y, si no, cae a power of two choices. Conservas casi todos los aciertos de caché sin que un prompt viral sature una réplica."
+      }
+    },
+    {
+      "id": "load-balancing.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "You route 1 million conversation keys across 20 replicas with consistent hashing for cache affinity. One replica is removed. Roughly how many keys move to a different replica? Assume keys are spread evenly.",
+        "es": "Enrutas 1 millón de claves de conversación entre 20 réplicas con consistent hashing para afinidad de caché. Se retira una réplica. ¿Cuántas claves cambian de réplica, aproximadamente? Supón que las claves están repartidas de forma pareja."
+      },
+      "answer": 50000,
+      "tolerance": 0.2,
+      "unit": "keys",
+      "explain": {
+        "en": "Consistent hashing moves only the departing replica's share, ~1/N: 1,000,000 / 20 = 50,000 keys. With hash mod N almost every key would remap (mod 20 becomes mod 19), wiping out the cache affinity you built.",
+        "es": "El consistent hashing solo mueve la porción de la réplica que sale, ~1/N: 1 millón / 20 = 50 mil claves. Con hash mod N casi todas las claves se reasignarían (mod 20 pasa a mod 19) y perderías la afinidad de caché que construiste."
+      }
+    },
+    {
+      "id": "load-balancing.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about load-balancing algorithms are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre algoritmos de balanceo de carga son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "P2C samples two replicas and picks the less loaded, with no global state", "es": "P2C toma dos réplicas al azar y elige la menos cargada, sin estado global" } },
+        { "text": { "en": "Round robin balances load as long as every replica gets the same request count", "es": "El round robin balancea la carga siempre que cada réplica reciba la misma cantidad de requests" },
+          "why": { "en": "Equal counts are not equal work: a 100k-token prompt costs hundreds of times a 200-token chat turn.", "es": "Igual cantidad no es igual trabajo: un prompt de 100k tokens cuesta cientos de veces más que un turno de chat de 200." } },
+        { "text": { "en": "Least outstanding requests adapts when some requests run slow", "es": "Menos requests pendientes se adapta cuando algunos requests son lentos" } },
+        { "text": { "en": "An L4 balancer can route each request by HTTP path or header", "es": "Un balanceador L4 puede enrutar cada request por path o header HTTP" },
+          "why": { "en": "L4 only sees TCP connections; routing by path or header needs an L7 proxy.", "es": "L4 solo ve conexiones TCP; enrutar por path o header requiere un proxy L7." } },
+        { "text": { "en": "Sticky sessions are the clean way to keep per-user state", "es": "Las sticky sessions son la forma limpia de guardar estado por usuario" },
+          "why": { "en": "They pin users to replicas and the state dies with the replica; move it to Redis or a database.", "es": "Atan usuarios a réplicas y el estado muere con la réplica; muévelo a Redis o a una base de datos." } },
+        { "text": { "en": "Consistent hashing sends the same key to the same replica for cache affinity", "es": "El consistent hashing manda la misma clave a la misma réplica para afinidad de caché" } }
+      ],
+      "answers": [0, 2, 5],
+      "explain": {
+        "en": "Pick the algorithm by how uneven request costs are. Equal costs: round robin is fine. Uneven costs: use live load (least requests, P2C). Cache-heavy: hash for affinity, capped by load. Any per-request decision needs an L7 proxy.",
+        "es": "Elige el algoritmo según qué tan desigual es el costo de los requests. Costos parejos: el round robin alcanza. Desiguales: usa carga en vivo (menos requests, P2C). Mucha caché: hash para afinidad, con tope de carga. Toda decisión por request necesita un proxy L7."
+      }
+    }
+  ]
+}

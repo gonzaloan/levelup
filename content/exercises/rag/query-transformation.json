@@ -1,0 +1,75 @@
+{
+  "concept": "query-transformation",
+  "items": [
+    {
+      "id": "query-transformation.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your HR assistant gets *\"Who gets more leave, Mexico or Spain?\"*. Traces show the top-5 chunks all come from the Mexico policy; Spain's never shows up, and the answer guesses. Which transformation fixes this?",
+        "es": "Tu asistente de RRHH recibe *\"¿Quién tiene más vacaciones, México o España?\"*. Las trazas muestran que los 5 mejores chunks vienen todos de la política de México; la de España nunca aparece y la respuesta adivina. ¿Qué transformación lo arregla?"
+      },
+      "options": [
+        { "text": { "en": "Decompose it into one sub-query per country and retrieve each", "es": "Descomponerla en una subconsulta por país y recuperar cada una" },
+          "why": { "en": "Each sub-query gets its own embedding, so both policies are retrieved and the LLM can compare.", "es": "Cada subconsulta tiene su propio embedding, así se recuperan ambas políticas y el LLM puede comparar." } },
+        { "text": { "en": "Add a conversational rewrite to make the query standalone", "es": "Agregar una reescritura conversacional para volver autónoma la consulta" },
+          "why": { "en": "It's already standalone; a rewrite still yields one query and one embedding.", "es": "Ya es autónoma; una reescritura sigue dando una consulta y un embedding." } },
+        { "text": { "en": "Embed a hypothetical answer instead of the question (HyDE)", "es": "Generar el embedding de una respuesta hipotética en vez de la pregunta (HyDE)" },
+          "why": { "en": "Still a single embedding: it lands near one country's policy just the same.", "es": "Sigue siendo un solo embedding: cae cerca de la política de un país igual que antes." } },
+        { "text": { "en": "Add a step-back question about leave policies in general", "es": "Agregar una pregunta step-back sobre políticas de vacaciones en general" },
+          "why": { "en": "Step-back fetches background principles, not the two specific policies you need to compare.", "es": "Step-back trae principios de fondo, no las dos políticas específicas que necesitas comparar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "One embedding is one point in vector space. A multi-hop or comparative question needs evidence from two places, and a single point can only sit near one of them. Decomposition turns one query into several, each with its own retrieval, then the LLM combines the results.",
+        "es": "Un embedding es un punto en el espacio vectorial. Una pregunta multi-hop o comparativa necesita evidencia de dos lugares, y un solo punto solo puede quedar cerca de uno. La descomposición convierte una consulta en varias, cada una con su propia recuperación, y luego el LLM combina los resultados."
+      }
+    },
+    {
+      "id": "query-transformation.a2",
+      "type": "code",
+      "prompt": {
+        "en": "`q = transform(history, message)` returned a standalone rewrite and 3 paraphrases. Complete the line that builds the search queries so you get the best recall, including on exact terms like product codes.",
+        "es": "`q = transform(history, message)` devolvió una reescritura autónoma y 3 paráfrasis. Completa la línea que arma las consultas de búsqueda para lograr el mejor recall, incluso con términos exactos como códigos de producto."
+      },
+      "lang": "python",
+      "code": "message = \"and for contractors?\"\nq = transform(history, message)\n____\nruns = [hybrid_search(x, k=50) for x in queries]\nruns.append(vector_search(embed(q.hyde), k=50))  # HyDE: embed the answer\ncandidates = rrf(runs)[:50]                      # then rerank",
+      "options": [
+        { "text": "queries = [message, q.standalone, *q.variants]" },
+        { "text": "queries = [q.standalone, *q.variants]",
+          "why": { "en": "Drops the original: exact terms the rewrite paraphrased away are lost.", "es": "Descarta la original: se pierden los términos exactos que la reescritura parafraseó." } },
+        { "text": "queries = [message]",
+          "why": { "en": "The raw follow-up has no subject, and the retriever never sees the chat history.", "es": "El seguimiento crudo no tiene sujeto, y el recuperador nunca ve el historial." } },
+        { "text": "queries = [message + \" \" + q.standalone]",
+          "why": { "en": "One merged query: no fan-out, so the paraphrases never run and RRF has nothing to fuse.", "es": "Una sola consulta combinada: no hay abanico, las paráfrasis nunca corren y RRF no tiene qué fusionar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Each query covers a different failure: the standalone rewrite resolves the conversation, the variants fix vocabulary mismatch, and the original keeps exact strings a rewrite might \"fix\". RRF then rewards documents that several queries agree on.",
+        "es": "Cada consulta cubre una falla distinta: la reescritura autónoma resuelve la conversación, las variantes corrigen el desajuste de vocabulario y la original conserva cadenas exactas que una reescritura podría \"corregir\". Luego RRF premia los documentos en los que coinciden varias consultas."
+      }
+    },
+    {
+      "id": "query-transformation.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A reviewer objects to HyDE in your RAG pipeline: \"The LLM will invent facts in that hypothetical answer, and they'll end up in what users read.\" What's the accurate response?",
+        "es": "Un revisor objeta HyDE en tu pipeline RAG: \"El LLM va a inventar hechos en esa respuesta hipotética y terminarán en lo que leen los usuarios\". ¿Cuál es la respuesta correcta?"
+      },
+      "options": [
+        { "text": { "en": "It's only embedded for search; the real risk is the wrong neighborhood", "es": "Solo se usa su embedding para buscar; el riesgo real es el vecindario equivocado" },
+          "why": { "en": "Invented details matter little for search; a model that doesn't know your domain points retrieval elsewhere.", "es": "Los detalles inventados importan poco para buscar; un modelo que no conoce tu dominio manda la búsqueda a otro lado." } },
+        { "text": { "en": "Valid: the hypothetical passage is added to the answer prompt as context", "es": "Es válido: el pasaje hipotético se agrega como contexto al prompt de respuesta" },
+          "why": { "en": "HyDE never passes the passage to the answer model; only retrieved real chunks reach it.", "es": "HyDE nunca le pasa el pasaje al modelo de respuesta; solo le llegan los chunks reales recuperados." } },
+        { "text": { "en": "Valid: generate the passage at temperature zero to stop invention", "es": "Es válido: generar el pasaje con temperatura cero para evitar invenciones" },
+          "why": { "en": "Temperature doesn't teach the model your domain, and the passage never reaches users anyway.", "es": "La temperatura no le enseña tu dominio al modelo, y de todos modos el pasaje nunca llega a los usuarios." } },
+        { "text": { "en": "Not a risk: HyDE is trained on relevance labels that keep it grounded", "es": "No hay riesgo: HyDE se entrena con etiquetas de relevancia que lo mantienen anclado" },
+          "why": { "en": "HyDE is zero-shot: it uses no relevance labels at all.", "es": "HyDE es zero-shot: no usa ninguna etiqueta de relevancia." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "HyDE works because answers look more like documents than questions do, so their embedding sits closer to relevant chunks. The passage is a search key, not content. Its failure mode is a model that doesn't know your niche: the fake answer points to the wrong region, so measure recall@k with and without it.",
+        "es": "HyDE funciona porque una respuesta se parece más a un documento que una pregunta, así que su embedding queda más cerca de los chunks relevantes. El pasaje es una llave de búsqueda, no contenido. Su modo de falla es un modelo que no conoce tu nicho: la respuesta falsa apunta a la región equivocada, así que mide el recall@k con y sin HyDE."
+      }
+    }
+  ]
+}

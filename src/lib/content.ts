@@ -62,3 +62,12 @@ export function neighbors(id: string) {
   const i = list.indexOf(id);
   return { prev: list[i - 1] ? getConcept(list[i - 1]) : undefined, next: list[i + 1] ? getConcept(list[i + 1]) : undefined };
 }
+
+export interface PathModule { id: string; title: I18n; concepts: string[] }
+export interface PathPhase { id: string; title: I18n; goal: I18n; modules: PathModule[] }
+
+/** The study path (content/path.json): every concept exactly once, in learning order. */
+export function getPath(): PathPhase[] {
+  const p = JSON.parse(fs.readFileSync(path.join(CONTENT, "path.json"), "utf8")) as { phases: PathPhase[] };
+  return p.phases.map((ph) => ({ ...ph, modules: ph.modules.map((m) => ({ ...m, concepts: m.concepts.filter((id) => load().concepts.has(id)) })) }));
+}

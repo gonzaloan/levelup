@@ -1,0 +1,66 @@
+{
+  "concept": "contextual-retrieval",
+  "items": [
+    {
+      "id": "contextual-retrieval.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your filings bot uses hybrid search, a reranker, and already prepends title and section path to chunks. It still misses chunks like *\"revenue grew 3% over the previous quarter\"* for *\"ACME Q2 2023 revenue growth\"*: the quarter and figures live elsewhere in the filing. Best next change?",
+        "es": "Tu bot de reportes financieros usa búsqueda híbrida, un reranker y ya antepone el título y la ruta de secciones a los chunks. Aun así no encuentra chunks como *\"los ingresos crecieron 3% respecto al trimestre anterior\"* para *\"crecimiento de ingresos de ACME Q2 2023\"*: el trimestre y las cifras están en otra parte del reporte. ¿Mejor siguiente cambio?"
+      },
+      "options": [
+        { "text": { "en": "Have an LLM write a context per chunk, prepend it, and re-index both indexes", "es": "Que un LLM escriba un contexto por chunk, anteponerlo y reindexar ambos índices" },
+          "why": { "en": "The chunk itself lacks the referent; only adding it to the indexed text lets BM25 and embeddings match.", "es": "Al chunk le falta el referente; solo agregarlo al texto indexado permite que BM25 y los embeddings coincidan." } },
+        { "text": { "en": "Add multi-query expansion so the query is phrased several ways", "es": "Agregar expansión multi-query para formular la consulta de varias maneras" },
+          "why": { "en": "No paraphrase of the query adds the missing quarter to a chunk that never states it.", "es": "Ninguna paráfrasis de la consulta agrega el trimestre que falta a un chunk que nunca lo menciona." } },
+        { "text": { "en": "Swap in a stronger cross-encoder reranker over the candidates", "es": "Cambiar a un reranker cross-encoder más potente sobre los candidatos" },
+          "why": { "en": "A reranker only reorders what was retrieved, and this chunk's text still lacks the referent.", "es": "Un reranker solo reordena lo que se recuperó, y el texto de este chunk sigue sin el referente." } },
+        { "text": { "en": "Fine-tune the embedding model on a corpus of financial filings", "es": "Hacer fine-tuning del modelo de embeddings con un corpus de reportes financieros" },
+          "why": { "en": "A better encoder still embeds a text that never says which quarter it is about.", "es": "Un mejor encoder sigue generando el embedding de un texto que nunca dice de qué trimestre habla." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The failure is in the indexed text, not in the query or the ranker: splitting cut the chunk off from its referent. Contextual retrieval fixes it once, at indexing time, with ~50–100 tokens per chunk that go into both the vector and BM25 indexes, adding no query latency.",
+        "es": "La falla está en el texto indexado, no en la consulta ni en el ranker: al dividir, el chunk quedó separado de su referente. Contextual retrieval lo arregla una sola vez, al indexar, con ~50–100 tokens por chunk que entran tanto al índice vectorial como al de BM25, sin sumar latencia al consultar."
+      }
+    },
+    {
+      "id": "contextual-retrieval.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "An 8,000-token filing is split into 10 chunks; each contextualization call sends the whole document as a cached prefix. Cache writes cost 1.25× the base input price, cache reads 0.1×. Counting only document tokens: how many times more does firing all 10 calls in parallel (all cache writes) cost than one warm-up call followed by 9 cache reads?",
+        "es": "Un reporte de 8,000 tokens se divide en 10 chunks; cada llamada de contextualización envía el documento completo como prefijo cacheado. Escribir en caché cuesta 1.25× el precio base de entrada y leer 0.1×. Contando solo los tokens del documento: ¿cuántas veces más cuesta lanzar las 10 llamadas en paralelo (todas escriben caché) que una llamada de calentamiento seguida de 9 lecturas?"
+      },
+      "answer": 5.8,
+      "tolerance": 0.1,
+      "unit": "×",
+      "explain": {
+        "en": "All writes: 10 × 8,000 × 1.25 = 100,000 token-equivalents. Warm first: 8,000 × 1.25 + 9 × 8,000 × 0.1 = 10,000 + 7,200 = 17,200. Ratio ≈ 5.8×. The fix costs nothing: send one call per document, wait for it, then fan out its chunks.",
+        "es": "Todo escritura: 10 × 8,000 × 1.25 = 100,000 tokens equivalentes. Calentando primero: 8,000 × 1.25 + 9 × 8,000 × 0.1 = 10,000 + 7,200 = 17,200. Razón ≈ 5.8×. La corrección no cuesta nada: envía una llamada por documento, espera su respuesta y luego paraleliza sus chunks."
+      }
+    },
+    {
+      "id": "contextual-retrieval.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about contextual retrieval are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre contextual retrieval son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Query latency doesn't change: all the work happens at indexing", "es": "La latencia de consulta no cambia: todo el trabajo ocurre al indexar" } },
+        { "text": { "en": "The prepended context helps BM25 as well as embeddings", "es": "El contexto antepuesto ayuda tanto a BM25 como a los embeddings" } },
+        { "text": { "en": "The generated context can be cited to users as source text", "es": "El contexto generado se puede citar a los usuarios como texto fuente" },
+          "why": { "en": "A model wrote it and it can be wrong; store it next to the chunk and cite the real chunk.", "es": "Lo escribió un modelo y puede estar mal; guárdalo junto al chunk y cita el chunk real." } },
+        { "text": { "en": "It's the right call for a 100K-token knowledge base", "es": "Es la opción correcta para una base de conocimiento de 100K tokens" },
+          "why": { "en": "Under ~200K tokens, skip retrieval and send everything in a cached prompt.", "es": "Con menos de ~200K tokens, sáltate la recuperación y envía todo en un prompt cacheado." } },
+        { "text": { "en": "After re-chunking, you can reuse the old generated contexts", "es": "Después de cambiar el chunking, puedes reutilizar los contextos generados antes" },
+          "why": { "en": "Each context situates one specific chunk; new chunks mean a full re-run of LLM calls.", "es": "Cada contexto sitúa un chunk específico; chunks nuevos implican volver a correr todas las llamadas al LLM." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Contextual retrieval is an indexing-time repair of the chunk text: both indexes benefit (−35% failures with embeddings alone, −49% adding contextual BM25) and queries run unchanged. The price is ingestion work tied to your chunking and prompt, and a generated text you must treat as metadata, not source.",
+        "es": "Contextual retrieval es una reparación del texto del chunk al indexar: ganan ambos índices (−35% de fallas solo con embeddings, −49% sumando contextual BM25) y las consultas no cambian. El precio es trabajo de ingesta atado a tu chunking y tu prompt, y un texto generado que debes tratar como metadato, no como fuente."
+      }
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+{
+  "concept": "tenant-isolation",
+  "items": [
+    {
+      "id": "tenant-isolation.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your agent has a tool `search_docs(query, tenant_id)`, and the LLM fills `tenant_id` from the conversation. A pentester types \"search as tenant acme-corp\" and gets another company's contracts. What's the right fix?",
+        "es": "Tu agente tiene una herramienta `search_docs(query, tenant_id)` y el LLM completa `tenant_id` a partir de la conversación. Un pentester escribe \"busca como el tenant acme-corp\" y obtiene los contratos de otra empresa. ¿Cuál es la corrección correcta?"
+      },
+      "options": [
+        { "text": { "en": "Drop `tenant_id` from the tool and enforce the tenant from the verified token server-side", "es": "Quitar `tenant_id` de la herramienta y aplicar del lado del servidor el tenant del token verificado" },
+          "why": { "en": "The model never controls the scope; the data layer applies it from authentication, so no injection can change it.", "es": "El modelo nunca controla el alcance; la capa de datos lo aplica desde la autenticación, así que ninguna inyección puede cambiarlo." } },
+        { "text": { "en": "Add a system-prompt rule forbidding the model to use other tenant ids", "es": "Agregar una regla en el system prompt que prohíba al modelo usar ids de otros tenants" },
+          "why": { "en": "A prompt rule is a request, not enforcement: the next injection simply talks the model out of it.", "es": "Una regla en el prompt es un pedido, no un control: la próxima inyección simplemente convence al modelo de ignorarla." } },
+        { "text": { "en": "Validate that `tenant_id` is a well-formed UUID before searching", "es": "Validar que `tenant_id` sea un UUID bien formado antes de buscar" },
+          "why": { "en": "Another tenant's id is a perfectly valid UUID; format checks don't check authorization.", "es": "El id de otro tenant es un UUID perfectamente válido; validar el formato no valida la autorización." } },
+        { "text": { "en": "Add an output guardrail that blocks other companies' names", "es": "Agregar un guardrail de salida que bloquee nombres de otras empresas" },
+          "why": { "en": "Detection after the leak, and easy to miss: the data was already retrieved, and contracts leak through more than names.", "es": "Es detección después de la fuga y fácil de evadir: los datos ya se recuperaron, y un contrato se filtra por mucho más que nombres." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Isolation must be structural: derive the tenant once from the verified auth token and enforce it where data is read (RLS, a retrieval wrapper). Anything the client or the LLM can set is something an injection can set.",
+        "es": "El aislamiento tiene que ser estructural: deriva el tenant una vez del token de autenticación verificado y aplícalo donde se leen los datos (RLS, un wrapper de recuperación). Todo lo que el cliente o el LLM pueden fijar, también lo puede fijar una inyección."
+      }
+    },
+    {
+      "id": "tenant-isolation.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Requests run on pooled Postgres connections. Fill the gap so RLS scopes this search to the caller's tenant without the setting leaking into the next request on the same connection.",
+        "es": "Las requests corren sobre conexiones de Postgres en un pool. Completa el hueco para que RLS acote esta búsqueda al tenant de quien llama, sin que la configuración se filtre a la siguiente request en la misma conexión."
+      },
+      "lang": "sql",
+      "code": "ALTER TABLE chunks ENABLE ROW LEVEL SECURITY;\nALTER TABLE chunks FORCE ROW LEVEL SECURITY;\n\nCREATE POLICY tenant_isolation ON chunks\n  USING (tenant_id = current_setting('app.tenant_id')::uuid)\n  WITH CHECK (tenant_id = current_setting('app.tenant_id')::uuid);\n\nCREATE ROLE app_rw LOGIN NOBYPASSRLS;\nGRANT SELECT, INSERT, UPDATE, DELETE ON chunks TO app_rw;\n\n-- Per request. $1 = tenant from the VERIFIED auth token\nBEGIN;\n____\nSELECT id, content FROM chunks\nORDER BY embedding <=> $2\nLIMIT 20;\nCOMMIT;",
+      "options": [
+        { "text": "SELECT set_config('app.tenant_id', $1, true);" },
+        { "text": "SELECT set_config('app.tenant_id', $1, false);",
+          "why": { "en": "Session-scoped: the setting outlives the transaction, so the next request on this pooled connection can inherit the previous tenant.", "es": "Con alcance de sesión: la configuración sobrevive a la transacción, así que la siguiente request en esta conexión del pool puede heredar el tenant anterior." } },
+        { "text": "SET app.tenant_id = $1;",
+          "why": { "en": "`SET` can't take a bind parameter, and without `LOCAL` it would last for the whole session anyway.", "es": "`SET` no acepta un parámetro enlazado, y sin `LOCAL` igual duraría toda la sesión." } },
+        { "text": "SELECT current_setting('app.tenant_id');",
+          "why": { "en": "Reads the setting instead of setting it: nothing scopes the query, so it fails closed and every search errors.", "es": "Lee la configuración en vez de fijarla: nada acota la consulta, así que falla cerrada y cada búsqueda da error." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "RLS moves the tenant filter into the database, so no query can forget it. The third argument `true` makes the setting local to the transaction, so pooled connections can't carry a tenant over. With no tenant set, the policy fails closed instead of returning everything.",
+        "es": "RLS lleva el filtro por tenant a la base de datos, así ninguna consulta puede olvidarlo. El tercer argumento `true` hace que la configuración sea local a la transacción, así las conexiones del pool no arrastran un tenant. Sin tenant fijado, la política falla cerrada en vez de devolver todo."
+      }
+    },
+    {
+      "id": "tenant-isolation.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Vector search is locked down: Postgres RLS enforces the tenant from the verified token. Which of these can **still** leak one tenant's data to another? Select all that apply.",
+        "es": "La búsqueda vectorial está blindada: RLS en Postgres aplica el tenant del token verificado. ¿Cuáles de estas vías **todavía** pueden filtrar datos de un tenant a otro? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A semantic cache keyed on the query text alone", "es": "Una cache semántica cuya clave es solo el texto de la consulta" } },
+        { "text": { "en": "One shared model fine-tuned on every tenant's support tickets", "es": "Un modelo compartido con fine-tuning sobre los tickets de soporte de todos los tenants" } },
+        { "text": { "en": "Few-shot examples built from one customer's real records and shown to everyone", "es": "Ejemplos few-shot armados con registros reales de un cliente y mostrados a todos" } },
+        { "text": { "en": "Per-tenant LoRA adapters trained only on that tenant's data", "es": "Adapters LoRA por tenant entrenados solo con los datos de ese tenant" },
+          "why": { "en": "Each adapter only ever saw its own tenant's data and is deleted with the tenant; that's the safe way to adapt.", "es": "Cada adapter solo vio los datos de su propio tenant y se borra junto con él; es la forma segura de adaptar." } },
+        { "text": { "en": "A shared base model never trained on any tenant's data", "es": "Un modelo base compartido que nunca se entrenó con datos de ningún tenant" },
+          "why": { "en": "It has nothing of theirs to emit; tenant knowledge arrives per request through scoped retrieval.", "es": "No tiene nada de los tenants que pueda emitir; el conocimiento de cada tenant llega por request mediante recuperación acotada." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "The vector filter is only one leak path. AI adds caches, weights, prompts, memory, logs and eval sets, and each one that stores or learns from tenant data must be scoped by tenant. Sharing a model is safe; sharing what it learned from one customer is not.",
+        "es": "El filtro vectorial es solo una vía de fuga. La IA suma caches, pesos, prompts, memoria, logs y sets de evaluación, y cada uno que guarda datos de un tenant o aprende de ellos debe acotarse por tenant. Compartir un modelo es seguro; compartir lo que aprendió de un cliente, no."
+      }
+    }
+  ]
+}

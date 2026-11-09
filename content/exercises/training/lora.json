@@ -1,0 +1,89 @@
+{
+  "concept": "lora",
+  "items": [
+    {
+      "id": "lora.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your SaaS has 40 enterprise customers, and each needs its own fine-tuned version of an 8B model (own terminology, own report format). New customers arrive monthly. Which design do you propose?",
+        "es": "Tu SaaS tiene 40 clientes empresariales y cada uno necesita su propia versión con fine-tuning de un modelo de 8B (su terminología, su formato de reporte). Llegan clientes nuevos cada mes. ¿Qué diseño propones?"
+      },
+      "options": [
+        { "text": { "en": "One shared base model plus one LoRA adapter per customer, served with multi-LoRA", "es": "Un modelo base compartido más un adapter LoRA por cliente, servido con multi-LoRA" },
+          "why": { "en": "One base in GPU memory, a ~170 MB adapter per tenant, and customer #41 is a training job, not a deployment.", "es": "Una base en la memoria de la GPU, un adapter de ~170 MB por cliente, y el cliente 41 es un job de entrenamiento, no un despliegue." } },
+        { "text": { "en": "One full fine-tune per customer, each deployed on its own GPUs", "es": "Un fine-tuning completo por cliente, cada uno desplegado en sus propias GPUs" },
+          "why": { "en": "That's 40 checkpoints of 16 GB and 40 deployments, growing with every new customer.", "es": "Son 40 checkpoints de 16 GB y 40 despliegues, y crecen con cada cliente nuevo." } },
+        { "text": { "en": "Merge all 40 adapters into the base so no adapter overhead remains", "es": "Fusionar los 40 adapters con la base para que no quede overhead de adapters" },
+          "why": { "en": "Merging folds one update into W. Summing 40 tenants' updates blends their behaviors, so no customer gets its own model.", "es": "Fusionar suma una sola actualización a W. Sumar las de 40 clientes mezcla sus comportamientos y ningún cliente tiene su propio modelo." } },
+        { "text": { "en": "Quantize 40 full copies to 4-bit with QLoRA to fit more per GPU", "es": "Cuantizar 40 copias completas a 4 bits con QLoRA para que quepan más por GPU" },
+          "why": { "en": "QLoRA quantizes the frozen base during training; you would still run 40 separate models and deployments.", "es": "QLoRA cuantiza la base congelada durante el entrenamiento; seguirías corriendo 40 modelos y despliegues separados." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The fine-tuned change is low-rank, so what differs per tenant is a few megabytes, not the whole model. Keep the shared part once (the base) and swap the small part (the adapter) per request: vLLM, S-LoRA and LoRAX batch requests for different adapters in the same forward pass.",
+        "es": "El cambio del fine-tuning es de bajo rango, así que lo que cambia por cliente son unos megabytes, no el modelo entero. Guarda una vez lo compartido (la base) e intercambia lo pequeño (el adapter) en cada request: vLLM, S-LoRA y LoRAX agrupan requests de distintos adapters en la misma pasada."
+      }
+    },
+    {
+      "id": "lora.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A frozen MLP weight `W` maps 4,096 inputs to 11,008 outputs (shape 11,008×4,096). You add LoRA with rank **r = 8**, learning `ΔW = B·A`. How many trainable parameters does this one adapter add? (Ignore biases.)",
+        "es": "Una matriz MLP congelada `W` mapea 4,096 entradas a 11,008 salidas (forma 11,008×4,096). Agregas LoRA con rango **r = 8**, que aprende `ΔW = B·A`. ¿Cuántos parámetros entrenables agrega este adapter? (Ignora los biases.)"
+      },
+      "answer": 120832,
+      "tolerance": 0.08,
+      "unit": "parameters",
+      "explain": {
+        "en": "`A` is r×4,096 = 32,768 and `B` is 11,008×r = 88,064, so 8 × (4,096 + 11,008) = 120,832. The full matrix has ~45.1M, so the adapter is ~0.27% of it. LoRA cost grows with r × (d_in + d_out), not with d_in × d_out.",
+        "es": "`A` es r×4,096 = 32,768 y `B` es 11,008×r = 88,064, así que 8 × (4,096 + 11,008) = 120,832. La matriz completa tiene ~45.1M, así que el adapter es ~0.27% de ella. El costo de LoRA crece con r × (d_in + d_out), no con d_in × d_out."
+      }
+    },
+    {
+      "id": "lora.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about LoRA and QLoRA are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre LoRA y QLoRA son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Merged into `W`, an adapter adds no inference latency", "es": "Fusionado con `W`, un adapter no agrega latencia en inferencia" } },
+        { "text": { "en": "`B` starts at zero, so training begins exactly at the base model", "es": "`B` arranca en cero, así que el entrenamiento empieza exactamente en el modelo base" } },
+        { "text": { "en": "QLoRA steps run faster than 16-bit LoRA steps", "es": "Los pasos de QLoRA son más rápidos que los de LoRA en 16 bits" },
+          "why": { "en": "They run slower: the 4-bit base is dequantized on the fly. QLoRA buys memory, not speed.", "es": "Son más lentos: la base de 4 bits se descuantiza al vuelo. QLoRA compra memoria, no velocidad." } },
+        { "text": { "en": "Raising the rank to 256 compensates for noisy training data", "es": "Subir el rango a 256 compensa datos de entrenamiento ruidosos" },
+          "why": { "en": "More capacity just fits the noise better; rank never fixes data quality.", "es": "Más capacidad solo ajusta mejor el ruido; el rango no arregla la calidad de los datos." } },
+        { "text": { "en": "LoRA learns as much as full fine-tuning on big shifts like code", "es": "LoRA aprende tanto como el fine-tuning completo en cambios grandes como código" },
+          "why": { "en": "It learns less on big domain shifts (and forgets less in exchange).", "es": "Aprende menos ante cambios grandes de dominio (y, a cambio, olvida menos)." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "LoRA's update `BA` is just added to `W`, so you can fold it in for free or keep it separate to swap. Its limits are capacity (low rank learns less on big shifts) and data quality, which no rank setting fixes; QLoRA trades step speed for memory.",
+        "es": "La actualización `BA` de LoRA solo se suma a `W`, así que puedes fusionarla gratis o dejarla aparte para intercambiarla. Sus límites son la capacidad (el bajo rango aprende menos ante cambios grandes) y la calidad de los datos, que ningún rango arregla; QLoRA cambia velocidad por paso por memoria."
+      }
+    },
+    {
+      "id": "lora.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your platform upgrades the shared base model to a newer revision and keeps serving the existing tenant adapters on top. Outputs degrade across every tenant. What's the right fix?",
+        "es": "Tu plataforma actualiza el modelo base compartido a una revisión más nueva y sigue sirviendo encima los adapters existentes de cada cliente. Las salidas empeoran en todos los clientes. ¿Cuál es la corrección correcta?"
+      },
+      "options": [
+        { "text": { "en": "Retrain every adapter on the new base revision", "es": "Reentrenar cada adapter sobre la nueva revisión de la base" },
+          "why": { "en": "An adapter learned a delta to one exact set of weights; on new weights that delta is meaningless.", "es": "Un adapter aprendió un delta sobre un conjunto exacto de pesos; sobre pesos nuevos ese delta no tiene sentido." } },
+        { "text": { "en": "Merge each adapter into the new base for serving", "es": "Fusionar cada adapter con la nueva base para servir" },
+          "why": { "en": "Merging adds the same mismatched delta into the weights; only latency changes, not correctness.", "es": "Fusionar suma el mismo delta desalineado a los pesos; solo cambia la latencia, no la corrección." } },
+        { "text": { "en": "Raise the adapters' alpha so the update weighs more", "es": "Subir el alpha de los adapters para que la actualización pese más" },
+          "why": { "en": "Scaling a delta computed for other weights amplifies the mismatch instead of fixing it.", "es": "Escalar un delta calculado para otros pesos amplifica el desajuste en vez de corregirlo." } },
+        { "text": { "en": "Switch serving to QLoRA so the base runs in 4-bit", "es": "Pasar el serving a QLoRA para que la base corra en 4 bits" },
+          "why": { "en": "QLoRA is a training-memory technique; quantizing the base doesn't realign the adapters.", "es": "QLoRA es una técnica de memoria para entrenar; cuantizar la base no realinea los adapters." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "An adapter is a correction to one specific base, not a portable skill. That's why multi-LoRA platforms must automate per-tenant training from day one: every base upgrade becomes N retraining jobs plus an eval gate per tenant.",
+        "es": "Un adapter es una corrección a una base específica, no una habilidad portable. Por eso las plataformas multi-LoRA deben automatizar el entrenamiento por cliente desde el primer día: cada actualización de la base se vuelve N jobs de reentrenamiento más una evaluación por cliente."
+      }
+    }
+  ]
+}

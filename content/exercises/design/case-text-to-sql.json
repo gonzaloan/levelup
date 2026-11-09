@@ -1,0 +1,102 @@
+{
+  "concept": "case-text-to-sql",
+  "items": [
+    {
+      "id": "case-text-to-sql.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A director asks for net revenue by region and gets a number well above the official dashboard. The generated SQL joins `orders` to `line_items`, then sums `order_total`. What is the most robust fix?",
+        "es": "Una directora pide los ingresos netos por región y recibe un número muy por encima del dashboard oficial. El SQL generado une `orders` con `line_items` y luego suma `order_total`. ¿Cuál es la corrección más robusta?"
+      },
+      "options": [
+        {
+          "text": { "en": "Route metric questions through the semantic layer, which compiles the joins", "es": "Mandar las preguntas de métricas por la capa semántica, que compila los joins" },
+          "why": { "en": "The LLM only picks metric, dimensions and filters; governed definitions remove fan-out and definition drift.", "es": "El LLM solo elige métrica, dimensiones y filtros; las definiciones gobernadas eliminan el fan-out y la deriva de definiciones." }
+        },
+        {
+          "text": { "en": "Add verified few-shot queries showing the right join for this pair", "es": "Agregar consultas verificadas few-shot con el join correcto para este par" },
+          "why": { "en": "Helps raw SQL but guarantees nothing: the next fan-out on another table pair is just as silent.", "es": "Ayuda al SQL crudo, pero no garantiza nada: el próximo fan-out sobre otro par de tablas es igual de silencioso." }
+        },
+        {
+          "text": { "en": "Move SQL generation to the strongest available model", "es": "Pasar la generación de SQL al modelo más fuerte disponible" },
+          "why": { "en": "Strong models still write plausible fan-out joins; the metric definition must come from governance, not the model.", "es": "Los modelos fuertes igual escriben joins con fan-out que parecen correctos; la definición de la métrica debe venir de la gobernanza, no del modelo." }
+        },
+        {
+          "text": { "en": "Make the validator reject any query with more than one join", "es": "Hacer que el validador rechace toda consulta con más de un join" },
+          "why": { "en": "Blocks most real analytics questions; the validator enforces safety and cost, not semantics.", "es": "Bloquea la mayoría de las preguntas analíticas reales; el validador aplica seguridad y costo, no semántica." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Fan-out double counting and definition drift are the errors users cannot see, and they look authoritative. When a question maps to a governed metric, let the semantic layer (dbt MetricFlow, LookML, Cube) write the joins and aggregation; keep raw SQL for exploratory questions, labeled unverified.",
+        "es": "El doble conteo por fan-out y la deriva de definiciones son los errores que el usuario no ve, y parecen autorizados. Cuando la pregunta corresponde a una métrica gobernada, deja que la capa semántica (dbt MetricFlow, LookML, Cube) escriba los joins y la agregación; reserva el SQL crudo para preguntas exploratorias, marcado como no verificado."
+      }
+    },
+    {
+      "id": "case-text-to-sql.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Estimate the LLM bill: **2,000 users × 10 questions per workday**, 22 workdays/month. Each question uses **~6k input + ~0.4k output** tokens, × **1.3** calls for clarifications and retries. Assume $2/M input and $8/M output tokens (assumed prices). Monthly cost in USD?",
+        "es": "Estima la factura del LLM: **2,000 usuarios × 10 preguntas por día hábil**, 22 días hábiles al mes. Cada pregunta usa **~6k tokens de entrada + ~0.4k de salida**, × **1.3** llamadas por aclaraciones y reintentos. Supón $2/M de entrada y $8/M de salida (precios supuestos). ¿Costo mensual en USD?"
+      },
+      "answer": 8700,
+      "tolerance": 0.15,
+      "unit": "USD/month",
+      "explain": {
+        "en": "440k questions × 1.3 ≈ 572k calls. Input: 572k × 6k ≈ 3.4B × $2/M ≈ $6.9k. Output: 572k × 0.4k ≈ 0.23B × $8/M ≈ $1.8k. Total ≈ $9k/month. Small next to one unbounded scan: a full pass over a 10 TB table on BigQuery on-demand is ~$57, hence the bytes-scanned cap.",
+        "es": "440k preguntas × 1.3 ≈ 572k llamadas. Entrada: 572k × 6k ≈ 3.4B × $2/M ≈ $6.9k. Salida: 572k × 0.4k ≈ 0.23B × $8/M ≈ $1.8k. Total ≈ $9k/mes. Es poco al lado de un escaneo sin límite: recorrer una tabla de 10 TB en BigQuery on-demand cuesta ~$57, de ahí el tope de bytes escaneados."
+      }
+    },
+    {
+      "id": "case-text-to-sql.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the online path for one analytics question in order.",
+        "es": "Ordena la ruta online de una pregunta de analítica."
+      },
+      "steps": [
+        { "en": "Retrieve permitted metrics, tables, values and similar verified queries", "es": "Recuperar las métricas, tablas, valores y consultas verificadas parecidas que el usuario puede ver" },
+        { "en": "Ask one clarifying question if two metrics fit", "es": "Hacer una pregunta aclaratoria si encajan dos métricas" },
+        { "en": "Generate a semantic-layer query, or raw SQL as fallback", "es": "Generar una consulta a la capa semántica, o SQL crudo como respaldo" },
+        { "en": "Validate: single SELECT, table allowlist, LIMIT, bytes-scanned cap", "es": "Validar: un solo SELECT, allowlist de tablas, LIMIT y tope de bytes escaneados" },
+        { "en": "Execute as the user so row-level security applies", "es": "Ejecutar como el usuario para que aplique la seguridad por fila" },
+        { "en": "Show the result with its SQL, definitions and assumptions", "es": "Mostrar el resultado con su SQL, definiciones y supuestos" }
+      ],
+      "explain": {
+        "en": "The LLM proposes, deterministic layers authorize. Retrieval and clarification fix the inputs, generation only proposes, then the validator and the warehouse's own permissions decide what runs. Showing SQL and assumptions last lets users catch the errors that remain.",
+        "es": "El LLM propone y las capas deterministas autorizan. La recuperación y la aclaración fijan las entradas, la generación solo propone, y luego el validador y los permisos del propio warehouse deciden qué se ejecuta. Mostrar el SQL y los supuestos al final permite que el usuario detecte los errores que quedan."
+      }
+    },
+    {
+      "id": "case-text-to-sql.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your golden set grades by **exact match** between generated and gold SQL. After a model upgrade the score drops, while analysts say the answers got better. What should change in the eval?",
+        "es": "Tu golden set califica por **coincidencia exacta** entre el SQL generado y el de referencia. Tras actualizar el modelo, el puntaje baja, mientras los analistas dicen que las respuestas mejoraron. ¿Qué debería cambiar en la evaluación?"
+      },
+      "options": [
+        {
+          "text": { "en": "Execute both queries and compare results on a pinned snapshot", "es": "Ejecutar ambas consultas y comparar resultados sobre un snapshot fijo" },
+          "why": { "en": "Execution accuracy accepts correct alternatives and catches near-misses that look right.", "es": "La exactitud por ejecución acepta alternativas correctas y detecta casi-aciertos que parecen correctos." }
+        },
+        {
+          "text": { "en": "Normalize whitespace, casing and aliases before comparing", "es": "Normalizar espacios, mayúsculas y alias antes de comparar" },
+          "why": { "en": "Cosmetic: a correct query with different joins or CTEs still fails, and near-misses still look close.", "es": "Es cosmético: una consulta correcta con otros joins o CTEs sigue fallando, y los casi-aciertos siguen pareciendo cercanos." }
+        },
+        {
+          "text": { "en": "Run both queries on the live warehouse for fresh data", "es": "Correr ambas consultas en el warehouse en vivo para tener datos frescos" },
+          "why": { "en": "Data changes between runs then look like model regressions; pin a snapshot or freeze results.", "es": "Así los cambios de datos entre corridas parecen regresiones del modelo; fija un snapshot o congela los resultados." }
+        },
+        {
+          "text": { "en": "Keep exact match and discount the analysts' feedback", "es": "Mantener la coincidencia exacta y descartar la opinión de los analistas" },
+          "why": { "en": "The metric is the problem: many correct queries look different from the gold one.", "es": "El problema es la métrica: muchas consultas correctas se ven distintas de la de referencia." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Grade text-to-SQL by execution accuracy: run generated and gold SQL, compare result sets ignoring column order and row order (unless there's an ORDER BY), with a float tolerance, on pinned data. String match fails correct alternatives and passes a wrong query that looks almost right.",
+        "es": "Califica text-to-SQL por exactitud de ejecución: corre el SQL generado y el de referencia y compara los resultados sin importar el orden de columnas ni de filas (salvo que haya ORDER BY), con tolerancia para floats, sobre datos fijos. Comparar strings reprueba alternativas correctas y aprueba una consulta mala que se ve casi bien."
+      }
+    }
+  ]
+}

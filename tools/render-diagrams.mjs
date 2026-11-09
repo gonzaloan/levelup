@@ -39,6 +39,7 @@ const THEMES = {
 
 fs.mkdirSync(DIAGRAMS, { recursive: true });
 const jobs = [];
+const graphJobs = [];
 const wanted = new Set();
 for (const f of listConceptFiles()) {
   const c = JSON.parse(fs.readFileSync(f, "utf8"));
@@ -49,9 +50,17 @@ for (const f of listConceptFiles()) {
     wanted.add(path.basename(out));
     if (force || readDiagramHash(out) !== h) jobs.push({ id: c.id, mode, code: c.diagram.code, out, h });
   }
+  // The node/edge graph powers the "rebuild the diagram" exercise (flowcharts only).
+  if (/^\s*(flowchart|graph)\b/.test(c.diagram.code)) {
+    const gout = path.join(DIAGRAMS, `${c.id}.graph.json`);
+    wanted.add(path.basename(gout));
+    let gh = null;
+    try { gh = JSON.parse(fs.readFileSync(gout, "utf8")).h; } catch { /* missing */ }
+    if (force || gh !== h) graphJobs.push({ id: c.id, code: c.diagram.code, out: gout, h });
+  }
 }
-for (const f of fs.readdirSync(DIAGRAMS)) if (f.endsWith(".svg") && !wanted.has(f)) { fs.unlinkSync(path.join(DIAGRAMS, f)); console.log("removed orphan", f); }
-if (!jobs.length) { console.log("diagrams: all up to date"); process.exit(0); }
+for (const f of fs.readdirSync(DIAGRAMS)) if ((f.endsWith(".svg") || f.endsWith(".graph.json")) && !wanted.has(f)) { fs.unlinkSync(path.join(DIAGRAMS, f)); console.log("removed orphan", f); }
+if (!jobs.length && !graphJobs.length) { console.log("diagrams: all up to date"); process.exit(0); }
 
 const browser = await launchBrowser();
 const page = await browser.newPage();
@@ -76,6 +85,22 @@ for (const j of jobs) {
   const svg = res.svg.replace(/<svg /, `<svg aria-hidden="true" focusable="false" `);
   fs.writeFileSync(j.out, `<!-- h:${j.h} -->\n${svg}\n`);
 }
+for (const g of graphJobs) {
+  const res = await page.evaluate(async (code) => {
+    try {
+      mermaid.initialize({ startOnLoad: false });
+      const d = await mermaid.mermaidAPI.getDiagramFromText(code);
+      const v = d.db.getVertices();
+      const nodes = [...(v instanceof Map ? v.values() : Object.values(v))].map((n) => ({ id: n.id, label: String(n.text ?? n.id) }));
+      const edges = d.db.getEdges().map((e) => ({ from: e.start, to: e.end }));
+      return { nodes, edges };
+    } catch (e) { return { error: String(e.message || e) }; }
+  }, g.code);
+  if (res.error) { failed++; console.log(`✗ ${g.id} (graph): ${res.error.split("\n")[0]}`); continue; }
+  const clean = (s) => s.replace(/<br\s*\/?>/gi, " ").replace(/<[^>]+>/g, "").replace(/&[a-z#0-9]+;/gi, " ").replace(/^["']|["']$/g, "").replace(/\s+/g, " ").trim();
+  fs.writeFileSync(g.out, JSON.stringify({ h: g.h, nodes: res.nodes.map((n) => ({ id: n.id, label: clean(n.label) })), edges: res.edges }) + "\n");
+}
 await browser.close();
+if (graphJobs.length) console.log(`graphs: extracted ${graphJobs.length}`);
 console.log(`diagrams: rendered ${jobs.length - failed}/${jobs.length}${failed ? `, ${failed} failed` : ""}`);
 process.exit(failed ? 1 : 0);

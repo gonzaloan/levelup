@@ -1,0 +1,90 @@
+{
+  "concept": "data-flywheel",
+  "items": [
+    {
+      "id": "data-flywheel.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your support copilot's draft accept rate is 85% and climbing, yet reopened tickets are rising too. Joining with sent replies shows many accepted drafts were mostly rewritten before sending. How do you treat these traces in the flywheel?",
+        "es": "La tasa de aceptación de borradores de tu copiloto de soporte está en 85% y sube, pero los tickets reabiertos también aumentan. Al cruzar con las respuestas enviadas ves que muchos borradores aceptados se reescribieron casi por completo antes de enviarse. ¿Cómo tratas esos traces en el flywheel?"
+      },
+      "options": [
+        { "text": { "en": "As failures: score accepts together with edit distance and downstream outcomes", "es": "Como fallas: evalúa las aceptaciones junto con la distancia de edición y los resultados posteriores" },
+          "why": { "en": "Accepted-then-rewritten is a hidden failure; an implicit signal is only trustworthy once joined with what happened next.", "es": "Aceptado y luego reescrito es una falla escondida; una señal implícita solo es confiable cuando la cruzas con lo que pasó después." } },
+        { "text": { "en": "As successes: fine-tune on every accepted draft, since users approved them", "es": "Como éxitos: haz fine-tuning con todos los borradores aceptados, porque los usuarios los aprobaron" },
+          "why": { "en": "You'd train on drafts users had to fix, amplifying the errors on every loop.", "es": "Entrenarías con borradores que los usuarios tuvieron que arreglar, y amplificarías los errores en cada vuelta." } },
+        { "text": { "en": "As noise: drop implicit signals and ask users for thumbs ratings instead", "es": "Como ruido: descarta las señales implícitas y pide calificaciones con pulgares" },
+          "why": { "en": "Explicit feedback is precise but sparse and skewed toward frustrated users; implicit signals are dense once you clean them.", "es": "El feedback explícito es preciso pero escaso y sesgado hacia usuarios frustrados; las señales implícitas son abundantes cuando las limpias." } },
+        { "text": { "en": "As the target: push accept rate higher with online RL on the same signal", "es": "Como objetivo: sube aún más la tasa de aceptación con RL online sobre la misma señal" },
+          "why": { "en": "Reward hacking: optimizing a signal already decoupled from the product goal makes the gap wider.", "es": "Reward hacking: optimizar una señal que ya se despegó del objetivo del producto agranda la brecha." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A flywheel only works if its signal is tied to the real outcome. Implicit signals are dense but noisy, so join them with downstream evidence (edits, reopens, escalations) before they become labels or rewards.",
+        "es": "Un flywheel solo funciona si su señal está atada al resultado real. Las señales implícitas son abundantes pero ruidosas, así que crúzalas con evidencia posterior (ediciones, reaperturas, escalamientos) antes de convertirlas en etiquetas o recompensas."
+      }
+    },
+    {
+      "id": "data-flywheel.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the selector: spend most of the labeling budget on the highest-priority traces and keep an `explore` share as an **unbiased** sample of the rest.",
+        "es": "Completa el selector: gasta la mayor parte del presupuesto de etiquetado en los traces de mayor prioridad y reserva una porción `explore` como muestra **sin sesgo** del resto."
+      },
+      "lang": "python",
+      "code": "def priority(t) -> float:\n    score = 0.0\n    if t.thumbs == -1 or t.escalated:\n        score += 1.0                     # clear failure\n    if t.accepted and t.edit_ratio > 0.5:\n        score += 0.6                     # accepted, then rewritten\n    if t.accepted is False:\n        score += 0.3\n    return score\n\ndef select_for_labeling(traces, budget: int, explore: float = 0.1):\n    pool = [scrub_pii(t) for t in traces if t.consent]\n    ranked = sorted(pool, key=priority, reverse=True)\n    n_rand = int(budget * explore)\n    head, tail = ranked[: budget - n_rand], ranked[budget - n_rand :]\n    ____",
+      "options": [
+        { "text": "return head + random.sample(tail, min(n_rand, len(tail)))" },
+        { "text": "return head + tail[:n_rand]",
+          "why": { "en": "That \"exploration\" slice is just the next-highest priorities: still biased, not a random sample.", "es": "Esa porción de \"exploración\" son solo las siguientes prioridades más altas: sigue sesgada, no es una muestra aleatoria." } },
+        { "text": "return random.sample(pool, min(budget, len(pool)))",
+          "why": { "en": "All random: most of the labeling budget goes to traces that teach nothing.", "es": "Todo aleatorio: la mayor parte del presupuesto de etiquetado se va en traces que no enseñan nada." } },
+        { "text": "return head + random.sample(head, min(n_rand, len(head)))",
+          "why": { "en": "Samples from what's already selected: duplicate labels and zero coverage of the rest.", "es": "Muestrea de lo que ya está seleccionado: etiquetas duplicadas y cero cobertura del resto." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Priority ranking finds failures fast, but only the ones your heuristics already suspect. A random slice of what's left (~10% of the budget) keeps evals representative and surfaces failures the selector misses. Note consent and PII scrubbing happen before anything is ranked.",
+        "es": "Ordenar por prioridad encuentra fallas rápido, pero solo las que tus heurísticas ya sospechan. Una porción aleatoria de lo que queda (~10% del presupuesto) mantiene representativos los evals y saca a la luz fallas que el selector no ve. Fíjate que el consentimiento y la limpieza de PII ocurren antes de ordenar nada."
+      }
+    },
+    {
+      "id": "data-flywheel.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your flywheel just produced 500 labeled production failures. A teammate wants to fine-tune on all of them today. What should happen first?",
+        "es": "Tu flywheel acaba de producir 500 fallas de producción etiquetadas. Un compañero quiere hacer fine-tuning con todas hoy mismo. ¿Qué debería pasar primero?"
+      },
+      "options": [
+        { "text": { "en": "Add them to the eval set, then try prompt or retrieval fixes", "es": "Agregarlas al set de evals y después probar arreglos de prompt o de recuperación" },
+          "why": { "en": "Evals first so the fix is measurable; cheap fixes before training.", "es": "Primero los evals para que el arreglo sea medible; los arreglos baratos antes que entrenar." } },
+        { "text": { "en": "Fine-tune on all 500 now and measure the result in production", "es": "Hacer fine-tuning con las 500 ahora y medir el resultado en producción" },
+          "why": { "en": "With no eval cases for these failures you can't prove offline that training fixed them, and fine-tuning is the expensive last step.", "es": "Sin casos de eval para estas fallas no puedes demostrar offline que el entrenamiento las arregló, y el fine-tuning es el último paso, el caro." } },
+        { "text": { "en": "Train on them and keep last quarter's eval set unchanged", "es": "Entrenar con ellas y dejar sin cambios el set de evals del trimestre pasado" },
+          "why": { "en": "The evals stop representing today's traffic, and the new failure modes are never measured.", "es": "Los evals dejan de representar el tráfico de hoy y los modos de falla nuevos nunca se miden." } },
+        { "text": { "en": "Wait for thumbs-down feedback to confirm each failure first", "es": "Esperar a que un pulgar abajo confirme cada falla antes de usarla" },
+          "why": { "en": "Explicit feedback is sparse and skewed toward frustrated users; waiting for it starves the loop.", "es": "El feedback explícito es escaso y está sesgado hacia usuarios frustrados; esperarlo deja sin alimento al ciclo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Each turn adds eval cases before training data: a failure you can't measure is one you can't prove you fixed. Then cheap fixes come first; fine-tuning waits until volume and clean examples justify it, and nothing ships unless it beats the evals.",
+        "es": "Cada vuelta agrega casos de eval antes que datos de entrenamiento: una falla que no puedes medir es una que no puedes demostrar que arreglaste. Después van los arreglos baratos; el fine-tuning espera a que el volumen y los ejemplos limpios lo justifiquen, y nada se despliega si no supera los evals."
+      }
+    },
+    {
+      "id": "data-flywheel.a4",
+      "type": "numeric",
+      "prompt": {
+        "en": "A code-completion product shows 1,000 suggestions at a 30% accept rate (assumed baseline). After online RL on accept/reject signals it shows 21% fewer suggestions, and the accept rate rises 28% in relative terms. How many suggestions get accepted now, per the same 1,000 before?",
+        "es": "Un producto de autocompletado de código muestra 1,000 sugerencias con una tasa de aceptación de 30% (base supuesta). Después de RL online sobre señales de aceptar/rechazar muestra 21% menos sugerencias, y la tasa de aceptación sube 28% en términos relativos. ¿Cuántas sugerencias se aceptan ahora, por cada 1,000 de antes?"
+      },
+      "answer": 303,
+      "tolerance": 0.05,
+      "unit": "accepted",
+      "explain": {
+        "en": "Shown: 1,000 × 0.79 = 790. Accept rate: 0.30 × 1.28 = 0.384. Accepted: 790 × 0.384 ≈ 303, versus 300 before. Roughly the same useful output with 21% fewer interruptions: because rejects score negative and silence scores zero, the model learned *when not to suggest*.",
+        "es": "Mostradas: 1,000 × 0.79 = 790. Tasa de aceptación: 0.30 × 1.28 = 0.384. Aceptadas: 790 × 0.384 ≈ 303, contra 300 antes. Casi el mismo resultado útil con 21% menos interrupciones: como rechazar resta y no sugerir vale cero, el modelo aprendió *cuándo no sugerir*."
+      }
+    }
+  ]
+}

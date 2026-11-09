@@ -1,0 +1,87 @@
+{
+  "concept": "quantization",
+  "items": [
+    {
+      "id": "quantization.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You serve a 70B model at batch 64+ on H100s. A teammate switched it to weight-only INT4 (AWQ) to raise throughput, but tokens/s did not improve and even dropped a little. What do you recommend?",
+        "es": "Sirves un modelo de 70B con batch de 64 o más en H100. Un compañero lo pasó a INT4 solo pesos (AWQ) para subir el throughput, pero los tokens/s no mejoraron e incluso bajaron un poco. ¿Qué recomiendas?"
+      },
+      "options": [
+        { "text": { "en": "Move to FP8 W8A8: at this batch size you're compute-bound", "es": "Pasar a FP8 W8A8: con este batch estás limitado por cómputo" } },
+        { "text": { "en": "Swap AWQ for GPTQ, whose error correction runs faster", "es": "Cambiar AWQ por GPTQ, cuya corrección de error corre más rápido" },
+          "why": { "en": "AWQ vs GPTQ is about how quantization error is minimized; both are weight-only and still run 16-bit matmuls.", "es": "AWQ vs GPTQ cambia cómo se minimiza el error de cuantización; ambos son solo pesos y siguen haciendo matmuls de 16 bits." } },
+        { "text": { "en": "Drop to 3 bits so each step reads even fewer bytes", "es": "Bajar a 3 bits para que cada paso lea todavía menos bytes" },
+          "why": { "en": "Bytes read aren't the bottleneck at large batch, and 3 bits or fewer cause large quality drops except on the biggest models.", "es": "Los bytes leídos no son el cuello de botella con batch grande, y 3 bits o menos causan caídas de calidad grandes salvo en los modelos más grandes." } },
+        { "text": { "en": "Go back to BF16: quantization never helps throughput", "es": "Volver a BF16: la cuantización nunca ayuda al throughput" },
+          "why": { "en": "Too broad: FP8 W8A8 runs the math itself on low-precision tensor cores, which does speed up compute-bound work.", "es": "Demasiado general: FP8 W8A8 hace las cuentas mismas en tensor cores de baja precisión, y eso sí acelera el trabajo limitado por cómputo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Weight-only INT4 speeds memory-bound decode by reading ~4× fewer weight bytes, but it dequantizes to 16-bit and runs 16-bit matmuls. At large batch each weight read serves many tokens, so math dominates; only low-precision math (FP8 or INT8 W8A8) speeds that up.",
+        "es": "INT4 solo pesos acelera el decode limitado por memoria porque lee ~4× menos bytes de pesos, pero decuantiza a 16 bits y hace matmuls de 16 bits. Con batch grande cada lectura de pesos sirve a muchos tokens, así que dominan las cuentas; solo la matemática de baja precisión (FP8 o INT8 W8A8) acelera eso."
+      }
+    },
+    {
+      "id": "quantization.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Rule of thumb: batch-1 decode ceiling ≈ HBM bandwidth ÷ weight bytes. An 8B model in **FP8** (1 byte per parameter) on an H100 with **3.35 TB/s**. Ignoring scales and KV-cache reads, what's the ceiling in tokens per second?",
+        "es": "Regla práctica: techo del decode con batch 1 ≈ ancho de banda de HBM ÷ bytes de pesos. Un modelo de 8B en **FP8** (1 byte por parámetro) en una H100 con **3.35 TB/s**. Ignorando escalas y lecturas del KV cache, ¿cuál es el techo en tokens por segundo?"
+      },
+      "answer": 419,
+      "tolerance": 0.15,
+      "unit": "tok/s",
+      "explain": {
+        "en": "8B params × 1 byte = 8 GB read per token; 3.35 TB/s ÷ 8 GB ≈ 419 tok/s. In BF16 (16 GB) it's ~200 tok/s: halving the bytes roughly doubles the ceiling, because batch-1 decode is bandwidth-bound.",
+        "es": "8B parámetros × 1 byte = 8 GB leídos por token; 3.35 TB/s ÷ 8 GB ≈ 419 tok/s. En BF16 (16 GB) son ~200 tok/s: reducir los bytes a la mitad casi duplica el techo, porque el decode con batch 1 está limitado por ancho de banda."
+      }
+    },
+    {
+      "id": "quantization.a3",
+      "type": "match",
+      "prompt": {
+        "en": "Match each 4-bit format to what it is.",
+        "es": "Relaciona cada formato de 4 bits con lo que es."
+      },
+      "pairs": [
+        { "left": { "en": "GPTQ", "es": "GPTQ" },
+          "right": { "en": "Second-order error correction; a standard INT4 serving format", "es": "Corrección de error de segundo orden; un formato INT4 estándar para serving" } },
+        { "left": { "en": "AWQ", "es": "AWQ" },
+          "right": { "en": "Scales up the ~1% of salient channels, found from activations", "es": "Escala el ~1% de canales más importantes, detectados por las activaciones" } },
+        { "left": { "en": "bitsandbytes NF4", "es": "bitsandbytes NF4" },
+          "right": { "en": "Easy quantize-on-load option behind QLoRA, not the fastest kernels", "es": "Opción fácil que cuantiza al cargar, base de QLoRA, sin los kernels más rápidos" } },
+        { "left": { "en": "GGUF", "es": "GGUF" },
+          "right": { "en": "llama.cpp format for CPUs, Macs and laptops", "es": "Formato de llama.cpp para CPUs, Macs y laptops" } }
+      ],
+      "explain": {
+        "en": "Pick by where it runs: AWQ or GPTQ pre-quantized checkpoints for GPU serving with fast kernels, NF4 for memory-saving QLoRA training, GGUF for local and edge. Serving production traffic on NF4 is a common, slow mistake.",
+        "es": "Elige según dónde corre: checkpoints ya cuantizados con AWQ o GPTQ para serving en GPU con kernels rápidos, NF4 para ahorrar memoria al entrenar con QLoRA, GGUF para local y edge. Servir tráfico de producción con NF4 es un error común y lento."
+      }
+    },
+    {
+      "id": "quantization.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Your team plans to ship a 4-bit build. Which statements are true? Select all that apply.",
+        "es": "Tu equipo planea desplegar una versión de 4 bits. ¿Qué afirmaciones son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "The quality hit is usually larger on 7–8B models than on 70B ones", "es": "La pérdida de calidad suele ser mayor en modelos de 7–8B que en los de 70B" } },
+        { "text": { "en": "Matching perplexity and MMLU means it's safe to ship", "es": "Si iguala la perplejidad y el MMLU, es seguro desplegarlo" },
+          "why": { "en": "Damage shows first in long context, reasoning, tool-call formats and non-English; averages hide it.", "es": "El daño aparece primero en contexto largo, razonamiento, formato de tool calls y otros idiomas; los promedios lo esconden." } },
+        { "text": { "en": "Calibration data should resemble the traffic you'll serve", "es": "Los datos de calibración deben parecerse al tráfico que vas a servir" } },
+        { "text": { "en": "Weight-only INT4 speeds up compute-bound prefill too", "es": "INT4 solo pesos también acelera el prefill limitado por cómputo" },
+          "why": { "en": "It dequantizes to 16-bit and runs 16-bit matmuls, so prefill gains nothing and pays some overhead.", "es": "Decuantiza a 16 bits y hace matmuls de 16 bits, así que el prefill no gana nada y paga algo de overhead." } },
+        { "text": { "en": "Going to 3 bits is a safe next step for any model size", "es": "Bajar a 3 bits es un siguiente paso seguro para cualquier tamaño de modelo" },
+          "why": { "en": "At 3 bits or fewer quality drops are large, except on the biggest models.", "es": "Con 3 bits o menos las caídas de calidad son grandes, salvo en los modelos más grandes." } }
+      ],
+      "answers": [0, 2],
+      "explain": {
+        "en": "4-bit is a quality trade, and it is uneven: small models, math, code, long context and non-English degrade first. Calibrate on data like your traffic and gate the release on your own sliced task evals, not perplexity.",
+        "es": "4 bits es un trade-off de calidad, y es desigual: modelos chicos, matemáticas, código, contexto largo y otros idiomas se degradan primero. Calibra con datos parecidos a tu tráfico y decide el despliegue con tus propios evals de la tarea por segmentos, no con perplejidad."
+      }
+    }
+  ]
+}

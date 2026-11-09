@@ -1,0 +1,75 @@
+{
+  "concept": "model-registry",
+  "items": [
+    {
+      "id": "model-registry.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Two days after v14 of a credit model is promoted, approvals in one region drop 6%. The registry still holds v13, approved and loadable. What do you do first?",
+        "es": "Dos días después de promover la v14 de un modelo de crédito, las aprobaciones en una región caen 6%. El registry todavía tiene la v13, aprobada y cargable. ¿Qué haces primero?"
+      },
+      "options": [
+        { "text": { "en": "Repoint the `@production` alias to v13, then use v14's lineage to find the cause", "es": "Reapuntar el alias `@production` a la v13 y luego usar el linaje de la v14 para buscar la causa" },
+          "why": { "en": "Rollback is an alias move measured in seconds; the investigation happens once users are safe.", "es": "El rollback es mover un alias en segundos; la investigación viene cuando los usuarios ya están a salvo." } },
+        { "text": { "en": "Retrain v14 with that region upweighted and promote the result", "es": "Reentrenar la v14 dándole más peso a esa región y promover el resultado" },
+          "why": { "en": "Slow, and it bets on a cause you haven't found yet; retraining is not how you roll back.", "es": "Es lento y apuesta por una causa que aún no encontraste; reentrenar no es la forma de hacer rollback." } },
+        { "text": { "en": "Copy the v13 weights over the v14 file path on the servers", "es": "Copiar los pesos de la v13 sobre la ruta del archivo de la v14 en los servidores" },
+          "why": { "en": "Deploys around the registry: now nobody can tell which version is serving, and the registry becomes fiction.", "es": "Despliega por fuera del registry: nadie puede saber qué versión está sirviendo, y el registry se vuelve ficción." } },
+        { "text": { "en": "Wait for default labels to confirm v14 is worse before acting", "es": "Esperar a que las etiquetas de morosidad confirmen que la v14 es peor antes de actuar" },
+          "why": { "en": "Default labels take weeks or months; with a known-good version one alias move away, rollback is cheap and reversible.", "es": "Las etiquetas de morosidad tardan semanas o meses; con una versión buena a un movimiento de alias, el rollback es barato y reversible." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A registry turns deployment into a pointer: serving resolves an alias, so rollback is repointing it to N-1 in seconds. Lineage (commit, data version, run) then tells you whether the fix belongs in the model or the data pipeline.",
+        "es": "Un registry convierte el deploy en un puntero: serving resuelve un alias, así que el rollback es reapuntarlo a N-1 en segundos. Después, el linaje (commit, versión de datos, corrida) te dice si el arreglo va en el modelo o en el pipeline de datos."
+      }
+    },
+    {
+      "id": "model-registry.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the serving line so serving loads whatever the gate promoted, or whatever a rollback restored.",
+        "es": "Completa la línea de serving para que cargue lo que promovió la compuerta, o lo que restauró un rollback."
+      },
+      "lang": "python",
+      "code": "import mlflow\nfrom mlflow import MlflowClient\n\nclient = MlflowClient()\nNAME = \"fraud-scorer\"\n\nmv = mlflow.register_model(f\"runs:/{run_id}/model\", NAME)\nprev = client.get_model_version_by_alias(NAME, \"champion\")\n\n# Promotion = gated alias move\nif eval_auc(mv) >= prev_auc(prev) and approved_by_risk(mv):\n    client.set_registered_model_alias(NAME, \"champion\", mv.version)\n\n# Serving (runs at startup and on every reload)\n____",
+      "options": [
+        { "text": "model = mlflow.pyfunc.load_model(f\"models:/{NAME}@champion\")" },
+        { "text": "model = mlflow.pyfunc.load_model(f\"models:/{NAME}/latest\")",
+          "why": { "en": "Latest is the newest registered version, approved or not: a model that failed the gate would still ship.", "es": "Latest es la versión registrada más nueva, aprobada o no: un modelo que falló la compuerta igual saldría a producción." } },
+        { "text": "model = mlflow.pyfunc.load_model(f\"runs:/{run_id}/model\")",
+          "why": { "en": "Points at one run's artifact: alias moves, promotions and rollbacks never reach serving.", "es": "Apunta al artefacto de una corrida: los movimientos del alias, las promociones y los rollbacks nunca llegan a serving." } },
+        { "text": "model = mlflow.pyfunc.load_model(f\"models:/{NAME}/{mv.version}\")",
+          "why": { "en": "Loads the new version even when the gate failed, and repointing the alias can't roll it back.", "es": "Carga la versión nueva aunque haya fallado la compuerta, y reapuntar el alias no puede hacerle rollback." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Serving should resolve an alias, never a file path, a run or 'latest'. Then the gated alias move is the only way a version reaches production, and rollback is the same move pointed back at the previous version.",
+        "es": "Serving debe resolver un alias, nunca una ruta de archivo, una corrida ni 'latest'. Así, mover el alias tras la compuerta es la única forma de que una versión llegue a producción, y el rollback es el mismo movimiento apuntando a la versión anterior."
+      }
+    },
+    {
+      "id": "model-registry.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your LLM support bot pins its model id in the registry. A teammate tweaks the prompt in a config repo that deploys on merge, with no eval run. Answer quality drops. Which principle was broken?",
+        "es": "Tu bot de soporte con LLM fija el id del modelo en el registry. Un compañero ajusta el prompt en un repo de configuración que se despliega al hacer merge, sin correr evals. La calidad de las respuestas cae. ¿Qué principio se rompió?"
+      },
+      "options": [
+        { "text": { "en": "The release unit is the bundle (model, prompt, index, tools, guardrails), versioned and gated together", "es": "La unidad de release es el bundle (modelo, prompt, índice, tools, guardrails), versionado y aprobado en conjunto" },
+          "why": { "en": "Changing any part of the bundle changes behavior, so it's a release that needs the eval gate.", "es": "Cambiar cualquier parte del bundle cambia el comportamiento, así que es un release que necesita la compuerta de eval." } },
+        { "text": { "en": "Only weight changes are releases; prompts are config and can ship without an eval gate", "es": "Solo los cambios de pesos son releases; los prompts son configuración y pueden salir sin compuerta de eval" },
+          "why": { "en": "That's the misconception that caused this: a prompt edit changes outputs as much as new weights can.", "es": "Ese es justo el error que causó esto: editar un prompt cambia las salidas tanto como pueden hacerlo pesos nuevos." } },
+        { "text": { "en": "The model id should float on the provider's latest alias so it keeps up with prompt changes", "es": "El id del modelo debería seguir el alias 'latest' del proveedor para acompañar los cambios de prompt" },
+          "why": { "en": "A floating alias moving under a tuned prompt is the classic failure; pin dated snapshots instead.", "es": "Un alias flotante que cambia debajo de un prompt ajustado es la falla clásica; fija snapshots con fecha." } },
+        { "text": { "en": "Prompts should live as editable tags on the model version so they're easy to fix in place", "es": "Los prompts deberían vivir como tags editables en la versión del modelo para corregirlos ahí mismo" },
+          "why": { "en": "Versions are immutable for a reason: editing in place erases what actually ran and skips the gate.", "es": "Las versiones son inmutables por algo: editar ahí mismo borra lo que realmente corrió y se salta la compuerta." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "In an LLM app, a prompt change is a release. Pin model snapshot, prompt, index, tool schemas and guardrail config as one versioned bundle, re-run evals on any change, and promote or roll back all of it with one alias.",
+        "es": "En una app con LLM, cambiar el prompt es un release. Fija el snapshot del modelo, el prompt, el índice, los esquemas de tools y la configuración de guardrails como un solo bundle versionado, vuelve a correr evals ante cualquier cambio, y promueve o haz rollback de todo con un solo alias."
+      }
+    }
+  ]
+}

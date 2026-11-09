@@ -1,0 +1,65 @@
+{
+  "concept": "react",
+  "items": [
+    {
+      "id": "react.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your text-protocol ReAct agent (the harness parses `Action:` lines) answers confidently, but facts it presents as observations never appear in your tool logs. Most likely cause?",
+        "es": "Tu agente ReAct con protocolo de texto (el harness parsea las líneas `Action:`) responde con seguridad, pero datos que presenta como observaciones nunca aparecen en los logs de tus tools. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "No stop sequence at `Observation:`, so the model writes its own results", "es": "No hay stop sequence en `Observation:`, así que el modelo escribe sus propios resultados" },
+          "why": { "en": "Generation runs past the Action and the model invents the Observation, then reasons from it.", "es": "La generación sigue después de la Action y el modelo inventa la Observation, y luego razona a partir de ella." } },
+        { "text": { "en": "Temperature above 0, so the model paraphrases the real tool output", "es": "La temperatura es mayor que 0, así que el modelo parafrasea el resultado real de la tool" },
+          "why": { "en": "A paraphrase would still trace back to a logged call; these observations have no call behind them.", "es": "Una paráfrasis seguiría correspondiendo a una llamada registrada; estas observaciones no tienen ninguna llamada detrás." } },
+        { "text": { "en": "Tool output is truncated at 1,500 characters, cutting off the cited facts", "es": "La salida de la tool se trunca a 1.500 caracteres y corta los datos citados" },
+          "why": { "en": "Truncation removes text from real results; it can't produce facts missing from every log.", "es": "Truncar quita texto de resultados reales; no puede producir datos que no están en ningún log." } },
+        { "text": { "en": "The step cap is too low, so the agent guesses before finishing its research", "es": "El límite de pasos es muy bajo, así que el agente adivina antes de terminar de investigar" },
+          "why": { "en": "Hitting the cap ends the loop with an explicit stop; it doesn't write invented observations into the transcript.", "es": "Llegar al límite termina el loop con un corte explícito; no escribe observaciones inventadas en el transcript." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "In a text protocol nothing stops the model from continuing past its Action and writing `Observation: ...` itself. The harness must cut generation at `Observation:` and append the real, truncated result. Native tool calling removes this failure: the turn ends at the structured call and only your code supplies results.",
+        "es": "En un protocolo de texto nada impide que el modelo siga después de su Action y escriba `Observation: ...` por su cuenta. El harness debe cortar la generación en `Observation:` y agregar el resultado real, truncado. El tool calling nativo elimina esta falla: el turno termina en la llamada estructurada y solo tu código entrega resultados."
+      }
+    },
+    {
+      "id": "react.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A ReAct run takes **20** model calls. Each step appends ~1,000 tokens (thought, action, observation) to the transcript, and every call re-sends the whole transcript so far. Ignoring the system prompt and question, how many input tokens does the run send in total? Answer in **thousands**.",
+        "es": "Una ejecución ReAct hace **20** llamadas al modelo. Cada paso agrega ~1.000 tokens (thought, action, observation) al transcript, y cada llamada reenvía todo el transcript acumulado. Ignorando el system prompt y la pregunta, ¿cuántos tokens de entrada envía la ejecución en total? Responde en **miles**."
+      },
+      "answer": 190,
+      "tolerance": 0.15,
+      "unit": "K tokens",
+      "explain": {
+        "en": "Call k re-sends the k−1 earlier steps: 0 + 1 + … + 19 = 190 steps ≈ 190K tokens, close to the n²/2 rule (200K). Steps grew linearly (20K of new content) but input grew quadratically. Prompt caching makes the repeated prefix cheap; trimming old observations keeps it small.",
+        "es": "La llamada k reenvía los k−1 pasos anteriores: 0 + 1 + … + 19 = 190 pasos ≈ 190K tokens, cerca de la regla n²/2 (200K). Los pasos crecieron de forma lineal (20K de contenido nuevo), pero la entrada creció de forma cuadrática. El prompt caching abarata el prefijo repetido; recortar observaciones viejas lo mantiene chico."
+      }
+    },
+    {
+      "id": "react.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about running a ReAct loop in production are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre operar un loop ReAct en producción son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Stop conditions belong to the harness, not the model", "es": "Las condiciones de corte le pertenecen al harness, no al modelo" } },
+        { "text": { "en": "A step cap near 2–3× a typical successful run is a sane start", "es": "Un límite de pasos cercano a 2–3× una ejecución exitosa típica es un buen punto de partida" } },
+        { "text": { "en": "Repeated identical calls should end the run early", "es": "Las llamadas idénticas repetidas deberían cortar la ejecución antes" } },
+        { "text": { "en": "A generous step cap alone is enough protection against loops", "es": "Un límite de pasos generoso basta por sí solo para protegerse de los loops" },
+          "why": { "en": "A loop burns every step before the cap trips. Detect no-progress and fail early.", "es": "Un loop quema todos los pasos antes de que salte el límite. Detecta la falta de progreso y corta antes." } },
+        { "text": { "en": "A `finish` action means the answer is supported by the observations", "es": "Una acción `finish` significa que la respuesta está respaldada por las observaciones" },
+          "why": { "en": "The model can finish with an unsupported claim. Check it against the trace or have a verifier grade it.", "es": "El modelo puede terminar con una afirmación sin respaldo. Contrástala con el trace o haz que un verificador la evalúe." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "The model only proposes the next action; deciding when to stop is your harness's job. Size the cap from traces, but pair it with budgets and a no-progress guard, and don't treat `finish` as proof. When a guard trips, return an explicit \"couldn't finish\" with the partial trace, never a guess.",
+        "es": "El modelo solo propone la siguiente acción; decidir cuándo parar es trabajo de tu harness. Dimensiona el límite a partir de trazas, pero combínalo con presupuestos y un guard de falta de progreso, y no tomes `finish` como prueba. Cuando salta un guard, devuelve un \"no pude terminar\" explícito con el trace parcial, nunca una suposición."
+      }
+    }
+  ]
+}

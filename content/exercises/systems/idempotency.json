@@ -1,0 +1,71 @@
+{
+  "concept": "idempotency",
+  "items": [
+    {
+      "id": "idempotency.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your refund handler runs `SELECT` on the idempotency key; if it's not found, it issues the refund, then `INSERT`s the key. Under load, a few customers still get refunded twice. Both duplicate requests carry the **same key** and arrive milliseconds apart. Cause?",
+        "es": "Tu handler de reembolsos hace `SELECT` de la idempotency key; si no la encuentra, emite el reembolso y luego hace `INSERT` de la clave. Con carga, algunos clientes siguen recibiendo dos reembolsos. Las dos solicitudes duplicadas traen la **misma clave** y llegan con milisegundos de diferencia. ¿Cuál es la causa?"
+      },
+      "options": [
+        { "text": { "en": "Check-then-act: both requests see \"not found\" before either inserts the key", "es": "Check-then-act: ambas solicitudes ven \"no encontrada\" antes de que alguna inserte la clave" } },
+        { "text": { "en": "The stored key expired between the first request and the retry", "es": "La clave guardada expiró entre la primera solicitud y el reintento" },
+          "why": { "en": "They arrived milliseconds apart. Expiry only matters for retries hours or days later.", "es": "Llegaron con milisegundos de diferencia. La expiración solo importa para reintentos horas o días después." } },
+        { "text": { "en": "The client generated a fresh key on each retry attempt", "es": "El cliente generó una clave nueva en cada reintento" },
+          "why": { "en": "Both requests carry the same key, so the client did its part. The gap is on the server.", "es": "Las dos solicitudes traen la misma clave, así que el cliente cumplió. La falla está en el servidor." } },
+        { "text": { "en": "The server should compare request-body hashes before refunding", "es": "El servidor debería comparar los hashes del body antes de reembolsar" },
+          "why": { "en": "The hash check rejects a key reused with a different body. Two identical requests pass it and still race.", "es": "Comparar el hash rechaza una clave reutilizada con otro body. Dos solicitudes idénticas lo pasan y siguen compitiendo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Claim the key atomically before doing the work: `INSERT … ON CONFLICT (key) DO NOTHING`. The unique constraint lets exactly one request win; the loser gets `409` while the original is in flight, or the stored response once it's done.",
+        "es": "Reclama la clave de forma atómica antes de hacer el trabajo: `INSERT … ON CONFLICT (key) DO NOTHING`. La restricción única deja ganar a una sola solicitud; la perdedora recibe `409` mientras la original sigue en curso, o la respuesta guardada cuando ya terminó."
+      }
+    },
+    {
+      "id": "idempotency.a2",
+      "type": "code",
+      "prompt": {
+        "en": "The handler has claimed the key and now calls the payment provider. Fill the gap so that if the server crashes after the provider refunds, and the stuck request is later resumed, the customer is **not** refunded twice.",
+        "es": "El handler ya reclamó la clave y ahora llama al proveedor de pagos. Completa el hueco para que, si el servidor se cae después de que el proveedor reembolsó y luego se reanuda la solicitud trabada, el cliente **no** reciba dos reembolsos."
+      },
+      "lang": "python",
+      "code": "@app.post(\"/refunds\")\ndef create_refund(body: dict, idempotency_key: str = Header()):\n    claimed = claim_key(idempotency_key, body)  # INSERT ... ON CONFLICT DO NOTHING\n    if not claimed:\n        return replay_or_reject(idempotency_key, body)  # 409 / 422 / stored response\n\n    ____\n    db.execute(\"UPDATE idem_keys SET status = 'done', code = 201, response = %s \"\n               \"WHERE key = %s\", (json.dumps(refund), idempotency_key))\n    return JSONResponse(refund, status_code=201)",
+      "options": [
+        { "text": "refund = payments.refund(body[\"charge_id\"], body[\"amount\"], idempotency_key=idempotency_key)" },
+        { "text": "refund = payments.refund(body[\"charge_id\"], body[\"amount\"], idempotency_key=str(uuid.uuid4()))",
+          "why": { "en": "A fresh key per attempt: on resume the provider sees a brand-new request and refunds again.", "es": "Una clave nueva por intento: al reanudar, el proveedor ve una solicitud nueva y reembolsa otra vez." } },
+        { "text": "refund = payments.refund(body[\"charge_id\"], body[\"amount\"])",
+          "why": { "en": "No key downstream: the gap between the provider's refund and our status update reopens on every crash.", "es": "Sin clave hacia abajo: el hueco entre el reembolso del proveedor y nuestra actualización de estado se reabre con cada crash." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "When the effect is an external call, your key table can't commit atomically with it. So pass the same key downstream: the provider dedupes, and a resumed or retried request gets the original refund back instead of a second one.",
+        "es": "Cuando el efecto es una llamada externa, tu tabla de claves no puede hacer commit atómico con ella. Por eso pasas la misma clave hacia abajo: el proveedor deduplica, y una solicitud reanudada o reintentada recibe el reembolso original en vez de uno nuevo."
+      }
+    },
+    {
+      "id": "idempotency.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which of these operations are **naturally idempotent**, safe to repeat without an idempotency key? Select all that apply.",
+        "es": "¿Cuáles de estas operaciones son **naturalmente idempotentes**, es decir, se pueden repetir sin una idempotency key? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "`PUT /orders/7` with body `{status: shipped}`", "es": "`PUT /orders/7` con body `{status: shipped}`" } },
+        { "text": { "en": "`DELETE /orders/7`", "es": "`DELETE /orders/7`" } },
+        { "text": { "en": "`INSERT … ON CONFLICT (event_id) DO NOTHING`", "es": "`INSERT … ON CONFLICT (event_id) DO NOTHING`" } },
+        { "text": { "en": "`POST /charges` with an amount and a card", "es": "`POST /charges` con un monto y una tarjeta" },
+          "why": { "en": "Each POST creates a new charge. It needs an idempotency key to make retries safe.", "es": "Cada POST crea un cobro nuevo. Necesita una idempotency key para que los reintentos sean seguros." } },
+        { "text": { "en": "Running `UPDATE counters SET n = n + 1 WHERE id = 7`", "es": "Ejecutar `UPDATE counters SET n = n + 1 WHERE id = 7`" },
+          "why": { "en": "Being an UPDATE doesn't make it idempotent: an increment changes state on every repeat.", "es": "Ser un UPDATE no lo vuelve idempotente: un incremento cambia el estado en cada repetición." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "The test is the effect, not the verb: does doing it twice leave the same state as doing it once? Setting state (PUT, DELETE, upsert by a unique id) passes; creating or incrementing doesn't, so those need conditional writes or keys.",
+        "es": "La prueba es el efecto, no el verbo: ¿hacerlo dos veces deja el mismo estado que hacerlo una? Fijar estado (PUT, DELETE, upsert por un id único) pasa; crear o incrementar no, así que esas operaciones necesitan escrituras condicionales o claves."
+      }
+    }
+  ]
+}

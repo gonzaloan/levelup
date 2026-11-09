@@ -1,0 +1,91 @@
+{
+  "concept": "offline-online-evals",
+  "items": [
+    {
+      "id": "offline-online-evals.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "v2 of an email agent passed every offline gate. Its tools can send emails and update CRM records. You want to see it on real traffic **before any user is exposed**. What do you do?",
+        "es": "La v2 de un agente de correo pasó todos los gates offline. Sus herramientas pueden enviar correos y actualizar registros del CRM. Quieres verla con tráfico real **antes de exponer a cualquier usuario**. ¿Qué haces?"
+      },
+      "options": [
+        { "text": { "en": "Shadow it on live requests with every write tool stubbed", "es": "Correrla en shadow con requests reales y todas las escrituras simuladas" } },
+        { "text": { "en": "Shadow it as-is, since nobody sees shadow outputs", "es": "Correrla en shadow tal cual, ya que nadie ve sus salidas" },
+          "why": { "en": "Nobody reads the text, but tool calls still execute: the shadow sends real emails and edits real records.", "es": "Nadie lee el texto, pero las llamadas a herramientas sí se ejecutan: el shadow envía correos reales y edita registros reales." } },
+        { "text": { "en": "Canary it to 5% of users with automatic rollback", "es": "Hacer un canary al 5% de usuarios con rollback automático" },
+          "why": { "en": "A canary exposes real users, which you wanted to avoid, and a rollback can't unsend an email.", "es": "Un canary expone a usuarios reales, justo lo que querías evitar, y un rollback no puede deshacer un correo enviado." } },
+        { "text": { "en": "Ship it fully: the offline gate already proved it", "es": "Desplegarla completa: el gate offline ya la validó" },
+          "why": { "en": "Offline sets drift from production; only live traffic shows the real query mix.", "es": "Los sets offline se alejan de producción; solo el tráfico real muestra la mezcla real de consultas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Shadow mode is the zero-exposure bridge between offline and online: real inputs, logged outputs, no user impact. For agents, 'no user impact' only holds if side effects are stubbed. After the shadow looks right, a canary at ~1–5% with automatic rollback is the next step.",
+        "es": "El modo shadow es el puente sin exposición entre offline y online: entradas reales, salidas registradas, sin impacto en usuarios. En agentes, \"sin impacto\" solo es cierto si simulas los efectos secundarios. Cuando el shadow se ve bien, el siguiente paso es un canary al ~1–5% con rollback automático."
+      }
+    },
+    {
+      "id": "offline-online-evals.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the sampler that picks ~2% of live traces for the LLM judge. The sample must be **replayable** and spread across every version (canary and control).",
+        "es": "Completa el muestreador que elige ~2% de las trazas en vivo para el juez LLM. La muestra debe ser **reproducible** y repartirse entre todas las versiones (canary y control)."
+      },
+      "lang": "python",
+      "code": "import random, time\nfrom hashlib import sha256\n\nJUDGE_SAMPLE_RATE = 0.02  # ~2% of live traffic\n\ndef in_sample(trace, rate: float = JUDGE_SAMPLE_RATE) -> bool:\n    ____\n    return h / 0xFFFFFFFF < rate\n\njudged = [judge_groundedness(t) for t in traces_24h if in_sample(t)]",
+      "options": [
+        { "text": "h = int(sha256(trace.id.encode()).hexdigest()[:8], 16)" },
+        { "text": "h = int(sha256(trace.version.encode()).hexdigest()[:8], 16)",
+          "why": { "en": "Every trace of a version gets the same hash: you judge 0% or 100% of the canary, never 2%.", "es": "Todas las trazas de una versión obtienen el mismo hash: juzgas 0% o 100% del canary, nunca 2%." } },
+        { "text": "h = int(sha256(str(random.random()).encode()).hexdigest()[:8], 16)",
+          "why": { "en": "Hashing a random number is still random: each rerun judges different traces, so results can't be replayed.", "es": "Hashear un número aleatorio sigue siendo aleatorio: cada corrida juzga trazas distintas, así que no se puede reproducir." } },
+        { "text": "h = int(sha256(str(time.time()).encode()).hexdigest()[:8], 16)",
+          "why": { "en": "The same trace lands in or out depending on when the job runs, so the sample isn't stable.", "es": "La misma traza entra o no según cuándo corre el job, así que la muestra no es estable." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Hash a stable, per-request key. The same trace always lands on the same side, so reruns judge the same set, and a good hash spreads traces uniformly across versions. Hash a per-version key and you sample whole versions; hash randomness or time and you lose replayability.",
+        "es": "Hashea una clave estable y propia de cada request. La misma traza siempre cae del mismo lado, así que cada corrida juzga el mismo conjunto, y un buen hash reparte las trazas de forma uniforme entre versiones. Si hasheas una clave por versión, muestreas versiones completas; si hasheas azar o tiempo, pierdes la reproducibilidad."
+      }
+    },
+    {
+      "id": "offline-online-evals.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "After launch, about 3% of users click thumbs up or down. A PM wants the **thumbs-up rate** to be the release gate for the next version. What's your take?",
+        "es": "Después del lanzamiento, cerca del 3% de los usuarios hace clic en pulgar arriba o abajo. Un PM quiere que la **tasa de pulgares arriba** sea el gate de lanzamiento de la próxima versión. ¿Qué opinas?"
+      },
+      "options": [
+        { "text": { "en": "Use thumbs to find bad examples; gate on outcomes and judged samples", "es": "Usar los pulgares para encontrar malos ejemplos; el gate, con resultados y muestras juzgadas" } },
+        { "text": { "en": "Good gate: explicit feedback is the most direct quality signal", "es": "Buen gate: el feedback explícito es la señal de calidad más directa" },
+          "why": { "en": "It's sparse and skewed toward unhappy users: a tiny self-selected sample, not a score.", "es": "Es escaso y sesgado hacia usuarios molestos: una muestra diminuta y autoseleccionada, no un puntaje." } },
+        { "text": { "en": "Good gate once you collect a few thousand ratings", "es": "Buen gate cuando juntes unos miles de calificaciones" },
+          "why": { "en": "More volume doesn't fix self-selection: the people who choose to click still aren't your typical user.", "es": "Más volumen no corrige la autoselección: quienes eligen hacer clic siguen sin ser tu usuario típico." } },
+        { "text": { "en": "Drop online signals and gate on the golden set only", "es": "Descartar las señales online y usar solo el golden set como gate" },
+          "why": { "en": "Offline alone drifts from production and misses the real query mix; you need both.", "es": "Lo offline por sí solo se aleja de producción y no ve la mezcla real de consultas; necesitas ambos." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Thumbs are great for finding failures and poor as a score. Gate on high-volume implicit behavior (regenerates, edits, escalations), outcomes, and an LLM judge on a hashed 1–5% of traces using the same rubric as the offline suite, so the two numbers compare.",
+        "es": "Los pulgares sirven para encontrar fallas y no como puntaje. Usa como gate el comportamiento implícito de alto volumen (regeneraciones, ediciones, escalamientos), los resultados y un juez LLM sobre un 1–5% de trazas elegido por hash, con la misma rúbrica que la suite offline, para que ambos números se puedan comparar."
+      }
+    },
+    {
+      "id": "offline-online-evals.a4",
+      "type": "order",
+      "prompt": {
+        "en": "Put the safe rollout path for a new LLM version in order.",
+        "es": "Ordena el camino seguro de despliegue de una nueva versión del LLM."
+      },
+      "steps": [
+        { "en": "Pass the offline gate: golden set and regression suite", "es": "Pasar el gate offline: golden set y suite de regresión" },
+        { "en": "Shadow mode: copy live requests, log outputs nobody sees", "es": "Modo shadow: copiar requests reales y registrar salidas que nadie ve" },
+        { "en": "Canary to ~1–5% of users with automatic rollback", "es": "Canary al ~1–5% de los usuarios con rollback automático" },
+        { "en": "Staged ramp (25% → 50% → 100%) gated on guardrails", "es": "Rampa escalonada (25% → 50% → 100%) condicionada a los guardrails" }
+      ],
+      "explain": {
+        "en": "Each step widens exposure only after the cheaper, safer one passes: fixed data first, then real inputs with no users, then few users, then everyone. Failing live traces found along the way go back into the golden set.",
+        "es": "Cada paso amplía la exposición solo después de que pasa el anterior, más barato y seguro: primero datos fijos, luego entradas reales sin usuarios, luego pocos usuarios y al final todos. Las trazas reales que fallan en el camino vuelven al golden set."
+      }
+    }
+  ]
+}

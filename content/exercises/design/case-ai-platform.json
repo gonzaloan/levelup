@@ -1,0 +1,180 @@
+{
+  "concept": "case-ai-platform",
+  "items": [
+    {
+      "id": "case-ai-platform.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your internal LLM gateway keeps per-team token quotas in Redis. At peak, the Redis cluster goes down. Every AI feature in the company calls through this gateway. What should the gateway do?",
+        "es": "El gateway interno de LLM guarda las cuotas de tokens por equipo en Redis. En pleno pico, el clúster de Redis se cae. Todas las funcionalidades de IA de la empresa pasan por este gateway. ¿Qué debería hacer el gateway?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Fail open: keep serving and accept a brief overspend",
+            "es": "Fallar abierto: seguir sirviendo y aceptar un sobregasto breve"
+          },
+          "why": {
+            "en": "A few minutes of unmetered tokens cost far less than taking down every AI feature at once.",
+            "es": "Unos minutos de tokens sin medir cuestan mucho menos que tumbar todas las funcionalidades de IA a la vez."
+          }
+        },
+        {
+          "text": {
+            "en": "Fail closed: reject calls until quotas can be checked",
+            "es": "Fallar cerrado: rechazar llamadas hasta poder revisar cuotas"
+          },
+          "why": {
+            "en": "Turns a bookkeeping outage into a platform-wide outage; the gateway's blast radius is every product.",
+            "es": "Convierte una caída contable en una caída de toda la plataforma; el radio de impacto del gateway es cada producto."
+          }
+        },
+        {
+          "text": {
+            "en": "Queue requests in the gateway until Redis recovers",
+            "es": "Encolar los requests en el gateway hasta que vuelva Redis"
+          },
+          "why": {
+            "en": "Users get hung requests and the gateway piles up long-lived connections; it is an outage with extra steps.",
+            "es": "Los usuarios reciben requests colgados y el gateway acumula conexiones largas; es una caída con pasos extra."
+          }
+        },
+        {
+          "text": {
+            "en": "Route every team to the cheapest alias to cap spend",
+            "es": "Mandar a todos los equipos al alias más barato para limitar el gasto"
+          },
+          "why": {
+            "en": "Silently swaps models under prompts tuned for others, degrading quality platform-wide to protect a budget.",
+            "es": "Cambia modelos en silencio bajo prompts ajustados para otros y degrada la calidad de toda la plataforma para cuidar un presupuesto."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Match the failure mode to the cost of each error. The gateway is a single point of failure for every AI feature, so anything that isn't the call itself must degrade gracefully: quotas fail open, logs are async and buffered, config is cached locally. A brief overspend beats an outage.",
+        "es": "Ajusta el modo de falla al costo de cada error. El gateway es un punto único de falla para todas las funcionalidades de IA, así que todo lo que no es la llamada en sí debe degradarse con gracia: las cuotas fallan abiertas, los logs son asíncronos y con buffer, y la configuración se cachea localmente. Un sobregasto breve es mejor que una caída."
+      }
+    },
+    {
+      "id": "case-ai-platform.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Your platform spends **$175k/month** on tokens. Evals show **70% of traffic** can move to a model **10× cheaper** with quality holding. Assume the token mix stays the same. What is the new monthly spend, in USD?",
+        "es": "Tu plataforma gasta **$175k/mes** en tokens. Los evals muestran que el **70% del tráfico** puede pasar a un modelo **10× más barato** sin perder calidad. Supón que la mezcla de tokens no cambia. ¿Cuál es el nuevo gasto mensual, en USD?"
+      },
+      "answer": 64750,
+      "tolerance": 0.1,
+      "unit": "USD/month",
+      "explain": {
+        "en": "The 30% that stays costs 0.3 of the bill; the 70% that moves costs 0.7 × 0.1 = 0.07. Total 0.37 × $175k ≈ $64.75k, a ~63% cut. Forgetting that the cheap model still costs something gives $52.5k. Routing is usually the biggest cost lever, but only after evals prove quality holds on that traffic.",
+        "es": "El 30% que se queda cuesta 0.3 de la factura; el 70% que se mueve cuesta 0.7 × 0.1 = 0.07. Total 0.37 × $175k ≈ $64.75k, un recorte de ~63%. Si olvidas que el modelo barato también cuesta, te da $52.5k. El ruteo suele ser la palanca de costo más grande, pero solo después de que los evals prueben que la calidad se mantiene en ese tráfico."
+      }
+    },
+    {
+      "id": "case-ai-platform.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the online path of one LLM call through the internal AI platform in order.",
+        "es": "Ordena el camino online de una llamada al LLM a través de la plataforma interna de IA."
+      },
+      "steps": [
+        {
+          "en": "SDK attaches the team's virtual key and a trace ID",
+          "es": "El SDK agrega la virtual key del equipo y un trace ID"
+        },
+        {
+          "en": "Gateway authenticates the virtual key",
+          "es": "El gateway autentica la virtual key"
+        },
+        {
+          "en": "Check data-class policy and token quota",
+          "es": "Revisar la política por clase de datos y la cuota de tokens"
+        },
+        {
+          "en": "Input guardrails mask PII",
+          "es": "Los guardrails de entrada enmascaran la PII"
+        },
+        {
+          "en": "Router sends the alias to a provider, with fallback on errors",
+          "es": "El router envía el alias a un proveedor, con fallback si hay errores"
+        },
+        {
+          "en": "Log tokens, latency and cost with team tags",
+          "es": "Registrar tokens, latencia y costo con las etiquetas del equipo"
+        }
+      ],
+      "explain": {
+        "en": "Identity first, because policy and quotas are per team; policy before guardrails and routing, so confidential data never reaches a disallowed provider; masking before the call leaves the building. Cost logging comes last and runs async, off the request path, tagged so every dollar is attributable.",
+        "es": "Primero la identidad, porque la política y las cuotas son por equipo; la política antes de los guardrails y del ruteo, para que los datos confidenciales nunca lleguen a un proveedor no permitido; el enmascarado antes de que la llamada salga. El registro de costos va al final, asíncrono y fuera de la ruta del request, etiquetado para atribuir cada dólar."
+      }
+    },
+    {
+      "id": "case-ai-platform.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "You are setting the rules for a new internal AI platform. Which choices are sound? Select all that apply.",
+        "es": "Estás definiendo las reglas de una nueva plataforma interna de IA. ¿Qué decisiones son acertadas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Fall back to the same model on another cloud before another family",
+            "es": "Hacer fallback al mismo modelo en otra nube antes que a otra familia"
+          }
+        },
+        {
+          "text": {
+            "en": "Report cost per successful task, not cost per token",
+            "es": "Reportar el costo por tarea exitosa, no el costo por token"
+          }
+        },
+        {
+          "text": {
+            "en": "Start with showback; move to chargeback once teams trust the numbers",
+            "es": "Empezar con showback y pasar a chargeback cuando los equipos confíen en los números"
+          }
+        },
+        {
+          "text": {
+            "en": "Mandate a rich internal SDK framework so no team can bypass it",
+            "es": "Imponer un framework interno de SDK completo para que nadie lo esquive"
+          },
+          "why": {
+            "en": "Heavy frameworks get routed around. Only the gateway is mandatory, enforced by key control; the rest wins on convenience.",
+            "es": "Los frameworks pesados se esquivan. Solo el gateway es obligatorio, forzado con el control de keys; lo demás gana por comodidad."
+          }
+        },
+        {
+          "text": {
+            "en": "Write cost logs synchronously so no request goes unbilled",
+            "es": "Escribir los logs de costo de forma síncrona para que ningún request quede sin cobrar"
+          },
+          "why": {
+            "en": "Logging on the request path adds latency and a failure mode to every call; log async and buffered.",
+            "es": "Registrar en la ruta del request agrega latencia y un modo de falla a cada llamada; registra de forma asíncrona y con buffer."
+          }
+        },
+        {
+          "text": {
+            "en": "Let model approval take a full quarter of review to be safe",
+            "es": "Dejar que aprobar un modelo tome un trimestre de revisión por seguridad"
+          },
+          "why": {
+            "en": "Slow approvals push teams back to personal keys; aim for a ~2-week SLA with a standard review.",
+            "es": "Las aprobaciones lentas devuelven a los equipos a sus keys personales; apunta a un SLA de ~2 semanas con una revisión estándar."
+          }
+        }
+      ],
+      "answers": [
+        0,
+        1,
+        2
+      ],
+      "explain": {
+        "en": "Mandatory at the choke point, opt-in everywhere else. Prompts are tuned per model, so same-model fallback is safe; a cheap model that fails half the time is expensive; chargeback works only once teams trust the numbers. The wrong options buy control at the cost of adoption or reliability, and teams route around both.",
+        "es": "Obligatorio en el punto de control, opcional en todo lo demás. Los prompts se ajustan por modelo, así que el fallback al mismo modelo es seguro; un modelo barato que falla la mitad de las veces sale caro; el chargeback solo funciona cuando los equipos confían en los números. Las opciones incorrectas compran control a costa de adopción o confiabilidad, y los equipos esquivan ambas cosas."
+      }
+    }
+  ]
+}

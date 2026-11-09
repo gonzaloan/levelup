@@ -1,0 +1,76 @@
+{
+  "concept": "synthetic-data",
+  "items": [
+    {
+      "id": "synthetic-data.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your team generated 10,000 SFT examples with one model, one prompt template and one temperature. Clustering shows they are paraphrases of about 50 ideas, and the fine-tune barely moves the real metric. Best next step?",
+        "es": "Tu equipo generó 10 mil ejemplos de SFT con un modelo, una plantilla de prompt y una temperatura. Al hacer clustering, ves que son paráfrasis de unas 50 ideas, y el fine-tuning casi no mueve la métrica real. ¿Mejor siguiente paso?"
+      },
+      "options": [
+        { "text": { "en": "Vary personas, seeds and constraints, and track cluster coverage", "es": "Variar personas, semillas y restricciones, y medir la cobertura por clusters" },
+          "why": { "en": "Diversity has to be injected on purpose; measuring clusters tells you if it worked.", "es": "La diversidad hay que inyectarla a propósito; medir los clusters te dice si funcionó." } },
+        { "text": { "en": "Generate 100,000 more examples with the same setup", "es": "Generar 100 mil ejemplos más con la misma configuración" },
+          "why": { "en": "Same model, template and temperature give more paraphrases of the same 50 ideas.", "es": "El mismo modelo, plantilla y temperatura dan más paráfrasis de las mismas 50 ideas." } },
+        { "text": { "en": "Loosen the dedup threshold so fewer examples get dropped", "es": "Relajar el umbral de dedup para que se descarten menos ejemplos" },
+          "why": { "en": "That keeps more near-copies; the set grows but its coverage doesn't.", "es": "Eso conserva más casi copias; el set crece pero su cobertura no." } },
+        { "text": { "en": "Switch to a bigger generator but keep the same template", "es": "Cambiar a un generador más grande pero mantener la misma plantilla" },
+          "why": { "en": "A single template still steers every sample toward the same ideas, whatever the model size.", "es": "Una sola plantilla sigue empujando cada muestra hacia las mismas ideas, sin importar el tamaño del modelo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Volume isn't coverage. A generator left alone collapses onto its favorite outputs, so diversity must come from the inputs: personas, seed tasks, Evol-Instruct-style constraints, source documents. Then measure it (clusters, dedup rate) and prove value with an ablation on real held-out data.",
+        "es": "Volumen no es cobertura. Un generador sin guía converge a sus salidas favoritas, así que la diversidad tiene que venir de las entradas: personas, tareas semilla, restricciones al estilo Evol-Instruct, documentos fuente. Luego mídela (clusters, tasa de dedup) y demuestra el valor con una ablación sobre datos reales reservados."
+      }
+    },
+    {
+      "id": "synthetic-data.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the verify step so a synthetic ticket survives only if an **independent** check confirms its label. `relabel()` asks a second model, from a different family, to classify the message.",
+        "es": "Completa el paso de verificación para que un ticket sintético sobreviva solo si un chequeo **independiente** confirma su etiqueta. `relabel()` le pide a un segundo modelo, de otra familia, que clasifique el mensaje."
+      },
+      "lang": "python",
+      "code": "def build_dataset(n: int) -> list[Ticket]:\n    tickets = generate(n)                          # persona x intent, structured output\n    tickets = dedup_minhash(tickets, threshold=0.8) # near-copies kill diversity\n    ____\n    review_queue(rng.sample(tickets, 200))          # humans before training\n    return tickets",
+      "options": [
+        { "text": "tickets = [t for t in tickets if relabel(t.message) == t.intent]" },
+        { "text": "tickets = [t for t in tickets if t.intent in INTENTS]",
+          "why": { "en": "Always true: the generator drew the intent from INTENTS, so this verifies nothing.", "es": "Siempre es verdadero: el generador tomó la intención de INTENTS, así que esto no verifica nada." } },
+        { "text": "tickets = [t for t in tickets if relabel(t.message) != t.intent]",
+          "why": { "en": "Inverted: it keeps exactly the tickets where the second model disagrees, the likely mislabels.", "es": "Invertido: conserva justo los tickets donde el segundo modelo no coincide, los probables mal etiquetados." } },
+        { "text": "tickets = [t for t in tickets if len(t.message) > 20]",
+          "why": { "en": "A length check drops junk but never checks that the message matches its label.", "es": "Un chequeo de longitud descarta basura, pero nunca revisa que el mensaje corresponda a su etiqueta." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Generation is the easy half; quality comes from filters. An independent model must reproduce the label from the message alone, so examples where the generator ignored or blurred the intent are dropped. Using another model family avoids shared blind spots, and humans still review a random sample.",
+        "es": "Generar es la mitad fácil; la calidad sale de los filtros. Un modelo independiente debe reproducir la etiqueta solo a partir del mensaje, así se descartan los ejemplos donde el generador ignoró o desdibujó la intención. Usar otra familia de modelos evita puntos ciegos compartidos, y una persona igual revisa una muestra aleatoria."
+      }
+    },
+    {
+      "id": "synthetic-data.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about synthetic data are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los datos sintéticos son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Accumulating synthetic data on top of real data avoids model collapse", "es": "Acumular datos sintéticos encima de los reales evita el model collapse" } },
+        { "text": { "en": "Synthetic eval inputs are cleaner than real traffic and inflate scores", "es": "Las entradas sintéticas de eval son más limpias que el tráfico real e inflan los puntajes" } },
+        { "text": { "en": "Grounded generation takes its facts from your documents, not model memory", "es": "La generación anclada toma los hechos de tus documentos, no de la memoria del modelo" } },
+        { "text": { "en": "Judging with the generator model keeps eval scores consistent and fair", "es": "Juzgar con el mismo modelo generador mantiene los puntajes de eval consistentes y justos" },
+          "why": { "en": "Shared blind spots inflate scores; judge with a different family and anchor on human labels.", "es": "Los puntos ciegos compartidos inflan los puntajes; juzga con otra familia y ancla en etiquetas humanas." } },
+        { "text": { "en": "Freshly generated data is free of benchmark test items", "es": "Los datos recién generados están libres de ítems de benchmarks" },
+          "why": { "en": "Generators reproduce famous test items; decontaminate synthetic sets like any other data.", "es": "Los generadores reproducen ítems de prueba famosos; descontamina los sets sintéticos como cualquier otro dato." } },
+        { "text": { "en": "Mixing synthetic data into training causes model collapse", "es": "Mezclar datos sintéticos en el entrenamiento causa model collapse" },
+          "why": { "en": "The risk comes from replacing real data with synthetic across generations, not from mixing it in.", "es": "El riesgo viene de reemplazar datos reales por sintéticos generación tras generación, no de mezclarlos." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Synthetic data is bounded by its generator: it's cleaner than reality, shares the generator's blind spots and can leak what the generator memorized. Keep a real-data anchor for training and for the headline eval metric, ground facts in your sources, and verify with an independent judge.",
+        "es": "Los datos sintéticos están limitados por su generador: son más limpios que la realidad, comparten los puntos ciegos del generador y pueden filtrar lo que memorizó. Mantén un ancla de datos reales para entrenar y para la métrica principal de eval, ancla los hechos en tus fuentes y verifica con un juez independiente."
+      }
+    }
+  ]
+}

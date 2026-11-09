@@ -1,0 +1,66 @@
+{
+  "concept": "gpu-memory-math",
+  "items": [
+    {
+      "id": "gpu-memory-math.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You must serve Llama-3-70B at 8k context to ~40 concurrent users. INT4 on one H100 fits but holds only ~12 sequences. Assume ~68 GB usable per H100 and ~2.7 GB of FP16 KV per 8k sequence. Which option meets the target with the **fewest GPUs**?",
+        "es": "Debes servir Llama-3-70B con contexto de 8k a ~40 usuarios concurrentes. En INT4 sobre una H100 cabe, pero solo admite ~12 secuencias. Supón ~68 GB utilizables por H100 y ~2.7 GB de KV en FP16 por secuencia de 8k. ¿Qué opción cumple el objetivo con la **menor cantidad de GPUs**?"
+      },
+      "options": [
+        { "text": { "en": "FP8 weights and FP8 KV cache on 2×H100", "es": "Pesos FP8 y KV cache en FP8 sobre 2×H100" },
+          "why": { "en": "136 − 70 GB leaves ~66 GB of KV; FP8 halves each 8k sequence to ~1.3 GB, so ~49 sequences fit.", "es": "136 − 70 GB deja ~66 GB de KV; FP8 reduce cada secuencia de 8k a ~1.3 GB, así que entran ~49 secuencias." } },
+        { "text": { "en": "FP16 weights and FP16 KV cache on 2×H100", "es": "Pesos FP16 y KV cache en FP16 sobre 2×H100" },
+          "why": { "en": "140 GB of weights exceed the ~136 GB usable on two GPUs: it doesn't even load.", "es": "140 GB de pesos superan los ~136 GB utilizables en dos GPUs: ni siquiera carga." } },
+        { "text": { "en": "FP16 weights and FP16 KV cache on 3×H100", "es": "Pesos FP16 y KV cache en FP16 sobre 3×H100" },
+          "why": { "en": "204 − 140 = 64 GB of KV ÷ 2.7 GB ≈ 23 sequences: well short of 40.", "es": "204 − 140 = 64 GB de KV ÷ 2.7 GB ≈ 23 secuencias: bastante menos que 40." } },
+        { "text": { "en": "INT4 weights on 1×H100 with `gpu_memory_utilization=1.0`", "es": "Pesos INT4 en 1×H100 con `gpu_memory_utilization=1.0`" },
+          "why": { "en": "The extra ~8 GB buys about three more 8k sequences, far from 40, and leaves no slack against OOM.", "es": "Los ~8 GB extra alcanzan para unas tres secuencias de 8k más, lejos de 40, y no dejan margen contra un OOM." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Weights are a fixed cost; the KV pool left over is what sets concurrency. Halving bytes on both weights and KV shrinks the fixed cost and the per-sequence cost at once: FP8 on 2 GPUs matches FP16 on 4 (~49 sequences), once an eval confirms quality.",
+        "es": "Los pesos son un costo fijo; el pool de KV que sobra es lo que define la concurrencia. Reducir a la mitad los bytes de pesos y de KV achica a la vez el costo fijo y el costo por secuencia: FP8 en 2 GPUs iguala a FP16 en 4 (~49 secuencias), una vez que un eval confirme la calidad."
+      }
+    },
+    {
+      "id": "gpu-memory-math.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Llama-3-70B in FP16 on 4×H100 leaves a **132 GB** KV pool after weights and overhead. Config: 80 layers, 8 KV heads (GQA), head_dim 128, KV in FP16 (2 bytes). How many concurrent **16k-token** sequences fit? Use 16k = 16,384 tokens and 1 GB = 10⁹ bytes.",
+        "es": "Llama-3-70B en FP16 sobre 4×H100 deja un pool de KV de **132 GB** después de los pesos y el overhead. Configuración: 80 capas, 8 KV heads (GQA), head_dim 128, KV en FP16 (2 bytes). ¿Cuántas secuencias concurrentes de **16k tokens** entran? Usa 16k = 16,384 tokens y 1 GB = 10⁹ bytes."
+      },
+      "answer": 24,
+      "tolerance": 0.12,
+      "unit": "sequences",
+      "explain": {
+        "en": "KV per token = 2 × 80 × 8 × 128 × 2 B = 327,680 B (320 KiB). Per 16k sequence: 327,680 × 16,384 ≈ 5.37 GB. 132 ÷ 5.37 ≈ 24. Doubling context from 8k halves concurrency (~49 → ~24); using query heads instead of KV heads would understate it several-fold.",
+        "es": "KV por token = 2 × 80 × 8 × 128 × 2 B = 327,680 B (320 KiB). Por secuencia de 16k: 327,680 × 16,384 ≈ 5.37 GB. 132 ÷ 5.37 ≈ 24. Duplicar el contexto desde 8k reduce la concurrencia a la mitad (~49 → ~24); usar los query heads en vez de los KV heads la subestimaría varias veces."
+      }
+    },
+    {
+      "id": "gpu-memory-math.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "You move a model from FP16 to INT4 **weight-only** quantization. TPOT drops noticeably, but TTFT on long prompts barely changes. Why?",
+        "es": "Pasas un modelo de FP16 a cuantización INT4 **solo de pesos**. El TPOT baja de forma notable, pero el TTFT con prompts largos casi no cambia. ¿Por qué?"
+      },
+      "options": [
+        { "text": { "en": "Prefill is compute-bound; fewer weight bytes mainly speed up bandwidth-bound decode", "es": "El prefill está limitado por cómputo; menos bytes de pesos aceleran sobre todo el decode, limitado por ancho de banda" },
+          "why": { "en": "Decode streams every weight per token, so smaller weights help; prefill does many FLOPs per weight read.", "es": "El decode lee todos los pesos por token, así que pesos más chicos ayudan; el prefill hace muchos FLOPs por cada lectura de pesos." } },
+        { "text": { "en": "The INT4 kernels are misconfigured; TTFT should drop as much as TPOT", "es": "Los kernels INT4 están mal configurados; el TTFT debería bajar tanto como el TPOT" },
+          "why": { "en": "Expecting INT4 to speed up everything is the misconception: the two phases have different bottlenecks.", "es": "Esperar que INT4 acelere todo es justamente el error: las dos fases tienen cuellos de botella distintos." } },
+        { "text": { "en": "TTFT is set by network latency to the client, not by the GPU", "es": "El TTFT lo define la latencia de red hacia el cliente, no la GPU" },
+          "why": { "en": "On long prompts, TTFT is dominated by the prefill pass on the GPU, not the network.", "es": "Con prompts largos, el TTFT lo domina la pasada de prefill en la GPU, no la red." } },
+        { "text": { "en": "INT4 frees memory for KV, which only helps once the batch is full", "es": "INT4 libera memoria para KV, lo cual solo ayuda cuando el batch ya está lleno" },
+          "why": { "en": "True that it frees KV room, but that affects concurrency, not why one prompt's prefill stays slow.", "es": "Es cierto que libera lugar para KV, pero eso afecta la concurrencia, no explica por qué el prefill de un prompt sigue lento." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Ask which resource each phase saturates. Batch-1 decode reads all weights per token, so it's capped at bandwidth ÷ weight bytes and shrinking weights raises that ceiling. Prefill processes the whole prompt in parallel and is compute-bound, so weight-only quantization barely moves it.",
+        "es": "Pregúntate qué recurso satura cada fase. El decode con batch 1 lee todos los pesos por token, así que su techo es ancho de banda ÷ bytes de pesos, y achicar los pesos sube ese techo. El prefill procesa todo el prompt en paralelo y está limitado por cómputo, así que cuantizar solo los pesos casi no lo mueve."
+      }
+    }
+  ]
+}

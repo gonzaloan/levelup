@@ -1,0 +1,73 @@
+{
+  "concept": "feature-engineering",
+  "items": [
+    {
+      "id": "feature-engineering.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You review features for a fraud model that scores each card transaction **at authorization time**. Which one must you drop or rebuild?",
+        "es": "Revisas las features de un modelo de fraude que puntúa cada transacción con tarjeta **al momento de la autorización**. ¿Cuál debes quitar o reconstruir?"
+      },
+      "options": [
+        { "text": { "en": "The card's `chargebacks_30d`, computed from today's table", "es": "El `chargebacks_30d` de la tarjeta, calculado con la tabla de hoy" } },
+        { "text": { "en": "The card's transaction count in the 24h before this one", "es": "La cantidad de transacciones de la tarjeta en las 24h previas a esta" },
+          "why": { "en": "It uses only events strictly before this one, so it exists at authorization time: a legitimate velocity feature.", "es": "Usa solo eventos estrictamente anteriores, así que existe al momento de autorizar: una feature de velocidad legítima." } },
+        { "text": { "en": "`log1p(amount)`, standardized on the training window", "es": "`log1p(amount)`, estandarizado con la ventana de entrenamiento" },
+          "why": { "en": "The amount is known at authorization and the scaler is fit on train only, so nothing leaks.", "es": "El monto se conoce al autorizar y el scaler se ajusta solo con train, así que no hay fuga." } },
+        { "text": { "en": "Out-of-fold target encoding of `merchant_id`", "es": "Target encoding out-of-fold de `merchant_id`" },
+          "why": { "en": "Cross-fitting means no row's encoding sees its own label; fit on the training window, it's safe.", "es": "El cross-fitting hace que ninguna fila vea su propia etiqueta en su codificación; ajustado con la ventana de entrenamiento, es seguro." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Ask of every feature: would this exact value exist at prediction time? Chargebacks are filed weeks after the transaction, so a count from today's table already contains the outcome for fraudulent rows. Recompute it as of the event timestamp with a point-in-time join.",
+        "es": "Pregúntale a cada feature: ¿existiría este valor exacto al momento de predecir? Los contracargos se presentan semanas después de la transacción, así que un conteo con la tabla de hoy ya contiene el resultado en las filas fraudulentas. Recalcúlalo a la fecha del evento con un join point-in-time."
+      }
+    },
+    {
+      "id": "feature-engineering.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the split so the validation score reflects how this fraud model will perform once deployed.",
+        "es": "Completa el split para que el puntaje de validación refleje cómo le irá a este modelo de fraude una vez desplegado."
+      },
+      "lang": "python",
+      "code": "tx = load_transactions().sort_values(\"ts\")  # card_id, merchant_id, country, amount, ts, is_fraud\ncols = [\"amount\", \"n_tx_24h\", \"country\", \"merchant_id\"]\n\ncut = tx[\"ts\"].quantile(0.8)   # hold out 20% for validation\n____\n\nmodel = make_pipeline(features, LogisticRegression(max_iter=1000))\nmodel.fit(train[cols], train[\"is_fraud\"])   # encoders see the training rows only\np = model.predict_proba(valid[cols])[:, 1]\nprint(\"PR-AUC:\", average_precision_score(valid[\"is_fraud\"], p))",
+      "options": [
+        { "text": "train, valid = tx[tx[\"ts\"] < cut], tx[tx[\"ts\"] >= cut]" },
+        { "text": "train, valid = train_test_split(tx, test_size=0.2, random_state=0)",
+          "why": { "en": "Random rows on time-ordered data: the model trains on the future and the score comes out inflated.", "es": "Filas aleatorias sobre datos ordenados en el tiempo: el modelo entrena con el futuro y el puntaje sale inflado." } },
+        { "text": "train, valid = tx[tx[\"ts\"] >= cut], tx[tx[\"ts\"] < cut]",
+          "why": { "en": "Reversed: it trains on the latest 20% and validates on the past, the opposite of deployment.", "es": "Al revés: entrena con el 20% más reciente y valida con el pasado, lo contrario del despliegue." } },
+        { "text": "train, valid = tx, tx[tx[\"ts\"] >= cut]",
+          "why": { "en": "Training includes the validation window, so the score rewards memorizing rows the model already saw.", "es": "El entrenamiento incluye la ventana de validación, así que el puntaje premia memorizar filas que el modelo ya vio." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "In production the model always scores transactions newer than anything it trained on. A time-based split reproduces that: train on the past, validate on the future, and fit every transform on the training window only.",
+        "es": "En producción el modelo siempre puntúa transacciones más nuevas que todo lo que vio en entrenamiento. Un split por tiempo reproduce eso: entrenar con el pasado, validar con el futuro y ajustar cada transformación solo con la ventana de entrenamiento."
+      }
+    },
+    {
+      "id": "feature-engineering.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate target-encodes `merchant_id` as each merchant's mean fraud rate over the whole training set, then trains a GBDT on those same rows. Train AUC soars; validation lags far behind. What's wrong?",
+        "es": "Un compañero hace target encoding de `merchant_id` con la tasa media de fraude de cada comercio sobre todo el set de entrenamiento, y luego entrena un GBDT con esas mismas filas. El AUC de train se dispara; el de validación queda muy atrás. ¿Qué está mal?"
+      },
+      "options": [
+        { "text": { "en": "Each row's encoding includes its own label; compute it out-of-fold", "es": "La codificación de cada fila incluye su propia etiqueta; calcúlala out-of-fold" } },
+        { "text": { "en": "Target encoding is inherently leaky; use one-hot instead", "es": "El target encoding tiene fuga por naturaleza; usa one-hot" },
+          "why": { "en": "Done out-of-fold it's safe; one-hot on many merchants gives sparse columns that learn nothing for rare ones.", "es": "Hecho out-of-fold es seguro; el one-hot sobre muchos comercios da columnas dispersas que no aprenden nada de los raros." } },
+        { "text": { "en": "Merchant fraud rates drift, so recompute them every day", "es": "Las tasas de fraude por comercio cambian, así que recalcúlalas cada día" },
+          "why": { "en": "Drift is a real risk for target encoding, but it doesn't explain a train–validation gap inside one fit.", "es": "El drift es un riesgo real del target encoding, pero no explica una brecha train–validación dentro de un mismo ajuste." } },
+        { "text": { "en": "The encoded column must be standardized for the GBDT", "es": "La columna codificada debe estandarizarse para el GBDT" },
+          "why": { "en": "Trees split on thresholds and ignore scale; standardizing changes no split.", "es": "Los árboles cortan por umbrales e ignoran la escala; estandarizar no cambia ningún split." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "For a rare merchant, its mean label is mostly the row's own label, so the model learns to read the answer. Cross-fitting encodes each row with statistics from other folds; scikit-learn's `TargetEncoder` does this with 5 folds in `fit_transform`.",
+        "es": "En un comercio raro, su etiqueta media es casi la etiqueta de la propia fila, así que el modelo aprende a leer la respuesta. El cross-fitting codifica cada fila con estadísticas de otros folds; el `TargetEncoder` de scikit-learn lo hace con 5 folds en `fit_transform`."
+      }
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+{
+  "concept": "context-engineering",
+  "items": [
+    {
+      "id": "context-engineering.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your support agent's system prompt holds the full 300-page product manual plus all 40 tools, loaded upfront \"just in case\". It often confuses overlapping tools and ignores key instructions. Best fix?",
+        "es": "El system prompt de tu agente de soporte incluye el manual completo del producto, de 300 páginas, más las 40 herramientas, cargados desde el inicio \"por si acaso\". Seguido confunde herramientas que se traslapan e ignora instrucciones clave. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Load manual sections just in time and keep only the tools it needs", "es": "Cargar secciones del manual just-in-time y dejar solo las herramientas que necesita" },
+          "why": { "en": "Each call then carries a small set of high-signal tokens instead of hundreds of pages of distractors.", "es": "Así cada llamada lleva un conjunto chico de tokens de alta señal en vez de cientos de páginas de distractores." }
+        },
+        {
+          "text": { "en": "Move to a model with a 1M-token window so nothing gets cut", "es": "Pasar a un modelo con ventana de 1M de tokens para no recortar nada" },
+          "why": { "en": "Recall and reasoning still degrade as the window fills (context rot), and the overlapping tools are still there.", "es": "El recall y el razonamiento igual se degradan al llenarse la ventana (context rot), y las herramientas que se traslapan siguen ahí." }
+        },
+        {
+          "text": { "en": "Repeat the key instructions in capitals at the end of the prompt", "es": "Repetir las instrucciones clave en mayúsculas al final del prompt" },
+          "why": { "en": "Patches one symptom; the 300 pages and 40 tools still compete for attention on every call.", "es": "Parcha un síntoma; las 300 páginas y las 40 herramientas siguen compitiendo por la atención en cada llamada." }
+        },
+        {
+          "text": { "en": "Compact the conversation history whenever it passes 100k tokens", "es": "Compactar el historial de la conversación cada vez que pase los 100k tokens" },
+          "why": { "en": "History isn't the bloat here: the static preload is re-sent on every call, however short the conversation.", "es": "El historial no es lo que infla aquí: la precarga estática se reenvía en cada llamada, por corta que sea la conversación." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Attention is a finite budget. Keep lightweight references in context and let the agent pull content with tools when it needs it, and keep the toolset few and non-overlapping. The goal is the smallest set of high-signal tokens, not the most complete one.",
+        "es": "La atención es un presupuesto finito. Deja referencias livianas en el contexto, permite que el agente traiga el contenido con herramientas cuando lo necesite y mantén pocas herramientas que no se traslapen. El objetivo es el conjunto más pequeño de tokens de alta señal, no el más completo."
+      }
+    },
+    {
+      "id": "context-engineering.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "At step 40, an agent's context is 180k tokens, and 70% of it is raw tool output it already acted on. You clear those stale results. Assume the context then stays at its new size for the next 20 steps (ignore growth). How many input tokens do you save over those 20 steps?",
+        "es": "En el paso 40, el contexto de un agente mide 180k tokens y el 70% es salida cruda de herramientas sobre la que ya actuó. Borras esos resultados viejos. Supón que el contexto se queda en su nuevo tamaño durante los siguientes 20 pasos (ignora el crecimiento). ¿Cuántos tokens de entrada ahorras en esos 20 pasos?"
+      },
+      "answer": 2520000,
+      "tolerance": 0.1,
+      "unit": "tokens",
+      "explain": {
+        "en": "Stale output: 0.7 × 180k = 126k tokens. Every step re-sends the whole context, so the saving repeats: 126k × 20 = 2.52M tokens. Trimming helps quality too, since a fuller window degrades recall and reasoning.",
+        "es": "Salida vieja: 0.7 × 180k = 126k tokens. Cada paso reenvía todo el contexto, así que el ahorro se repite: 126k × 20 = 2.52M tokens. Recortar también ayuda a la calidad, porque una ventana más llena degrada el recall y el razonamiento."
+      }
+    },
+    {
+      "id": "context-engineering.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete `compact` so the window **shrinks** while the agent keeps its latest working state.",
+        "es": "Completa `compact` para que la ventana se **reduzca** y el agente conserve su estado de trabajo más reciente."
+      },
+      "lang": "python",
+      "code": "def compact(history, keep_recent=8):\n    # split on a turn boundary, never between tool_use and tool_result\n    old, recent = history[:-keep_recent], history[-keep_recent:]\n    summary = llm(\n        \"Summarize this agent transcript for your future self: goal, decisions, \"\n        \"open bugs, files touched, next step. Drop raw tool output.\\n\\n\" + render(old)\n    )\n    ____",
+      "options": [
+        { "text": "return [{\"role\": \"user\", \"content\": f\"<progress>{summary}</progress>\"}] + recent" },
+        {
+          "text": "return [{\"role\": \"user\", \"content\": f\"<progress>{summary}</progress>\"}]",
+          "why": { "en": "Drops the recent turns: the agent loses the latest tool results it was acting on.", "es": "Descarta los turnos recientes: el agente pierde los últimos resultados de herramientas sobre los que estaba actuando." }
+        },
+        {
+          "text": "return history + [{\"role\": \"user\", \"content\": f\"<progress>{summary}</progress>\"}]",
+          "why": { "en": "Appends the summary but keeps everything: the window grows instead of shrinking.", "es": "Agrega el resumen pero conserva todo: la ventana crece en vez de reducirse." }
+        },
+        {
+          "text": "return old + recent",
+          "why": { "en": "Rebuilds the original history: you paid for a summary and threw it away.", "es": "Reconstruye el historial original: pagaste por un resumen y lo tiraste." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Compaction replaces the old part of the history with a summary that keeps goal, decisions, open bugs and next step, and leaves the latest turns verbatim. It's lossy, so the summary prompt must name what can't be dropped.",
+        "es": "La compactación reemplaza la parte vieja del historial por un resumen que conserva objetivo, decisiones, bugs abiertos y siguiente paso, y deja los últimos turnos tal cual. Pierde información, así que el prompt de resumen debe nombrar lo que no se puede perder."
+      }
+    },
+    {
+      "id": "context-engineering.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about context engineering are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre context engineering son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Sub-agents keep the main context small but raise total token spend", "es": "Los subagentes mantienen chico el contexto principal pero suben el gasto total de tokens" } },
+        {
+          "text": { "en": "A large enough context window makes curation unnecessary", "es": "Una ventana de contexto lo bastante grande vuelve innecesario curar" },
+          "why": { "en": "Recall and reasoning degrade as any window fills, while cost and latency rise on every call.", "es": "El recall y el razonamiento se degradan a medida que se llena cualquier ventana, mientras suben el costo y la latencia en cada llamada." }
+        },
+        { "text": { "en": "A summary that drops open bugs can make the agent retry what failed", "es": "Un resumen que pierde los bugs abiertos puede hacer que el agente reintente lo que falló" } },
+        {
+          "text": { "en": "Clearing stale tool results saves cost but doesn't affect quality", "es": "Borrar resultados viejos de herramientas ahorra costo pero no afecta la calidad" },
+          "why": { "en": "Stale output is distraction: a fuller window means worse recall and reasoning, not just a bigger bill.", "es": "La salida vieja es distracción: una ventana más llena significa peor recall y razonamiento, no solo una factura más alta." }
+        },
+        {
+          "text": { "en": "The system prompt should spell out every edge case to remove ambiguity", "es": "El system prompt debe detallar cada caso borde para eliminar la ambigüedad" },
+          "why": { "en": "Exhaustive rules bloat every call and bury what matters; aim for guidance at the right altitude.", "es": "Las reglas exhaustivas inflan cada llamada y entierran lo importante; apunta a una guía a la altitud correcta." }
+        }
+      ],
+      "answers": [0, 2],
+      "explain": {
+        "en": "More context is not free and not neutral. Every token competes for attention and is re-sent on every step. Each technique (sub-agents, compaction, trimming) trades something: total tokens, lost detail, or another part that needs its own evals.",
+        "es": "Más contexto no es gratis ni neutral. Cada token compite por la atención y se reenvía en cada paso. Cada técnica (subagentes, compactación, recorte) cuesta algo: tokens totales, detalles perdidos u otra pieza que necesita sus propias evals."
+      }
+    }
+  ]
+}

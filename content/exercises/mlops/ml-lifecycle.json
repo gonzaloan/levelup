@@ -1,0 +1,94 @@
+{
+  "concept": "ml-lifecycle",
+  "items": [
+    {
+      "id": "ml-lifecycle.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your retraining pipeline produced a fraud model whose overall AUC beats production by 0.01, but on new users its AUC dropped 4 points. The PM says ship it, since the overall number is up. What do you do?",
+        "es": "Tu pipeline de reentrenamiento produjo un modelo de fraude cuyo AUC global le gana a producción por 0,01, pero en usuarios nuevos su AUC cayó 4 puntos. El PM dice que se lance, porque el número global subió. ¿Qué haces?"
+      },
+      "options": [
+        { "text": { "en": "Block it and add a per-slice regression gate before promotion", "es": "Bloquearlo y agregar un gate de regresión por segmento antes de promover" },
+          "why": { "en": "A small average gain can hide a large loss for one group; the gate makes that a hard stop.", "es": "Una mejora chica en el promedio puede esconder una pérdida grande en un grupo; el gate lo convierte en un freno obligatorio." } },
+        { "text": { "en": "Ship it, because average AUC is the agreed launch metric", "es": "Lanzarlo, porque el AUC promedio es la métrica de lanzamiento acordada" },
+          "why": { "en": "Averages hide slice regressions; a 4-point drop on new users is a real loss the overall number dilutes.", "es": "Los promedios esconden regresiones por segmento; una caída de 4 puntos en usuarios nuevos es una pérdida real que el número global diluye." } },
+        { "text": { "en": "Ship it and retrain weekly so the slice recovers on its own", "es": "Lanzarlo y reentrenar cada semana para que el segmento se recupere solo" },
+          "why": { "en": "Retraining with the same data and code tends to reproduce the same regression; nothing targets the slice.", "es": "Reentrenar con los mismos datos y el mismo código tiende a reproducir la misma regresión; nada apunta al segmento." } },
+        { "text": { "en": "Drop new users from the holdout, since their labels are noisy", "es": "Sacar a los usuarios nuevos del holdout, porque sus etiquetas son ruidosas" },
+          "why": { "en": "Hiding a slice from evaluation doesn't fix the model for the users who hit it.", "es": "Esconder un segmento de la evaluación no arregla el modelo para los usuarios que lo sufren." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Evaluate against the current model per slice, not just on average. A sound promotion gate requires the candidate to win overall and no key slice (country, new users) to regress beyond a set tolerance, such as 1 point. Then investigate why the slice fell before trying again.",
+        "es": "Evalúa contra el modelo actual por segmento, no solo en promedio. Un gate de promoción sólido exige que el candidato gane en general y que ningún segmento clave (país, usuarios nuevos) retroceda más allá de una tolerancia fija, por ejemplo 1 punto. Después investiga por qué cayó el segmento antes de volver a intentar."
+      }
+    },
+    {
+      "id": "ml-lifecycle.a2",
+      "type": "order",
+      "prompt": {
+        "en": "Put one run of a level-1 continuous-training pipeline in order, from trigger to rollout.",
+        "es": "Ordena una ejecución de un pipeline de entrenamiento continuo de nivel 1, desde el disparo hasta el despliegue."
+      },
+      "steps": [
+        { "en": "Load the latest 90-day data window", "es": "Cargar la ventana de datos de los últimos 90 días" },
+        { "en": "Validate the schema and stop the run on anomalies", "es": "Validar el esquema y detener la ejecución si hay anomalías" },
+        { "en": "Build features with the same code serving imports", "es": "Construir features con el mismo código que importa serving" },
+        { "en": "Train the candidate model", "es": "Entrenar el modelo candidato" },
+        { "en": "Evaluate candidate and champion per slice on a recent holdout", "es": "Evaluar candidato y campeón por segmento sobre un holdout reciente" },
+        { "en": "Register the candidate as staging only if it wins", "es": "Registrar el candidato como staging solo si gana" },
+        { "en": "Roll out from the registry via shadow or canary", "es": "Desplegar desde el registry con shadow o canary" }
+      ],
+      "explain": {
+        "en": "Validation comes before training, so bad data stops the line instead of producing a bad model. The candidate is judged against the current champion on the same holdout and slices, only a winner reaches the registry, and rollout from there is gradual.",
+        "es": "La validación va antes del entrenamiento, para que los datos malos detengan la línea en vez de producir un modelo malo. El candidato se compara con el campeón actual sobre el mismo holdout y los mismos segmentos, solo un ganador llega al registry, y desde ahí el despliegue es gradual."
+      }
+    },
+    {
+      "id": "ml-lifecycle.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Your model's dashboard tracks p99 latency, error rate and uptime, all green, while the business metric it drives keeps sliding. Which additional signals would catch the model failing silently? Select all that apply.",
+        "es": "El dashboard de tu modelo mide latencia p99, tasa de errores y uptime, todo en verde, mientras la métrica de negocio que impulsa sigue cayendo. ¿Qué señales adicionales detectarían que el modelo falla en silencio? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Input feature distributions compared with training", "es": "Distribuciones de las features de entrada comparadas con las de entrenamiento" } },
+        { "text": { "en": "The distribution of the model's predictions over time", "es": "La distribución de las predicciones del modelo a lo largo del tiempo" } },
+        { "text": { "en": "Outcomes versus predictions once labels arrive", "es": "Resultados reales contra predicciones cuando llegan las etiquetas" } },
+        { "text": { "en": "CPU and memory utilization of the serving pods", "es": "Uso de CPU y memoria de los pods de serving" },
+          "why": { "en": "Still service health: a wrong model uses the same CPU as a right one.", "es": "Sigue siendo salud del servicio: un modelo equivocado usa la misma CPU que uno correcto." } },
+        { "text": { "en": "Requests per second for each endpoint", "es": "Requests por segundo de cada endpoint" },
+          "why": { "en": "Traffic volume says nothing about whether the predictions are right.", "es": "El volumen de tráfico no dice nada sobre si las predicciones son correctas." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "A model can fail behind HTTP 200 with perfect latency. Monitor three layers beyond the service: inputs (drift against training), predictions (score shifts) and outcomes (precision or chargebacks once labels land). Outcomes are the ground truth; the first two warn you early when labels are delayed.",
+        "es": "Un modelo puede fallar detrás de un HTTP 200 con latencia perfecta. Monitorea tres capas además del servicio: entradas (drift frente a entrenamiento), predicciones (cambios en los puntajes) y resultados (precisión o contracargos cuando llegan las etiquetas). Los resultados son la verdad; las otras dos te avisan antes cuando las etiquetas se demoran."
+      }
+    },
+    {
+      "id": "ml-lifecycle.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your team runs one stable batch model, retrained once a year on slowly changing data. A VP proposes a quarter of platform work to reach MLOps level 2. What do you advise?",
+        "es": "Tu equipo opera un único modelo batch estable, que se reentrena una vez al año con datos que cambian poco. Un VP propone un trimestre de trabajo de plataforma para llegar al nivel 2 de MLOps. ¿Qué le recomiendas?"
+      },
+      "options": [
+        { "text": { "en": "A documented level-0 process plus monitoring; level 2 won't pay off here", "es": "Un proceso de nivel 0 documentado más monitoreo; el nivel 2 no se paga aquí" },
+          "why": { "en": "Automation should scale with retraining frequency and the cost of a silent failure; both are low here.", "es": "La automatización debe crecer con la frecuencia de reentrenamiento y el costo de una falla silenciosa; aquí ambos son bajos." } },
+        { "text": { "en": "Go to level 2, since full automation pays for itself over time", "es": "Ir al nivel 2, porque la automatización completa se paga sola con el tiempo" },
+          "why": { "en": "Level 2 is months of platform work that rarely pays off for a single model.", "es": "El nivel 2 son meses de trabajo de plataforma que rara vez se pagan para un solo modelo." } },
+        { "text": { "en": "Level 1 with daily retraining, so the model stays as fresh as possible", "es": "Nivel 1 con reentrenamiento diario, para que el modelo esté lo más fresco posible" },
+          "why": { "en": "Daily retrains add moving parts with no payoff when the data barely changes; monitoring tells you when it does.", "es": "Reentrenar a diario suma piezas móviles sin beneficio si los datos casi no cambian; el monitoreo te avisa cuando cambian." } },
+        { "text": { "en": "Skip monitoring too, since a model this stable rarely drifts", "es": "Omitir también el monitoreo, porque un modelo tan estable rara vez tiene drift" },
+          "why": { "en": "Stable data can still shift. Even a level-0 process needs monitoring of inputs and outcomes.", "es": "Datos estables igual pueden cambiar. Hasta un proceso de nivel 0 necesita monitorear entradas y resultados." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Maturity levels describe how much of the loop is automated, not a ladder every model must climb. Automate in proportion to how often you retrain and how costly a silent failure is. A yearly batch model needs a reproducible, documented process and monitoring; level 2 earns its cost across many models or frequent releases.",
+        "es": "Los niveles de madurez describen cuánto del ciclo está automatizado, no una escalera que todo modelo deba subir. Automatiza en proporción a qué tan seguido reentrenas y a cuánto cuesta una falla silenciosa. Un modelo batch anual necesita un proceso documentado y reproducible más monitoreo; el nivel 2 se justifica con muchos modelos o lanzamientos frecuentes."
+      }
+    }
+  ]
+}

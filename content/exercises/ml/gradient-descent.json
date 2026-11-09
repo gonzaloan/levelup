@@ -1,0 +1,88 @@
+{
+  "concept": "gradient-descent",
+  "items": [
+    {
+      "id": "gradient-descent.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You fine-tune pretrained BERT-base for ticket classification with Adam at its textbook **lr = 1e-3**. Within a few hundred steps it predicts only the majority class. What's your first fix?",
+        "es": "Haces fine-tuning de BERT-base preentrenado para clasificar tickets con Adam y su LR de manual, **lr = 1e-3**. En unos cientos de pasos solo predice la clase mayoritaria. ¿Cuál es tu primera corrección?"
+      },
+      "options": [
+        { "text": { "en": "Drop the LR to ~2e-5–5e-5 with warmup, then decay", "es": "Bajar el LR a ~2e-5–5e-5 con warmup y luego decaimiento" } },
+        { "text": { "en": "Train for more epochs so the model can recover", "es": "Entrenar más épocas para que el modelo se recupere" },
+          "why": { "en": "The pretrained weights are already wrecked; more steps at a too-high LR won't restore them.", "es": "Los pesos preentrenados ya quedaron destruidos; más pasos con un LR demasiado alto no los recuperan." } },
+        { "text": { "en": "Switch the loss from cross-entropy to MSE", "es": "Cambiar la pérdida de entropía cruzada a MSE" },
+          "why": { "en": "MSE on softmax or sigmoid outputs makes gradients vanish when the model is confidently wrong; the loss isn't the problem.", "es": "MSE sobre salidas softmax o sigmoide hace que los gradientes se desvanezcan cuando el modelo se equivoca con confianza; la pérdida no es el problema." } },
+        { "text": { "en": "Oversample the minority classes to rebalance", "es": "Sobremuestrear las clases minoritarias para balancear" },
+          "why": { "en": "Collapse within a few hundred steps at 1e-3 points to the LR destroying pretrained weights, not to class imbalance.", "es": "Un colapso en unos cientos de pasos con 1e-3 apunta a que el LR destruyó los pesos preentrenados, no al desbalance de clases." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Check the learning rate first. Fine-tuning starts from good weights, so it needs a far smaller LR than training from scratch: the BERT paper's grid is 2e-5 to 5e-5. Warmup keeps Adam's early, noisy steps from shoving the weights too far.",
+        "es": "Revisa primero el learning rate. El fine-tuning parte de buenos pesos, así que necesita un LR mucho más chico que entrenar desde cero: el grid del paper de BERT va de 2e-5 a 5e-5. El warmup evita que los primeros pasos de Adam, todavía ruidosos, empujen los pesos demasiado lejos."
+      }
+    },
+    {
+      "id": "gradient-descent.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the gradient of **binary cross-entropy** with respect to the logit in this mini-batch SGD loop.",
+        "es": "Completa el gradiente de la **entropía cruzada binaria** respecto del logit en este ciclo de SGD con mini-batches."
+      },
+      "lang": "python",
+      "code": "import numpy as np\n\ndef sigmoid(z): return 1 / (1 + np.exp(-z))\n\nw, b = np.zeros(2), 0.0\nvw, vb = np.zeros(2), 0.0                  # momentum buffers\nlr, beta, batch = 0.05, 0.9, 64\n\nfor step in range(2001):\n    idx = rng.integers(0, len(X), batch)   # sample a mini-batch\n    p = sigmoid(X[idx] @ w + b)\n    ____                                   # dLoss/dlogit\n    gw, gb = X[idx].T @ err / batch, err.mean()\n    vw = beta * vw + gw\n    vb = beta * vb + gb\n    w, b = w - lr * vw, b - lr * vb        # step against the gradient",
+      "options": [
+        { "text": "err = p - y[idx]" },
+        { "text": "err = y[idx] - p",
+          "why": { "en": "Sign flipped: combined with `w - lr * vw`, every step climbs the loss instead of descending it.", "es": "Signo invertido: combinado con `w - lr * vw`, cada paso sube la pérdida en vez de bajarla." } },
+        { "text": "err = (p - y[idx]) * p * (1 - p)",
+          "why": { "en": "That's the MSE-on-sigmoid gradient (up to a constant): the p(1 − p) factor vanishes exactly when the model is confidently wrong.", "es": "Ese es el gradiente de MSE sobre sigmoide (salvo una constante): el factor p(1 − p) se anula justo cuando el modelo se equivoca con confianza." } },
+        { "text": "err = -np.log(p)",
+          "why": { "en": "That's part of the loss value, not its gradient, and it ignores the label entirely.", "es": "Eso es parte del valor de la pérdida, no su gradiente, y además ignora por completo la etiqueta." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "For sigmoid or softmax plus cross-entropy, the gradient with respect to the logits is simply p − y: large when the model is confidently wrong, zero when it's right. That clean, non-vanishing signal is why cross-entropy beats MSE for classification.",
+        "es": "Con sigmoide o softmax más entropía cruzada, el gradiente respecto de los logits es simplemente p − y: grande cuando el modelo se equivoca con confianza y cero cuando acierta. Esa señal limpia, que no se desvanece, es la razón por la que la entropía cruzada le gana a MSE para clasificar."
+      }
+    },
+    {
+      "id": "gradient-descent.a3",
+      "type": "numeric",
+      "prompt": {
+        "en": "Mixed-precision Adam needs ~16 bytes per parameter (bf16 weights and grads, fp32 master copy, 2 fp32 moments). How many GB of GPU memory does a **13B**-parameter model need for these alone, before activations? Use 1 GB = 10⁹ bytes.",
+        "es": "Adam en precisión mixta necesita ~16 bytes por parámetro (pesos y gradientes en bf16, copia maestra fp32, 2 momentos fp32). ¿Cuántos GB de memoria de GPU necesita un modelo de **13B** parámetros solo para esto, sin contar activaciones? Usa 1 GB = 10⁹ bytes."
+      },
+      "answer": 208,
+      "tolerance": 0.1,
+      "unit": "GB",
+      "explain": {
+        "en": "13 × 10⁹ params × 16 bytes = 208 × 10⁹ bytes ≈ 208 GB. Only 26 GB of that is the bf16 weights: optimizer state and the master copy dominate, which is why large runs shard them with FSDP/ZeRO.",
+        "es": "13 × 10⁹ parámetros × 16 bytes = 208 × 10⁹ bytes ≈ 208 GB. Solo 26 GB son los pesos en bf16: el estado del optimizador y la copia maestra dominan, y por eso las corridas grandes los particionan con FSDP/ZeRO."
+      }
+    },
+    {
+      "id": "gradient-descent.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate adds an L2 penalty to the loss, trains with Adam, and says it's equivalent to AdamW with weight decay. Are they right?",
+        "es": "Un compañero agrega una penalización L2 a la pérdida, entrena con Adam y dice que es equivalente a AdamW con weight decay. ¿Tiene razón?"
+      },
+      "options": [
+        { "text": { "en": "No: Adam's adaptive step rescales the L2 penalty and weakens it", "es": "No: el paso adaptativo de Adam reescala la penalización L2 y la debilita" } },
+        { "text": { "en": "Yes: L2 and weight decay are identical for any optimizer", "es": "Sí: L2 y weight decay son idénticos con cualquier optimizador" },
+          "why": { "en": "They coincide for plain SGD. Adam divides the L2 gradient by a per-parameter scale, so the effective decay varies by weight.", "es": "Coinciden con SGD simple. Adam divide el gradiente de L2 por una escala por parámetro, así que el decay efectivo varía según el peso." } },
+        { "text": { "en": "No: AdamW differs because it drops momentum to save memory", "es": "No: AdamW es distinto porque elimina el momentum para ahorrar memoria" },
+          "why": { "en": "AdamW keeps both moment tensors; the only change is applying weight decay separately from the adaptive step.", "es": "AdamW conserva los dos tensores de momentos; lo único que cambia es que aplica el weight decay aparte del paso adaptativo." } },
+        { "text": { "en": "Yes, as long as the run uses LR warmup", "es": "Sí, siempre que la corrida use warmup del LR" },
+          "why": { "en": "Warmup only shapes the early learning rate; it doesn't change how Adam rescales the penalty's gradient.", "es": "El warmup solo da forma al LR inicial; no cambia cómo Adam reescala el gradiente de la penalización." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "With L2 in the loss, the penalty's gradient flows through Adam's per-parameter normalization, so it no longer shrinks every weight proportionally. AdamW decouples it: decay is applied directly to the weights, apart from the adaptive step, which is why it's the default for transformers.",
+        "es": "Con L2 en la pérdida, el gradiente de la penalización pasa por la normalización por parámetro de Adam, así que ya no encoge cada peso de forma proporcional. AdamW lo desacopla: aplica el decay directo sobre los pesos, aparte del paso adaptativo, y por eso es el default para transformers."
+      }
+    }
+  ]
+}

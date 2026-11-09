@@ -1,0 +1,75 @@
+{
+  "concept": "context-rot",
+  "items": [
+    {
+      "id": "context-rot.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A legal RAG puts the top 40 clauses (~30K tokens) in every prompt, question first. The eval keeps missing answers whose clause ranks ~15–25. A teammate proposes raising top-k to 60 \"to be safe\". What do you do instead?",
+        "es": "Un RAG legal mete las 40 mejores cláusulas (~30K tokens) en cada prompt, con la pregunta al principio. La evaluación sigue fallando en respuestas cuya cláusula queda ~15–25. Un compañero propone subir el top-k a 60 \"por si acaso\". ¿Qué haces en su lugar?"
+      },
+      "options": [
+        { "text": { "en": "Rerank down to ~6 chunks, strongest at the edges, question after the documents", "es": "Reordenar hasta ~6 chunks, los más fuertes en los extremos y la pregunta después de los documentos" },
+          "why": { "en": "The clause is already retrieved; it gets lost mid-context. Fewer chunks at the edges plus question-last fix the use, not the recall.", "es": "La cláusula ya se recupera; se pierde en medio del contexto. Menos chunks en los extremos y la pregunta al final arreglan el uso, no el recall." } },
+        { "text": { "en": "Raise top-k to 60 so the right clause is always somewhere in the prompt", "es": "Subir el top-k a 60 para que la cláusula correcta siempre esté en algún lugar del prompt" },
+          "why": { "en": "It is already in the prompt; more chunks add distractors and push it deeper into the middle.", "es": "Ya está en el prompt; más chunks agregan distractores y la empujan más hacia el medio." } },
+        { "text": { "en": "Move to a model with a 1M-token window so 30K is a small fraction", "es": "Pasar a un modelo con ventana de 1M tokens para que 30K sea una fracción chica" },
+          "why": { "en": "A window is how much a model can read, not how well it uses it; position effects remain.", "es": "La ventana es cuánto puede leer el modelo, no qué tan bien lo usa; los efectos de posición siguen ahí." } },
+        { "text": { "en": "Keep the question first so the model knows what to look for while reading", "es": "Mantener la pregunta al principio para que el modelo sepa qué buscar mientras lee" },
+          "why": { "en": "Anthropic measured up to ~30% better responses with the query after long documents.", "es": "Anthropic midió respuestas hasta ~30% mejores con la consulta después de los documentos largos." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Use of long context is U-shaped: facts at the start or end get used, the middle gets lost. When the right chunk is retrieved but missed, the fix is fewer, better chunks placed at the edges, with the question last. It also cuts input cost on every call.",
+        "es": "El uso del contexto largo tiene forma de U: los hechos al principio o al final se usan, los del medio se pierden. Cuando el chunk correcto se recupera pero se ignora, la corrección es enviar menos chunks y mejores, en los extremos, con la pregunta al final. Además baja el costo de entrada en cada llamada."
+      }
+    },
+    {
+      "id": "context-rot.a2",
+      "type": "code",
+      "prompt": {
+        "en": "`ranked[0]` is the strongest chunk. Fill the gap so the strongest chunks sit at **both** ends of the prompt and the weakest in the middle.",
+        "es": "`ranked[0]` es el chunk más fuerte. Completa el hueco para que los chunks más fuertes queden en **ambos** extremos del prompt y los más débiles en el medio."
+      },
+      "lang": "python",
+      "code": "def edge_order(ranked: list[str]) -> list[str]:\n    front, back = ranked[0::2], ranked[1::2]\n    ____\n\ndef build_prompt(question: str, candidates: list[str]) -> str:\n    top = rerank(question, candidates, keep=6)  # fewer, better chunks\n    docs = \"\\n\\n\".join(\n        f'<doc id=\"{i}\">\\n{c}\\n</doc>' for i, c in enumerate(edge_order(top))\n    )\n    return f\"<documents>\\n{docs}\\n</documents>\\n\\nQuestion: {question}\"",
+      "options": [
+        { "text": "return front + back[::-1]" },
+        { "text": "return front + back",
+          "why": { "en": "You get [1,3,5,2,4,6]: the second-best chunk lands mid-context and the weakest takes the strong last slot.", "es": "Obtienes [1,3,5,2,4,6]: el segundo mejor chunk cae en medio del contexto y el más débil ocupa el último lugar, que es fuerte." } },
+        { "text": "return ranked[::-1]",
+          "why": { "en": "You get [6,5,4,3,2,1]: only the end holds a strong chunk, and the weakest takes the prime first slot.", "es": "Obtienes [6,5,4,3,2,1]: solo el final tiene un chunk fuerte, y el más débil ocupa el primer lugar, que es privilegiado." } },
+        { "text": "return ranked",
+          "why": { "en": "You get [1,2,3,4,5,6]: only the start holds strong chunks, and the weakest gets the strong last slot.", "es": "Obtienes [1,2,3,4,5,6]: solo el principio tiene chunks fuertes, y el más débil se queda con el último lugar, que es fuerte." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Odd ranks go forward, even ranks go backward: [1,2,3,4,5,6] becomes [1,3,5,6,4,2], so #1 opens and #2 closes the context while #5 and #6 sit in the middle. A free reorder with no extra calls that matches the U-shaped way models use position.",
+        "es": "Los rangos impares van hacia adelante y los pares en reversa: [1,2,3,4,5,6] queda [1,3,5,6,4,2], así que el #1 abre y el #2 cierra el contexto, mientras el #5 y el #6 quedan en el medio. Es un reordenamiento gratis, sin llamadas extra, que sigue la forma de U con que los modelos usan la posición."
+      }
+    },
+    {
+      "id": "context-rot.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A vendor's needle-in-a-haystack chart is all green up to 1M tokens. A teammate concludes the model will reason reliably over 500K tokens of your contracts. What's the main flaw?",
+        "es": "El gráfico needle-in-a-haystack de un proveedor está todo en verde hasta 1M tokens. Un compañero concluye que el modelo razonará de forma confiable sobre 500K tokens de tus contratos. ¿Cuál es la falla principal?"
+      },
+      "options": [
+        { "text": { "en": "The needle repeats the question's words: it tests lookup, not reasoning", "es": "La aguja repite las palabras de la pregunta: mide búsqueda, no razonamiento" },
+          "why": { "en": "Lexical overlap makes NIAH the easiest case; harder tests like RULER and NoLiMa show steep drops.", "es": "La coincidencia léxica hace que NIAH sea el caso más fácil; pruebas más difíciles como RULER y NoLiMa muestran caídas fuertes." } },
+        { "text": { "en": "Nothing: if the needle is found at 1M, quality holds on any task", "es": "Ninguna: si encuentra la aguja en 1M, la calidad se mantiene en cualquier tarea" },
+          "why": { "en": "NoLiMa: at 32K tokens, 11 of 13 models fell below 50% of their short-context score.", "es": "NoLiMa: a 32K tokens, 11 de 13 modelos cayeron por debajo del 50% de su puntaje con contexto corto." } },
+        { "text": { "en": "Decay only shows on hard tasks, and contract questions are easy", "es": "El deterioro solo aparece en tareas difíciles, y las preguntas sobre contratos son fáciles" },
+          "why": { "en": "Chroma found quality decays with input length even on trivial tasks like copying repeated words.", "es": "Chroma encontró que la calidad se deteriora con el largo de la entrada incluso en tareas triviales como copiar palabras repetidas." } },
+        { "text": { "en": "NIAH only places the needle at the start, never in the middle", "es": "NIAH solo coloca la aguja al principio, nunca en el medio" },
+          "why": { "en": "NIAH charts sweep needle depth; the flaw is that the needle repeats the question's words.", "es": "Los gráficos NIAH recorren distintas profundidades de la aguja; la falla es que la aguja repite las palabras de la pregunta." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Context rot gets worse when the question and the needed fact share few words and when plausible distractors are present, which describes real contracts. NIAH is the best case, so a green chart says little. Measure on your own data, at your real lengths.",
+        "es": "El context rot empeora cuando la pregunta y el dato necesario comparten pocas palabras y cuando hay distractores plausibles, que es justo lo que pasa con contratos reales. NIAH es el mejor caso, así que un gráfico en verde dice poco. Mide con tus propios datos y con tus largos reales."
+      }
+    }
+  ]
+}

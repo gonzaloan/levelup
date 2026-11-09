@@ -1,0 +1,90 @@
+{
+  "concept": "eval-ci",
+  "items": [
+    {
+      "id": "eval-ci.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "The nightly suite drops **4 points** on Spanish queries. No prompt, code or data change was merged since the last green run, and the drop reproduces on rerun. What's the most likely cause?",
+        "es": "La suite nocturna cae **4 puntos** en consultas en español. No se mergeó ningún cambio de prompt, código ni datos desde la última corrida en verde, y la caída se repite al volver a correr. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "A moving model alias was repointed to a newer snapshot", "es": "Un alias móvil de modelo pasó a apuntar a un snapshot más nuevo" },
+          "why": { "en": "Aliases get repointed over time; pin dated snapshots so the baseline only moves when you move it.", "es": "Los alias se reasignan con el tiempo; fija snapshots con fecha para que la línea base solo cambie cuando tú la cambies." } },
+        { "text": { "en": "Run-to-run noise from the LLM judge's sampling", "es": "Ruido entre corridas por el muestreo del LLM juez" },
+          "why": { "en": "Noise wouldn't reproduce on rerun, nor hit one slice consistently.", "es": "El ruido no se repetiría al volver a correr ni afectaría siempre al mismo segmento." } },
+        { "text": { "en": "The golden set went stale and no longer fits traffic", "es": "El golden set quedó desactualizado y ya no refleja el tráfico" },
+          "why": { "en": "A stale set gives false confidence over months; it doesn't drop 4 points overnight.", "es": "Un set desactualizado da falsa confianza a lo largo de meses; no cae 4 puntos de un día para otro." } },
+        { "text": { "en": "The CI runner switched to a different machine type", "es": "El runner de CI cambió a otro tipo de máquina" },
+          "why": { "en": "The model runs at the provider; the runner's hardware doesn't change API outputs.", "es": "El modelo corre en el proveedor; el hardware del runner no cambia las salidas de la API." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A score only means something against a pinned config. Model aliases, and embedding models referenced the same way, get repointed by the provider, so the baseline moves with no code change. Pin dated snapshots, version index builds, and make any change to them go through the gate.",
+        "es": "Un puntaje solo significa algo contra una configuración fija. El proveedor reasigna los alias de modelos, y también los de modelos de embeddings referenciados igual, así que la línea base se mueve sin cambios de código. Fija snapshots con fecha, versiona las construcciones del índice y haz que cualquier cambio en ellos pase por el gate."
+      }
+    },
+    {
+      "id": "eval-ci.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Your PR gate runs **200 cases** at an **85%** pass rate. With the normal approximation, half-width = 1.96·√(p(1−p)/n), what is the 95% confidence half-width of one run's pass rate, in percentage points?",
+        "es": "Tu gate de PR corre **200 casos** con una tasa de aprobación de **85%**. Con la aproximación normal, semiancho = 1,96·√(p(1−p)/n), ¿cuál es el semiancho del intervalo de confianza del 95% para la tasa de una corrida, en puntos porcentuales?"
+      },
+      "answer": 4.95,
+      "tolerance": 0.12,
+      "unit": "pts",
+      "explain": {
+        "en": "p(1−p)/n = 0.85 × 0.15 / 200 ≈ 0.00064; its square root ≈ 0.025; × 1.96 ≈ 0.049, so about ±5 points. A gate that fails on a 2-point drop will flake on noise alone: set the regression threshold above this band, or add cases or trials to shrink it.",
+        "es": "p(1−p)/n = 0,85 × 0,15 / 200 ≈ 0,00064; su raíz ≈ 0,025; × 1,96 ≈ 0,049, o sea unos ±5 puntos. Un gate que falla ante una caída de 2 puntos va a fallar por puro ruido: pon el umbral de regresión por encima de esta banda, o agrega casos o intentos para reducirla."
+      }
+    },
+    {
+      "id": "eval-ci.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the workflow trigger so the eval gate runs on **every** kind of change that shapes model behavior.",
+        "es": "Completa el disparador del workflow para que el gate de evals corra con **todo** tipo de cambio que afecte el comportamiento del modelo."
+      },
+      "lang": "yaml",
+      "code": "# .github/workflows/evals.yml\non:\n  pull_request:\n    ____\njobs:\n  evals:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - run: npm ci\n      - run: npx promptfoo eval -c promptfooconfig.yaml -o results.json || true\n      - run: python scripts/gate.py results.json --baseline main --per-slice",
+      "options": [
+        { "text": "paths: [\"prompts/**\", \"evals/**\", \"retrieval/**\", \"tools/**\", \"models.yaml\"]" },
+        { "text": "paths: [\"prompts/**\"]",
+          "why": { "en": "Retrieval, tool-schema and model-config changes skip the gate, yet they change outputs as much as a prompt edit.", "es": "Los cambios de retrieval, de schemas de tools y de configuración del modelo se saltan el gate, aunque cambian las salidas tanto como editar un prompt." } },
+        { "text": "paths: [\"prompts/**\", \"evals/**\", \"src/**\", \"tests/**\"]",
+          "why": { "en": "App code is covered, but index builds, tool schemas and the model config still skip the gate.", "es": "Cubre el código de la app, pero la construcción del índice, los schemas de tools y la configuración del modelo siguen sin pasar por el gate." } },
+        { "text": "paths-ignore: [\"retrieval/**\", \"tools/**\", \"models.yaml\"]",
+          "why": { "en": "It excludes exactly the non-prompt changes that silently move scores.", "es": "Excluye justo los cambios que no son de prompt y que mueven los puntajes en silencio." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Anything that shapes behavior must trigger the gate: prompts, the eval cases themselves, retrieval (chunking, embeddings, index), tool definitions and the model config. Triggering on prompt files alone is a classic gap: a model or index change sails through untested.",
+        "es": "Todo lo que afecta el comportamiento debe disparar el gate: prompts, los propios casos de evaluación, retrieval (chunking, embeddings, índice), definiciones de tools y la configuración del modelo. Disparar solo con archivos de prompts es un hueco clásico: un cambio de modelo o de índice pasa sin evaluarse."
+      }
+    },
+    {
+      "id": "eval-ci.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A PR shortens the system prompt. The eval average moves **0.86 → 0.85**, inside the noise band, so the reviewer approves. What did the gate miss?",
+        "es": "Un PR acorta el system prompt. El promedio del eval pasa de **0,86 a 0,85**, dentro de la banda de ruido, y quien revisa lo aprueba. ¿Qué se le escapó al gate?"
+      },
+      "options": [
+        { "text": { "en": "Per-slice gating: one slice can collapse while the mean stays flat", "es": "Gating por segmento: uno puede colapsar mientras el promedio no se mueve" },
+          "why": { "en": "A per-slice gate catches, say, refunds falling from 0.92 to 0.71 while the average barely moves.", "es": "Un gate por segmento detecta, por ejemplo, que reembolsos cae de 0,92 a 0,71 mientras el promedio casi no se mueve." } },
+        { "text": { "en": "A stricter threshold that fails the PR on any drop at all", "es": "Un umbral más estricto que falle el PR ante cualquier caída" },
+          "why": { "en": "Thresholds tighter than run-to-run noise make the gate flaky, and people learn to rerun until green.", "es": "Umbrales más estrictos que el ruido entre corridas vuelven inestable el gate, y la gente aprende a reintentar hasta ver verde." } },
+        { "text": { "en": "A larger LLM judge to grade the same cases more accurately", "es": "Un LLM juez más grande para calificar los mismos casos con más precisión" },
+          "why": { "en": "A better judge feeding the same aggregate still averages the regression away.", "es": "Un mejor juez que alimenta el mismo agregado igual diluye la regresión en el promedio." } },
+        { "text": { "en": "More trials per case to shrink the noise band around the mean", "es": "Más intentos por caso para reducir la banda de ruido del promedio" },
+          "why": { "en": "A narrower band helps the average, but this regression hides in one slice, not in noise.", "es": "Una banda más angosta ayuda al promedio, pero esta regresión se esconde en un segmento, no en el ruido." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Averages hide localized regressions: a shorter prompt can lose one clause, like escalation, and break one slice while others barely move. Gate on floors and on no-regression-beyond-noise per slice (refunds, billing, language), and list the newly failing cases in the PR.",
+        "es": "Los promedios esconden regresiones localizadas: un prompt más corto puede perder una cláusula, como la de escalamiento, y romper un segmento mientras los demás casi no cambian. Aplica pisos y la regla de no retroceder más allá del ruido por segmento (reembolsos, facturación, idioma), y lista en el PR los casos que empezaron a fallar."
+      }
+    }
+  ]
+}

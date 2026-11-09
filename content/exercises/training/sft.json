@@ -1,0 +1,81 @@
+{
+  "concept": "sft",
+  "items": [
+    {
+      "id": "sft.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "After SFT, your model's answers are correct, but it doesn't stop: it keeps generating, sometimes inventing a new user turn. Training and eval loss looked healthy. Most likely cause?",
+        "es": "Después del SFT, las respuestas de tu modelo son correctas, pero no se detiene: sigue generando y a veces inventa un nuevo turno del usuario. La pérdida de entrenamiento y de evaluación se veían sanas. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        {
+          "text": { "en": "Chat template mismatch or a dropped EOS token in training", "es": "Plantilla de chat distinta o un token EOS omitido en el entrenamiento" },
+          "why": { "en": "If training data lacks the end-of-turn token, or serving uses another template, the model never learns where to stop.", "es": "Si los datos de entrenamiento no traen el token de fin de turno, o el serving usa otra plantilla, el modelo nunca aprende dónde parar." }
+        },
+        {
+          "text": { "en": "Learning rate too high, so the training run diverged", "es": "Learning rate demasiado alto, así que el entrenamiento divergió" },
+          "why": { "en": "Divergence would show up in the loss and in answer quality; here only stopping is broken.", "es": "La divergencia se vería en la pérdida y en la calidad de las respuestas; aquí solo falla el parar." }
+        },
+        {
+          "text": { "en": "Too few examples: stopping needs ~100k of them", "es": "Muy pocos ejemplos: aprender a parar requiere ~100k" },
+          "why": { "en": "LIMA aligned a 65B model with ~1,000 examples; stopping comes from the template's end-of-turn token.", "es": "LIMA alineó un modelo de 65B con ~1,000 ejemplos; el parar viene del token de fin de turno de la plantilla." }
+        },
+        {
+          "text": { "en": "Prompt tokens were masked out of the training loss", "es": "Los tokens del prompt se enmascararon en la pérdida" },
+          "why": { "en": "Masking the prompt is the standard default; it focuses gradients on responses and doesn't break stopping.", "es": "Enmascarar el prompt es el default estándar; concentra los gradientes en las respuestas y no rompe el parar." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Each example must be rendered in the model's exact chat template, end-of-turn token included, and serving must use the same template. A mismatch degrades quality silently: losses look fine while the model rambles. Capping `max_tokens` only hides the symptom.",
+        "es": "Cada ejemplo debe renderizarse con la plantilla de chat exacta del modelo, incluido el token de fin de turno, y el serving debe usar la misma plantilla. Una discrepancia baja la calidad en silencio: las pérdidas se ven bien mientras el modelo divaga. Limitar `max_tokens` solo esconde el síntoma."
+      }
+    },
+    {
+      "id": "sft.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Rule of thumb: full fine-tuning with Adam needs **~16 bytes per parameter** (weights + gradients + optimizer state), before activations. How much GPU memory, in GB, does full SFT of a **7B** model need?",
+        "es": "Regla práctica: el fine-tuning completo con Adam necesita **~16 bytes por parámetro** (pesos + gradientes + estado del optimizador), sin contar activaciones. ¿Cuánta memoria de GPU, en GB, necesita un SFT completo de un modelo de **7B**?"
+      },
+      "answer": 112,
+      "tolerance": 0.1,
+      "unit": "GB",
+      "explain": {
+        "en": "7B × 16 bytes = 112 GB before activations: more than a single 80 GB GPU. Serving the same model in bf16 needs only ~14 GB (2 bytes/param). That gap is why LoRA, which freezes the base and trains a small adapter, fits task SFT on one GPU.",
+        "es": "7B × 16 bytes = 112 GB sin contar activaciones: más que una sola GPU de 80 GB. Servir el mismo modelo en bf16 necesita solo ~14 GB (2 bytes/parámetro). Esa diferencia explica por qué LoRA, que congela la base y entrena un adaptador chico, permite hacer SFT de una tarea en una sola GPU."
+      }
+    },
+    {
+      "id": "sft.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Your team plans SFT on **50k raw production chat logs** so the assistant \"acts like our best agents\". Which concerns are valid? Select all that apply.",
+        "es": "Tu equipo planea hacer SFT con **50k logs crudos de chats de producción** para que el asistente \"actúe como nuestros mejores agentes\". ¿Qué preocupaciones son válidas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "SFT will imitate the bad answers in the logs too", "es": "El SFT también va a imitar las respuestas malas de los logs" } },
+        { "text": { "en": "It can't learn to beat the answers it imitates", "es": "No puede aprender a superar las respuestas que imita" } },
+        { "text": { "en": "General skills and safety refusals may regress", "es": "Las habilidades generales y los rechazos de seguridad pueden empeorar" } },
+        {
+          "text": { "en": "50k examples are too few for SFT to change behavior", "es": "50k ejemplos son muy pocos para que el SFT cambie la conducta" },
+          "why": { "en": "LIMA aligned a 65B model with ~1,000 curated examples; the issue is quality, not count.", "es": "LIMA alineó un modelo de 65B con ~1,000 ejemplos curados; el problema es la calidad, no la cantidad." }
+        },
+        {
+          "text": { "en": "Masking prompt tokens will stop it from learning the format", "es": "Enmascarar los tokens del prompt le impedirá aprender el formato" },
+          "why": { "en": "The format lives in the responses, which still carry the loss; masking focuses learning there.", "es": "El formato vive en las respuestas, que siguen llevando la pérdida; enmascarar concentra el aprendizaje ahí." }
+        },
+        {
+          "text": { "en": "SFT needs preference pairs, not single ideal responses", "es": "El SFT necesita pares de preferencia, no respuestas ideales sueltas" },
+          "why": { "en": "That's DPO or RLHF; SFT trains on (prompt, ideal response) pairs.", "es": "Eso es DPO o RLHF; el SFT entrena con pares (prompt, respuesta ideal)." }
+        }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "SFT is imitation: it copies whatever the data shows, errors included, and its ceiling is its demonstrations. Curate a few thousand examples from your best agents, then evaluate before and after on the task and on general ability and safety.",
+        "es": "El SFT es imitación: copia lo que muestran los datos, errores incluidos, y su techo son sus demostraciones. Cura unos miles de ejemplos de tus mejores agentes y evalúa antes y después, en la tarea y en habilidad general y seguridad."
+      }
+    }
+  ]
+}

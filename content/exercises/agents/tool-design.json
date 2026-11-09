@@ -1,0 +1,127 @@
+{
+  "concept": "tool-design",
+  "items": [
+    {
+      "id": "tool-design.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Transcripts show your SRE agent paging through `list_tickets` 500 rows at a time to find one incident, then passing a ticket title where a UUID is expected. Best tool-level fix?",
+        "es": "Las transcripciones muestran que tu agente de SRE pagina `list_tickets` de 500 filas en 500 para encontrar un incidente y luego pasa el título de un ticket donde se espera un UUID. ¿Cuál es la mejor corrección a nivel de herramienta?"
+      },
+      "options": [
+        {
+          "text": { "en": "Replace it with `search_tickets(query, status, limit=20)` returning names", "es": "Reemplazarla por `search_tickets(query, status, limit=20)`, que devuelva nombres" },
+          "why": { "en": "One task-shaped call finds the incident, keeps the output small, and accepts what the agent naturally has.", "es": "Una sola llamada orientada a la tarea encuentra el incidente, mantiene la salida chica y acepta lo que el agente naturalmente tiene." }
+        },
+        {
+          "text": { "en": "Raise the page size to 5,000 rows so a single call returns everything", "es": "Subir el tamaño de página a 5,000 filas para que una sola llamada lo devuelva todo" },
+          "why": { "en": "Fewer calls, but each output balloons to tens of thousands of tokens: context rot and truncation instead of a fix.", "es": "Menos llamadas, pero cada salida crece a decenas de miles de tokens: context rot y truncamiento en vez de una solución." }
+        },
+        {
+          "text": { "en": "Return each ticket's full JSON so the agent can match on any field", "es": "Devolver el JSON completo de cada ticket para que el agente pueda filtrar por cualquier campo" },
+          "why": { "en": "Missing fields weren't the problem; raw blobs and UUIDs waste tokens and invite hallucinated ids.", "es": "El problema no eran campos faltantes; los blobs crudos y los UUIDs desperdician tokens e invitan a ids alucinados." }
+        },
+        {
+          "text": { "en": "Add a `get_ticket_by_title` tool next to the existing ticket tools", "es": "Agregar una herramienta `get_ticket_by_title` junto a las herramientas de tickets existentes" },
+          "why": { "en": "One more overlapping tool to choose from, and the agent still pages to discover the title.", "es": "Es una herramienta más que se solapa con las otras, y el agente igual pagina para descubrir el título." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Design tools around the agent's task, not your REST endpoints. A search with filters and a small default `limit` replaces many paging calls, and returning names instead of UUIDs removes the id-matching step where agents hallucinate.",
+        "es": "Diseña las herramientas alrededor de la tarea del agente, no de tus endpoints REST. Una búsqueda con filtros y un `limit` chico por defecto reemplaza muchas llamadas de paginación, y devolver nombres en vez de UUIDs elimina el paso de emparejar ids, que es donde los agentes alucinan."
+      }
+    },
+    {
+      "id": "tool-design.a2",
+      "type": "code",
+      "prompt": {
+        "en": "The agent called `search_logs(\"paymnts\", ...)`. Fill the gap so it can **fix the call on its next step**.",
+        "es": "El agente llamó a `search_logs(\"paymnts\", ...)`. Completa el hueco para que pueda **corregir la llamada en su siguiente paso**."
+      },
+      "lang": "python",
+      "code": "def search_logs(service: str, query: str, limit: int = 20) -> str:\n    if service not in SERVICES:\n        ____\n    hits = log_index.search(service, query)\n    lines = [f\"{h.ts} {h.level} {h.msg[:200]}\" for h in hits[:limit]]\n    if len(hits) > limit:\n        lines.append(f\"[{len(hits) - limit} more: add a time range or a stricter query]\")\n    return \"\\n\".join(lines) or \"No matches. Try a broader query.\"",
+      "options": [
+        { "text": "return f\"Unknown service '{service}'. Valid: {', '.join(sorted(SERVICES))}.\"" },
+        {
+          "text": "raise ValueError(f\"Invalid service name received: {service!r}\")",
+          "why": { "en": "Says what's wrong but not what's valid, and may surface as a traceback: the agent guesses or retries unchanged.", "es": "Dice qué está mal pero no qué es válido, y puede llegar como traceback: el agente adivina o reintenta sin cambios." }
+        },
+        {
+          "text": "return f\"Error 400: bad request for service={service}\"",
+          "why": { "en": "An opaque status code: the agent tends to retry the same call unchanged.", "es": "Un código de estado opaco: el agente suele reintentar la misma llamada sin cambios." }
+        },
+        {
+          "text": "return f\"No logs found for service '{service}'.\"",
+          "why": { "en": "Misleading: the agent concludes the service had no errors instead of fixing the typo.", "es": "Engañoso: el agente concluye que el servicio no tuvo errores en vez de corregir el error de tipeo." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Errors are prompts too. An actionable error names the problem and the valid options, so the next call is right. Opaque codes and tracebacks cause blind retries; a fake \"no results\" is worse, because the agent trusts it.",
+        "es": "Los errores también son prompts. Un error accionable nombra el problema y las opciones válidas, así la siguiente llamada sale bien. Los códigos opacos y los tracebacks provocan reintentos a ciegas; un \"sin resultados\" falso es peor, porque el agente le cree."
+      }
+    },
+    {
+      "id": "tool-design.a3",
+      "type": "match",
+      "prompt": {
+        "en": "Match each symptom seen in agent transcripts to the tool fix.",
+        "es": "Relaciona cada síntoma visto en las transcripciones del agente con la corrección de la herramienta."
+      },
+      "pairs": [
+        {
+          "left": { "en": "Picks at random between `search_docs` and `search_kb`", "es": "Elige al azar entre `search_docs` y `search_kb`" },
+          "right": { "en": "Merge or rename them, and say when to use each instead of the other", "es": "Fusionarlas o renombrarlas, y decir cuándo usar cada una en lugar de la otra" }
+        },
+        {
+          "left": { "en": "Breaks after changing the working directory", "es": "Falla después de cambiar el directorio de trabajo" },
+          "right": { "en": "Require absolute file paths in the parameters", "es": "Exigir rutas de archivo absolutas en los parámetros" }
+        },
+        {
+          "left": { "en": "Passes \"Ana\" where an email is expected", "es": "Pasa \"Ana\" donde se espera un email" },
+          "right": { "en": "Name the parameter `attendee_emails` and show an example value", "es": "Nombrar el parámetro `attendee_emails` y mostrar un valor de ejemplo" }
+        },
+        {
+          "left": { "en": "Writes durations like \"half an hour-ish\"", "es": "Escribe duraciones como \"media hora más o menos\"" },
+          "right": { "en": "Use an enum: 15, 30, 45 or 60 minutes", "es": "Usar un enum: 15, 30, 45 o 60 minutos" }
+        }
+      ],
+      "explain": {
+        "en": "Each fix makes the wrong call hard to make (poka-yoke) instead of hoping the model reads a warning. Tool names, parameter names and schemas are read on every call, so they're where these mistakes are cheapest to prevent.",
+        "es": "Cada corrección vuelve difícil hacer la llamada equivocada (poka-yoke) en vez de esperar que el modelo lea una advertencia. Los nombres de herramientas, los nombres de parámetros y los esquemas se leen en cada llamada, así que ahí es más barato prevenir estos errores."
+      }
+    },
+    {
+      "id": "tool-design.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Transcripts show wrong tool picks, malformed dates and blind retries. A teammate proposes a sprint of system-prompt rewrites, leaving tool definitions untouched. Your response?",
+        "es": "Las transcripciones muestran herramientas mal elegidas, fechas mal formadas y reintentos a ciegas. Un compañero propone un sprint reescribiendo el system prompt, sin tocar las definiciones de herramientas. ¿Qué respondes?"
+      },
+      "options": [
+        {
+          "text": { "en": "Fix the tools themselves, measured on an eval of real tasks", "es": "Corregir las herramientas en sí, midiendo con un eval de tareas reales" },
+          "why": { "en": "Names, descriptions, schemas and errors are the prompt the agent reads every call; that's where these failures live.", "es": "Nombres, descripciones, esquemas y errores son el prompt que el agente lee en cada llamada; ahí viven estas fallas." }
+        },
+        {
+          "text": { "en": "Agree: the system prompt is the main lever; tools are plumbing", "es": "Estar de acuerdo: el system prompt es la palanca principal; las herramientas son plomería" },
+          "why": { "en": "For its SWE-bench agent, Anthropic spent more time optimizing tools than the main prompt.", "es": "Para su agente de SWE-bench, Anthropic dedicó más tiempo a optimizar las herramientas que el prompt principal." }
+        },
+        {
+          "text": { "en": "Fine-tune the model on transcripts of correct tool calls", "es": "Hacer fine-tuning del modelo con transcripciones de llamadas correctas" },
+          "why": { "en": "Tool design is often the cheapest quality win: no model change, no fine-tuning, and it transfers to every agent.", "es": "El diseño de herramientas suele ser la mejora más barata: sin cambiar de modelo ni hacer fine-tuning, y sirve para todo agente." }
+        },
+        {
+          "text": { "en": "Switch to a stronger model that can handle any interface", "es": "Cambiar a un modelo más fuerte que se arregle con cualquier interfaz" },
+          "why": { "en": "SWE-agent ablations showed interface details alone changed the solve rate with the same model.", "es": "Las ablaciones de SWE-agent mostraron que solo detalles de interfaz cambiaban la tasa de resolución con el mismo modelo." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The agent can't read your code or ask a colleague: the agent-computer interface is all it knows. Treat tool definitions like prompts and tune them against realistic multi-step tasks, tracking success, calls, tokens and errors, with a held-out set.",
+        "es": "El agente no puede leer tu código ni preguntarle a un colega: la interfaz agente-computadora es todo lo que conoce. Trata las definiciones de herramientas como prompts y ajústalas contra tareas realistas de varios pasos, midiendo éxito, llamadas, tokens y errores, con un set reservado."
+      }
+    }
+  ]
+}

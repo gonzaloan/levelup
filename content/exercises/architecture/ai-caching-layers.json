@@ -1,0 +1,89 @@
+{
+  "concept": "ai-caching-layers",
+  "items": [
+    {
+      "id": "ai-caching-layers.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You enabled provider prompt caching on a 6k-token system prompt plus tool definitions, but input cost and TTFT didn't move. Every prompt starts with `Now: {timestamp}, user: {name}`, then the instructions. What's the fix?",
+        "es": "Activaste el prompt caching del proveedor sobre un system prompt de 6k tokens con definiciones de herramientas, pero el costo de input y el TTFT no se movieron. Cada prompt empieza con `Now: {timestamp}, user: {name}` y después vienen las instrucciones. ¿Cuál es la corrección?"
+      },
+      "options": [
+        { "text": { "en": "Move the timestamp and name after the static instructions and tools", "es": "Mover el timestamp y el nombre después de las instrucciones y herramientas estáticas" },
+          "why": { "en": "The cache reuses an identical prefix; a value that changes on every call at the top means nothing after it ever matches.", "es": "La caché reutiliza un prefijo idéntico; un valor que cambia en cada llamada al inicio hace que nada de lo que sigue coincida nunca." } },
+        { "text": { "en": "Switch to the 1-hour cache TTL so entries live longer", "es": "Pasar al TTL de 1 hora para que las entradas duren más" },
+          "why": { "en": "Entries aren't expiring, they never match. A longer TTL only pays the 2× write price for prefixes nobody reuses.", "es": "Las entradas no vencen: nunca coinciden. Un TTL más largo solo paga la escritura a 2× por prefijos que nadie reutiliza." } },
+        { "text": { "en": "Add a semantic cache in front of the model", "es": "Agregar una caché semántica delante del modelo" },
+          "why": { "en": "Different layer: it skips some calls on similar questions, but the calls that still run stay just as expensive, and it adds false-hit risk.", "es": "Es otra capa: se salta algunas llamadas con preguntas parecidas, pero las que sí corren siguen igual de caras, y agrega el riesgo de hits falsos." } },
+        { "text": { "en": "Cache full responses keyed by the whole prompt", "es": "Cachear respuestas completas con el prompt entero como clave" },
+          "why": { "en": "The timestamp makes every prompt unique, so an exact response cache would never hit either.", "es": "El timestamp hace que cada prompt sea único, así que una caché de respuesta exacta tampoco tendría hits." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Prefix caching reuses computation only for a byte-identical prefix. Order every prompt static-first (instructions, tools, documents) and variable-last (time, user, question); then the repeated part is read at ~0.1× the input price and TTFT drops.",
+        "es": "El prefix caching reutiliza cómputo solo para un prefijo idéntico byte a byte. Ordena cada prompt con lo estático primero (instrucciones, herramientas, documentos) y lo variable al final (hora, usuario, pregunta); así la parte repetida se lee a ~0.1× del precio de input y baja el TTFT."
+      }
+    },
+    {
+      "id": "ai-caching-layers.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A help-desk bot: the exact response cache answers 12% of requests and the semantic cache another 8%, both in ~5 ms. Every miss runs the full pipeline at ~3 s. What is the average latency per request, in milliseconds?",
+        "es": "Un bot de mesa de ayuda: la caché de respuesta exacta contesta el 12% de las requests y la caché semántica otro 8%, ambas en ~5 ms. Cada miss corre el pipeline completo en ~3 s. ¿Cuál es la latencia promedio por request, en milisegundos?"
+      },
+      "answer": 2401,
+      "tolerance": 0.05,
+      "unit": "ms",
+      "explain": {
+        "en": "Average = hit rate × hit latency + miss rate × miss latency = 0.20 × 5 + 0.80 × 3,000 = 1 + 2,400 ≈ 2,401 ms. Misses dominate: 20% hits cut the average by only ~20%. That's why inner caches (retrieval, prefix) matter: they speed up the 80% that miss.",
+        "es": "Promedio = tasa de hits × latencia del hit + tasa de misses × latencia del miss = 0.20 × 5 + 0.80 × 3,000 = 1 + 2,400 ≈ 2,401 ms. Los misses dominan: un 20% de hits baja el promedio apenas ~20%. Por eso importan las cachés internas (recuperación, prefijo): aceleran el 80% que no acierta."
+      }
+    },
+    {
+      "id": "ai-caching-layers.a3",
+      "type": "match",
+      "prompt": {
+        "en": "Match each cache layer to the work a hit saves.",
+        "es": "Relaciona cada capa de caché con el trabajo que se ahorra en un hit."
+      },
+      "pairs": [
+        { "left": { "en": "Exact response cache", "es": "Caché de respuesta exacta" },
+          "right": { "en": "The entire LLM call, retrieval included", "es": "La llamada completa al LLM, incluida la recuperación" } },
+        { "left": { "en": "Retrieval-result cache", "es": "Caché de resultados de recuperación" },
+          "right": { "en": "Query embedding, vector search and reranking", "es": "El embedding de la consulta, la búsqueda vectorial y el reranking" } },
+        { "left": { "en": "Embedding cache", "es": "Caché de embeddings" },
+          "right": { "en": "Re-embedding unchanged text when you re-index", "es": "Volver a calcular embeddings de texto sin cambios al reindexar" } },
+        { "left": { "en": "Provider prompt caching", "es": "Prompt caching del proveedor" },
+          "right": { "en": "Recomputing a repeated static prefix; the model still generates a fresh answer", "es": "Recalcular un prefijo estático repetido; el modelo igual genera una respuesta nueva" } }
+      ],
+      "explain": {
+        "en": "Outer layers skip work entirely; inner layers make the remaining work cheaper. Each has its own key and invalidation: model and prompt version for responses, index version for retrieval results, embedding model for vectors.",
+        "es": "Las capas externas se saltan el trabajo por completo; las internas abaratan el que queda. Cada una tiene su propia clave e invalidación: modelo y versión del prompt para las respuestas, versión del índice para los resultados de recuperación y modelo de embeddings para los vectores."
+      }
+    },
+    {
+      "id": "ai-caching-layers.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "You add a retrieval-result cache (query → top-k chunk ids) to a multi-tenant RAG app. Besides the normalized query, what must go into its key? Select all that apply.",
+        "es": "Agregas una caché de resultados de recuperación (consulta → ids de los chunks del top-k) a una app RAG multi-tenant. Además de la consulta normalizada, ¿qué debe ir en su clave? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "The tenant id", "es": "El id del tenant" } },
+        { "text": { "en": "A hash of the user's permission set (ACL)", "es": "Un hash del conjunto de permisos del usuario (ACL)" } },
+        { "text": { "en": "The index version", "es": "La versión del índice" } },
+        { "text": { "en": "The request timestamp", "es": "El timestamp de la request" },
+          "why": { "en": "Every key becomes unique, so the hit rate drops to zero.", "es": "Cada clave se vuelve única y la tasa de hits cae a cero." } },
+        { "text": { "en": "The chat model's sampling parameters", "es": "Los parámetros de sampling del modelo de chat" },
+          "why": { "en": "Retrieval doesn't depend on generation settings; adding them only splits the cache and lowers hits.", "es": "La recuperación no depende de la configuración de generación; agregarlos solo fragmenta la caché y baja los hits." } },
+        { "text": { "en": "The user's session id", "es": "El id de sesión del usuario" },
+          "why": { "en": "Over-scoped: users with the same tenant and ACL can safely share results, and the ACL hash already captures who may see what.", "es": "Alcance excesivo: usuarios con el mismo tenant y ACL pueden compartir resultados sin riesgo, y el hash de ACL ya captura quién puede ver qué." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Key by who may see the result (tenant, ACL) and by what produced it (index version, so a re-index makes stale entries miss instead of returning deleted chunks). A key without the tenant is a data leak; anything extra only lowers the hit rate.",
+        "es": "Arma la clave con quién puede ver el resultado (tenant, ACL) y con qué lo produjo (versión del índice, para que un reindexado haga fallar las entradas viejas en vez de devolver chunks borrados). Una clave sin tenant es una fuga de datos; cualquier cosa de más solo baja la tasa de hits."
+      }
+    }
+  ]
+}

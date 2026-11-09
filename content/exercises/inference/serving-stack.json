@@ -1,0 +1,86 @@
+{
+  "concept": "serving-stack",
+  "items": [
+    {
+      "id": "serving-stack.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your vLLM fleet's HPA scales on CPU. On Monday mornings traffic triples: CPU sits at ~15% and requests wait 40 s in the queue, yet nothing scales. Which signal should drive autoscaling?",
+        "es": "El HPA de tu flota de vLLM escala por CPU. Los lunes en la mañana el tráfico se triplica: la CPU se queda en ~15% y las peticiones esperan 40 s en cola, pero nada escala. ¿Qué señal debería guiar el autoescalado?"
+      },
+      "options": [
+        { "text": { "en": "Requests waiting in the engine queue", "es": "Las peticiones esperando en la cola del motor" } },
+        { "text": { "en": "GPU utilization % from nvidia-smi", "es": "El % de uso de GPU que reporta nvidia-smi" },
+          "why": { "en": "It reads ~100% even at batch 1, so it can't tell a half-empty batch from a saturated one.", "es": "Marca ~100% incluso con batch 1, así que no distingue un batch medio vacío de uno saturado." } },
+        { "text": { "en": "GPU memory usage per replica", "es": "El uso de memoria de GPU por réplica" },
+          "why": { "en": "vLLM pre-allocates 90% of GPU memory at startup, so it looks full whether busy or idle.", "es": "vLLM reserva el 90% de la memoria de la GPU al arrancar, así que se ve llena esté ocupada u ociosa." } },
+        { "text": { "en": "CPU, with a lower target such as 10%", "es": "La CPU, con un objetivo más bajo como 10%" },
+          "why": { "en": "CPU doesn't track how full the GPU batch is; a lower target just scales on noise.", "es": "La CPU no refleja qué tan lleno está el batch en la GPU; un objetivo más bajo solo escala por ruido." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Web-serving signals can't see GPU saturation. Scale on what tracks how full the batch is: queued requests, KV-cache usage or p95 TTFT against the SLO. Since a new replica takes minutes, pair it with a warm floor and scheduled scale-ups for known peaks.",
+        "es": "Las señales del serving web no ven la saturación de la GPU. Escala con lo que refleja qué tan lleno está el batch: peticiones en cola, uso del KV cache o TTFT p95 contra el SLO. Como una réplica nueva tarda minutos, combínalo con un mínimo de réplicas encendidas y escalados programados para los picos conocidos."
+      }
+    },
+    {
+      "id": "serving-stack.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A new replica must load a **70B** model in **BF16** (2 bytes per parameter) from storage at **~1 GB/s**. Ignoring node provisioning, image pull and warm-up, how many minutes does reading the weights alone take?",
+        "es": "Una réplica nueva debe cargar un modelo de **70B** en **BF16** (2 bytes por parámetro) desde almacenamiento a **~1 GB/s**. Sin contar aprovisionar el nodo, bajar la imagen ni el warm-up, ¿cuántos minutos toma solo leer los pesos?"
+      },
+      "answer": 2.3,
+      "tolerance": 0.15,
+      "unit": "minutes",
+      "explain": {
+        "en": "70B × 2 bytes = 140 GB; 140 GB ÷ 1 GB/s = 140 s ≈ 2.3 minutes, and that's only the floor. Add a GPU node and a ~10 GB image and it reaches ~12 minutes in practice, which is why you keep a warm floor and pre-stage weights on local NVMe.",
+        "es": "70B × 2 bytes = 140 GB; 140 GB ÷ 1 GB/s = 140 s ≈ 2.3 minutos, y eso es solo el piso. Suma un nodo GPU y una imagen de ~10 GB y en la práctica llega a ~12 minutos; por eso mantienes réplicas encendidas y precargas los pesos en NVMe local."
+      }
+    },
+    {
+      "id": "serving-stack.a3",
+      "type": "match",
+      "prompt": {
+        "en": "Match each inference engine to where it fits best.",
+        "es": "Relaciona cada motor de inferencia con donde mejor encaja."
+      },
+      "pairs": [
+        { "left": { "en": "vLLM", "es": "vLLM" },
+          "right": { "en": "The default: widest model and hardware support, multi-LoRA", "es": "La opción por defecto: el soporte más amplio de modelos y hardware, multi-LoRA" } },
+        { "left": { "en": "SGLang", "es": "SGLang" },
+          "right": { "en": "RadixAttention reuses shared prefixes; strong for agents and multi-turn chat", "es": "RadixAttention reutiliza prefijos compartidos; brilla con agentes y chat de varios turnos" } },
+        { "left": { "en": "TensorRT-LLM", "es": "TensorRT-LLM" },
+          "right": { "en": "NVIDIA-optimized kernels and FP8/FP4; often fastest, harder to operate", "es": "Kernels optimizados de NVIDIA y FP8/FP4; suele ser el más rápido, más difícil de operar" } },
+        { "left": { "en": "llama.cpp / Ollama", "es": "llama.cpp / Ollama" },
+          "right": { "en": "Quantized GGUF models on laptops and CPUs, for development", "es": "Modelos GGUF cuantizados en laptops y CPU, para desarrollo" } }
+      ],
+      "explain": {
+        "en": "Start from vLLM and move only for a reason: long shared prefixes favor SGLang, large NVIDIA fleets can repay TensorRT-LLM's complexity. Whatever you pick, benchmark on your own prompt and output lengths at your latency SLO, not a vendor chart.",
+        "es": "Parte de vLLM y cambia solo con una razón: los prefijos largos compartidos favorecen a SGLang y las flotas grandes de NVIDIA pueden pagar la complejidad de TensorRT-LLM. Elijas lo que elijas, haz benchmark con tus propios largos de prompt y de salida, a tu SLO de latencia, no con la gráfica del proveedor."
+      }
+    },
+    {
+      "id": "serving-stack.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which practices are right for a self-hosted LLM fleet behind an interactive product? Select all that apply.",
+        "es": "¿Qué prácticas son correctas para una flota de LLMs self-hosted detrás de un producto interactivo? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Keep a warm floor of replicas even at night", "es": "Mantener un mínimo de réplicas encendidas incluso de noche" } },
+        { "text": { "en": "Use a long startupProbe so loading replicas aren't killed", "es": "Usar un startupProbe largo para que no maten réplicas que están cargando" } },
+        { "text": { "en": "Scale to zero when idle to stop paying for GPUs", "es": "Escalar a cero en los ratos ociosos para dejar de pagar GPUs" },
+          "why": { "en": "Cold starts take minutes, so the first user after a quiet period waits minutes.", "es": "Los arranques en frío tardan minutos, así que el primer usuario después de un rato tranquilo espera minutos." } },
+        { "text": { "en": "Run tensor parallelism across nodes over Ethernet", "es": "Correr tensor parallelism entre nodos sobre Ethernet" },
+          "why": { "en": "Per-layer all-reduce over a ~50 GB/s NIC vs ~900 GB/s NVLink eats the gain; use pipeline parallelism between nodes.", "es": "El all-reduce de cada capa sobre una NIC de ~50 GB/s vs ~900 GB/s de NVLink se come la ganancia; entre nodos usa pipeline parallelism." } },
+        { "text": { "en": "Pin the engine image version instead of `:latest`", "es": "Fijar la versión de la imagen del motor en vez de `:latest`" } }
+      ],
+      "answers": [0, 1, 4],
+      "explain": {
+        "en": "LLM serving breaks web habits: replicas take minutes to become ready, engines change flags and metric names between minor versions, and tensor parallelism needs NVLink bandwidth. Pay for a warm floor, give startup time, pin versions and keep TP inside one node.",
+        "es": "El serving de LLMs rompe los hábitos del serving web: las réplicas tardan minutos en estar listas, los motores cambian flags y nombres de métricas entre versiones menores y el tensor parallelism necesita el ancho de banda de NVLink. Paga un mínimo de réplicas encendidas, dales tiempo de arranque, fija versiones y deja el TP dentro de un nodo."
+      }
+    }
+  ]
+}

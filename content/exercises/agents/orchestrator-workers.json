@@ -1,0 +1,112 @@
+{
+  "concept": "orchestrator-workers",
+  "items": [
+    {
+      "id": "orchestrator-workers.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your research orchestrator spawns ~20 workers even for simple questions like *\"What's our refund window?\"*. Answers are fine, but the token bill is exploding. Best fix?",
+        "es": "Tu orquestador de investigación lanza ~20 workers incluso para preguntas simples como *\"¿Cuál es nuestro plazo de reembolso?\"*. Las respuestas están bien, pero la factura de tokens se dispara. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Add effort-scaling rules to the orchestrator prompt and a hard cap on fan-out", "es": "Agregar reglas de escala de esfuerzo al prompt del orquestador y un tope duro de workers" },
+          "why": { "en": "The waste is decided at planning time, so the planner is where you tell it how much effort each kind of question deserves.", "es": "El desperdicio se decide al planificar, así que es en el planificador donde le dices cuánto esfuerzo merece cada tipo de pregunta." }
+        },
+        {
+          "text": { "en": "Switch the workers to a cheaper model to absorb the extra cost", "es": "Cambiar los workers a un modelo más barato para absorber el costo extra" },
+          "why": { "en": "Cheaper tokens, same waste: a simple question still fans out to 20 workers it doesn't need.", "es": "Tokens más baratos, mismo desperdicio: una pregunta simple sigue repartiéndose entre 20 workers que no necesita." }
+        },
+        {
+          "text": { "en": "Add a dedupe step in synthesis to drop redundant worker results", "es": "Agregar un paso de deduplicación en la síntesis para descartar resultados redundantes" },
+          "why": { "en": "By synthesis you've already paid for all 20 workers; the waste happens when the plan is made.", "es": "Al llegar a la síntesis ya pagaste los 20 workers; el desperdicio ocurre cuando se arma el plan." }
+        },
+        {
+          "text": { "en": "Give every worker the full conversation so they coordinate better", "es": "Darle a cada worker la conversación completa para que se coordinen mejor" },
+          "why": { "en": "Kills context isolation and multiplies tokens further; the problem is how many workers get spawned.", "es": "Elimina el aislamiento de contexto y multiplica aún más los tokens; el problema es cuántos workers se lanzan." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Over-delegation is a known failure: Anthropic's early research agents spawned 50 subagents for simple queries. The orchestrator writes the plan, so effort-scaling rules in its prompt, plus hard caps on fan-out and rounds, are what keep simple questions cheap.",
+        "es": "Delegar de más es una falla conocida: los primeros agentes de investigación de Anthropic lanzaban 50 subagentes para consultas simples. El orquestador escribe el plan, así que las reglas de escala de esfuerzo en su prompt, más topes duros de workers y rondas, son lo que mantiene baratas las preguntas simples."
+      }
+    },
+    {
+      "id": "orchestrator-workers.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A chat-style answer to a research question uses ~10k tokens. Using Anthropic's reported ratios (single agent ~4× chat tokens, multi-agent ~15×), how many **extra** tokens per day does a multi-agent design cost over a single agent at 5,000 questions per day?",
+        "es": "Una respuesta tipo chat a una pregunta de investigación usa ~10k tokens. Con las proporciones que reportó Anthropic (un solo agente ~4× los tokens de un chat, multiagente ~15×), ¿cuántos tokens **extra** por día cuesta un diseño multiagente frente a un solo agente, con 5,000 preguntas por día?"
+      },
+      "answer": 550000000,
+      "tolerance": 0.15,
+      "unit": "tokens/day",
+      "explain": {
+        "en": "Single agent: 10k × 4 = 40k per question. Multi-agent: 10k × 15 = 150k. Difference: 110k × 5,000 = 550M tokens per day. The pattern has to buy enough answer quality to justify that, which is why it fits valuable, broad tasks.",
+        "es": "Un solo agente: 10k × 4 = 40k por pregunta. Multiagente: 10k × 15 = 150k. Diferencia: 110k × 5,000 = 550M tokens por día. El patrón tiene que comprar suficiente calidad de respuesta para justificarlo; por eso encaja en tareas amplias y valiosas."
+      }
+    },
+    {
+      "id": "orchestrator-workers.a3",
+      "type": "code",
+      "prompt": {
+        "en": "Fill the gap so workers run **in parallel**, each on its own brief, and one failure doesn't sink the rest.",
+        "es": "Completa el hueco para que los workers corran **en paralelo**, cada uno con su propio encargo, y una falla no hunda al resto."
+      },
+      "lang": "python",
+      "code": "async def orchestrate(task, max_workers=5):\n    plan = json.loads(await llm(LEAD, PLAN_PROMPT + task))\n    briefs = [f\"Objective: {s['objective']}\\nScope: {s['scope']}\\n\"\n              f\"Return: {s['output_format']}\" for s in plan[:max_workers]]\n    ____\n    findings = \"\\n\\n\".join(r for r in results if not isinstance(r, Exception))\n    return await llm(LEAD, f\"Task: {task}\\nWorker results:\\n{findings}\\n\"\n                           \"Synthesize one answer. Resolve conflicts and list gaps.\")",
+      "options": [
+        { "text": "results = await asyncio.gather(*[llm(WORKER, b) for b in briefs], return_exceptions=True)" },
+        {
+          "text": "results = await asyncio.gather(*[llm(WORKER, b) for b in briefs])",
+          "why": { "en": "Parallel, but the first worker exception propagates and the whole orchestration fails.", "es": "Es paralelo, pero la primera excepción de un worker se propaga y falla toda la orquestación." }
+        },
+        {
+          "text": "results = [await llm(WORKER, b) for b in briefs]",
+          "why": { "en": "Runs workers one after another: same tokens, wall-clock time grows with every worker, and one failure still stops everything.", "es": "Corre los workers uno tras otro: mismos tokens, el tiempo de reloj crece con cada worker y una falla igual detiene todo." }
+        },
+        {
+          "text": "results = await asyncio.gather(*[llm(WORKER, task) for b in briefs], return_exceptions=True)",
+          "why": { "en": "Every worker gets the whole task instead of its brief: duplicated work and no division of labour.", "es": "Cada worker recibe la tarea completa en vez de su encargo: trabajo duplicado y ningún reparto de tareas." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Fan out each focused brief concurrently, and collect exceptions as values so synthesis can work with the workers that succeeded and list the gaps. Together with the `max_workers` slice, this bounds both cost and blast radius.",
+        "es": "Reparte cada encargo enfocado de forma concurrente y recoge las excepciones como valores, para que la síntesis trabaje con los workers que sí terminaron y liste los huecos. Junto con el corte por `max_workers`, esto acota tanto el costo como el impacto de una falla."
+      }
+    },
+    {
+      "id": "orchestrator-workers.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Every incoming document gets the same three checks: PII, toxicity and format. A teammate wraps them in an orchestrator–workers setup \"so the model can plan the work\". Your view?",
+        "es": "Cada documento que entra recibe los mismos tres chequeos: PII, toxicidad y formato. Un compañero los envuelve en un esquema orquestador–workers \"para que el modelo planifique el trabajo\". ¿Qué opinas?"
+      },
+      "options": [
+        {
+          "text": { "en": "Use plain parallelization: code already knows the three subtasks", "es": "Usar paralelización simple: el código ya conoce las tres subtareas" },
+          "why": { "en": "When the subtasks are fixed, code should define them: predictable cost, latency and evals.", "es": "Cuando las subtareas son fijas, el código debe definirlas: costo, latencia y evals predecibles." }
+        },
+        {
+          "text": { "en": "Good idea: the orchestrator may discover useful extra checks", "es": "Buena idea: el orquestador puede descubrir chequeos extra útiles" },
+          "why": { "en": "Checks fixed by policy shouldn't vary per document; a varying plan makes cost, latency and evals unpredictable.", "es": "Los chequeos fijados por política no deberían variar por documento; un plan variable vuelve impredecibles el costo, la latencia y los evals." }
+        },
+        {
+          "text": { "en": "Good idea, as long as a cheaper model plays the orchestrator", "es": "Buena idea, siempre que un modelo más barato haga de orquestador" },
+          "why": { "en": "Still pays for a planning call and nondeterminism just to rediscover a list you already have.", "es": "Igual pagas una llamada de planificación y no determinismo solo para redescubrir una lista que ya tienes." }
+        },
+        {
+          "text": { "en": "Run the three checks inside one agent loop, one after another", "es": "Correr los tres chequeos dentro de un solo loop de agente, uno tras otro" },
+          "why": { "en": "The checks are independent; serializing them in an agent adds latency and nondeterminism for no gain.", "es": "Los chequeos son independientes; serializarlos en un agente agrega latencia y no determinismo sin ganar nada." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Orchestrator–workers and parallelization share a topology; what differs is who writes the plan. If code can enumerate the subtasks, let code do it. The orchestrator earns its planning call only when the subtasks can't be known in advance.",
+        "es": "Orquestador–workers y paralelización comparten topología; lo que cambia es quién escribe el plan. Si el código puede enumerar las subtareas, que lo haga el código. El orquestador se gana su llamada de planificación solo cuando las subtareas no se pueden conocer de antemano."
+      }
+    }
+  ]
+}

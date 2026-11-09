@@ -1,0 +1,112 @@
+{
+  "concept": "evaluator-optimizer",
+  "items": [
+    {
+      "id": "evaluator-optimizer.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your evaluator returns feedback like *\"improve clarity and flow\"*. Drafts change every round, but scores bounce 3 → 4 → 3 and rarely pass. Best fix?",
+        "es": "Tu evaluador devuelve feedback como *\"mejora la claridad y la fluidez\"*. Los borradores cambian en cada ronda, pero los puntajes rebotan 3 → 4 → 3 y casi nunca aprueban. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Require specific, located fixes tied to rubric items in the evaluator's output", "es": "Exigir en la salida del evaluador correcciones concretas, ubicadas y ligadas a puntos de la rúbrica" },
+          "why": { "en": "The generator can only converge on feedback it can act on; vague notes just make it rewrite at random.", "es": "El generador solo converge con feedback sobre el que puede actuar; las notas vagas solo lo hacen reescribir al azar." }
+        },
+        {
+          "text": { "en": "Raise the round cap from 3 to 8 so the loop has time to converge", "es": "Subir el tope de rondas de 3 a 8 para que el ciclo tenga tiempo de converger" },
+          "why": { "en": "An oscillating loop doesn't converge with more rounds; you just pay 2 more sequential calls per extra round.", "es": "Un ciclo que oscila no converge con más rondas; solo pagas 2 llamadas secuenciales más por cada ronda extra." }
+        },
+        {
+          "text": { "en": "Swap the generator for a stronger model that interprets feedback better", "es": "Cambiar el generador por un modelo más fuerte que interprete mejor el feedback" },
+          "why": { "en": "No model can act precisely on \"improve clarity\"; the missing information is in the feedback, not the generator.", "es": "Ningún modelo puede actuar con precisión sobre \"mejora la claridad\"; la información que falta está en el feedback, no en el generador." }
+        },
+        {
+          "text": { "en": "Lower the pass threshold from 4 to 3 so more drafts are accepted", "es": "Bajar el umbral de aprobación de 4 a 3 para que se acepten más borradores" },
+          "why": { "en": "Hides the symptom by shipping weaker output; the feedback is still unusable.", "es": "Esconde el síntoma publicando salidas más débiles; el feedback sigue siendo inútil." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The loop is only as good as its feedback. *\"Line 3 switches from formal to casual\"* gives the generator a target; *\"could be better\"* gives it nothing, so each revision is a fresh guess and the score oscillates. Make the evaluator return structured, located issues.",
+        "es": "El ciclo vale lo que vale su feedback. *\"La línea 3 pasa de formal a informal\"* le da al generador un objetivo; *\"podría estar mejor\"* no le da nada, así que cada revisión es un intento nuevo al azar y el puntaje oscila. Haz que el evaluador devuelva problemas estructurados y ubicados."
+      }
+    },
+    {
+      "id": "evaluator-optimizer.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "You localize 2,000 strings with a loop capped at 3 rounds; each round is 1 generator + 1 evaluator call. 70% pass in round 1, 25% in round 2, and the remaining 5% use all 3 rounds. How many LLM calls in total?",
+        "es": "Localizas 2,000 textos con un ciclo con tope de 3 rondas; cada ronda es 1 llamada al generador + 1 al evaluador. El 70% aprueba en la ronda 1, el 25% en la ronda 2 y el 5% restante usa las 3 rondas. ¿Cuántas llamadas al LLM hay en total?"
+      },
+      "answer": 5400,
+      "tolerance": 0.1,
+      "unit": "LLM calls",
+      "explain": {
+        "en": "Average rounds: 0.70×1 + 0.25×2 + 0.05×3 = 1.35. Calls: 2,000 × 1.35 × 2 = 5,400, versus 2,000 for single-pass translation and 12,000 in the worst case. Logging which round each item passes tells you whether round 3 earns its cost.",
+        "es": "Rondas promedio: 0.70×1 + 0.25×2 + 0.05×3 = 1.35. Llamadas: 2,000 × 1.35 × 2 = 5,400, frente a 2,000 de una traducción de una sola pasada y 12,000 en el peor caso. Registrar en qué ronda aprueba cada texto te dice si la ronda 3 vale lo que cuesta."
+      }
+    },
+    {
+      "id": "evaluator-optimizer.a3",
+      "type": "code",
+      "prompt": {
+        "en": "The loop ran out of rounds without a pass. Fill the gap with what it should return.",
+        "es": "El ciclo agotó sus rondas sin aprobar. Completa el hueco con lo que debería devolver."
+      },
+      "lang": "python",
+      "code": "def translate(source, max_rounds=3):\n    prompt, best = f\"Translate to Spanish. {RUBRIC}\\n\\n{source}\", (0, \"\")\n    for _ in range(max_rounds):\n        draft = generate(prompt)\n        verdict = evaluate(source, draft)\n        best = max(best, (verdict.score, draft))\n        if verdict.passed:\n            return draft\n        fixes = \"\\n- \".join(verdict.feedback)\n        prompt = f\"Revise. Fix exactly these issues:\\n- {fixes}\\n\\nSOURCE:\\n{source}\\n\\nDRAFT:\\n{draft}\"\n    ____",
+      "options": [
+        { "text": "return best[1]" },
+        {
+          "text": "return draft",
+          "why": { "en": "The last revision can be worse than an earlier one: fixing one criterion can break another that was passing.", "es": "La última revisión puede ser peor que una anterior: arreglar un criterio puede romper otro que ya pasaba." }
+        },
+        {
+          "text": "return translate(source, max_rounds)",
+          "why": { "en": "Restarts the loop, so the round cap no longer bounds cost or latency.", "es": "Reinicia el ciclo, así que el tope de rondas ya no acota el costo ni la latencia." }
+        },
+        {
+          "text": "raise RuntimeError(\"no draft passed\")",
+          "why": { "en": "Throws away a usable best-so-far draft; return it, or route it to a human reviewer.", "es": "Descarta un borrador útil, el mejor hasta el momento; devuélvelo o envíalo a un revisor humano." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Revisions can regress, so track the best-scored draft across rounds and return it when the cap hits, or escalate it to a human. The hard round cap is what bounds cost and latency; never let the fallback reopen the loop.",
+        "es": "Las revisiones pueden retroceder, así que guarda el borrador mejor puntuado entre rondas y devuélvelo cuando se llegue al tope, o escálalo a una persona. El tope duro de rondas es lo que acota costo y latencia; nunca dejes que el fallback reabra el ciclo."
+      }
+    },
+    {
+      "id": "evaluator-optimizer.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "To boost accuracy on multi-step math reasoning, a teammate adds a loop: the same model and prompt are asked *\"Are you sure? Check and fix your answer\"* up to 3 times. What should you expect?",
+        "es": "Para subir la precisión en razonamiento matemático de varios pasos, un compañero agrega un ciclo: al mismo modelo y con el mismo prompt se le pregunta *\"¿Estás seguro? Revisa y corrige tu respuesta\"* hasta 3 veces. ¿Qué deberías esperar?"
+      },
+      "options": [
+        {
+          "text": { "en": "Little or no gain, possibly lower accuracy: no new information enters the loop", "es": "Poca o ninguna mejora, quizá menos precisión: no entra información nueva al ciclo" },
+          "why": { "en": "Without external feedback, self-correction did not improve reasoning benchmarks and sometimes lowered accuracy (Huang et al., 2023).", "es": "Sin feedback externo, la autocorrección no mejoró los benchmarks de razonamiento y a veces bajó la precisión (Huang et al., 2023)." }
+        },
+        {
+          "text": { "en": "Roughly a 20-point absolute gain, as Self-Refine reported", "es": "Una mejora de unos 20 puntos absolutos, como reportó Self-Refine" },
+          "why": { "en": "That figure is an average over Self-Refine's 7 tasks; on reasoning, self-correction without external feedback didn't help.", "es": "Esa cifra es un promedio sobre las 7 tareas de Self-Refine; en razonamiento, la autocorrección sin feedback externo no ayudó." }
+        },
+        {
+          "text": { "en": "Gains like Reflexion's on HumanEval, from 80% to 91% pass@1", "es": "Mejoras como las de Reflexion en HumanEval, de 80% a 91% en pass@1" },
+          "why": { "en": "Reflexion's feedback came from running tests, an external signal; \"are you sure?\" adds none.", "es": "El feedback de Reflexion venía de correr tests, una señal externa; \"¿estás seguro?\" no agrega ninguna." }
+        },
+        {
+          "text": { "en": "Steady gains each round, since every pass catches a few more errors", "es": "Mejoras constantes en cada ronda, porque cada pasada atrapa algunos errores más" },
+          "why": { "en": "Each pass has the same blind spots as the first; there's no new signal to catch what it missed.", "es": "Cada pasada tiene los mismos puntos ciegos que la primera; no hay una señal nueva para atrapar lo que se le escapó." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "An evaluator–optimizer loop is only as good as its evaluation signal. Best: external, deterministic checks (tests, compilers, validators). Good: a separate evaluator with a rubric, ideally another model. Weak: the same model second-guessing itself with nothing new to go on.",
+        "es": "Un ciclo evaluador–optimizador vale lo que vale su señal de evaluación. La mejor: verificaciones externas y deterministas (tests, compiladores, validadores). Buena: un evaluador separado con rúbrica, idealmente otro modelo. Débil: el mismo modelo dudando de sí mismo sin nada nuevo en qué apoyarse."
+      }
+    }
+  ]
+}

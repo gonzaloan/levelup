@@ -1,0 +1,95 @@
+{
+  "concept": "lethal-trifecta",
+  "items": [
+    {
+      "id": "lethal-trifecta.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your agent's session uses three MCP servers, each approved in its own security review: web fetch, a filesystem server over folders with customer records, and email sending. What do you flag?",
+        "es": "La sesión de tu agente usa tres servidores MCP, cada uno aprobado en su propia revisión de seguridad: web fetch, un servidor de archivos sobre carpetas con registros de clientes y envío de correos. ¿Qué señalas?"
+      },
+      "options": [
+        { "text": { "en": "Together they form a trifecta in one session: cut a leg or gate outbound email on approval", "es": "Juntos forman una trifecta en una sesión: corta una pata o pon el correo saliente detrás de una aprobación" } },
+        { "text": { "en": "Nothing: each server passed its own review, so the combined agent inherits that safety", "es": "Nada: cada servidor pasó su propia revisión, así que el agente combinado hereda esa seguridad" },
+          "why": { "en": "The risk lives in the combination. Legs are counted per session across all tools, not per tool.", "es": "El riesgo está en la combinación. Las patas se cuentan por sesión sumando todas las herramientas, no por herramienta." } },
+        { "text": { "en": "Revoke the filesystem server's write access, since writing files is the risky leg", "es": "Quitarle permisos de escritura al servidor de archivos, porque escribir archivos es la pata riesgosa" },
+          "why": { "en": "The leg is *reading* private data. A read-only filesystem server still feeds customer records to the model.", "es": "La pata es *leer* datos privados. Un servidor de archivos de solo lectura igual le pasa los registros de clientes al modelo." } },
+        { "text": { "en": "Add an injection classifier on fetched pages; that closes the exfiltration path", "es": "Agregar un clasificador de inyección sobre las páginas descargadas; eso cierra la vía de exfiltración" },
+          "why": { "en": "Detection lowers the success rate but never reaches zero. Only removing a leg closes the path.", "es": "La detección baja la tasa de éxito pero nunca llega a cero. Solo quitar una pata cierra la vía." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Web fetch brings untrusted content, the filesystem brings private data, email is the way out. Each server is harmless alone; the session is the unit of risk. Recount the legs every time a tool or MCP server is added.",
+        "es": "Web fetch trae contenido no confiable, el sistema de archivos trae datos privados y el correo es la salida. Cada servidor es inofensivo por separado; la unidad de riesgo es la sesión. Vuelve a contar las patas cada vez que agregas una herramienta o un servidor MCP."
+      }
+    },
+    {
+      "id": "lethal-trifecta.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the guard so an outbound call needs a human **only** when it would complete all three legs in this session.",
+        "es": "Completa el guard para que una llamada de salida requiera a una persona **solo** cuando completaría las tres patas en esta sesión."
+      },
+      "lang": "python",
+      "code": "class TrifectaGuard:\n    def __init__(self):\n        self.private = self.untrusted = False\n\n    def on_tool_result(self, tool):\n        self.private |= tool.reads_private_data     # read_inbox, query_crm\n        self.untrusted |= tool.returns_untrusted    # fetch_url, read_issue\n\n    def may_call(self, tool) -> str:\n        if not tool.communicates_externally:        # send_email, http_post, create_pr\n            return \"allow\"\n        ____\n            return \"ask_human\"\n        return \"allow\"",
+      "options": [
+        { "text": "if self.private and self.untrusted:" },
+        { "text": "if tool.reads_private_data and tool.returns_untrusted:",
+          "why": { "en": "Checks the outbound tool alone. Legs supplied earlier by other tools or MCP servers are ignored.", "es": "Revisa solo la herramienta de salida. Ignora las patas que aportaron antes otras herramientas o servidores MCP." } },
+        { "text": "if self.private or self.untrusted:",
+          "why": { "en": "Gates two-leg sessions too: more prompts, approval fatigue, and users start approving without reading.", "es": "También frena sesiones con dos patas: más solicitudes, fatiga de aprobación y usuarios que aprueban sin leer." } },
+        { "text": "if self.private and self.untrusted and tool.name == \"send_email\":",
+          "why": { "en": "Gates only email. `http_post` and `create_pr` are egress too, so the data leaves through them.", "es": "Solo controla el correo. `http_post` y `create_pr` también son salidas, así que los datos se van por ahí." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The guard accumulates legs across the whole session with `|=`, then gates the third leg only when the other two are already present. Any tool flagged `communicates_externally` counts, whatever its name.",
+        "es": "El guard acumula patas en toda la sesión con `|=` y controla la tercera solo cuando las otras dos ya están presentes. Cuenta cualquier herramienta marcada como `communicates_externally`, sin importar su nombre."
+      }
+    },
+    {
+      "id": "lethal-trifecta.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Your agent already sees private data and reads untrusted content. Which of these give it the third leg, **external communication**? Select all that apply.",
+        "es": "Tu agente ya ve datos privados y lee contenido no confiable. ¿Cuáles de estas le dan la tercera pata, la **comunicación externa**? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "The chat UI auto-renders markdown images from any host", "es": "La UI del chat renderiza automáticamente imágenes markdown de cualquier host" } },
+        { "text": { "en": "A `create_pr` tool that writes to a public repo", "es": "Una herramienta `create_pr` que escribe en un repo público" } },
+        { "text": { "en": "Rendered links whose query string the model wrote", "es": "Enlaces renderizados cuyo query string escribió el modelo" } },
+        { "text": { "en": "A plain-text answer shown only to the signed-in user", "es": "Una respuesta en texto plano que solo ve el usuario que inició sesión" },
+          "why": { "en": "Showing data to its own authorized user is not egress, as long as nothing in it fetches or links outward.", "es": "Mostrarle datos a su propio usuario autorizado no es salida, mientras nada en el texto haga peticiones o enlace hacia afuera." } },
+        { "text": { "en": "A read-only `query_crm` tool", "es": "Una herramienta `query_crm` de solo lectura" },
+          "why": { "en": "That is leg 1, private data. Read-only does not make it an exfiltration channel.", "es": "Esa es la pata 1, datos privados. Ser de solo lectura no la convierte en un canal de exfiltración." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Egress is leakier than the tool list suggests. A rendered image is an outbound GET with zero clicks, and its URL can carry the data. Count implicit channels (images, links, PR titles, webhooks) as leg 3, not just tools named \"send\".",
+        "es": "La salida tiene más fugas de lo que sugiere la lista de herramientas. Una imagen renderizada es un GET saliente sin ningún clic y su URL puede llevar los datos. Cuenta los canales implícitos (imágenes, enlaces, títulos de PRs, webhooks) como pata 3, no solo las herramientas que se llaman \"send\"."
+      }
+    },
+    {
+      "id": "lethal-trifecta.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "You removed every egress channel. The agent still reads untrusted issues and can push and delete branches in private repos. A reviewer says: \"Trifecta broken, we're done.\" Your response?",
+        "es": "Quitaste todos los canales de salida. El agente todavía lee issues no confiables y puede hacer push y borrar ramas en repos privados. Un revisor dice: \"La trifecta está rota, terminamos\". ¿Qué respondes?"
+      },
+      "options": [
+        { "text": { "en": "Exfiltration is closed, but injected text can still trigger destructive writes: add least privilege and approval", "es": "La exfiltración está cerrada, pero el texto inyectado aún puede disparar escrituras destructivas: agrega mínimo privilegio y aprobación" } },
+        { "text": { "en": "Agreed: with one leg removed, an injected instruction has no remaining payoff", "es": "De acuerdo: sin una pata, una instrucción inyectada ya no tiene ninguna ganancia" },
+          "why": { "en": "It removes the *exfiltration* payoff only. Deleting branches needs no egress at all.", "es": "Solo elimina la ganancia de *exfiltración*. Borrar ramas no necesita ninguna salida." } },
+        { "text": { "en": "Not done: you must remove at least two legs before any agent is safe", "es": "No terminamos: hay que quitar al menos dos patas para que un agente sea seguro" },
+          "why": { "en": "Removing any one leg closes this exfiltration path. A second leg doesn't address destructive actions either.", "es": "Quitar cualquier pata cierra esta vía de exfiltración. Una segunda pata tampoco resuelve las acciones destructivas." } },
+        { "text": { "en": "Not done: egress can't really be removed, so keep it and add a classifier", "es": "No terminamos: la salida no se puede quitar de verdad, así que mantenla y agrega un clasificador" },
+          "why": { "en": "Cutting egress is often the cheapest leg to cut. A classifier is a signal, not a replacement for it.", "es": "Cortar la salida suele ser la pata más barata. Un clasificador es una señal, no un reemplazo de eso." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The trifecta is a model for one threat, data exfiltration, not a complete threat model. A two-leg agent can still delete data, spend money or mislead users, so pair it with least privilege, approval gates and output handling.",
+        "es": "La trifecta modela una sola amenaza, la exfiltración de datos, no es un modelo de amenazas completo. Un agente con dos patas todavía puede borrar datos, gastar dinero o engañar a usuarios, así que combínala con mínimo privilegio, puntos de aprobación y manejo de la salida."
+      }
+    }
+  ]
+}

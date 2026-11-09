@@ -1,0 +1,85 @@
+{
+  "concept": "regularization",
+  "items": [
+    {
+      "id": "regularization.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Offline evaluation of your PyTorch classifier was fine. In the serving code, the same image gets **noticeably different** class probabilities on every call, and accuracy is lower. Most likely cause?",
+        "es": "La evaluación offline de tu clasificador en PyTorch estaba bien. En el código de serving, la misma imagen recibe probabilidades **notablemente distintas** en cada llamada, y la accuracy es más baja. ¿Causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "Dropout is still on: the server never calls `model.eval()`", "es": "El dropout sigue activo: el servidor nunca llama a `model.eval()`" } },
+        { "text": { "en": "Weight decay was too weak during training", "es": "El weight decay fue demasiado débil en el entrenamiento" },
+          "why": { "en": "Weight decay shapes the learned weights; it can't make the same weights give different answers twice.", "es": "El weight decay da forma a los pesos aprendidos; no puede hacer que los mismos pesos den respuestas distintas." } },
+        { "text": { "en": "Label smoothing made the logits unstable", "es": "El label smoothing volvió inestables los logits" },
+          "why": { "en": "Label smoothing only changes training targets; at inference the network is a fixed function either way.", "es": "El label smoothing solo cambia los objetivos de entrenamiento; en inferencia la red es una función fija de todos modos." } },
+        { "text": { "en": "GPU kernels are nondeterministic; pin the seed", "es": "Los kernels de GPU no son deterministas; fija la semilla" },
+          "why": { "en": "Kernel nondeterminism causes tiny floating-point differences, not visibly different probabilities and lower accuracy.", "es": "El no determinismo de los kernels causa diferencias mínimas de punto flotante, no probabilidades visiblemente distintas ni menor accuracy." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "In train mode, dropout zeroes a random subset of activations on every forward pass, so outputs are noisy by design. `model.eval()` turns it off and uses every unit. Your eval loop called it; the serving path didn't.",
+        "es": "En modo train, el dropout apaga un subconjunto aleatorio de activaciones en cada forward, así que las salidas son ruidosas a propósito. `model.eval()` lo desactiva y usa todas las unidades. Tu ciclo de evaluación lo llamaba; el camino de serving no."
+      }
+    },
+    {
+      "id": "regularization.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A layer uses inverted dropout with drop probability **p = 0.3** (PyTorch's convention). During training, a unit that survives has activation 2.0 before scaling. What value does it pass on?",
+        "es": "Una capa usa inverted dropout con probabilidad de apagado **p = 0.3** (la convención de PyTorch). En entrenamiento, una unidad que sobrevive tiene activación 2.0 antes de escalar. ¿Qué valor pasa a la siguiente capa?"
+      },
+      "answer": 2.857,
+      "tolerance": 0.04,
+      "explain": {
+        "en": "Survivors are scaled by 1/(1 − p) = 1/0.7 ≈ 1.43, so 2.0 → ~2.86. That keeps each unit's expected output equal to its no-dropout value, which is why inference uses every unit with no rescaling at all.",
+        "es": "Las unidades que sobreviven se escalan por 1/(1 − p) = 1/0.7 ≈ 1.43, así que 2.0 → ~2.86. Así el valor esperado de cada unidad queda igual que sin dropout, y por eso en inferencia se usan todas las unidades sin reescalar nada."
+      }
+    },
+    {
+      "id": "regularization.a3",
+      "type": "match",
+      "prompt": {
+        "en": "Match each regularizer to how it works.",
+        "es": "Relaciona cada regularizador con cómo funciona."
+      },
+      "pairs": [
+        { "left": { "en": "L1 (lasso)", "es": "L1 (lasso)" },
+          "right": { "en": "Constant pull drives many weights to exactly zero, selecting features", "es": "Un tirón constante lleva muchos pesos a exactamente cero y selecciona features" } },
+        { "left": { "en": "L2 / weight decay", "es": "L2 / weight decay" },
+          "right": { "en": "Shrinks all weights smoothly toward zero, giving a smoother function", "es": "Encoge todos los pesos suavemente hacia cero y da una función más suave" } },
+        { "left": { "en": "Label smoothing", "es": "Label smoothing" },
+          "right": { "en": "Trains on soft targets so logits can't be pushed toward infinity", "es": "Entrena con objetivos suaves para que los logits no se empujen hacia el infinito" } },
+        { "left": { "en": "Early stopping", "es": "Early stopping" },
+          "right": { "en": "Keeps the checkpoint with the best validation loss and halts training", "es": "Guarda el checkpoint con la mejor pérdida de validación y detiene el entrenamiento" } }
+      ],
+      "explain": {
+        "en": "Each one attacks memorization at a different point: the loss (L1, L2), the targets (label smoothing) or the decision to stop. All of them cut variance at the price of a little bias, so tune each strength on validation.",
+        "es": "Cada uno ataca la memorización en un punto distinto: la pérdida (L1, L2), los objetivos (label smoothing) o la decisión de parar. Todos reducen varianza a cambio de un poco de sesgo, así que ajusta cada intensidad en validación."
+      }
+    },
+    {
+      "id": "regularization.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "After adding augmentation, weight decay, label smoothing and early stopping, train accuracy falls from 99% to ~90% and validation rises from 78% to ~86%. A teammate wants to revert: \"the model got worse.\" Your response?",
+        "es": "Después de agregar data augmentation, weight decay, label smoothing y early stopping, la accuracy en train baja de 99% a ~90% y la de validación sube de 78% a ~86%. Un compañero quiere revertir: \"el modelo empeoró\". ¿Qué respondes?"
+      },
+      "options": [
+        { "text": { "en": "Keep it: the lower train score means it stopped memorizing", "es": "Mantenerlo: que train baje significa que dejó de memorizar" } },
+        { "text": { "en": "Revert: a 9-point train drop signals underfitting", "es": "Revertir: una caída de 9 puntos en train indica underfitting" },
+          "why": { "en": "Underfitting means both scores are poor. Validation improved 8 points, so variance went down; bias barely moved.", "es": "Underfitting significa que ambos puntajes son malos. Validación mejoró 8 puntos, así que bajó la varianza; el sesgo casi no se movió." } },
+        { "text": { "en": "Revert: good regularization raises train and validation together", "es": "Revertir: una buena regularización sube train y validación a la vez" },
+          "why": { "en": "Regularization trades a little training fit for generalization; a lower train score is the expected price.", "es": "La regularización cambia un poco de ajuste en train por generalización; un puntaje de train más bajo es el precio esperado." } },
+        { "text": { "en": "Keep it, then tune each strength on the test set", "es": "Mantenerlo y luego ajustar cada intensidad en el test" },
+          "why": { "en": "Strengths (λ, p, ε, patience) are tuned on validation; tuning on test destroys your only unbiased estimate.", "es": "Las intensidades (λ, p, ε, paciencia) se ajustan en validación; ajustarlas en test destruye tu única estimación sin sesgo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Judge a model by validation, not train. The gap shrank from 21 to ~4 points: the model traded memorized quirks (like backgrounds) for patterns that generalize. A falling train score with rising validation is regularization working.",
+        "es": "Juzga un modelo por validación, no por train. La brecha bajó de 21 a ~4 puntos: el modelo cambió rarezas memorizadas (como los fondos) por patrones que generalizan. Que train baje mientras validación sube es la regularización funcionando."
+      }
+    }
+  ]
+}

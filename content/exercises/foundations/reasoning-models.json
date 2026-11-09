@@ -1,0 +1,96 @@
+{
+  "concept": "reasoning-models",
+  "items": [
+    {
+      "id": "reasoning-models.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your planning feature calls a reasoning model with `max_output_tokens=2000`. On hard prompts, responses come back with `status: \"incomplete\"` and an empty answer. Most likely cause and fix?",
+        "es": "Tu función de planificación llama a un modelo de razonamiento con `max_output_tokens=2000`. En los prompts difíciles, las respuestas vuelven con `status: \"incomplete\"` y la respuesta vacía. ¿Causa y corrección más probables?"
+      },
+      "options": [
+        {
+          "text": { "en": "Thinking ate the cap: raise the output limit or lower effort", "es": "El razonamiento se comió el límite: sube el tope de salida o baja el effort" },
+          "why": { "en": "The output cap includes hidden reasoning tokens; a hard prompt can burn ~5–20k of them.", "es": "El tope de salida incluye los tokens ocultos de razonamiento; un prompt difícil puede gastar ~5–20k." }
+        },
+        {
+          "text": { "en": "The prompt lacks CoT: add \"think step by step\" to it", "es": "Al prompt le falta CoT: agrégale \"piensa paso a paso\"" },
+          "why": { "en": "Redundant for reasoning models (OpenAI advises against it), and more thinking would hit the cap sooner.", "es": "Es redundante en modelos de razonamiento (OpenAI lo desaconseja), y pensar más alcanzaría el tope antes." }
+        },
+        {
+          "text": { "en": "The input is too long: trim the context to free up room", "es": "La entrada es muy larga: recorta el contexto para liberar espacio" },
+          "why": { "en": "The limit that ran out is the output cap, which the hidden reasoning shares with the answer.", "es": "El límite que se agotó es el tope de salida, que el razonamiento oculto comparte con la respuesta." }
+        },
+        {
+          "text": { "en": "Effort is too low: set it to high so the model finishes", "es": "El effort es muy bajo: ponlo en high para que el modelo termine" },
+          "why": { "en": "Higher effort spends more thinking tokens and exhausts the same cap faster.", "es": "Un effort más alto gasta más tokens de razonamiento y agota el mismo tope más rápido." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Hidden reasoning tokens are output tokens: they count against the output cap and are billed even when you never see them. Size the cap for thinking plus answer (OpenAI suggests reserving ≥25,000 tokens at first), or lower effort on routes that don't need it.",
+        "es": "Los tokens ocultos de razonamiento son tokens de salida: cuentan contra el tope de salida y se cobran aunque nunca los veas. Dimensiona el tope para el razonamiento más la respuesta (OpenAI sugiere reservar ≥25,000 tokens al empezar), o baja el effort en las rutas que no lo necesitan."
+      }
+    },
+    {
+      "id": "reasoning-models.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the usage log so it reports how many tokens of the **visible** answer you got back.",
+        "es": "Completa el registro de uso para que reporte cuántos tokens de la respuesta **visible** recibiste."
+      },
+      "lang": "python",
+      "code": "resp = client.responses.create(\n    model=\"o4-mini\",\n    reasoning={\"effort\": \"medium\"},\n    max_output_tokens=25_000,  # includes hidden reasoning\n    input=prompt,\n)\nu = resp.usage\nhidden = u.output_tokens_details.reasoning_tokens\n____\nprint(f\"reasoning={hidden} visible={visible}\")",
+      "options": [
+        { "text": "visible = u.output_tokens - hidden" },
+        {
+          "text": "visible = u.output_tokens",
+          "why": { "en": "`output_tokens` already includes the hidden reasoning, so this overstates the answer.", "es": "`output_tokens` ya incluye el razonamiento oculto, así que esto infla la respuesta." }
+        },
+        {
+          "text": "visible = u.output_tokens + hidden",
+          "why": { "en": "Counts the reasoning twice: it is already inside `output_tokens`.", "es": "Cuenta el razonamiento dos veces: ya está dentro de `output_tokens`." }
+        },
+        {
+          "text": "visible = u.input_tokens - hidden",
+          "why": { "en": "Reasoning tokens are generated, so they are billed as output, not input.", "es": "Los tokens de razonamiento se generan, así que se cobran como salida, no como entrada." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Reasoning tokens are a subset of output tokens: billed at the output rate, never returned. Logging both per route is how you spot a bill that grew from thinking rather than from longer answers.",
+        "es": "Los tokens de razonamiento son un subconjunto de los tokens de salida: se cobran a la tarifa de salida y nunca se devuelven. Registrar ambos por ruta es como detectas una factura que creció por el razonamiento y no por respuestas más largas."
+      }
+    },
+    {
+      "id": "reasoning-models.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about reasoning models are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los modelos de razonamiento son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Hidden thinking tokens are billed as output tokens", "es": "Los tokens ocultos de razonamiento se cobran como tokens de salida" } },
+        {
+          "text": { "en": "Adding \"think step by step\" makes them reason better", "es": "Agregar \"piensa paso a paso\" los hace razonar mejor" },
+          "why": { "en": "They already think before answering; the scaffolding is redundant and OpenAI advises against it.", "es": "Ya piensan antes de responder; ese andamiaje es redundante y OpenAI lo desaconseja." }
+        },
+        { "text": { "en": "You can trade cost for accuracy per request with an effort setting", "es": "Puedes cambiar costo por precisión en cada request con un ajuste de effort" } },
+        {
+          "text": { "en": "The reasoning summary is a faithful audit trail", "es": "El resumen del razonamiento es un registro de auditoría fiel" },
+          "why": { "en": "Raw reasoning is hidden or summarized and is not a faithful explanation of the answer.", "es": "El razonamiento crudo está oculto o resumido y no es una explicación fiel de la respuesta." }
+        },
+        { "text": { "en": "They are trained with RL on tasks with checkable answers", "es": "Se entrenan con RL en tareas con respuestas verificables" } },
+        {
+          "text": { "en": "They are the best default for high-volume classification", "es": "Son la mejor opción por defecto para clasificación de alto volumen" },
+          "why": { "en": "On extraction and classification they mostly add cost and latency, and can overthink a right answer.", "es": "En extracción y clasificación sobre todo suman costo y latencia, y pueden pensar de más una respuesta correcta." }
+        }
+      ],
+      "answers": [0, 2, 4],
+      "explain": {
+        "en": "RL on verifiable rewards teaches the model to think at length; test-time compute makes accuracy a per-request dial that you pay for in output tokens and seconds. Spend it where errors are expensive, and don't mistake the summary for the real reasoning.",
+        "es": "El RL con recompensas verificables le enseña al modelo a pensar a fondo; el cómputo en inferencia vuelve la precisión un dial por request que pagas en tokens de salida y segundos. Gástalo donde los errores son caros, y no confundas el resumen con el razonamiento real."
+      }
+    }
+  ]
+}

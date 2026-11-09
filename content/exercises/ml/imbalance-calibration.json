@@ -1,0 +1,89 @@
+{
+  "concept": "imbalance-calibration",
+  "items": [
+    {
+      "id": "imbalance-calibration.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You add `scale_pos_weight = neg/pos` to your fraud GBDT. PR-AUC improves, but the rule `p × amount > review cost` now sends **5×** more transactions to manual review. Nothing else changed. What's the cause and the fix?",
+        "es": "Agregas `scale_pos_weight = neg/pos` a tu GBDT de fraude. El PR-AUC mejora, pero la regla `p × monto > costo de revisión` ahora manda **5×** más transacciones a revisión manual. Nada más cambió. ¿Cuál es la causa y la corrección?"
+      },
+      "options": [
+        { "text": { "en": "The weights inflated `p`; recalibrate on an unsampled holdout", "es": "Los pesos inflaron `p`; recalibra sobre un holdout sin muestrear" },
+          "why": { "en": "Class weights help ranking but push probabilities up; calibration restores `p` so expected-value rules work again.", "es": "Los pesos de clase ayudan al ranking pero empujan las probabilidades hacia arriba; calibrar devuelve un `p` real para que las reglas de valor esperado vuelvan a funcionar." } },
+        { "text": { "en": "The PR-AUC gain is fake; remove the class weights entirely", "es": "La mejora de PR-AUC es falsa; quita por completo los pesos de clase" },
+          "why": { "en": "The ranking gain is real. The weights only bend the probabilities, which calibration fixes without giving the gain back.", "es": "La mejora del ranking es real. Los pesos solo deforman las probabilidades, y la calibración lo corrige sin perder esa mejora." } },
+        { "text": { "en": "Raise the review cost until review volume looks normal", "es": "Sube el costo de revisión hasta que el volumen se vea normal" },
+          "why": { "en": "That hides a miscalibrated `p` behind a fudged business constant, and it breaks again whenever weights or base rates change.", "es": "Eso esconde un `p` mal calibrado detrás de una constante de negocio maquillada, y se rompe otra vez cuando cambian los pesos o la tasa base." } },
+        { "text": { "en": "Replace the cost rule with a fixed 0.5 probability threshold", "es": "Reemplaza la regla de costo por un umbral fijo de probabilidad de 0,5" },
+          "why": { "en": "0.5 ignores the costs entirely; with rare fraud it flags almost nothing, and `p` is still miscalibrated.", "es": "El 0,5 ignora por completo los costos; con fraude raro casi no marca nada, y `p` sigue mal calibrado." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Reweighting and resampling buy ranking quality but distort probabilities. Anything that multiplies `p` by money needs calibrated scores, so keep the weights and fit Platt or isotonic on a recent, unsampled holdout. Ranking metrics won't flag the problem; a reliability diagram will.",
+        "es": "Reponderar y remuestrear mejoran el ranking pero distorsionan las probabilidades. Todo lo que multiplica `p` por dinero necesita puntajes calibrados, así que conserva los pesos y ajusta Platt o isotónica sobre un holdout reciente y sin muestrear. Las métricas de ranking no ven el problema; un diagrama de confiabilidad sí."
+      }
+    },
+    {
+      "id": "imbalance-calibration.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "An ads model trains on all clicks but only **5%** of non-clicks (`w = 0.05`). For one ad it predicts `p = 0.17`. Undo the downsampling with `q = p / (p + (1 − p)/w)`. What is the corrected click probability, in %?",
+        "es": "Un modelo de ads entrena con todos los clics pero solo con el **5%** de los no-clics (`w = 0.05`). Para un anuncio predice `p = 0.17`. Deshaz el submuestreo con `q = p / (p + (1 − p)/w)`. ¿Cuál es la probabilidad de clic corregida, en %?"
+      },
+      "answer": 1.01,
+      "tolerance": 0.1,
+      "unit": "%",
+      "explain": {
+        "en": "(1 − 0.17) / 0.05 = 16.6, so q = 0.17 / (0.17 + 16.6) = 0.17 / 16.77 ≈ 0.0101 ≈ 1.0%. Dropping 95% of negatives makes the odds 1/w = 20× too high. Multiplying p by w (0.85%) is close but wrong: the correction acts on the odds, not the probability.",
+        "es": "(1 − 0,17) / 0,05 = 16,6, así que q = 0,17 / (0,17 + 16,6) = 0,17 / 16,77 ≈ 0,0101 ≈ 1,0%. Descartar el 95% de los negativos deja los odds 1/w = 20× más altos. Multiplicar p por w (0,85%) se acerca pero está mal: la corrección actúa sobre los odds, no sobre la probabilidad."
+      }
+    },
+    {
+      "id": "imbalance-calibration.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "A teammate says the new pCTR model is well calibrated because its holdout AUC went up. Which checks could actually reveal miscalibration? Select all that apply.",
+        "es": "Un compañero dice que el nuevo modelo de pCTR está bien calibrado porque su AUC en el holdout subió. ¿Qué chequeos sí podrían revelar una mala calibración? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A reliability diagram on an unsampled holdout", "es": "Un diagrama de confiabilidad sobre un holdout sin muestrear" } },
+        { "text": { "en": "ECE computed with equal-mass bins", "es": "El ECE calculado con bins de igual masa" } },
+        { "text": { "en": "Predicted ÷ observed clicks, per segment", "es": "Clics predichos ÷ observados, por segmento" } },
+        { "text": { "en": "PR-AUC on the same holdout", "es": "El PR-AUC sobre el mismo holdout" },
+          "why": { "en": "Like ROC-AUC, it depends only on score order; any monotone distortion leaves it unchanged.", "es": "Igual que el ROC-AUC, depende solo del orden de los puntajes; cualquier distorsión monótona lo deja igual." } },
+        { "text": { "en": "NDCG@10 of the ads ranked by pCTR", "es": "El NDCG@10 de los anuncios ordenados por pCTR" },
+          "why": { "en": "Ranking metrics are blind to scale: scores 10× too high produce the same order.", "es": "Las métricas de ranking no ven la escala: puntajes 10× más altos producen el mismo orden." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Calibration is about values; AUC, PR-AUC and NDCG are about order. A monotone transform, like the inflation from weighting or sampling, keeps them unchanged while every probability is wrong. Check reliability diagrams, ECE, log loss or the predicted/observed ratio, per segment.",
+        "es": "La calibración trata de valores; AUC, PR-AUC y NDCG tratan del orden. Una transformación monótona, como la inflación por pesos o por muestreo, los deja intactos aunque todas las probabilidades estén mal. Revisa diagramas de confiabilidad, ECE, log loss o el ratio predicho/observado, por segmento."
+      }
+    },
+    {
+      "id": "imbalance-calibration.a4",
+      "type": "match",
+      "prompt": {
+        "en": "Match each technique to what it does.",
+        "es": "Une cada técnica con lo que hace."
+      },
+      "pairs": [
+        { "left": { "en": "Class weights", "es": "Pesos de clase" },
+          "right": { "en": "Upweight positives in the loss without dropping any data", "es": "Dan más peso a los positivos en la loss sin descartar datos" } },
+        { "left": { "en": "Negative downsampling", "es": "Submuestreo de negativos" },
+          "right": { "en": "Keep every positive, sample negatives; needs a closed-form correction afterwards", "es": "Conserva todos los positivos y muestrea negativos; luego requiere una corrección en forma cerrada" } },
+        { "left": { "en": "Focal loss", "es": "Focal loss" },
+          "right": { "en": "Down-weights easy examples so rare, hard ones dominate training", "es": "Le quita peso a los ejemplos fáciles para que dominen los raros y difíciles" } },
+        { "left": { "en": "Platt scaling", "es": "Platt scaling" },
+          "right": { "en": "Fits a two-parameter sigmoid from score to probability", "es": "Ajusta una sigmoide de dos parámetros del puntaje a la probabilidad" } },
+        { "left": { "en": "Isotonic regression", "es": "Regresión isotónica" },
+          "right": { "en": "Fits a monotone step function; needs roughly 1,000+ calibration samples", "es": "Ajusta una función escalonada monótona; necesita unas 1.000+ muestras de calibración" } }
+      ],
+      "explain": {
+        "en": "The first three change training to cope with rare positives and all of them bend probabilities. The last two run after training, on a holdout, to map scores back to real frequencies.",
+        "es": "Las tres primeras cambian el entrenamiento para lidiar con positivos raros, y todas deforman las probabilidades. Las dos últimas corren después del entrenamiento, sobre un holdout, para devolver los puntajes a frecuencias reales."
+      }
+    }
+  ]
+}

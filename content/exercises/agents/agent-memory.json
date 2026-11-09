@@ -1,0 +1,97 @@
+{
+  "concept": "agent-memory",
+  "items": [
+    {
+      "id": "agent-memory.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your travel assistant embeds every chat message into a per-user vector store. A user said *\"I'm vegetarian\"* in March and *\"I eat fish now\"* in May; the agent still suggests only vegetarian restaurants about half the time. Root fix?",
+        "es": "Tu asistente de viajes convierte en embedding cada mensaje del chat y lo guarda en un vector store por usuario. Un usuario dijo *\"soy vegetariano\"* en marzo y *\"ahora como pescado\"* en mayo; el agente sigue sugiriendo solo restaurantes vegetarianos la mitad de las veces. ¿Cuál es la solución de fondo?"
+      },
+      "options": [
+        { "text": { "en": "Extract atomic facts with timestamps and overwrite the fact a new one contradicts", "es": "Extraer hechos atómicos con fecha y sobrescribir el hecho que uno nuevo contradice" },
+          "why": { "en": "The store is append-only, so old and new preferences compete forever; an update path resolves the conflict at write time.", "es": "El almacén es de solo inserción, así que la preferencia vieja y la nueva compiten para siempre; una vía de actualización resuelve el conflicto al escribir." } },
+        { "text": { "en": "Raise top-k so both facts and more surrounding messages reach the model", "es": "Subir el top-k para que ambos hechos y más mensajes cercanos lleguen al modelo" },
+          "why": { "en": "More retrieved chunks add chit-chat noise; the contradiction is still there, now with more company.", "es": "Más chunks recuperados suman ruido de charla trivial; la contradicción sigue ahí, ahora con más compañía." } },
+        { "text": { "en": "Switch to a stronger embedding model so retrieval ranks the facts better", "es": "Cambiar a un modelo de embeddings más fuerte para que la recuperación ordene mejor los hechos" },
+          "why": { "en": "Both facts are equally relevant to \"food\"; retrieval works. The problem is that the write policy never resolved them.", "es": "Ambos hechos son igual de relevantes para \"comida\"; la recuperación funciona. El problema es que la política de escritura nunca los resolvió." } },
+        { "text": { "en": "Drop the store and replay the user's full chat history every turn", "es": "Eliminar el almacén y repetir todo el historial de chat del usuario en cada turno" },
+          "why": { "en": "Pays for every token on every turn, recall degrades as the window fills, and both statements are still present.", "es": "Pagas cada token en cada turno, el recall se degrada al llenarse la ventana y ambas afirmaciones siguen presentes." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Memory is a set of policies, not a database. Most failures trace to the write policy: save atomic facts (not transcripts) with timestamp and source, and update or overwrite on contradiction so retrieval never has to arbitrate between stale and current facts.",
+        "es": "La memoria es un conjunto de políticas, no una base de datos. La mayoría de las fallas vienen de la política de escritura: guarda hechos atómicos (no transcripciones) con fecha y fuente, y actualiza o sobrescribe ante una contradicción para que la recuperación nunca tenga que arbitrar entre hechos viejos y actuales."
+      }
+    },
+    {
+      "id": "agent-memory.a2",
+      "type": "match",
+      "prompt": {
+        "en": "Match each kind of agent memory to what it holds.",
+        "es": "Une cada tipo de memoria del agente con lo que guarda."
+      },
+      "pairs": [
+        { "left": { "en": "Working memory", "es": "Memoria de trabajo" },
+          "right": { "en": "The context window: conversation, tool results and scratchpad, gone when the session ends", "es": "La ventana de contexto: conversación, resultados de herramientas y borrador; desaparece al terminar la sesión" } },
+        { "left": { "en": "Semantic memory", "es": "Memoria semántica" },
+          "right": { "en": "Facts and preferences, like \"user is vegetarian\"", "es": "Hechos y preferencias, como \"el usuario es vegetariano\"" } },
+        { "left": { "en": "Episodic memory", "es": "Memoria episódica" },
+          "right": { "en": "Past runs, like \"last deploy failed on migration 42\"", "es": "Ejecuciones pasadas, como \"el último deploy falló en la migración 42\"" } },
+        { "left": { "en": "Procedural memory", "es": "Memoria procedimental" },
+          "right": { "en": "How to act: system prompt, rules files, learned skills", "es": "Cómo actuar: system prompt, archivos de reglas, habilidades aprendidas" } }
+      ],
+      "explain": {
+        "en": "Only working memory lives inside the model call; the CoALA long-term kinds live outside and are retrieved in. Naming the kind tells you its policy: semantic facts get updated on contradiction, episodes expire, procedures change rarely and deliberately.",
+        "es": "Solo la memoria de trabajo vive dentro de la llamada al modelo; los tipos de largo plazo de CoALA viven afuera y se recuperan hacia la ventana. Nombrar el tipo te dice su política: los hechos semánticos se actualizan ante contradicciones, los episodios expiran y los procedimientos cambian poco y a propósito."
+      }
+    },
+    {
+      "id": "agent-memory.a3",
+      "type": "code",
+      "prompt": {
+        "en": "A near-identical memory already exists. Complete the branch so the store **updates instead of piling up near-duplicates**.",
+        "es": "Ya existe una memoria casi idéntica. Completa la rama para que el almacén **actualice en vez de acumular casi duplicados**."
+      },
+      "lang": "python",
+      "code": "def save_memory(fact: str, user_id: str, store) -> str:\n    if contains_pii(fact):\n        return \"Not saved: sensitive data.\"\n    same = store.search(user_id, fact, k=1, min_score=0.9)\n    if same:\n        ____\n        return \"Updated an existing memory.\"\n    store.add(user_id, text=fact, ts=time.time(), source=\"chat\")\n    return \"Saved.\"",
+      "options": [
+        { "text": "store.update(same[0].id, text=fact, ts=time.time())" },
+        { "text": "store.add(user_id, text=fact, ts=time.time(), source=\"chat\")",
+          "why": { "en": "Appends a near-duplicate: the old and new versions now compete at retrieval time forever.", "es": "Agrega un casi duplicado: la versión vieja y la nueva compiten para siempre al recuperar." } },
+        { "text": "store.update(same[0].id, ts=time.time())",
+          "why": { "en": "Refreshes the timestamp but keeps the old text, so the outdated fact now looks recent.", "es": "Refresca la fecha pero conserva el texto viejo, así que el hecho desactualizado ahora parece reciente." } },
+        { "text": "store.delete_where(user_id=user_id)",
+          "why": { "en": "Wipes every memory this user has to fix one fact.", "es": "Borra todas las memorias del usuario para corregir un solo hecho." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The model decides what is worth remembering; code enforces the policy. Dedupe on write: if a close match exists, overwrite its text and timestamp so retrieval returns one current fact instead of several conflicting versions.",
+        "es": "El modelo decide qué vale la pena recordar; el código aplica la política. Deduplica al escribir: si existe una coincidencia cercana, sobrescribe su texto y su fecha para que la recuperación devuelva un hecho actual en vez de varias versiones en conflicto."
+      }
+    },
+    {
+      "id": "agent-memory.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about long-term agent memory are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la memoria de largo plazo de un agente son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A \"forget me\" request must delete memory rows, embeddings and derived summaries", "es": "Una solicitud de \"olvídame\" debe borrar filas de memoria, embeddings y resúmenes derivados" } },
+        { "text": { "en": "Every memory read must be scoped by user or tenant id", "es": "Toda lectura de memoria debe filtrarse por id de usuario o de tenant" } },
+        { "text": { "en": "Embedding every message is safest, since no fact can be lost", "es": "Convertir cada mensaje en embedding es lo más seguro, porque no se pierde ningún hecho" },
+          "why": { "en": "Retrieval drowns in chit-chat and contradictions; save a few atomic facts instead.", "es": "La recuperación se ahoga en charla trivial y contradicciones; mejor guarda unos pocos hechos atómicos." } },
+        { "text": { "en": "Saving text from web pages is safe because the model chose to save it", "es": "Guardar texto de páginas web es seguro porque el modelo decidió guardarlo" },
+          "why": { "en": "That turns a one-time prompt injection into a permanent one replayed every session.", "es": "Eso convierte una prompt injection puntual en una permanente que se repite en cada sesión." } },
+        { "text": { "en": "Deleting the chat log is enough, since memories derive from it", "es": "Borrar el registro del chat alcanza, porque las memorias salen de ahí" },
+          "why": { "en": "Extracted facts and vectors survive the log; erasure must reach them too.", "es": "Los hechos extraídos y los vectores sobreviven al registro; el borrado también debe alcanzarlos." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Long-term memory is a new data store with its own duties: strict scoping on every read, writes treated as untrusted (only the user's own statements), and deletion that reaches every derived copy, not just the source transcript.",
+        "es": "La memoria de largo plazo es un nuevo almacén de datos con sus propias obligaciones: filtro estricto en cada lectura, escrituras tratadas como no confiables (solo afirmaciones del propio usuario) y un borrado que alcance cada copia derivada, no solo la transcripción original."
+      }
+    }
+  ]
+}

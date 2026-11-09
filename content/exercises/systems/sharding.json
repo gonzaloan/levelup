@@ -1,0 +1,67 @@
+{
+  "concept": "sharding",
+  "items": [
+    {
+      "id": "sharding.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "An LLM trace store is range-partitioned on `created_at` across 8 nodes. Insert throughput has plateaued: one node is at 100% CPU, the other seven are nearly idle. What's the cause, and the fix?",
+        "es": "Un almacén de trazas de LLM está particionado por rangos sobre `created_at` en 8 nodos. El throughput de inserción se estancó: un nodo está al 100% de CPU y los otros siete casi ociosos. ¿Cuál es la causa y la solución?"
+      },
+      "options": [
+        { "text": { "en": "A monotonic key: every insert hits the newest range; hash or prefix the key", "es": "Una key monótona: cada inserción cae en el rango más nuevo; aplícale hash o un prefijo" },
+          "why": { "en": "Time only moves forward, so the last range takes all writes. A well-distributed hash or prefix spreads them.", "es": "El tiempo solo avanza, así que el último rango recibe todas las escrituras. Un hash o un prefijo bien distribuido las reparte." } },
+        { "text": { "en": "Too few nodes: double the cluster to 16 and keep the same key", "es": "Pocos nodos: duplicar el clúster a 16 y mantener la misma key" },
+          "why": { "en": "Inserts still all land in the newest range, now on one of 16 nodes.", "es": "Las inserciones siguen cayendo en el rango más nuevo, ahora en uno de 16 nodos." } },
+        { "text": { "en": "One hot tenant: salt the busiest tenant's key into sub-keys", "es": "Un tenant caliente: dividir con sal la key del tenant más activo" },
+          "why": { "en": "Salting fixes one hot key; here every writer targets the same time range.", "es": "La sal arregla una key caliente; aquí todos los que escriben apuntan al mismo rango de tiempo." } },
+        { "text": { "en": "A missing index: add a secondary index on `created_at`", "es": "Falta un índice: agregar un índice secundario sobre `created_at`" },
+          "why": { "en": "An index adds write work; it doesn't change which shard receives the inserts.", "es": "Un índice suma trabajo de escritura; no cambia qué shard recibe las inserciones." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Range partitioning keeps scans cheap, but a monotonic key (timestamp, auto-increment ID) funnels all inserts into the last shard. Lead the key with a well-distributed, high-cardinality field and keep time as a secondary sort.",
+        "es": "El particionamiento por rangos abarata los escaneos, pero una key monótona (timestamp, ID autoincremental) manda todas las inserciones al último shard. Empieza la key con un campo bien distribuido y de alta cardinalidad, y deja el tiempo como orden secundario."
+      }
+    },
+    {
+      "id": "sharding.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Your router maps **1,024** fixed logical partitions onto **4** nodes. You add a 5th node and move whole partitions until all five hold an equal share. About how many partitions move?",
+        "es": "Tu router asigna **1,024** particiones lógicas fijas a **4** nodos. Agregas un 5.º nodo y mueves particiones completas hasta que los cinco tengan la misma parte. ¿Cuántas particiones se mueven, aproximadamente?"
+      },
+      "answer": 205,
+      "tolerance": 0.1,
+      "unit": "partitions",
+      "explain": {
+        "en": "Only the new node's share moves: 1,024 ÷ 5 ≈ 205 partitions (~20%), and no key is rehashed. With `hash % node_count`, going from 4 to 5 nodes would move ~4/5 of all keys instead.",
+        "es": "Solo se mueve la parte del nodo nuevo: 1,024 ÷ 5 ≈ 205 particiones (~20%), sin volver a hacer hash de ninguna key. Con `hash % cantidad_de_nodos`, pasar de 4 a 5 nodos movería ~4/5 de todas las keys."
+      }
+    },
+    {
+      "id": "sharding.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about partitioning are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre el particionamiento son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Replication scales reads; partitioning scales writes and storage", "es": "La replicación escala lecturas; el particionamiento escala escrituras y almacenamiento" } },
+        { "text": { "en": "Hash partitioning eliminates hotspots", "es": "El particionamiento por hash elimina los hotspots" },
+          "why": { "en": "A celebrity key or whale tenant still lands on one shard; split it with salted sub-keys.", "es": "Una key de celebridad o un tenant gigante sigue cayendo en un shard; divídelo con sub-keys con sal." } },
+        { "text": { "en": "With hash partitioning, range queries fan out to every shard", "es": "Con particionamiento por hash, las consultas por rango se abren a todos los shards" } },
+        { "text": { "en": "A global secondary index gives one-shard reads but multi-shard writes", "es": "Un índice secundario global da lecturas a un solo shard pero escrituras en varios" } },
+        { "text": { "en": "A local secondary index makes lookups by the indexed value hit one shard", "es": "Un índice secundario local hace que las búsquedas por el valor indexado vayan a un solo shard" },
+          "why": { "en": "Local indexes live inside each shard, so lookups by that value scatter-gather across all of them.", "es": "Los índices locales viven dentro de cada shard, así que buscar por ese valor hace scatter-gather sobre todos." } },
+        { "text": { "en": "Shard early: it's simpler than scaling up, replicas and caching", "es": "Haz sharding temprano: es más simple que escalar vertical, réplicas y caché" },
+          "why": { "en": "Sharding adds permanent complexity; one well-sized Postgres with replicas carries a lot.", "es": "El sharding agrega complejidad permanente; un Postgres bien dimensionado con réplicas aguanta mucho." } }
+      ],
+      "answers": [0, 2, 3],
+      "explain": {
+        "en": "Every partitioning choice moves a cost somewhere: hashing trades range scans for even spread, global indexes trade write cost for read locality, and sharding itself trades simplicity for scale. Know which side of each trade your hot queries sit on.",
+        "es": "Cada decisión de particionamiento mueve un costo a otro lado: el hash cambia escaneos por rango por reparto parejo, los índices globales cambian costo de escritura por lecturas locales y el sharding mismo cambia simplicidad por escala. Ten claro de qué lado de cada trade-off quedan tus consultas frecuentes."
+      }
+    }
+  ]
+}

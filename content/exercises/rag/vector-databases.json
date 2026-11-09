@@ -1,0 +1,66 @@
+{
+  "concept": "vector-databases",
+  "items": [
+    {
+      "id": "vector-databases.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "In your multi-tenant SaaS, every document is indexed, yet queries for **small** tenants often return 2–3 chunks instead of 10, while large tenants always get 10. No errors. Most likely cause?",
+        "es": "En tu SaaS multi-tenant todos los documentos están indexados, pero las consultas de clientes **chicos** suelen devolver 2–3 chunks en vez de 10, mientras que los grandes siempre reciben 10. No hay errores. ¿Cuál es la causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "The tenant filter runs after the ANN top-k, discarding most candidates", "es": "El filtro por cliente se aplica después del top-k del ANN y descarta casi todos los candidatos" },
+          "why": { "en": "Post-filtering starves selective filters: a tenant with 1% of rows keeps almost none of the global top-k.", "es": "El post-filtrado deja sin resultados a los filtros selectivos: un cliente con el 1% de las filas casi no conserva nada del top-k global." } },
+        { "text": { "en": "HNSW `ef_search` is set too high, so the search stops early", "es": "El `ef_search` de HNSW está muy alto, así que la búsqueda se detiene antes" },
+          "why": { "en": "Backwards: a higher `ef_search` widens the candidate list and raises recall, at a latency cost.", "es": "Es al revés: un `ef_search` más alto amplía la lista de candidatos y sube el recall, a costa de latencia." } },
+        { "text": { "en": "Small tenants' chunks are too short for the embedding model", "es": "Los chunks de los clientes chicos son muy cortos para el modelo de embeddings" },
+          "why": { "en": "Short text still gets a vector; a drop that tracks tenant size points at the filter.", "es": "Un texto corto igual recibe un vector; una caída que sigue al tamaño del cliente apunta al filtro." } },
+        { "text": { "en": "Unnormalized vectors make cosine search skip some rows", "es": "Los vectores sin normalizar hacen que la búsqueda por coseno se salte filas" },
+          "why": { "en": "Normalization changes scores, not how many rows come back.", "es": "La normalización cambia los puntajes, no cuántas filas se devuelven." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Engines differ most on filtered search. Use one that filters during index traversal (in pgvector 0.8+, iterative scan) or partition per tenant, and benchmark the filtered query you actually run, not the unfiltered one.",
+        "es": "Donde más se diferencian los motores es en la búsqueda filtrada. Usa uno que filtre mientras recorre el índice (en pgvector 0.8+, el iterative scan) o particiona por cliente, y mide la consulta filtrada que de verdad ejecutas, no la que no tiene filtro."
+      }
+    },
+    {
+      "id": "vector-databases.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "You must serve **20M chunks** embedded at **1,536 dims**, quantized to **int8**. How much memory do the raw vectors need, in GB (10⁹ bytes)? Ignore HNSW links and metadata.",
+        "es": "Tienes que servir **20M de chunks** con embeddings de **1,536 dimensiones**, cuantizados a **int8**. ¿Cuánta memoria necesitan los vectores crudos, en GB (10⁹ bytes)? Ignora los enlaces de HNSW y los metadatos."
+      },
+      "answer": 30.72,
+      "tolerance": 0.15,
+      "unit": "GB",
+      "explain": {
+        "en": "int8 is 1 byte per dimension: 20M × 1,536 × 1 ≈ 30.7 GB, versus ~123 GB in float32. HNSW links add only ~130 B per vector at M = 16 (~2.6 GB here), so the vectors dominate the RAM bill.",
+        "es": "int8 ocupa 1 byte por dimensión: 20M × 1,536 × 1 ≈ 30.7 GB, frente a ~123 GB en float32. Los enlaces de HNSW suman solo ~130 B por vector con M = 16 (~2.6 GB aquí), así que los vectores dominan la cuenta de RAM."
+      }
+    },
+    {
+      "id": "vector-databases.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your team runs Postgres and has **2M chunks** at 1,536 dims. A teammate says: *\"RAG needs a dedicated vector database, let's add one.\"* Best response?",
+        "es": "Tu equipo opera Postgres y tiene **2M de chunks** de 1,536 dimensiones. Alguien del equipo dice: *\"Un RAG necesita una base de datos vectorial dedicada, agreguemos una.\"* ¿Cuál es la mejor respuesta?"
+      },
+      "options": [
+        { "text": { "en": "Do the math first: ~12 GB of vectors fits pgvector on our Postgres", "es": "Primero hagamos las cuentas: ~12 GB de vectores caben en pgvector sobre nuestro Postgres" },
+          "why": { "en": "2M × 1,536 × 4 B ≈ 12 GB: comfortable for one node, with SQL filters and transactional deletes.", "es": "2M × 1,536 × 4 B ≈ 12 GB: cómodo para un nodo, con filtros en SQL y borrados transaccionales." } },
+        { "text": { "en": "Agree: Postgres can't run approximate nearest-neighbor search", "es": "De acuerdo: Postgres no puede hacer búsqueda aproximada de vecinos cercanos" },
+          "why": { "en": "pgvector adds HNSW indexes to Postgres.", "es": "pgvector le agrega índices HNSW a Postgres." } },
+        { "text": { "en": "Agree: only dedicated engines can filter vectors by metadata", "es": "De acuerdo: solo los motores dedicados pueden filtrar vectores por metadatos" },
+          "why": { "en": "In pgvector a filter is a SQL `WHERE`, alongside joins and transactions.", "es": "En pgvector un filtro es un `WHERE` de SQL, junto con joins y transacciones." } },
+        { "text": { "en": "Skip the index: brute-force NumPy search is exact at any scale", "es": "Sin índice: la búsqueda por fuerza bruta con NumPy es exacta a cualquier escala" },
+          "why": { "en": "Brute force is fine under ~100k vectors; at 2M with filters and updates you want a real database.", "es": "La fuerza bruta sirve por debajo de ~100k vectores; con 2M, filtros y actualizaciones quieres una base de datos de verdad." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A separate store is another copy to sync, secure and delete from. Start with what you operate; move to a dedicated engine when vectors outgrow a node's RAM, selective filters hurt recall, tenants need isolation, or nobody can own index tuning.",
+        "es": "Un almacén aparte es otra copia que sincronizar, proteger y de la que borrar. Empieza con lo que ya operas; pasa a un motor dedicado cuando los vectores ya no quepan en la RAM de un nodo, los filtros selectivos dañen el recall, los clientes necesiten aislamiento o nadie pueda hacerse cargo del ajuste de índices."
+      }
+    }
+  ]
+}

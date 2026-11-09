@@ -1,0 +1,65 @@
+{
+  "concept": "indexes",
+  "items": [
+    {
+      "id": "indexes.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A dashboard runs `WHERE tenant_id = 42 AND created_at > now() - interval '24 hours'` on a 20M-row Postgres table. A teammate added an index on `(created_at, tenant_id)`, yet the query is still slow. Best fix?",
+        "es": "Un dashboard ejecuta `WHERE tenant_id = 42 AND created_at > now() - interval '24 hours'` sobre una tabla Postgres de 20M filas. Un compañero agregó un índice en `(created_at, tenant_id)` y la consulta sigue lenta. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Index `(tenant_id, created_at)`: equality column first, range second", "es": "Indexar `(tenant_id, created_at)`: primero la columna de igualdad, después la de rango" },
+          "why": { "en": "The index then walks only tenant 42's last 24 h instead of every tenant's.", "es": "Así el índice recorre solo las últimas 24 h del tenant 42 y no las de todos los tenants." } },
+        { "text": { "en": "Add a second single-column index on `tenant_id` alone", "es": "Agregar un segundo índice de una sola columna sobre `tenant_id`" },
+          "why": { "en": "It reads all of tenant 42's rows and filters by time; one composite in the right order reaches only the matching entries, and each extra index taxes writes.", "es": "Lee todas las filas del tenant 42 y filtra por fecha; un compuesto en el orden correcto llega solo a las entradas buscadas, y cada índice extra cobra impuesto a las escrituras." } },
+        { "text": { "en": "Move the table to an LSM store to speed up reads", "es": "Mover la tabla a un store LSM para acelerar las lecturas" },
+          "why": { "en": "LSMs favor writes; a read may touch several SSTables. The engine isn't the problem here, the column order is.", "es": "Los LSM favorecen las escrituras; una lectura puede tocar varios SSTables. El problema no es el motor, es el orden de las columnas." } },
+        { "text": { "en": "Rebuild the existing index; it is probably bloated", "es": "Reconstruir el índice actual; seguramente está inflado" },
+          "why": { "en": "Even a fresh copy has a range on the leading column, so it still scans every tenant's last 24 h and filters.", "es": "Incluso recién construido tiene un rango en la columna líder, así que sigue recorriendo las últimas 24 h de todos los tenants y filtrando." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A composite index is sorted by its first column, then the second. A range on the leading column ends the usable prefix, so put equality columns first and the range or sort column last. Add `INCLUDE` for the selected columns to get an index-only scan.",
+        "es": "Un índice compuesto se ordena por su primera columna y luego por la segunda. Un rango en la columna líder corta el prefijo útil, así que pon primero las columnas de igualdad y al final la de rango u orden. Agrega `INCLUDE` con las columnas seleccionadas para lograr un index-only scan."
+      }
+    },
+    {
+      "id": "indexes.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "An LSM store holds **1 billion** keys. You use RocksDB's classic Bloom filter setting of **~10 bits per key** (~1% false positives). Roughly how much memory do the filters need, in GB?",
+        "es": "Un store LSM guarda **1.000 millones** de claves. Usas la configuración clásica de RocksDB para Bloom filters: **~10 bits por clave** (~1% de falsos positivos). ¿Cuánta memoria necesitan los filtros, aproximadamente, en GB?"
+      },
+      "answer": 1.25,
+      "tolerance": 0.15,
+      "unit": "GB",
+      "explain": {
+        "en": "10⁹ keys × 10 bits = 10¹⁰ bits; ÷ 8 = 1.25 × 10⁹ bytes ≈ 1.25 GB. Forgetting the ÷ 8 gives 10 GB. That memory buys reads that skip SSTables which can't hold the key, which is how LSMs keep read amplification in check.",
+        "es": "10⁹ claves × 10 bits = 10¹⁰ bits; ÷ 8 = 1,25 × 10⁹ bytes ≈ 1,25 GB. Si olvidas dividir entre 8 te da 10 GB. Esa memoria permite que las lecturas se salten los SSTables que no pueden tener la clave, y así el LSM controla la amplificación de lectura."
+      }
+    },
+    {
+      "id": "indexes.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "A teammate wants to index every column \"just in case\". Which statements are true? Select all that apply.",
+        "es": "Un compañero quiere indexar todas las columnas \"por si acaso\". ¿Qué afirmaciones son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Every index must be updated on each insert", "es": "Cada índice se debe actualizar en cada insert" } },
+        { "text": { "en": "On a small table, a seq scan can beat an index", "es": "En una tabla chica, un seq scan puede ganarle a un índice" } },
+        { "text": { "en": "Unused indexes cost disk space but not write latency", "es": "Los índices sin uso cuestan disco pero no latencia de escritura" },
+          "why": { "en": "Unused or not, every index is written on every insert, plus WAL volume and cache pressure.", "es": "Se usen o no, cada índice se escribe en cada insert, además del volumen de WAL y la presión sobre la cache." } },
+        { "text": { "en": "An index on a boolean column speeds up most queries", "es": "Un índice sobre una columna booleana acelera la mayoría de las consultas" },
+          "why": { "en": "Low selectivity: a value typically matches a large share of the rows, so a scan is usually cheaper.", "es": "Baja selectividad: un valor suele coincidir con una gran parte de las filas, así que un scan suele salir más barato." } },
+        { "text": { "en": "`pg_stat_user_indexes` reveals indexes with zero scans", "es": "`pg_stat_user_indexes` muestra los índices con cero scans" } }
+      ],
+      "answers": [0, 1, 4],
+      "explain": {
+        "en": "Indexes are a read optimization paid for on every write. Add one only when you can name the query it serves, prove it with EXPLAIN, and periodically drop those with `idx_scan = 0`.",
+        "es": "Los índices son una optimización de lectura que se paga en cada escritura. Agrega uno solo si puedes nombrar la consulta que atiende, compruébalo con EXPLAIN y elimina periódicamente los que tengan `idx_scan = 0`."
+      }
+    }
+  ]
+}

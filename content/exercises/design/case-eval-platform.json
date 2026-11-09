@@ -1,0 +1,103 @@
+{
+  "concept": "case-eval-platform",
+  "items": [
+    {
+      "id": "case-eval-platform.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your agent eval gate uses a **2-point** non-inferiority tolerance. A PR's paired diff against the baseline is **−1 point**, with a 95% bootstrap CI of **[−6, +4]**. What should the gate report?",
+        "es": "El gate de evals de tu agente usa una tolerancia de no inferioridad de **2 puntos**. La diferencia pareada de un PR contra la línea base es de **−1 punto**, con un CI bootstrap del 95% de **[−6, +4]**. ¿Qué debería reportar el gate?"
+      },
+      "options": [
+        {
+          "text": { "en": "Inconclusive: add tasks or trials before deciding", "es": "No concluyente: agregar tareas o intentos antes de decidir" },
+          "why": { "en": "The CI is too wide to show non-inferiority or a regression; more data narrows it.", "es": "El CI es demasiado ancho para mostrar no inferioridad o una regresión; más datos lo angostan." }
+        },
+        {
+          "text": { "en": "Pass: the −1 point mean is within the tolerance", "es": "Pasa: la media de −1 punto está dentro de la tolerancia" },
+          "why": { "en": "Gating on the point estimate ignores noise; non-inferiority needs the lower bound above −2, and it is −6.", "es": "Decidir con la estimación puntual ignora el ruido; la no inferioridad exige que el límite inferior supere −2, y es −6." }
+        },
+        {
+          "text": { "en": "Fail: the confidence interval reaches below zero", "es": "Falla: el intervalo de confianza baja de cero" },
+          "why": { "en": "A real regression needs the whole CI below zero; this one also reaches +4.", "es": "Una regresión real exige que todo el CI quede bajo cero; este también llega a +4." }
+        },
+        {
+          "text": { "en": "Fail: any negative mean diff blocks the merge", "es": "Falla: cualquier diferencia media negativa bloquea el merge" },
+          "why": { "en": "A −1 that noise can explain would block good changes and teach teams to bypass the gate.", "es": "Un −1 que el ruido puede explicar bloquearía cambios buenos y enseñaría a los equipos a saltarse el gate." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Three verdicts, not two: pass if the lower bound clears −tolerance, fail if the upper bound is below 0, otherwise run more. A binary gate on noisy data produces false greens that ship regressions and false reds that train teams to ignore it.",
+        "es": "Tres veredictos, no dos: pasa si el límite inferior supera −tolerancia, falla si el límite superior queda bajo 0 y, si no, corre más. Un gate binario con datos ruidosos produce falsos verdes que dejan pasar regresiones y falsos rojos que enseñan a los equipos a ignorarlo."
+      }
+    },
+    {
+      "id": "case-eval-platform.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Your full agent suite is **500 tasks × 5 trials**, ~**30k tokens** per episode, at an assumed **$3/M** blended. A team proposes running it on every PR: **50 PRs/day**, 30-day month. What is the monthly token cost, in USD?",
+        "es": "Tu suite completa de agentes es de **500 tareas × 5 intentos**, ~**30k tokens** por episodio, suponiendo **$3/M** combinado. Un equipo propone correrla en cada PR: **50 PRs/día**, mes de 30 días. ¿Cuál es el costo mensual en tokens, en USD?"
+      },
+      "answer": 337500,
+      "tolerance": 0.15,
+      "unit": "USD/month",
+      "explain": {
+        "en": "2,500 episodes × 30k = 75M tokens × $3/M ≈ $225 per run. × 50 PRs × 30 days ≈ $337.5k/month, versus ~$6.8k for one nightly run. So tier it: a ~60 × 3 smoke suite per PR, the full suite nightly, the held-out set per release, plus impact-based selection and caching.",
+        "es": "2,500 episodios × 30k = 75M tokens × $3/M ≈ $225 por corrida. × 50 PRs × 30 días ≈ $337.5k/mes, contra ~$6.8k de una corrida nocturna. Por eso se escalona: una suite smoke de ~60 × 3 por PR, la completa por la noche y la reservada por release, más selección por impacto y caché."
+      }
+    },
+    {
+      "id": "case-eval-platform.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the path of a PR through the agent evaluation platform in order.",
+        "es": "Ordena el camino de un PR a través de la plataforma de evaluación de agentes."
+      },
+      "steps": [
+        { "en": "A change to a prompt, model or tool triggers CI", "es": "Un cambio en un prompt, modelo o herramienta dispara CI" },
+        { "en": "Orchestrator expands the run into tasks × k trial jobs", "es": "El orquestador expande la corrida en jobs de tareas × k intentos" },
+        { "en": "Each trial runs in a fresh, seeded sandbox container", "es": "Cada intento corre en un contenedor sandbox nuevo y sembrado" },
+        { "en": "Store the trajectory and the final environment state", "es": "Guardar la trayectoria y el estado final del entorno" },
+        { "en": "Code graders and the LLM judge score each trial", "es": "Los graders de código y el LLM juez califican cada intento" },
+        { "en": "Compute the paired diff against the baseline with a bootstrap CI", "es": "Calcular la diferencia pareada contra la línea base con un CI bootstrap" },
+        { "en": "Post pass, fail or inconclusive to the PR", "es": "Publicar pasa, falla o no concluyente en el PR" }
+      ],
+      "explain": {
+        "en": "Execution and grading are separate stages: trials write complete trajectories and end state, and graders read them afterwards. That lets you re-score a baseline with a new grader version and cache judge verdicts by trajectory hash, without re-running the agent.",
+        "es": "La ejecución y la calificación son etapas separadas: los intentos escriben trayectorias completas y el estado final, y los graders los leen después. Eso permite recalificar una línea base con una versión nueva del grader y cachear veredictos del juez por hash de trayectoria, sin volver a correr el agente."
+      }
+    },
+    {
+      "id": "case-eval-platform.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your support-agent eval has an LLM judge read the agent's final reply. The pass rate is 94%, yet customers report refunds that never arrived. What is the most likely cause, and the fix?",
+        "es": "En el eval de tu agente de soporte, un LLM juez lee la respuesta final del agente. La tasa de éxito es 94%, pero los clientes reportan reembolsos que nunca llegaron. ¿Cuál es la causa más probable y la corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Grading words: check the payments fake's ledger instead", "es": "Se califican palabras: revisar el registro del fake de pagos" },
+          "why": { "en": "The agent can say *Refund issued* while nothing happened; only the end state proves the action.", "es": "El agente puede decir *Reembolso emitido* sin que pase nada; solo el estado final prueba la acción." }
+        },
+        {
+          "text": { "en": "A weak judge: switch to a stronger judge model", "es": "Un juez débil: cambiar a un modelo juez más fuerte" },
+          "why": { "en": "Any judge reading only the reply sees the same claim; it cannot observe whether the refund happened.", "es": "Cualquier juez que solo lee la respuesta ve la misma afirmación; no puede observar si el reembolso ocurrió." }
+        },
+        {
+          "text": { "en": "Too few trials: raise k from 3 to 10 per task", "es": "Pocos intentos: subir k de 3 a 10 por tarea" },
+          "why": { "en": "More trials of a broken grader measure the wrong thing more precisely.", "es": "Más intentos con un grader roto miden lo equivocado con más precisión." }
+        },
+        {
+          "text": { "en": "Thin coverage: add more refund tasks to the dataset", "es": "Poca cobertura: agregar más tareas de reembolso al dataset" },
+          "why": { "en": "New tasks graded the same way still pass on the words, not the action.", "es": "Las tareas nuevas calificadas igual siguen pasando por las palabras, no por la acción." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Graders in order of trust: code on end state first (database rows, fake ledgers, required calls like `verify_identity` before `issue_refund`), an LLM judge only for what code can't see, such as tone or asking before acting. An agent's description of its work is a claim, not evidence.",
+        "es": "Graders en orden de confianza: primero código sobre el estado final (filas de la base de datos, registros de los fakes, llamadas obligatorias como `verify_identity` antes de `issue_refund`), y un LLM juez solo para lo que el código no ve, como el tono o preguntar antes de actuar. Lo que el agente dice de su trabajo es una afirmación, no evidencia."
+      }
+    }
+  ]
+}

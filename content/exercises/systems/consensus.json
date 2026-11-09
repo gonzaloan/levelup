@@ -1,0 +1,71 @@
+{
+  "concept": "consensus",
+  "items": [
+    {
+      "id": "consensus.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your etcd cluster has 3 members: 2 in zone A, 1 in zone B. Zone A goes down. What happens to writes, and what would have prevented the outage?",
+        "es": "Tu clúster de etcd tiene 3 miembros: 2 en la zona A y 1 en la zona B. Se cae la zona A. ¿Qué pasa con las escrituras y qué habría evitado la caída?"
+      },
+      "options": [
+        { "text": { "en": "Writes stop, since 1 of 3 isn't a majority; one member per zone across 3 zones", "es": "Las escrituras se detienen porque 1 de 3 no es mayoría; un miembro por zona en 3 zonas" },
+          "why": { "en": "Then losing any single zone leaves 2 of 3, which is still a majority.", "es": "Así, perder cualquier zona deja 2 de 3, que sigue siendo mayoría." } },
+        { "text": { "en": "Zone B's member elects itself leader and keeps committing writes", "es": "El miembro de la zona B se elige líder a sí mismo y sigue confirmando escrituras" },
+          "why": { "en": "A candidate needs votes from a majority; 1 of 3 can't win an election or commit.", "es": "Un candidato necesita los votos de una mayoría; 1 de 3 no puede ganar una elección ni confirmar." } },
+        { "text": { "en": "Writes stop; a 4th member in zone B, making it 2+2, would have helped", "es": "Las escrituras se detienen; un 4.º miembro en la zona B, quedando 2+2, habría ayudado" },
+          "why": { "en": "With 4 members the quorum is 3; losing either zone leaves 2, still no majority.", "es": "Con 4 miembros el quórum es 3; perder cualquiera de las zonas deja 2, que sigue sin ser mayoría." } },
+        { "text": { "en": "Zone B keeps accepting writes and reconciles them when zone A returns", "es": "La zona B sigue aceptando escrituras y las concilia cuando vuelve la zona A" },
+          "why": { "en": "That's multi-leader behavior. Raft never commits without a majority: it picks consistency over availability.", "es": "Eso es comportamiento multilíder. Raft nunca confirma sin mayoría: elige consistencia sobre disponibilidad." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Quorum math must survive your real failure domains. With 2f+1 members spread so that no zone holds a majority, losing one zone still leaves a majority. Count failures per zone, not per node.",
+        "es": "La aritmética del quórum tiene que sobrevivir a tus dominios de falla reales. Con 2f+1 miembros repartidos de modo que ninguna zona tenga mayoría, perder una zona igual deja una mayoría. Cuenta fallas por zona, no por nodo."
+      }
+    },
+    {
+      "id": "consensus.a2",
+      "type": "order",
+      "prompt": {
+        "en": "Put a Raft write in order, from client request to acknowledgment.",
+        "es": "Ordena una escritura en Raft, desde la solicitud del cliente hasta la confirmación."
+      },
+      "steps": [
+        { "en": "Client sends the write to the leader", "es": "El cliente envía la escritura al líder" },
+        { "en": "Leader appends the entry to its own log", "es": "El líder agrega la entrada a su propio log" },
+        { "en": "Leader sends AppendEntries to the followers", "es": "El líder envía AppendEntries a los followers" },
+        { "en": "A majority of nodes have persisted the entry", "es": "Una mayoría de nodos ya persistió la entrada" },
+        { "en": "Entry is committed and applied to the state machine", "es": "La entrada se confirma y se aplica a la máquina de estados" },
+        { "en": "Leader replies OK to the client", "es": "El líder le responde OK al cliente" }
+      ],
+      "explain": {
+        "en": "The commit point is the majority, not all nodes: a slow follower doesn't delay it. That's why a write costs one round trip to the fastest majority plus an fsync (~1–5 ms in one region).",
+        "es": "El punto de commit es la mayoría, no todos los nodos: un follower lento no lo retrasa. Por eso una escritura cuesta un viaje de ida y vuelta a la mayoría más rápida más un fsync (~1–5 ms en una región)."
+      }
+    },
+    {
+      "id": "consensus.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your index builder elects a leader with an etcd lease (10 s TTL). A teammate says: \"etcd runs Raft, so only one builder can ever write at a time.\" What's wrong?",
+        "es": "Tu builder de índices elige líder con un lease de etcd (TTL de 10 s). Un compañero dice: \"etcd usa Raft, así que solo un builder puede escribir a la vez.\" ¿Qué está mal?"
+      },
+      "options": [
+        { "text": { "en": "A paused ex-leader can wake up and still write; storage must check fencing tokens", "es": "Un ex líder pausado puede despertar y seguir escribiendo; el almacenamiento debe validar fencing tokens" },
+          "why": { "en": "etcd agrees on who holds the lease, but a process frozen past its TTL still believes it leads.", "es": "etcd acuerda quién tiene el lease, pero un proceso congelado más allá de su TTL sigue creyéndose líder." } },
+        { "text": { "en": "Nothing: Raft's majority votes make two concurrent leaders impossible", "es": "Nada: los votos por mayoría de Raft hacen imposible tener dos líderes a la vez" },
+          "why": { "en": "Raft guarantees one lease holder inside etcd, not what a stale client does afterwards.", "es": "Raft garantiza un solo dueño del lease dentro de etcd, no lo que haga después un cliente desactualizado." } },
+        { "text": { "en": "The TTL is too long; a 1 s lease would rule out any overlap", "es": "El TTL es demasiado largo; un lease de 1 s descartaría cualquier solapamiento" },
+          "why": { "en": "Any pause longer than the TTL still creates two writers, and very short leases cause flapping.", "es": "Cualquier pausa más larga que el TTL igual crea dos escritores, y los leases muy cortos causan inestabilidad." } },
+        { "text": { "en": "Followers may serve stale reads of the leader key to the builders", "es": "Los followers pueden servir lecturas viejas de la clave de líder a los builders" },
+          "why": { "en": "etcd reads are linearizable by default; the danger is the paused client, not the read path.", "es": "Las lecturas de etcd son linealizables por defecto; el peligro es el cliente pausado, no la lectura." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Consensus makes the cluster agree; it can't stop a process from acting on a stale belief. Pass the election revision as a fencing token and have storage reject anything lower: a write with token 812 fails once 845 has been issued.",
+        "es": "El consenso hace que el clúster se ponga de acuerdo; no puede impedir que un proceso actúe con una creencia vieja. Pasa la revisión de la elección como fencing token y haz que el almacenamiento rechace cualquiera menor: una escritura con token 812 falla una vez emitido el 845."
+      }
+    }
+  ]
+}

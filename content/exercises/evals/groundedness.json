@@ -1,0 +1,74 @@
+{
+  "concept": "groundedness",
+  "items": [
+    {
+      "id": "groundedness.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your benefits assistant scores **0.94** average faithfulness on the eval set, yet users keep reporting wrong figures in answers about plan tables. What's your first move?",
+        "es": "Tu asistente de beneficios logra **0,94** de faithfulness promedio en el set de evaluación, pero los usuarios siguen reportando cifras incorrectas en respuestas sobre las tablas de los planes. ¿Cuál es tu primer paso?"
+      },
+      "options": [
+        { "text": { "en": "Break faithfulness down by source type and inspect the worst slice", "es": "Desglosar el faithfulness por tipo de fuente y revisar el peor segmento" },
+          "why": { "en": "An average can hide a failing slice: table-based answers may sit far below 0.94.", "es": "Un promedio puede esconder un segmento que falla: las respuestas basadas en tablas pueden estar muy por debajo de 0,94." } },
+        { "text": { "en": "Lower the verifier's threshold so fewer claims get flagged", "es": "Bajar el umbral del verificador para que marque menos afirmaciones" },
+          "why": { "en": "That hides unsupported claims: it moves the score, not the answers.", "es": "Eso esconde las afirmaciones sin respaldo: mueve el puntaje, no las respuestas." } },
+        { "text": { "en": "Switch the generator to a larger, smarter model", "es": "Cambiar el generador por un modelo más grande e inteligente" },
+          "why": { "en": "You don't know the cause yet; if parsing mangled the tables, a bigger model still fills numbers in from memory.", "es": "Todavía no conoces la causa; si el parseo arruinó las tablas, un modelo más grande igual completa los números de memoria." } },
+        { "text": { "en": "Run SelfCheckGPT sampling instead of the context check", "es": "Usar muestreo con SelfCheckGPT en vez de verificar contra el contexto" },
+          "why": { "en": "SelfCheckGPT is for answers with no context; here you have the source and can check against it directly.", "es": "SelfCheckGPT es para respuestas sin contexto; aquí tienes la fuente y puedes verificar directamente contra ella." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Report groundedness per slice (document type, language, empty retrieval, numeric questions): a healthy average can hide one broken slice. Slicing points at the cause, often upstream, like a parser that flattened table columns so the model 'repaired' numbers from memory.",
+        "es": "Reporta la groundedness por segmento (tipo de documento, idioma, recuperación vacía, preguntas numéricas): un promedio sano puede esconder un segmento roto. Segmentar apunta a la causa, que suele estar antes, como un parser que aplanó las columnas de las tablas y llevó al modelo a 'reparar' números de memoria."
+      }
+    },
+    {
+      "id": "groundedness.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete `check` so it returns the **RAGAS-style faithfulness** of one answer.",
+        "es": "Completa `check` para que devuelva el **faithfulness al estilo RAGAS** de una respuesta."
+      },
+      "lang": "python",
+      "code": "def check(context: str, answer: str, threshold: float = 0.5) -> dict:\n    claims = extract_claims(answer)   # LLM call: atomic claims\n    if not claims:                    # abstention: track separately\n        return {\"faithfulness\": None, \"hallucinated\": False}\n    scores = hhem.predict([(context, c) for c in claims]).tolist()\n    unsupported = [c for c, s in zip(claims, scores) if s < threshold]\n    return {\n        ____\n        \"hallucinated\": bool(unsupported),\n    }",
+      "options": [
+        { "text": "\"faithfulness\": 1 - len(unsupported) / len(claims)," },
+        { "text": "\"faithfulness\": len(unsupported) / len(claims),",
+          "why": { "en": "That's the unsupported share: higher would mean worse, inverting the metric.", "es": "Esa es la proporción sin respaldo: más alto sería peor, lo que invierte la métrica." } },
+        { "text": "\"faithfulness\": sum(scores) / len(scores),",
+          "why": { "en": "A mean classifier score, not the share of supported claims: many borderline scores can average above the cut-off.", "es": "Un promedio de puntajes del clasificador, no la proporción de afirmaciones respaldadas: muchos puntajes dudosos pueden promediar por encima del corte." } },
+        { "text": "\"faithfulness\": float(not unsupported),",
+          "why": { "en": "That's the answer-level pass/fail flag: one invented figure drops it to 0 whatever the other claims say.", "es": "Esa es la bandera de aprobado/reprobado de la respuesta: una cifra inventada la baja a 0 sin importar las demás afirmaciones." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "RAGAS faithfulness = supported claims ÷ total claims, so 1 − unsupported/total. Keep both views: the ratio shows how much of an answer is grounded, and the answer-level flag (≥ 1 unsupported claim) feeds the hallucination rate.",
+        "es": "El faithfulness de RAGAS = afirmaciones respaldadas ÷ afirmaciones totales, o sea 1 − sin respaldo/total. Conserva ambas vistas: la proporción muestra cuánto de la respuesta está fundamentado, y la bandera por respuesta (≥ 1 afirmación sin respaldo) alimenta la tasa de alucinación."
+      }
+    },
+    {
+      "id": "groundedness.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about groundedness evals are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre las evaluaciones de groundedness son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "An answer can be fully grounded and still be wrong", "es": "Una respuesta puede estar totalmente fundamentada y aun así ser incorrecta" } },
+        { "text": { "en": "Groundedness can be checked without knowing the true answer", "es": "La groundedness se puede verificar sin conocer la respuesta verdadera" } },
+        { "text": { "en": "An \"I don't know\" with no supporting evidence counts as a hallucination", "es": "Un \"no lo sé\" sin evidencia que lo respalde cuenta como alucinación" },
+          "why": { "en": "When evidence is missing, abstaining is the correct behavior; track it separately instead of scoring it as a failure.", "es": "Cuando falta evidencia, abstenerse es lo correcto; mídelo aparte en vez de contarlo como falla." } },
+        { "text": { "en": "Verifying the whole answer at once is as precise as per claim", "es": "Verificar toda la respuesta de una vez es tan preciso como por afirmación" },
+          "why": { "en": "One invented figure hides in a long reply; per-claim checks pinpoint exactly which sentence is unsupported.", "es": "Una cifra inventada se esconde en una respuesta larga; verificar por afirmación señala exactamente qué oración no tiene respaldo." } },
+        { "text": { "en": "The claim extractor and verifier can themselves make mistakes", "es": "El extractor de afirmaciones y el verificador también pueden equivocarse" } }
+      ],
+      "answers": [0, 1, 4],
+      "explain": {
+        "en": "Groundedness asks whether each claim is supported by the context you gave the model, so it needs no ground truth, but it can't see a stale or wrong source. The checker is a model too: calibrate it on human-labeled hallucinations, verify per claim and score abstentions separately.",
+        "es": "La groundedness pregunta si cada afirmación está respaldada por el contexto que le diste al modelo, así que no necesita la verdad de referencia, pero no ve una fuente desactualizada o errónea. El verificador también es un modelo: calíbralo con alucinaciones etiquetadas por personas, verifica por afirmación y mide las abstenciones aparte."
+      }
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "concept": "paged-attention",
+  "items": [
+    {
+      "id": "paged-attention.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You turned on `enable_prefix_caching` in vLLM for a support bot whose prompts all share a long policy text, yet the prefix-cache hit rate is near **0%**. Every prompt starts with `Current time: {now}`, then the policy. Most likely cause?",
+        "es": "Activaste `enable_prefix_caching` en vLLM para un bot de soporte cuyos prompts comparten un texto largo de políticas, pero el hit rate del prefix cache está cerca de **0%**. Cada prompt empieza con `Current time: {now}` y después van las políticas. ¿Causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "The timestamp at the top changes every block after it", "es": "El timestamp al inicio cambia todos los bloques siguientes" },
+          "why": { "en": "Each block is hashed with all tokens before it, so a varying first line makes every later block unique.", "es": "Cada bloque se identifica con un hash de sus tokens y de todo lo anterior, así que una primera línea variable vuelve únicos todos los bloques siguientes." } },
+        { "text": { "en": "16-token blocks are too small to be worth caching", "es": "Los bloques de 16 tokens son demasiado chicos para cachearse" },
+          "why": { "en": "Block size doesn't block reuse: any full block whose token prefix is identical gets shared.", "es": "El tamaño de bloque no impide reutilizar: cualquier bloque completo con un prefijo idéntico token a token se comparte." } },
+        { "text": { "en": "Prefix sharing only works among samples of one prompt", "es": "Compartir prefijos solo funciona entre muestras de un mismo prompt" },
+          "why": { "en": "That's n-sample sharing. Automatic prefix caching reuses full blocks across different requests too.", "es": "Eso es compartir entre las n muestras. El prefix caching automático también reutiliza bloques completos entre requests distintas." } },
+        { "text": { "en": "`gpu_memory_utilization` is too low to keep cached blocks", "es": "`gpu_memory_utilization` es muy bajo para retener bloques en cache" },
+          "why": { "en": "Less memory evicts cached blocks sooner, but can't explain ~0% when every request repeats the same policy.", "es": "Menos memoria desaloja antes los bloques cacheados, pero no explica ~0% cuando cada request repite las mismas políticas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Prefix caching needs prompts that are token-identical from the first token. Put static instructions and documents first and per-request content (timestamps, user IDs, the question) last, then track the hit rate to confirm.",
+        "es": "El prefix caching necesita prompts idénticos token a token desde el primer token. Pon primero las instrucciones y documentos estáticos y al final lo que cambia por request (timestamps, IDs de usuario, la pregunta), y mide el hit rate para confirmarlo."
+      }
+    },
+    {
+      "id": "paged-attention.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Llama-3-8B on one 80 GB H100: after weights, **55 GiB** is left for KV at **128 KiB per token**. Conversations average **1.5k tokens**. With 16-token blocks allocated on demand (ignore the <4% waste), roughly how many sequences fit at once?",
+        "es": "Llama-3-8B en una H100 de 80 GB: tras los pesos quedan **55 GiB** para KV, a **128 KiB por token**. Las conversaciones promedian **1.5k tokens**. Con bloques de 16 tokens asignados a demanda (ignora el desperdicio de <4%), ¿cuántas secuencias caben a la vez, aproximadamente?"
+      },
+      "answer": 300,
+      "tolerance": 0.15,
+      "unit": "sequences",
+      "explain": {
+        "en": "55 GiB ÷ 128 KiB = 55 × 1024 × 1024 ÷ 128 ≈ 450k tokens; 450k ÷ 1.5k ≈ 300 sequences. Reserving a full 8k-token slab each would cap it at 450k ÷ 8k ≈ 55: same memory, ~5× smaller batch.",
+        "es": "55 GiB ÷ 128 KiB = 55 × 1024 × 1024 ÷ 128 ≈ 450k tokens; 450k ÷ 1.5k ≈ 300 secuencias. Reservar un bloque completo de 8k tokens por request lo limitaría a 450k ÷ 8k ≈ 55: la misma memoria, un batch ~5× más chico."
+      }
+    },
+    {
+      "id": "paged-attention.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "You say vLLM delivers 2–4× throughput. The interviewer asks: \"So PagedAttention makes the attention kernel faster?\" Best answer?",
+        "es": "Dices que vLLM logra 2–4× de throughput. El entrevistador pregunta: \"¿Entonces PagedAttention hace más rápido el kernel de atención?\" ¿Mejor respuesta?"
+      },
+      "options": [
+        { "text": { "en": "No: the kernel is a bit slower; freed KV memory buys bigger batches", "es": "No: el kernel es algo más lento; la memoria de KV liberada compra batches más grandes" } },
+        { "text": { "en": "Yes: small blocks are read faster than one large contiguous slab", "es": "Sí: los bloques pequeños se leen más rápido que una reserva contigua grande" },
+          "why": { "en": "The block-table indirection made the kernel ~20–26% slower in the paper, not faster.", "es": "La indirección de la tabla de bloques hizo el kernel ~20–26% más lento en el paper, no más rápido." } },
+        { "text": { "en": "Yes: it tiles attention into on-chip SRAM to cut HBM traffic", "es": "Sí: divide la atención en tiles en la SRAM del chip para bajar el tráfico a HBM" },
+          "why": { "en": "That's FlashAttention. PagedAttention changes where KV lives in memory, not how attention is computed.", "es": "Eso es FlashAttention. PagedAttention cambia dónde vive el KV en memoria, no cómo se calcula la atención." } },
+        { "text": { "en": "No: the gain comes from compressing KV blocks to fewer bytes", "es": "No: la ganancia viene de comprimir los bloques de KV a menos bytes" },
+          "why": { "en": "Paging removes waste, not size: a 128k-token request still needs ~16 GiB of KV on Llama-3-8B.", "es": "Paginar elimina desperdicio, no tamaño: una request de 128k tokens sigue necesitando ~16 GiB de KV en Llama-3-8B." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Decode throughput comes from batch size, and batch size is capped by KV memory. Cutting KV waste from ~60–80% to under 4% lets continuous batching run far more sequences per step, which dwarfs the kernel's block-table overhead.",
+        "es": "El throughput del decode sale del tamaño de batch, y ese tamaño lo limita la memoria de KV. Bajar el desperdicio de KV de ~60–80% a menos de 4% permite que continuous batching corra muchas más secuencias por paso, y eso opaca el costo extra de la tabla de bloques."
+      }
+    },
+    {
+      "id": "paged-attention.a4",
+      "type": "match",
+      "prompt": {
+        "en": "Match each vLLM memory mechanism to what it does.",
+        "es": "Relaciona cada mecanismo de memoria de vLLM con lo que hace."
+      },
+      "pairs": [
+        { "left": { "en": "Block table", "es": "Tabla de bloques" },
+          "right": { "en": "Maps a request's logical KV blocks to scattered physical blocks", "es": "Traduce los bloques lógicos de KV de una request a bloques físicos dispersos" } },
+        { "left": { "en": "Copy-on-write", "es": "Copy-on-write" },
+          "right": { "en": "Duplicates a shared block only when one sequence writes to it", "es": "Duplica un bloque compartido solo cuando una secuencia escribe en él" } },
+        { "left": { "en": "Automatic prefix caching", "es": "Prefix caching automático" },
+          "right": { "en": "Reuses full blocks across requests with an identical token prefix", "es": "Reutiliza bloques completos entre requests con un prefijo idéntico token a token" } },
+        { "left": { "en": "Preemption", "es": "Preemption" },
+          "right": { "en": "Evicts and later recomputes sequences when the block pool runs out", "es": "Desaloja y luego recalcula secuencias cuando se agota el pool de bloques" } }
+      ],
+      "explain": {
+        "en": "All four fall out of treating KV like OS memory pages: indirection through a table, reference-counted sharing, content-based reuse, and eviction under pressure. Preemption is the one to watch in production, because it shows up as latency spikes.",
+        "es": "Los cuatro salen de tratar el KV como páginas de memoria del sistema operativo: indirección mediante una tabla, compartir con conteo de referencias, reutilizar según contenido y desalojar bajo presión. La preemption es la que hay que vigilar en producción, porque se ve como picos de latencia."
+      }
+    }
+  ]
+}

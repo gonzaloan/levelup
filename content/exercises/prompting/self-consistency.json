@@ -1,0 +1,89 @@
+{
+  "concept": "self-consistency",
+  "items": [
+    {
+      "id": "self-consistency.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You wrap a claims calculator in self-consistency with N=7. Cost rose 7×, accuracy didn't move, and the logs show the 7 reasoning paths are **word-for-word identical** on every request. Most likely cause?",
+        "es": "Envuelves una calculadora de reclamos con self-consistency y N=7. El costo subió 7×, la precisión no se movió y los logs muestran que los 7 caminos de razonamiento son **idénticos palabra por palabra** en cada request. ¿Causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "The calls sample at temperature 0", "es": "Las llamadas muestrean con temperature 0" },
+          "why": { "en": "Greedy decoding returns the same path every time: you pay N× for a unanimous vote that adds nothing.", "es": "La decodificación greedy devuelve siempre el mismo camino: pagas N× por una votación unánime que no aporta nada." } },
+        { "text": { "en": "N is too small; the paper used 40 samples", "es": "N es muy chico; el paper usó 40 muestras" },
+          "why": { "en": "Identical paths mean zero diversity; 40 copies of one path vote just as unanimously as 7.", "es": "Caminos idénticos significan cero diversidad; 40 copias de un camino votan igual de unánimes que 7." } },
+        { "text": { "en": "Answers aren't normalized before the vote", "es": "Las respuestas no se normalizan antes de votar" },
+          "why": { "en": "Missing normalization splits the vote (\"42\" vs \"$42.00\"); it can't make the paths themselves identical.", "es": "Sin normalizar se divide el voto (\"42\" vs \"$42.00\"); eso no puede volver idénticos los caminos." } },
+        { "text": { "en": "A number needs universal self-consistency", "es": "Un número necesita universal self-consistency" },
+          "why": { "en": "USC is for free text that can't be exact-matched; a reimbursement figure is a discrete answer a plain vote handles.", "es": "USC es para texto libre que no se puede comparar por igualdad exacta; un monto de reembolso es una respuesta discreta que una votación simple resuelve." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Self-consistency works only if paths differ: wrong chains fail in many different ways while right ones converge. Sampling at ~0.7 creates that diversity; temperature 0 gives N copies of one path, so the vote is always unanimous and tells you nothing.",
+        "es": "Self-consistency solo funciona si los caminos difieren: las cadenas incorrectas fallan de muchas formas distintas y las correctas convergen. Muestrear con ~0.7 crea esa diversidad; con temperature 0 obtienes N copias de un camino, así que la votación siempre es unánime y no te dice nada."
+      }
+    },
+    {
+      "id": "self-consistency.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the vote so it returns the **majority** answer and its agreement rate.",
+        "es": "Completa la votación para que devuelva la respuesta **mayoritaria** y su tasa de acuerdo."
+      },
+      "lang": "python",
+      "code": "from collections import Counter\n\ndef vote(answers: list[str | None], n: int) -> tuple[str | None, float]:\n    votes = Counter(a for a in answers if a)   # answers already normalized\n    if not votes:\n        return None, 0.0\n    ____\n    return best, count / n   # agreement doubles as confidence",
+      "options": [
+        { "text": "best, count = votes.most_common(1)[0]" },
+        { "text": "best, count = votes.most_common()[-1]",
+          "why": { "en": "Takes the least common answer: you'd return the outlier, the opposite of a majority vote.", "es": "Toma la respuesta menos común: devolverías el caso atípico, lo contrario de una votación mayoritaria." } },
+        { "text": "best, count = max(votes.items())",
+          "why": { "en": "Tuples compare by their first element, so this returns the alphabetically largest answer, not the most voted one.", "es": "Las tuplas se comparan por su primer elemento, así que devuelve la respuesta alfabéticamente mayor, no la más votada." } },
+        { "text": "best, count = next(iter(votes.items()))",
+          "why": { "en": "Returns the first answer parsed, which is just one sample: the vote is ignored.", "es": "Devuelve la primera respuesta extraída, que es una sola muestra: la votación se ignora." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "`most_common(1)` returns the (answer, count) pair with the highest count. Dividing by `n`, all samples including unparseable ones, gives an honest agreement rate you can threshold to route low-consensus cases to a human.",
+        "es": "`most_common(1)` devuelve el par (respuesta, conteo) con el conteo más alto. Dividir por `n`, todas las muestras incluidas las que no se pudieron extraer, da una tasa de acuerdo honesta que puedes usar como umbral para mandar los casos con poco consenso a un humano."
+      }
+    },
+    {
+      "id": "self-consistency.a3",
+      "type": "numeric",
+      "prompt": {
+        "en": "You sample adaptively: draw 3 paths; if all 3 agree, stop; otherwise draw 4 more (7 total). Assume 80% of requests agree on the first 3. How many paths do you pay for per request, on average?",
+        "es": "Muestreas de forma adaptativa: sacas 3 caminos; si los 3 coinciden, paras; si no, sacas 4 más (7 en total). Supón que el 80% de los requests coincide en los primeros 3. ¿Cuántos caminos pagas por request, en promedio?"
+      },
+      "answer": 3.8,
+      "tolerance": 0.08,
+      "unit": "paths",
+      "explain": {
+        "en": "Every request pays the first 3; only the 20% that disagree pay 4 more: 3 + 0.2 × 4 = 3.8 paths, about half of a fixed N=7. Adaptive sampling spends the extra tokens only where the model is uncertain.",
+        "es": "Todos los requests pagan los primeros 3; solo el 20% con desacuerdo paga 4 más: 3 + 0.2 × 4 = 3.8 caminos, más o menos la mitad de un N=7 fijo. El muestreo adaptativo gasta los tokens extra solo donde el modelo duda."
+      }
+    },
+    {
+      "id": "self-consistency.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "On your golden set, one claim type is still wrong even when **7 of 7** paths agree. A teammate proposes raising N to 40, like the paper. What do you tell them?",
+        "es": "En tu golden set, un tipo de reclamo sigue saliendo mal incluso cuando **7 de 7** caminos coinciden. Un compañero propone subir N a 40, como en el paper. ¿Qué le dices?"
+      },
+      "options": [
+        { "text": { "en": "No: every path makes the same error, so more votes won't fix it", "es": "No: todos los caminos cometen el mismo error, así que más votos no lo arreglan" } },
+        { "text": { "en": "Yes: with enough votes the wrong paths get outvoted", "es": "Sí: con suficientes votos los caminos incorrectos pierden" },
+          "why": { "en": "Voting cancels errors that vary across paths. An error every path shares wins the vote at any N.", "es": "La votación cancela errores que varían entre caminos. Un error que comparten todos gana la votación con cualquier N." } },
+        { "text": { "en": "Raise temperature to 1.5 so the paths finally disagree", "es": "Subir temperature a 1.5 para que los caminos por fin discrepen" },
+          "why": { "en": "Hotter sampling adds noise, not knowledge: each path gets worse and the shared mistake still tends to dominate.", "es": "Muestrear más caliente agrega ruido, no conocimiento: cada camino empeora y el error compartido igual tiende a dominar." } },
+        { "text": { "en": "Replace the vote with an unvalidated LLM judge", "es": "Reemplazar la votación por un LLM juez sin validar" },
+          "why": { "en": "An unvalidated judge rewards length and style, not correctness; it won't catch an error the model makes confidently.", "es": "Un juez sin validar premia la longitud y el estilo, no la corrección; no va a detectar un error que el modelo comete con seguridad." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Self-consistency reduces random reasoning errors, not systematic ones: if the model is confidently wrong, all N paths agree on the error and high agreement hides it. Fix the cause (prompt, context, a stronger model) or add a deterministic verifier.",
+        "es": "Self-consistency reduce errores de razonamiento aleatorios, no sistemáticos: si el modelo se equivoca con seguridad, los N caminos coinciden en el error y el acuerdo alto lo esconde. Corrige la causa (prompt, contexto, un modelo más fuerte) o agrega un verificador determinista."
+      }
+    }
+  ]
+}

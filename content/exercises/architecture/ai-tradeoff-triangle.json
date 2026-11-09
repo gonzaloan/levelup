@@ -1,0 +1,90 @@
+{
+  "concept": "ai-tradeoff-triangle",
+  "items": [
+    {
+      "id": "ai-tradeoff-triangle.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A backend service calls your LLM endpoint and waits for the **complete** JSON; p95 is over budget. Requests carry ~3k prompt tokens, and half of each output is an explanation field the service discards. Which change cuts latency most?",
+        "es": "Un servicio backend llama a tu endpoint de LLM y espera el JSON **completo**; el p95 está por encima del presupuesto. Las requests llevan ~3k tokens de prompt, y la mitad de cada salida es un campo de explicación que el servicio descarta. ¿Qué cambio baja más la latencia?"
+      },
+      "options": [
+        { "text": { "en": "Drop the discarded explanation field, halving the output tokens", "es": "Quitar el campo de explicación descartado, reduciendo a la mitad los tokens de salida" } },
+        { "text": { "en": "Trim the prompt from ~3k to ~1.5k tokens of instructions", "es": "Recortar el prompt de ~3k a ~1.5k tokens de instrucciones" },
+          "why": { "en": "Halving the prompt often cuts latency only ~1–5%: the prompt is processed in parallel, output tokens one at a time.", "es": "Reducir el prompt a la mitad suele bajar la latencia solo ~1–5%: el prompt se procesa en paralelo, la salida token por token." } },
+        { "text": { "en": "Turn on streaming so tokens arrive as they are generated", "es": "Activar streaming para que los tokens lleguen a medida que se generan" },
+          "why": { "en": "Streaming only cuts perceived latency. This service waits for the full JSON, so nothing changes.", "es": "El streaming solo baja la latencia percibida. Este servicio espera el JSON completo, así que no cambia nada." } },
+        { "text": { "en": "Move the calls to a Batch API for its ~50% discount", "es": "Pasar las llamadas a una API batch por su ~50% de descuento" },
+          "why": { "en": "Batching buys cost with latency: results arrive in hours, not seconds.", "es": "El batch compra costo con latencia: los resultados llegan en horas, no en segundos." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Know which lever moves which corner. Generation time scales with output tokens, so halving output can cut latency ~50%, while halving the prompt often moves it ~1–5%. Streaming changes how latency feels, not how long it takes.",
+        "es": "Conoce qué palanca mueve cada vértice. El tiempo de generación crece con los tokens de salida, así que reducir la salida a la mitad puede bajar la latencia ~50%, mientras que reducir el prompt a la mitad suele moverla ~1–5%. El streaming cambia cómo se siente la latencia, no cuánto dura."
+      }
+    },
+    {
+      "id": "ai-tradeoff-triangle.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Quality and p95 are bars to clear; cost is the corner you optimize. Complete the decision.",
+        "es": "La calidad y el p95 son umbrales que hay que cumplir; el costo es el vértice que optimizas. Completa la decisión."
+      },
+      "lang": "python",
+      "code": "QUALITY_BAR = 0.85   # pass rate on the golden set\nP95_BAR_MS = 2500    # end-to-end latency budget\n# results: one row per config, all run on the same eval set\n\ndef dominates(b, a) -> bool:\n    \"\"\"b is no worse than a on every axis and strictly better on one.\"\"\"\n    axes = [(b[\"quality\"], a[\"quality\"]), (-b[\"p95_ms\"], -a[\"p95_ms\"]),\n            (-b[\"usd_per_1k\"], -a[\"usd_per_1k\"])]\n    return all(x >= y for x, y in axes) and any(x > y for x, y in axes)\n\nfrontier = [a for a in results if not any(dominates(b, a) for b in results)]\npassing = [r for r in frontier\n           if r[\"quality\"] >= QUALITY_BAR and r[\"p95_ms\"] <= P95_BAR_MS]\nif passing:\n    ____\n    print(\"ship:\", best[\"config\"])",
+      "options": [
+        { "text": "best = min(passing, key=lambda r: r[\"usd_per_1k\"])" },
+        { "text": "best = max(passing, key=lambda r: r[\"quality\"])",
+          "why": { "en": "Once the quality bar is met, extra quality isn't the target. This ships the priciest passing config.", "es": "Una vez cumplido el umbral de calidad, más calidad no es el objetivo. Esto despliega la configuración aprobada más cara." } },
+        { "text": "best = min(frontier, key=lambda r: r[\"usd_per_1k\"])",
+          "why": { "en": "Ignores the bars: the cheapest frontier config may fail quality or p95.", "es": "Ignora los umbrales: la configuración más barata de la frontera puede no cumplir calidad o p95." } },
+        { "text": "best = min(passing, key=lambda r: r[\"p95_ms\"])",
+          "why": { "en": "Latency is a bar here, not the objective. Beating the budget further usually costs money you didn't need to spend.", "es": "Aquí la latencia es un umbral, no el objetivo. Mejorar más allá del presupuesto suele costar dinero que no hacía falta gastar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Clear the bar on two corners, optimize the third: filter the frontier by every bar, then ship the cheapest config that passes. If nothing passes, add a lever or renegotiate a bar instead of quietly lowering one.",
+        "es": "Cumple el umbral en dos vértices y optimiza el tercero: filtra la frontera por cada umbral y despliega la configuración más barata que pase. Si ninguna pasa, agrega una palanca o renegocia un umbral en lugar de bajarlo en silencio."
+      }
+    },
+    {
+      "id": "ai-tradeoff-triangle.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about measuring AI trade-offs are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre medir trade-offs de IA son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "On a few dozen examples, a 1–2 point quality gap is likely noise", "es": "Con unas pocas docenas de ejemplos, una diferencia de 1–2 puntos de calidad probablemente es ruido" } },
+        { "text": { "en": "Users feel p95 and time to first token more than mean latency", "es": "El usuario siente el p95 y el tiempo al primer token más que la latencia promedio" } },
+        { "text": { "en": "Caching cuts cost and latency, nearly free on quality if keys are right", "es": "La caché baja costo y latencia, casi gratis en calidad si las claves están bien" } },
+        { "text": { "en": "A config's per-token list price captures its full cost", "es": "El precio de lista por token de una configuración refleja su costo total" },
+          "why": { "en": "Retries, reasoning tokens, reranker GPUs and human review cost too.", "es": "Los reintentos, los tokens de razonamiento, las GPUs del reranker y la revisión humana también cuestan." } },
+        { "text": { "en": "A frontier measured at launch stays valid until traffic grows", "es": "Una frontera medida en el lanzamiento sigue siendo válida hasta que crece el tráfico" },
+          "why": { "en": "Prices and models change every few months too. Re-run it when a new model ships or prices drop.", "es": "Los precios y los modelos también cambian cada pocos meses. Vuelve a calcularla cuando sale un modelo nuevo o bajan los precios." } },
+        { "text": { "en": "Raising reasoning effort improves hard tasks at no latency cost", "es": "Subir el esfuerzo de razonamiento mejora las tareas difíciles sin costo de latencia" },
+          "why": { "en": "It is paid in output tokens and seconds: quality bought with latency and cost.", "es": "Se paga en tokens de salida y segundos: calidad comprada con latencia y costo." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "The frontier is only as good as its measurements: enough examples to separate signal from noise, the latency users actually feel, full cost rather than list price, and a re-run whenever models or prices move.",
+        "es": "La frontera vale lo que valen sus mediciones: suficientes ejemplos para separar señal de ruido, la latencia que el usuario realmente siente, el costo total en vez del precio de lista y volver a medir cada vez que cambian modelos o precios."
+      }
+    },
+    {
+      "id": "ai-tradeoff-triangle.a4",
+      "type": "numeric",
+      "prompt": {
+        "en": "From your eval: a large model costs ~$41 per 1,000 requests; a mid-size model plus reranker costs ~$6.50. A classifier sends the hardest 5% of traffic to the large model and the rest to mid + rerank. Ignoring the classifier's own cost, what is the blended cost per 1,000 requests?",
+        "es": "Según tu eval: un modelo grande cuesta ~$41 por cada 1,000 requests; un modelo mediano con reranker, ~$6.50. Un clasificador manda el 5% más difícil del tráfico al modelo grande y el resto al mediano con reranker. Sin contar el costo del clasificador, ¿cuál es el costo combinado por cada 1,000 requests?"
+      },
+      "answer": 8.225,
+      "tolerance": 0.1,
+      "unit": "USD per 1k requests",
+      "explain": {
+        "en": "Weight each route by its share: 0.05 × $41 + 0.95 × $6.50 = $2.05 + $6.18 ≈ $8.23. That's ~80% cheaper than sending everything to the large model, while the hardest slice still gets its quality.",
+        "es": "Pondera cada ruta por su proporción: 0.05 × $41 + 0.95 × $6.50 = $2.05 + $6.18 ≈ $8.23. Es ~80% más barato que mandar todo al modelo grande, y la porción más difícil igual recibe su calidad."
+      }
+    }
+  ]
+}

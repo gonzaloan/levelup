@@ -125,3 +125,102 @@ export function readDiagramHash(file) {
   const m = fs.readFileSync(file, "utf8").match(/^<!-- h:([0-9a-f]+) -->/);
   return m ? m[1] : null;
 }
+
+/* ---------------------------------------------------------------- exercises
+ * content/exercises/<domain>/<concept>.json = { concept, items: [...] }. Every item is graded
+ * deterministically in the browser (no LLM). Option order is shuffled at render, so the authored
+ * index of the correct answer carries no signal; the length check below guards the other classic
+ * tell (the correct option being visibly the longest/most qualified one). */
+export const EXERCISE_TYPES = ["mcq", "multi", "order", "match", "numeric", "code"];
+export const EXERCISES = path.join(CONTENT, "exercises");
+
+export function listExerciseFiles() {
+  if (!fs.existsSync(EXERCISES)) return [];
+  const out = [];
+  for (const d of fs.readdirSync(EXERCISES)) {
+    const sub = path.join(EXERCISES, d);
+    if (!fs.statSync(sub).isDirectory()) continue;
+    for (const f of fs.readdirSync(sub)) if (f.endsWith(".json") && !f.startsWith("_")) out.push(path.join(sub, f));
+  }
+  return out.sort();
+}
+
+const optLen = (o) => (typeof o.text === "string" ? o.text : o.text?.en ?? "").length;
+
+export function validateExercises(x, file, domains) {
+  const errors = [], warnings = [];
+  const E = (m) => errors.push(m), W = (m) => warnings.push(m);
+  const ids = new Map();
+  for (const d of domains) for (const id of d.concepts) ids.set(id, d.id);
+  const base = path.basename(file || "", ".json");
+  if (!x || typeof x !== "object") return { errors: ["not an object"], warnings };
+  if (file && x.concept !== base) E(`concept "${x.concept}" != filename "${base}"`);
+  if (!ids.has(x.concept)) E(`concept "${x.concept}" not in domains.json`);
+  else if (file && path.basename(path.dirname(file)) !== ids.get(x.concept)) E(`file must live under content/exercises/${ids.get(x.concept)}/`);
+  if (!Array.isArray(x.items) || x.items.length < 2 || x.items.length > 6) E("items: want 2-6");
+  const t = (f, v, { min = 1, max = Infinity } = {}) => {
+    if (!v || typeof v.en !== "string" || typeof v.es !== "string" || !v.en.trim() || !v.es.trim()) return E(`${f} must be {en, es}`);
+    const n = words(v.en);
+    if (n < min) E(`${f}: ${n} words < ${min}`);
+    if (n > max) E(`${f}: ${n} words > ${max}`);
+    if (n >= 10 && v.en.trim() === v.es.trim()) E(`${f}: es is identical to en`);
+    if (n >= 8 && !looksSpanish(v.es)) E(`${f}: es does not read as Spanish`);
+    for (const m of (v.en + " " + v.es).matchAll(/\[\[([^\]]+)\]\]/g)) if (!ids.has(m[1])) E(`${f}: [[${m[1]}]] is not a concept id`);
+  };
+  const seen = new Set();
+  (x.items || []).forEach((it, i) => {
+    const f = `items[${i}]`;
+    if (typeof it.id !== "string" || !it.id.startsWith(`${x.concept}.`)) E(`${f}.id must start with "${x.concept}."`);
+    else if (seen.has(it.id)) E(`${f}.id duplicated`); else seen.add(it.id);
+    if (!EXERCISE_TYPES.includes(it.type)) return E(`${f}.type must be one of ${EXERCISE_TYPES}`);
+    t(`${f}.prompt`, it.prompt, { min: 4, max: 70 });
+    t(`${f}.explain`, it.explain, { min: 10, max: 100 });
+    const opts = (n0, n1, codeText = false) => {
+      if (!Array.isArray(it.options) || it.options.length < n0 || it.options.length > n1) return E(`${f}.options: want ${n0}-${n1}`);
+      const texts = new Set();
+      it.options.forEach((o, j) => {
+        if (codeText) { if (typeof o.text !== "string" || !o.text.trim()) E(`${f}.options[${j}].text must be a code string`); }
+        else t(`${f}.options[${j}].text`, o.text, { max: 40 });
+        if (o.why != null) t(`${f}.options[${j}].why`, o.why, { max: 45 });
+        const key = typeof o.text === "string" ? o.text : o.text?.en;
+        if (texts.has(key)) E(`${f}.options[${j}] duplicates another option`); texts.add(key);
+      });
+    };
+    if (it.type === "mcq" || it.type === "code") {
+      opts(3, 5, it.type === "code");
+      if (!Number.isInteger(it.answer) || it.answer < 0 || it.answer >= (it.options?.length ?? 0)) E(`${f}.answer out of range`);
+      else {
+        const lens = it.options.map(optLen), right = lens[it.answer], others = lens.filter((_, j) => j !== it.answer);
+        if (others.length && right > 1.6 * Math.max(...others)) W(`${f}: correct option is much longer than every distractor (a tell)`);
+      }
+      if (it.type === "code") {
+        if (typeof it.lang !== "string" || !LANGS.includes(it.lang)) E(`${f}.lang must be one of ${LANGS}`);
+        if (typeof it.code !== "string" || (it.code.match(/____/g) || []).length !== 1) E(`${f}.code must contain exactly one ____ gap`);
+        else if (it.code.split("\n").length > 22) E(`${f}.code: keep it under 22 lines`);
+      }
+    }
+    if (it.type === "multi") {
+      opts(4, 6);
+      const a = it.answers;
+      if (!Array.isArray(a) || a.length < 2 || new Set(a).size !== a.length || a.some((k) => !Number.isInteger(k) || k < 0 || k >= (it.options?.length ?? 0))) E(`${f}.answers: want ≥2 distinct valid indexes`);
+      else if (a.length === it.options.length) E(`${f}.answers: not every option can be correct`);
+    }
+    if (it.type === "order") {
+      if (!Array.isArray(it.steps) || it.steps.length < 3 || it.steps.length > 7) E(`${f}.steps: want 3-7, in the correct order`);
+      else it.steps.forEach((s, j) => t(`${f}.steps[${j}]`, s, { max: 22 }));
+    }
+    if (it.type === "match") {
+      // 2 pairs is solvable by elimination after one guess: always ≥ 3, prefer 4.
+      if (!Array.isArray(it.pairs) || it.pairs.length < 3 || it.pairs.length > 5) E(`${f}.pairs: want 3-5`);
+      else it.pairs.forEach((p, j) => { t(`${f}.pairs[${j}].left`, p.left, { max: 10 }); t(`${f}.pairs[${j}].right`, p.right, { max: 26 }); });
+    }
+    if (it.type === "numeric") {
+      if (typeof it.answer !== "number" || !Number.isFinite(it.answer) || it.answer <= 0) E(`${f}.answer must be a positive number`);
+      if (typeof it.tolerance !== "number" || it.tolerance <= 0 || it.tolerance > 0.5) E(`${f}.tolerance: relative, in (0, 0.5]`);
+      if (it.unit != null && typeof it.unit !== "string") E(`${f}.unit must be a string`);
+    }
+    const known = new Set(["id", "type", "prompt", "explain", "options", "answer", "answers", "steps", "pairs", "tolerance", "unit", "lang", "code"]);
+    for (const k of Object.keys(it)) if (!known.has(k)) E(`${f}: unknown field "${k}"`);
+  });
+  return { errors, warnings };
+}

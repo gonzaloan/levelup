@@ -1,0 +1,75 @@
+{
+  "concept": "replication",
+  "items": [
+    {
+      "id": "replication.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your support bot stores chunks in Postgres + pgvector: a primary plus two async read replicas that serve retrieval. A nightly re-embedding job pushes replica lag to **40 s**. A customer uploads a PDF, asks about it, and the bot can't find it. Best fix?",
+        "es": "Tu bot de soporte guarda chunks en Postgres + pgvector: un primario y dos réplicas de lectura asíncronas que atienden la recuperación. Un job nocturno de re-embedding sube el lag de las réplicas a **40 s**. Un cliente sube un PDF, pregunta por él y el bot no lo encuentra. ¿Cuál es la mejor solución?"
+      },
+      "options": [
+        { "text": { "en": "Read from the primary for a minute after an upload; throttle the batch job", "es": "Leer del primario durante un minuto tras una carga y limitar el ritmo del job batch" },
+          "why": { "en": "The write succeeded; only the read was stale. Route the recent writer's reads and cut the lag at its source.", "es": "La escritura funcionó; solo la lectura estaba vieja. Rutea las lecturas de quien acaba de escribir y corta el lag en su origen." } },
+        { "text": { "en": "Make both read replicas synchronous so they never fall behind", "es": "Hacer síncronas ambas réplicas de lectura para que nunca se atrasen" },
+          "why": { "en": "Every commit would wait on both followers; one slow replica would stall all writes.", "es": "Cada commit esperaría a ambos seguidores; una réplica lenta frenaría todas las escrituras." } },
+        { "text": { "en": "Add a third async read replica to spread the retrieval load", "es": "Agregar una tercera réplica asíncrona para repartir la carga de recuperación" },
+          "why": { "en": "The batch job's writes must replay on every replica, so a new one lags just the same.", "es": "Las escrituras del job batch se reproducen en cada réplica, así que una nueva se atrasa igual." } },
+        { "text": { "en": "Re-run ingestion for the PDF, since the upload must have failed", "es": "Reintentar la ingesta del PDF, porque la carga debió fallar" },
+          "why": { "en": "The upload committed on the primary; the replica just hasn't replayed it yet.", "es": "La carga se confirmó en el primario; la réplica todavía no la reprodujo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Async replicas trade freshness for read scale, so first separate a failed write from a stale read. Fix the anomaly where it hurts (read-your-writes routing for recent writers), attack the lag source, and alert on `replay_lag`.",
+        "es": "Las réplicas asíncronas cambian frescura por escala de lectura, así que primero distingue una escritura fallida de una lectura vieja. Corrige la anomalía donde duele (ruteo read-your-writes para quien acaba de escribir), ataca la fuente del lag y alerta sobre `replay_lag`."
+      }
+    },
+    {
+      "id": "replication.a2",
+      "type": "code",
+      "prompt": {
+        "en": "The primary has two standbys, `replica_a` and `replica_b`. Complete its config so a committed write survives losing the primary, yet **one slow standby can't stall commits**.",
+        "es": "El primario tiene dos standbys, `replica_a` y `replica_b`. Completa su configuración para que una escritura confirmada sobreviva a la pérdida del primario, pero **un standby lento no frene los commits**."
+      },
+      "lang": "sql",
+      "code": "-- Primary with two standbys: replica_a, replica_b\n____\nALTER SYSTEM SET synchronous_commit = 'on';\nSELECT pg_reload_conf();\n\n-- Low-value writes can skip the wait, scoped to their own transaction\nBEGIN;\nSET LOCAL synchronous_commit = 'local';\nINSERT INTO usage_events (tenant_id, tokens) VALUES (42, 1830);\nCOMMIT;",
+      "options": [
+        { "text": "ALTER SYSTEM SET synchronous_standby_names = 'ANY 1 (replica_a, replica_b)';" },
+        { "text": "ALTER SYSTEM SET synchronous_standby_names = 'ANY 2 (replica_a, replica_b)';",
+          "why": { "en": "Waits for both standbys: one slow or dead standby stalls every commit.", "es": "Espera a ambos standbys: uno lento o caído frena cada commit." } },
+        { "text": "ALTER SYSTEM SET synchronous_standby_names = 'ANY 1 (replica_a)';",
+          "why": { "en": "Only one candidate: if replica_a is slow or down, every commit waits on it.", "es": "Un solo candidato: si replica_a está lento o caído, cada commit lo espera." } },
+        { "text": "ALTER SYSTEM SET synchronous_standby_names = '';",
+          "why": { "en": "No synchronous standby at all: fully async, so a failover can lose the last committed writes.", "es": "Ningún standby síncrono: todo es asíncrono, así que un failover puede perder las últimas escrituras confirmadas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "`ANY 1` over two standbys is semi-sync: every commit is flushed on at least one other node (RPO = 0 for a single failure), and whichever standby answers first counts, so neither can stall writes alone.",
+        "es": "`ANY 1` sobre dos standbys es semisíncrono: cada commit queda guardado en al menos otro nodo (RPO = 0 ante una sola falla), y cuenta el standby que responda primero, así que ninguno puede frenar las escrituras por sí solo."
+      }
+    },
+    {
+      "id": "replication.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: \"We run three replicas across availability zones, so we can drop point-in-time backups.\" What's the flaw?",
+        "es": "Un compañero dice: \"Tenemos tres réplicas en distintas zonas de disponibilidad, así que podemos dejar los backups point-in-time.\" ¿Cuál es la falla?"
+      },
+      "options": [
+        { "text": { "en": "A bad `DELETE` reaches every replica within milliseconds; only a backup undoes it", "es": "Un `DELETE` equivocado llega a todas las réplicas en milisegundos; solo un backup lo deshace" },
+          "why": { "en": "Replication copies mistakes as faithfully as good writes. Replicas protect against losing a node; backups against bad writes.", "es": "La replicación copia los errores igual de fiel que las escrituras buenas. Las réplicas protegen contra perder un nodo; los backups, contra escrituras malas." } },
+        { "text": { "en": "Async replicas may lag, so the newest data could be missing", "es": "Las réplicas asíncronas pueden atrasarse, así que podrían faltar los datos más nuevos" },
+          "why": { "en": "True but beside the point: even a sync replica would copy the bad write, only faster.", "es": "Es cierto, pero no viene al caso: incluso una réplica síncrona copiaría la escritura mala, solo que más rápido." } },
+        { "text": { "en": "Three copies aren't enough; with RF=5 backups become optional", "es": "Tres copias no alcanzan; con RF=5 los backups pasan a ser opcionales" },
+          "why": { "en": "Five copies of the same mistake: every replica applies the bad write.", "es": "Cinco copias del mismo error: cada réplica aplica la escritura equivocada." } },
+        { "text": { "en": "No flaw: spreading replicas across zones already covers recovery", "es": "Ninguna falla: repartir réplicas entre zonas ya cubre la recuperación" },
+          "why": { "en": "Zones cover hardware and site loss, not a bad migration, a bug or a human mistake.", "es": "Las zonas cubren fallas de hardware o de sitio, no una migración mala, un bug o un error humano." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Replication and backups answer different failures. Replicas keep you running when a node or zone dies; point-in-time backups let you rewind after a bad write, which replication spreads everywhere in milliseconds.",
+        "es": "Replicación y backups responden a fallas distintas. Las réplicas te mantienen en pie cuando cae un nodo o una zona; los backups point-in-time te permiten volver atrás tras una escritura mala, que la replicación propaga a todas partes en milisegundos."
+      }
+    }
+  ]
+}

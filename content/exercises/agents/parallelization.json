@@ -1,0 +1,66 @@
+{
+  "concept": "parallelization",
+  "items": [
+    {
+      "id": "parallelization.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A contract-review service runs one LLM call per section, ~12 in parallel. p50 latency is fine, but p99 is several times higher, and ~1% of requests fail outright when a single branch errors. Traces show no rate-limit errors. What do you add?",
+        "es": "Un servicio de revisión de contratos hace una llamada al LLM por sección, ~12 en paralelo. La latencia p50 está bien, pero la p99 es varias veces mayor, y ~1% de las solicitudes falla por completo cuando una sola rama da error. Las trazas no muestran errores de rate limit. ¿Qué agregas?"
+      },
+      "options": [
+        { "text": { "en": "Per-branch timeouts and retries, plus a policy for partial results", "es": "Timeouts y reintentos por rama, más una política para resultados parciales" },
+          "why": { "en": "It bounds how long the slowest branch can hold the request and stops one failure from sinking it.", "es": "Acota cuánto puede retener la solicitud la rama más lenta y evita que una sola falla la hunda." } },
+        { "text": { "en": "Run the sections sequentially so one failure can't take down the rest", "es": "Correr las secciones en secuencia para que una falla no tumbe al resto" },
+          "why": { "en": "Latency becomes the sum of 12 calls. What's missing is a failure policy, not less concurrency.", "es": "La latencia pasa a ser la suma de 12 llamadas. Lo que falta es una política de fallas, no menos concurrencia." } },
+        { "text": { "en": "Use a bigger model per branch so each call fails less often", "es": "Usar un modelo más grande por rama para que cada llamada falle menos" },
+          "why": { "en": "With 12 branches, any rare slow or failed call still decides the request; nothing bounds it.", "es": "Con 12 ramas, cualquier llamada lenta o fallida, aunque sea rara, sigue decidiendo la solicitud; nada la acota." } },
+        { "text": { "en": "Merge all sections into one long call to avoid the fan-out entirely", "es": "Juntar todas las secciones en una sola llamada larga para eliminar el fan-out" },
+          "why": { "en": "You lose the focused-prompt gains and wait on one long generation; the missing piece is still the failure policy.", "es": "Pierdes la ventaja de los prompts enfocados y esperas una sola generación larga; lo que falta sigue siendo la política de fallas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Wall-clock is the max of the branches, so with fan-out your tail latency is set by whichever branch is slowest, and one failed branch can crash the request. The aggregator is where the design lives: a timeout per branch, a retry budget, and a rule for returning what finished while flagging what didn't.",
+        "es": "El tiempo total es el máximo de las ramas, así que con fan-out tu latencia de cola la fija la rama más lenta, y una rama fallida puede tumbar la solicitud. El diseño vive en el agregador: un timeout por rama, un presupuesto de reintentos y una regla para devolver lo que terminó marcando lo que no."
+      }
+    },
+    {
+      "id": "parallelization.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Three parallel reviewers each catch 80% of seeded bugs, and assume their errors are **independent**. You flag a PR only when a **majority** (at least 2 of 3) flag it. What share of bugs gets flagged?",
+        "es": "Tres revisores en paralelo detectan cada uno el 80% de los bugs sembrados, y supón que sus errores son **independientes**. Marcas un PR solo si una **mayoría** (al menos 2 de 3) lo marca. ¿Qué porcentaje de los bugs queda marcado?"
+      },
+      "answer": 89.6,
+      "tolerance": 0.04,
+      "unit": "%",
+      "explain": {
+        "en": "Exactly two flag: 3 × 0.8² × 0.2 = 0.384. All three: 0.8³ = 0.512. Majority ≈ 0.896, versus any-of = 1 − 0.2³ ≈ 0.992. The rule follows the cost of a miss. And the math holds only if errors are independent; same model and prompt means shared blind spots.",
+        "es": "Exactamente dos marcan: 3 × 0,8² × 0,2 = 0,384. Los tres: 0,8³ = 0,512. Mayoría ≈ 0,896, frente a \"basta uno\" = 1 − 0,2³ ≈ 0,992. La regla depende de lo que cuesta un bug no detectado. Y la cuenta solo vale si los errores son independientes; mismo modelo y mismo prompt implican los mismos puntos ciegos."
+      }
+    },
+    {
+      "id": "parallelization.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your classifier now runs 5 votes with the **same prompt and model at temperature 0**, then takes the majority. On the eval set accuracy is unchanged versus one call, at 5× the cost. Why?",
+        "es": "Tu clasificador ahora hace 5 votos con el **mismo prompt y modelo a temperatura 0** y toma la mayoría. En el set de evaluación la precisión no cambia frente a una sola llamada, con 5× el costo. ¿Por qué?"
+      },
+      "options": [
+        { "text": { "en": "The voters are near-identical, so they share every error", "es": "Los votantes son casi idénticos, así que comparten cada error" },
+          "why": { "en": "Voting adds information only when voters differ; diversify prompts, models or inputs.", "es": "Votar agrega información solo si los votantes difieren; diversifica prompts, modelos o inputs." } },
+        { "text": { "en": "Five votes is too few; self-consistency needs about 40", "es": "Cinco votos son muy pocos; self-consistency necesita unos 40" },
+          "why": { "en": "Forty identical answers are as uninformative as five. 3–5 diverse voters is a common start.", "es": "Cuarenta respuestas idénticas informan lo mismo que cinco. 3–5 votantes diversos es un punto de partida habitual." } },
+        { "text": { "en": "Majority is the wrong rule; any-of would raise accuracy", "es": "La mayoría es la regla equivocada; con \"basta uno\" subiría la precisión" },
+          "why": { "en": "Any-of trades precision for recall. With identical voters every rule returns the same label.", "es": "\"Basta uno\" cambia precisión por recall. Con votantes idénticos, toda regla devuelve la misma etiqueta." } },
+        { "text": { "en": "The votes should run in sequence so each sees the earlier ones", "es": "Los votos deberían correr en secuencia para que cada uno vea los anteriores" },
+          "why": { "en": "That's a chain, and voters that see earlier votes anchor on them, which makes them even less independent.", "es": "Eso es una cadena, y los votantes que ven votos previos se anclan en ellos, lo que los vuelve aún menos independientes." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Voting buys confidence only from independent errors. The same prompt and model at temperature 0 gives N near-identical answers: N× the cost, no new information. Vary the prompts (e.g. one lens per voter), the models or the inputs, and check the eval curve before adding voters.",
+        "es": "Votar da confianza solo cuando los errores son independientes. El mismo prompt y modelo a temperatura 0 da N respuestas casi idénticas: N× el costo, sin información nueva. Varía los prompts (p. ej., un enfoque por votante), los modelos o los inputs, y revisa la curva de la eval antes de sumar votantes."
+      }
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "concept": "training-serving-skew",
+  "items": [
+    {
+      "id": "training-serving-skew.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A pricing model looks great offline, but conversion drops 4% in production with no errors. A parity check shows `distance_km` disagrees on 38% of rows: Spark computes route distance, the Go backend computes straight-line distance. Best lasting fix?",
+        "es": "Un modelo de precios se ve genial offline, pero en producción la conversión cae 4% sin ningún error. Un chequeo de paridad muestra que `distance_km` no coincide en el 38% de las filas: Spark calcula la distancia de la ruta y el backend en Go, la distancia en línea recta. ¿Cuál es la solución duradera?"
+      },
+      "options": [
+        { "text": { "en": "One shared transformation for both sides, then retrain on logged serving features", "es": "Una sola transformación compartida para ambos lados, y reentrenar con las features registradas en serving" },
+          "why": { "en": "Removes the second code path and makes training data match production by construction.", "es": "Elimina el segundo camino de código y hace que los datos de entrenamiento coincidan con producción por construcción." } },
+        { "text": { "en": "Retrain more often on recent data so the model adapts to production", "es": "Reentrenar más seguido con datos recientes para que el modelo se adapte a producción" },
+          "why": { "en": "This is a code-path bug, not drift: fresh data built by the same Spark code still disagrees with what Go serves.", "es": "Es un bug de código, no drift: los datos frescos que arma el mismo código de Spark siguen sin coincidir con lo que sirve Go." } },
+        { "text": { "en": "Loosen the parity tolerance so harmless differences stop alerting", "es": "Relajar la tolerancia del chequeo para que las diferencias inofensivas dejen de alertar" },
+          "why": { "en": "More than ~1% of rows disagreeing is a code-path bug, not noise; 38% is a real mismatch, and hiding it fixes nothing.", "es": "Más de ~1% de filas que no coinciden es un bug de código, no ruido; 38% es una diferencia real, y ocultarla no arregla nada." } },
+        { "text": { "en": "Add a correction factor to the Go value so the averages match", "es": "Agregar un factor de corrección al valor de Go para que los promedios coincidan" },
+          "why": { "en": "Matching averages leaves per-row errors and keeps two implementations that will diverge again.", "es": "Igualar promedios deja errores fila por fila y mantiene dos implementaciones que volverán a separarse." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Skew fixes, best first: one shared transformation, then log served features and train on them (Rules of ML #32 and #29). Patching values or tolerances keeps two code paths alive, and they will drift apart again.",
+        "es": "Soluciones al skew, de mejor a peor: una transformación compartida y luego registrar las features servidas y entrenar con ellas (Rules of ML #32 y #29). Parchar valores o tolerancias mantiene vivos dos caminos de código, que volverán a separarse."
+      }
+    },
+    {
+      "id": "training-serving-skew.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the parity check: logged serving values (`a`) vs the same requests recomputed with the training code (`b`), compared **row by row**.",
+        "es": "Completa el chequeo de paridad: valores registrados en serving (`a`) contra los mismos requests recalculados con el código de entrenamiento (`b`), comparados **fila por fila**."
+      },
+      "lang": "python",
+      "code": "import numpy as np\nimport pandas as pd\n\nFEATURES = [\"distance_km\", \"user_orders_30d\", \"avg_basket_usd\"]\nonline = pd.read_parquet(\"serving_feature_log/2026-11-05.parquet\")\noffline = recompute_features(online[[\"request_id\", \"user_id\", \"ts\"]])\ndf = online.merge(offline, on=\"request_id\", suffixes=(\"_on\", \"_off\"))\n\nfor f in FEATURES:\n    a, b = df[f + \"_on\"].to_numpy(), df[f + \"_off\"].to_numpy()\n    ____\n    rate = bad.mean()\n    if rate > 0.01:  # >1% of rows disagree: a code-path bug, not noise\n        print(f\"SKEW {f}: {rate:.1%} of rows differ\")",
+      "options": [
+        { "text": "bad = ~np.isclose(a, b, rtol=1e-3, equal_nan=True)" },
+        { "text": "bad = a != b",
+          "why": { "en": "Exact float equality flags harmless rounding, and NaN != NaN marks every matching null as skew.", "es": "La igualdad exacta de floats marca redondeos inofensivos, y NaN != NaN marca como skew cada nulo que sí coincide." } },
+        { "text": "bad = np.isclose(a, b, rtol=1e-3, equal_nan=True)",
+          "why": { "en": "Missing the `~`: it counts matching rows as bad, so a clean feature reports ~100% skew.", "es": "Falta el `~`: cuenta como malas las filas que coinciden, así que una feature limpia reporta ~100% de skew." } },
+        { "text": "bad = ~np.isclose(a.mean(), b.mean(), rtol=1e-3)",
+          "why": { "en": "Compares averages: opposite per-row errors cancel out, and you get one boolean instead of a per-row rate.", "es": "Compara promedios: los errores opuestos por fila se cancelan, y obtienes un solo booleano en lugar de una tasa por fila." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Parity is a per-row diff with a small relative tolerance and NaN-aware equality, turned into a rate. Above ~1% disagreement points to a code-path bug, not floating-point noise.",
+        "es": "La paridad es una comparación fila por fila con una tolerancia relativa chica y que trata bien los NaN, convertida en una tasa. Más de ~1% de diferencias apunta a un bug de código, no a ruido de punto flotante."
+      }
+    },
+    {
+      "id": "training-serving-skew.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which of these are **training–serving skew** rather than drift? Select all that apply.",
+        "es": "¿Cuáles de estos casos son **training–serving skew** y no drift? Marca todos los que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Training drops rows with nulls; serving fills missing values with 0", "es": "El entrenamiento descarta filas con nulos; serving llena los faltantes con 0" } },
+        { "text": { "en": "Training features are built from today's snapshot of a mutable table", "es": "Las features de entrenamiento salen del snapshot actual de una tabla mutable" } },
+        { "text": { "en": "The fraud rate doubles during the holiday season", "es": "La tasa de fraude se duplica en la temporada de fiestas" },
+          "why": { "en": "That's label drift: the world changed, not your code. Training and serving still agree.", "es": "Eso es label drift: cambió el mundo, no tu código. Entrenamiento y serving siguen coincidiendo." } },
+        { "text": { "en": "The LLM eval uses a notebook prompt that differs from the deployed one", "es": "La eval del LLM usa un prompt de notebook distinto al desplegado" } },
+        { "text": { "en": "Users from a newly launched country change the input mix", "es": "Usuarios de un país recién lanzado cambian la mezcla de entradas" },
+          "why": { "en": "That's data drift: P(X) moved in the real world, while both sides still compute features the same way.", "es": "Eso es data drift: P(X) cambió en el mundo real, mientras ambos lados siguen calculando las features igual." } }
+      ],
+      "answers": [0, 1, 3],
+      "explain": {
+        "en": "Skew is a mismatch you built: different code, preprocessing, timing or prompt between training (or eval) and production. Drift is the world changing under a consistent pipeline. Different causes, different fixes: unify code paths for skew, retrain for drift.",
+        "es": "El skew es una diferencia que tú construiste: otro código, otro preprocesamiento, otro momento u otro prompt entre entrenamiento (o eval) y producción. El drift es el mundo cambiando bajo un pipeline consistente. Causas distintas, soluciones distintas: unificar caminos de código para el skew, reentrenar para el drift."
+      }
+    },
+    {
+      "id": "training-serving-skew.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: 'Metrics on our held-out set match training, so there's no training–serving skew.' The held-out set came from the same feature pipeline as the training data. What's wrong with the claim?",
+        "es": "Un compañero dice: 'Las métricas en nuestro set reservado coinciden con las de entrenamiento, así que no hay training–serving skew'. El set reservado salió del mismo pipeline de features que los datos de entrenamiento. ¿Qué falla en ese argumento?"
+      },
+      "options": [
+        { "text": { "en": "It shares the training code path, so it can't reveal how serving differs", "es": "Comparte el camino de código del entrenamiento, así que no puede revelar en qué difiere serving" },
+          "why": { "en": "Skew lives between pipelines; you only see it by comparing against what serving actually logged.", "es": "El skew vive entre pipelines; solo lo ves comparando contra lo que serving realmente registró." } },
+        { "text": { "en": "Nothing: matching held-out metrics rule out skew", "es": "Nada: si las métricas del set reservado coinciden, se descarta el skew" },
+          "why": { "en": "A held-out set produced by the same, possibly buggy, pipeline inherits the same bugs and hides them.", "es": "Un set reservado producido por el mismo pipeline, quizá con bugs, hereda esos bugs y los esconde." } },
+        { "text": { "en": "The held-out set is too small to detect skew reliably", "es": "El set reservado es demasiado chico para detectar el skew con confianza" },
+          "why": { "en": "Size isn't the issue: even a huge set built by the training code never touches the serving code.", "es": "El tamaño no es el problema: ni un set enorme armado con el código de entrenamiento pasa nunca por el código de serving." } },
+        { "text": { "en": "Skew only shows up as serving errors, which the held-out set can't trigger", "es": "El skew solo aparece como errores en serving, que el set reservado no puede provocar" },
+          "why": { "en": "Skew returns HTTP 200 with a confident prediction; only quality drops, so nothing errors.", "es": "Con skew el modelo devuelve HTTP 200 y una predicción segura; solo baja la calidad, así que nada falla." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Offline validation inherits every bug of the pipeline that produced it. To detect skew you need a production view: recompute logged serving requests with the training code and diff them, and compare live feature distributions with training.",
+        "es": "La validación offline hereda todos los bugs del pipeline que la produjo. Para detectar skew necesitas una vista de producción: recalcular con el código de entrenamiento los requests registrados en serving y compararlos, y contrastar las distribuciones en vivo con las de entrenamiento."
+      }
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "concept": "attention",
+  "items": [
+    {
+      "id": "attention.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You train a small language model from scratch with hand-written attention. Training loss drops suspiciously fast to near zero, but at inference the model produces garbage. Most likely bug?",
+        "es": "Entrenas desde cero un modelo de lenguaje chico con atención escrita a mano. La loss de entrenamiento baja sospechosamente rápido hasta casi cero, pero en inferencia el modelo genera basura. ¿Cuál es el bug más probable?"
+      },
+      "options": [
+        { "text": { "en": "The causal mask is missing, so each position sees the token it predicts", "es": "Falta la máscara causal, así que cada posición ve el token que predice" },
+          "why": { "en": "In training the model reads the answer from the future; at inference there is no future to read.", "es": "En entrenamiento el modelo lee la respuesta del futuro; en inferencia no hay futuro que leer." } },
+        { "text": { "en": "The √d scaling is missing, so the softmax saturates", "es": "Falta el escalado por √d, así que el softmax se satura" },
+          "why": { "en": "That makes training harder and less stable; it can't make loss suspiciously low.", "es": "Eso vuelve el entrenamiento más difícil e inestable; no puede dar una loss sospechosamente baja." } },
+        { "text": { "en": "The model has too few heads to track long-range relations", "es": "El modelo tiene muy pocas cabezas para seguir relaciones de largo alcance" },
+          "why": { "en": "Fewer heads lower quality everywhere; they don't explain great training loss with broken inference.", "es": "Menos cabezas bajan la calidad en todos lados; no explican una loss excelente con una inferencia rota." } },
+        { "text": { "en": "The KV cache is disabled at inference time", "es": "El KV cache está desactivado en inferencia" },
+          "why": { "en": "Without a cache, decode recomputes past keys and values: slower, but the outputs are the same.", "es": "Sin cache, el decode recalcula las keys y values pasados: más lento, pero las salidas son las mismas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The causal mask sets future scores to −∞ before the softmax so token i sees only tokens ≤ i. That is what lets training predict every position in parallel without cheating. A train/inference gap this sharp means the model had information in training it can't have at inference.",
+        "es": "La máscara causal pone en −∞ los puntajes del futuro antes del softmax, para que el token i vea solo tokens ≤ i. Eso permite entrenar todas las posiciones en paralelo sin hacer trampa. Una brecha tan marcada entre entrenamiento e inferencia indica que el modelo tuvo en entrenamiento información que en inferencia no existe."
+      }
+    },
+    {
+      "id": "attention.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the score line of single-head causal attention.",
+        "es": "Completa la línea de puntajes de una atención causal de una sola cabeza."
+      },
+      "lang": "python",
+      "code": "def causal_attention(Q, K, V):\n    \"\"\"Q, K, V: (seq_len, d_head).\"\"\"\n    n, d = Q.shape\n    ____\n    future = np.triu(np.ones((n, n), dtype=bool), k=1)\n    scores = np.where(future, -np.inf, scores)\n    weights = softmax(scores, axis=-1)\n    return weights @ V",
+      "options": [
+        { "text": "scores = Q @ K.T / np.sqrt(d)" },
+        { "text": "scores = Q @ K.T",
+          "why": { "en": "No √d scaling: large dot products saturate the softmax into near one-hot weights.", "es": "Sin escalar por √d: los productos punto grandes saturan el softmax y los pesos quedan casi one-hot." } },
+        { "text": "scores = Q.T @ K / np.sqrt(d)",
+          "why": { "en": "Yields a (d, d) matrix of feature correlations, not an (n, n) score for every query-key pair.", "es": "Da una matriz (d, d) de correlaciones entre features, no un puntaje (n, n) para cada par query-key." } },
+        { "text": "scores = Q @ V.T / np.sqrt(d)",
+          "why": { "en": "Queries are matched against keys; values are what gets averaged after the softmax.", "es": "Las queries se comparan con las keys; los values son lo que se promedia después del softmax." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "softmax(QKᵀ/√d)·V: every query is dotted with every key to give an n×n score matrix, scaled by the head dimension so the softmax stays smooth, then masked and normalized into weights over the values.",
+        "es": "softmax(QKᵀ/√d)·V: cada query se multiplica por cada key y da una matriz de puntajes n×n, escalada por la dimensión de la cabeza para que el softmax no se sature; luego se enmascara y se normaliza en pesos sobre los values."
+      }
+    },
+    {
+      "id": "attention.a3",
+      "type": "numeric",
+      "prompt": {
+        "en": "A prompt grows from 8k to 32k tokens. By what factor do attention-score FLOPs grow, per head and per layer? Ignore the MLP and everything else.",
+        "es": "Un prompt crece de 8k a 32k tokens. ¿Por qué factor crecen los FLOPs de los puntajes de atención, por cabeza y por capa? Ignora el MLP y todo lo demás."
+      },
+      "answer": 16,
+      "tolerance": 0.1,
+      "unit": "×",
+      "explain": {
+        "en": "The score matrix is n×n, so cost scales with n². 4× the tokens gives 4² = 16× the attention FLOPs. The KV cache, by contrast, grows linearly: only 4×.",
+        "es": "La matriz de puntajes es n×n, así que el costo escala con n². 4× los tokens da 4² = 16× los FLOPs de atención. El KV cache, en cambio, crece de forma lineal: solo 4×."
+      }
+    },
+    {
+      "id": "attention.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: *\"We enabled FlashAttention, so attention is linear now; a 4× longer prompt costs ~4× the attention compute.\"* What's the right correction?",
+        "es": "Alguien de tu equipo dice: *\"Activamos FlashAttention, así que la atención ahora es lineal; un prompt 4× más largo cuesta ~4× el cómputo de atención\"*. ¿Cuál es la corrección adecuada?"
+      },
+      "options": [
+        { "text": { "en": "It removes the O(n²) memory and IO, but FLOPs stay quadratic", "es": "Elimina la memoria y el IO O(n²), pero los FLOPs siguen siendo cuadráticos" },
+          "why": { "en": "Tiling avoids materializing the n×n matrix, yet every query is still scored against every key.", "es": "El tiling evita materializar la matriz n×n, pero cada query se sigue comparando con cada key." } },
+        { "text": { "en": "Correct: tiling the computation makes attention linear", "es": "Es correcto: dividir el cálculo en tiles vuelve lineal la atención" },
+          "why": { "en": "Tiles change where the scores live in memory, not how many get computed: still n² per head.", "es": "Los tiles cambian dónde viven los puntajes en memoria, no cuántos se calculan: siguen siendo n² por cabeza." } },
+        { "text": { "en": "It shrinks the KV cache 4×, the same way GQA does", "es": "Reduce el KV cache 4×, igual que GQA" },
+          "why": { "en": "Cache size is set by layers, KV heads and head_dim; GQA changes the head count, FlashAttention doesn't.", "es": "El tamaño del cache depende de capas, KV heads y head_dim; GQA cambia la cantidad de cabezas, FlashAttention no." } },
+        { "text": { "en": "It approximates attention, trading some accuracy for speed", "es": "Aproxima la atención, cambiando algo de precisión por velocidad" },
+          "why": { "en": "FlashAttention computes exact attention; it reorders the work, it doesn't skip any of it.", "es": "FlashAttention calcula la atención exacta; reordena el trabajo, no se salta nada." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Separate the two costs: memory for the score matrix and FLOPs to fill it. Fused kernels fix the first. Cutting the second needs a different attention pattern, such as sliding-window or sparse attention, usually at some quality cost.",
+        "es": "Separa los dos costos: la memoria de la matriz de puntajes y los FLOPs para llenarla. Los kernels fusionados resuelven el primero. Reducir el segundo exige otro patrón de atención, como ventana deslizante o atención dispersa, normalmente con algo de costo en calidad."
+      }
+    }
+  ]
+}

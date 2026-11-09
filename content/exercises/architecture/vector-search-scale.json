@@ -1,0 +1,67 @@
+{
+  "concept": "vector-search-scale",
+  "items": [
+    {
+      "id": "vector-search-scale.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A multi-tenant SaaS hash-shards 1B vectors across 16 shards. Every query is scoped to one tenant, and the largest tenant has 20M vectors. p99 is poor, and cost per query grew each time you added shards. Best change?",
+        "es": "Un SaaS multi-tenant reparte 1B de vectores por hash en 16 shards. Cada consulta pertenece a un solo tenant, y el tenant más grande tiene 20M de vectores. El p99 es malo y el costo por consulta creció cada vez que agregaste shards. ¿Cuál es el mejor cambio?"
+      },
+      "options": [
+        { "text": { "en": "Shard by tenant so each query hits a single shard", "es": "Particionar por tenant para que cada consulta vaya a un solo shard" },
+          "why": { "en": "Even the largest tenant fits on one shard, so fan-out disappears: one shard's latency and one shard's cost per query.", "es": "Hasta el tenant más grande cabe en un shard, así que el fan-out desaparece: la latencia y el costo de un solo shard por consulta." } },
+        { "text": { "en": "Add more hash shards so each one is smaller", "es": "Agregar más shards por hash para que cada uno sea más chico" },
+          "why": { "en": "More fan-out: cost grows with shard count, and p99 becomes the slowest of even more shards.", "es": "Más fan-out: el costo crece con la cantidad de shards y el p99 pasa a ser el del más lento entre todavía más shards." } },
+        { "text": { "en": "Add a replica set to every shard", "es": "Agregar un set de réplicas a cada shard" },
+          "why": { "en": "Replicas add QPS and availability, but each query still fans out to all 16 shards and waits for the slowest.", "es": "Las réplicas suman QPS y disponibilidad, pero cada consulta igual va a los 16 shards y espera al más lento." } },
+        { "text": { "en": "Search all shards unfiltered, then post-filter by tenant", "es": "Buscar en todos los shards sin filtro y post-filtrar por tenant" },
+          "why": { "en": "A selective post-filter empties the top-k: a tenant with 2% of the data keeps ~2 of the top 100.", "es": "Un post-filtro selectivo vacía el top-k: un tenant con el 2% de los datos conserva ~2 de los 100 mejores." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Hash sharding fans every query out to every shard, so cost scales with shard count and p99 is the slowest shard. When queries are scoped by tenant or partition, shard on that key: one billion-vector problem becomes many small ones.",
+        "es": "El sharding por hash manda cada consulta a todos los shards, así que el costo escala con la cantidad de shards y el p99 es el del más lento. Cuando las consultas están acotadas por tenant o partición, particiona por esa clave: un problema de mil millones de vectores se vuelve muchos chicos."
+      }
+    },
+    {
+      "id": "vector-search-scale.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Your corpus is 1B embeddings with 1,024 dimensions each. With binary quantization (1 bit per dimension), how much memory do the codes take, in GB (10⁹ bytes), before any index overhead?",
+        "es": "Tu corpus tiene 1B de embeddings de 1,024 dimensiones cada uno. Con cuantización binaria (1 bit por dimensión), ¿cuánta memoria ocupan los códigos, en GB (10⁹ bytes), antes de cualquier overhead del índice?"
+      },
+      "answer": 128,
+      "tolerance": 0.1,
+      "unit": "GB",
+      "explain": {
+        "en": "1,024 bits ÷ 8 = 128 bytes per vector; × 10⁹ vectors = 128 GB. The same corpus in float32 is 1,024 × 4 = 4,096 bytes per vector ≈ 4.1 TB: 32× more. That gap is why you search compressed codes in RAM and rescore a few hundred candidates with full vectors from SSD.",
+        "es": "1,024 bits ÷ 8 = 128 bytes por vector; × 10⁹ vectores = 128 GB. El mismo corpus en float32 ocupa 1,024 × 4 = 4,096 bytes por vector ≈ 4.1 TB: 32× más. Esa diferencia es la razón para buscar sobre códigos comprimidos en RAM y hacer rescoring de unos cientos de candidatos con los vectores completos desde SSD."
+      }
+    },
+    {
+      "id": "vector-search-scale.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about billion-scale vector search are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre búsqueda vectorial a escala de miles de millones son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Rescoring compressed-search candidates with full vectors buys back recall lost to compression", "es": "Hacer rescoring con vectores completos de los candidatos de la búsqueda comprimida recupera recall perdido por la compresión" } },
+        { "text": { "en": "DiskANN keeps compressed vectors in RAM and the graph plus full vectors on SSD", "es": "DiskANN deja los vectores comprimidos en RAM y el grafo más los vectores completos en SSD" } },
+        { "text": { "en": "Under ~50M vectors, one node with HNSW or pgvector is usually simpler and cheaper", "es": "Con menos de ~50M de vectores, un solo nodo con HNSW o pgvector suele ser más simple y barato" } },
+        { "text": { "en": "Recall measured on the float32 index carries over to the compressed index you ship", "es": "El recall medido sobre el índice en float32 se mantiene en el índice comprimido que despliegas" },
+          "why": { "en": "Every approximation layer costs recall. Measure recall@k against exact kNN in the production config.", "es": "Cada capa de aproximación cuesta recall. Mide recall@k contra kNN exacto con la configuración de producción." } },
+        { "text": { "en": "Post-filtering the ANN top-k works fine for a filter matching 1% of items", "es": "Post-filtrar el top-k del ANN funciona bien con un filtro que cumple el 1% de los ítems" },
+          "why": { "en": "Take the top 100, keep the 1% that match, return ~1 result. Filter inside the index or partition on the filter.", "es": "Tomas el top 100, te quedas con el 1% que cumple y devuelves ~1 resultado. Filtra dentro del índice o particiona por el filtro." } },
+        { "text": { "en": "A new embedding model can be rolled out by updating vectors in place", "es": "Un modelo de embeddings nuevo se puede desplegar actualizando los vectores en el mismo lugar" },
+          "why": { "en": "Old and new vectors live in different spaces. Build the new index side by side, compare, then flip an alias.", "es": "Los vectores viejos y nuevos viven en espacios distintos. Construye el índice nuevo en paralelo, compara y luego cambia el alias." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "At this scale every lever trades recall, latency and cost. Compression and rescoring cut memory; SSD tiers cut RAM; filters belong inside the index or the partition key; reindexing is a side-by-side migration. Measure what each approximation costs against exact search.",
+        "es": "A esta escala cada palanca negocia recall, latencia y costo. Comprimir y hacer rescoring reduce memoria; los niveles en SSD reducen RAM; los filtros van dentro del índice o en la clave de partición; reindexar es una migración en paralelo. Mide cuánto cuesta cada aproximación contra búsqueda exacta."
+      }
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "concept": "llm-gateway",
+  "items": [
+    {
+      "id": "llm-gateway.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your shared gateway caps each team at 300 requests/min. Every night the support bot starts getting 429s from the provider, while the batch team stays far under its request cap sending **~80k-token prompts**. Which fix addresses the cause?",
+        "es": "Tu gateway compartido limita a cada equipo a 300 requests por minuto. Cada noche el bot de soporte empieza a recibir 429 del proveedor, mientras el equipo de batch queda muy por debajo de su tope de requests enviando **prompts de ~80k tokens**. ¿Qué corrección ataca la causa?"
+      },
+      "options": [
+        { "text": { "en": "Add per-team tokens-per-minute caps alongside the request caps", "es": "Agregar topes de tokens por minuto por equipo, además de los de requests" },
+          "why": { "en": "One 80k-token call counts as 1 request but drains the shared TPM budget; quotas must be two-dimensional, like the provider's.", "es": "Una llamada de 80k tokens cuenta como 1 request pero agota el presupuesto de TPM compartido; las cuotas deben tener dos dimensiones, como las del proveedor." } },
+        { "text": { "en": "Lower the batch team's requests-per-minute limit", "es": "Bajar el límite de requests por minuto del equipo de batch" },
+          "why": { "en": "It is already far under its request cap: a few huge calls still drain tokens. Request count is the wrong axis.", "es": "Ya está muy por debajo de su tope de requests: unas pocas llamadas enormes igual agotan los tokens. El conteo de requests es el eje equivocado." } },
+        { "text": { "en": "Add more gateway replicas to absorb the load", "es": "Agregar más réplicas del gateway para absorber la carga" },
+          "why": { "en": "The 429s come from the provider's org limit, not gateway capacity; more replicas forward the same tokens.", "es": "Los 429 vienen del límite de la organización en el proveedor, no de la capacidad del gateway; más réplicas reenvían los mismos tokens." } },
+        { "text": { "en": "Enable the exact-match response cache for batch traffic", "es": "Activar la caché de respuestas exacta para el tráfico batch" },
+          "why": { "en": "A cache only helps repeated prompts; it does not stop one team from consuming the shared token budget.", "es": "Una caché solo ayuda con prompts repetidos; no impide que un equipo consuma el presupuesto de tokens compartido." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Provider limits are two-dimensional: requests and tokens per minute. A request cap treats a short ping and an 80k-token prompt as equal, so a few long-context calls starve everyone. Cap tokens per team too, and keep the sum of team quotas below the org limit.",
+        "es": "Los límites del proveedor tienen dos dimensiones: requests y tokens por minuto. Un tope de requests trata igual un ping corto y un prompt de 80k tokens, así que unas pocas llamadas de contexto largo dejan sin cupo a todos. Limita también los tokens por equipo y mantén la suma de cuotas por debajo del límite de la organización."
+      }
+    },
+    {
+      "id": "llm-gateway.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Your gateway admits a call by reserving input tokens + `max_tokens` against the team's TPM budget, then reconciles with real usage. A team has a **200,000 TPM** cap; each call sends **20,000 input tokens** with `max_tokens` = **5,000**. How many calls can it admit per minute, before reconciliation?",
+        "es": "Tu gateway admite una llamada reservando tokens de entrada + `max_tokens` contra el presupuesto de TPM del equipo y después reconcilia con el uso real. Un equipo tiene un tope de **200.000 TPM**; cada llamada envía **20.000 tokens de entrada** con `max_tokens` = **5.000**. ¿Cuántas llamadas puede admitir por minuto, antes de reconciliar?"
+      },
+      "answer": 8,
+      "tolerance": 0.1,
+      "unit": "calls/min",
+      "explain": {
+        "en": "Each call reserves 20,000 + 5,000 = 25,000 tokens, because output length isn't known up front. 200,000 ÷ 25,000 = 8 calls. Counting input only (10 calls) overshoots the cap whenever outputs run long; reconciliation later returns the unused part of each reservation to the budget.",
+        "es": "Cada llamada reserva 20.000 + 5.000 = 25.000 tokens, porque el largo de la salida no se conoce de antemano. 200.000 ÷ 25.000 = 8 llamadas. Contar solo la entrada (10 llamadas) excede el tope cuando las salidas son largas; luego la reconciliación devuelve al presupuesto la parte no usada de cada reserva."
+      }
+    },
+    {
+      "id": "llm-gateway.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which provider responses should the gateway retry with backoff and jitter? Select all that apply.",
+        "es": "¿Qué respuestas del proveedor debería reintentar el gateway con backoff y jitter? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "429 rate limited", "es": "429: límite de tasa excedido" } },
+        { "text": { "en": "529 overloaded (Anthropic)", "es": "529: sobrecargado (Anthropic)" } },
+        { "text": { "en": "503 service unavailable", "es": "503: servicio no disponible" } },
+        { "text": { "en": "401 unauthorized", "es": "401: no autorizado" },
+          "why": { "en": "A bad or revoked key fails the same way every time; retrying only adds load and latency.", "es": "Una key inválida o revocada falla igual cada vez; reintentar solo agrega carga y latencia." } },
+        { "text": { "en": "400 bad request", "es": "400: solicitud inválida" },
+          "why": { "en": "The request itself is malformed or too long; resending it unchanged cannot succeed.", "es": "La request en sí está mal formada o es demasiado larga; reenviarla sin cambios no puede funcionar." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Retry what is transient: rate limits, overload, server errors and timeouts may succeed a moment later. Client errors (400/401/403) are deterministic, so the same request fails again; retrying burns quota and hides the bug. When retries run out, the route's fallback takes over.",
+        "es": "Reintenta lo transitorio: límites de tasa, sobrecarga, errores del servidor y timeouts pueden funcionar un momento después. Los errores del cliente (400/401/403) son deterministas, así que la misma request vuelve a fallar; reintentar gasta cuota y esconde el bug. Cuando se agotan los reintentos, entra el fallback de la ruta."
+      }
+    },
+    {
+      "id": "llm-gateway.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "You scale the gateway from 1 to 3 replicas behind a round-robin load balancer. Rate-limit counters stay in each replica's memory. A week later, finance sees teams spending well past their quotas. Why?",
+        "es": "Escalas el gateway de 1 a 3 réplicas detrás de un balanceador round-robin. Los contadores de rate limit siguen en la memoria de cada réplica. Una semana después, finanzas ve equipos gastando mucho más que sus cuotas. ¿Por qué?"
+      },
+      "options": [
+        { "text": { "en": "Each replica counts on its own, so a team can get up to ~3× its limit", "es": "Cada réplica cuenta por su lado, así que un equipo puede obtener hasta ~3× su límite" },
+          "why": { "en": "Counters must live in shared storage like Redis so every replica enforces the same limit.", "es": "Los contadores deben vivir en un almacenamiento compartido como Redis para que todas las réplicas apliquen el mismo límite." } },
+        { "text": { "en": "The load balancer strips virtual keys, so calls go unmetered", "es": "El balanceador elimina las virtual keys, así que las llamadas no se miden" },
+          "why": { "en": "Without a virtual key the gateway rejects the call; it does not pass it through unmetered.", "es": "Sin virtual key el gateway rechaza la llamada; no la deja pasar sin medirla." } },
+        { "text": { "en": "Retries on the extra replicas multiply each team's token usage", "es": "Los reintentos en las réplicas nuevas multiplican el uso de tokens de cada equipo" },
+          "why": { "en": "Retry settings are per route, not per replica; adding replicas does not multiply retries.", "es": "La configuración de reintentos es por ruta, no por réplica; agregar réplicas no multiplica los reintentos." } },
+        { "text": { "en": "Provider limits grow with each gateway instance you add", "es": "Los límites del proveedor crecen con cada instancia del gateway que agregas" },
+          "why": { "en": "Provider limits belong to your org and keys, not to how many proxies sit in front.", "es": "Los límites del proveedor dependen de tu organización y tus keys, no de cuántos proxies haya delante." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "In-memory counters make limits drift per replica: with round-robin, each replica sees a third of a team's traffic and allows a full quota. Keep the gateway stateless with counters in shared Redis, and run ≥2 replicas so it isn't a single point of failure.",
+        "es": "Los contadores en memoria hacen que los límites diverjan por réplica: con round-robin, cada réplica ve un tercio del tráfico del equipo y permite una cuota completa. Mantén el gateway sin estado, con los contadores en Redis compartido, y corre ≥2 réplicas para que no sea un punto único de falla."
+      }
+    }
+  ]
+}

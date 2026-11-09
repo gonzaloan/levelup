@@ -1,0 +1,97 @@
+{
+  "concept": "human-in-the-loop",
+  "items": [
+    {
+      "id": "human-in-the-loop.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Refund approvals often take a day. After every Friday deploy, all pending approvals vanish and those agent runs never resume. What's the root cause?",
+        "es": "Las aprobaciones de reembolsos suelen tardar un día. Después de cada deploy del viernes, todas las aprobaciones pendientes desaparecen y esas corridas del agente nunca continúan. ¿Cuál es la causa raíz?"
+      },
+      "options": [
+        { "text": { "en": "Runs wait in process memory instead of checkpointing state and resuming on the decision", "es": "Las corridas esperan en la memoria del proceso en vez de hacer checkpoint del estado y retomar con la decisión" },
+          "why": { "en": "A deploy restarts the process, so in-memory waits die. Checkpoint, then resume from the stored state when the human decides.", "es": "Un deploy reinicia el proceso y las esperas en memoria mueren. Haz checkpoint y retoma desde el estado guardado cuando la persona decida." } },
+        { "text": { "en": "Reviewers take too long, so a tighter review SLA would fix it", "es": "Los revisores tardan demasiado, así que un SLA de revisión más estricto lo resolvería" },
+          "why": { "en": "Approvals can legitimately take days. Speed only shrinks the window; any item still pending dies on the next deploy.", "es": "Una aprobación puede tardar días con toda razón. Apurar solo achica la ventana; cualquier caso que siga pendiente muere en el siguiente deploy." } },
+        { "text": { "en": "Too many actions are gated, so the queue overflows on deploys", "es": "Hay demasiadas acciones con aprobación, así que la cola se desborda en los deploys" },
+          "why": { "en": "Gating less reduces fatigue, but volume doesn't explain items vanishing exactly at deploy time.", "es": "Pedir menos aprobaciones reduce la fatiga, pero el volumen no explica que los casos desaparezcan justo al hacer deploy." } },
+        { "text": { "en": "The review queue lives in Slack instead of a durable admin UI", "es": "La cola de revisión vive en Slack en lugar de una UI de administración duradera" },
+          "why": { "en": "The channel is just where humans decide; what's lost is the paused agent state, not the message.", "es": "El canal es solo donde decide la persona; lo que se pierde es el estado pausado del agente, no el mensaje." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A human gate turns an agent run into a long-running workflow that may wait minutes or days. Persist the state at the pause (a checkpointer, Step Functions task tokens) and resume when the decision arrives, so restarts and deploys don't kill pending approvals.",
+        "es": "Un control humano convierte la corrida del agente en un flujo de larga duración que puede esperar minutos o días. Persiste el estado en la pausa (un checkpointer, task tokens de Step Functions) y retoma cuando llegue la decisión, para que los reinicios y deploys no maten las aprobaciones pendientes."
+      }
+    },
+    {
+      "id": "human-in-the-loop.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the gate so a tool missing from `TIER` (say, one added last week) is still handled safely, without crashing the run.",
+        "es": "Completa el control para que una herramienta que no está en `TIER` (por ejemplo, una agregada la semana pasada) se maneje de forma segura, sin tumbar la corrida."
+      },
+      "lang": "python",
+      "code": "TIER = {\"search_orders\": 0, \"draft_reply\": 0,\n        \"send_reply\": 1, \"update_address\": 1,\n        \"issue_refund\": 2, \"close_account\": 2}\n\ndef act(state: dict) -> dict:\n    call = state[\"proposed_call\"]        # proposed by the LLM\n    ____\n    if tier >= 1:\n        decision = interrupt({\"call\": call, \"tier\": tier,\n                              \"preview\": render_effect(call)})\n        if decision[\"action\"] == \"reject\":\n            return {\"messages\": [tool_result(call, \"Rejected: \" + decision[\"note\"])]}\n        if decision[\"action\"] == \"edit\":\n            call = {**call, \"args\": decision[\"args\"]}\n    audit.write(call=call, tier=tier)\n    return {\"messages\": [tool_result(call, TOOLS[call[\"name\"]](**call[\"args\"]))]}",
+      "options": [
+        { "text": "tier = TIER.get(call[\"name\"], 2)" },
+        { "text": "tier = TIER.get(call[\"name\"], 0)",
+          "why": { "en": "Fail-open: an unknown tool, possibly a destructive one, auto-executes with no human involved.", "es": "Falla abierta: una herramienta desconocida, quizá destructiva, se ejecuta sola sin que intervenga ninguna persona." } },
+        { "text": "tier = call.get(\"tier\", 2)",
+          "why": { "en": "The tier would come from the model's own proposal: a confused or injected model just says 0.", "es": "El nivel saldría de la propia propuesta del modelo: un modelo confundido o inyectado simplemente dice 0." } },
+        { "text": "tier = TIER[call[\"name\"]]",
+          "why": { "en": "Fails closed, but crashes the run with a KeyError instead of routing the call to a human.", "es": "Falla cerrado, pero tumba la corrida con un KeyError en vez de mandar la llamada a una persona." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Two rules in one line: the tier comes from an engineer-owned table in code, never from the model, and anything missing from the table gets the strictest tier. Default-deny keeps new tools safe until someone classifies them.",
+        "es": "Dos reglas en una línea: el nivel sale de una tabla en código que controlan los ingenieros, nunca del modelo, y lo que falta en la tabla recibe el nivel más estricto. Denegar por defecto mantiene seguras las herramientas nuevas hasta que alguien las clasifique."
+      }
+    },
+    {
+      "id": "human-in-the-loop.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which observations suggest approval fatigue in your review queue? Select all that apply.",
+        "es": "¿Qué observaciones sugieren fatiga de aprobación en tu cola de revisión? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "About 99% of requests are approved with no edits", "es": "Cerca del 99% de las solicitudes se aprueba sin ediciones" } },
+        { "text": { "en": "Median time-to-decision is a few seconds", "es": "La mediana del tiempo de decisión es de unos pocos segundos" } },
+        { "text": { "en": "Known-bad requests seeded on purpose get approved", "es": "Las solicitudes malas que se siembran a propósito se aprueban" } },
+        { "text": { "en": "Reviewers often edit amounts before approving", "es": "Los revisores suelen editar montos antes de aprobar" },
+          "why": { "en": "Edits show reviewers read and correct: edit-before-send is working as designed.", "es": "Las ediciones muestran que los revisores leen y corrigen: la edición antes de enviar funciona como se diseñó." } },
+        { "text": { "en": "Rejections carry a reason back to the agent", "es": "Los rechazos le devuelven un motivo al agente" },
+          "why": { "en": "That's the intended feedback loop, not a sign that anyone stopped reading.", "es": "Ese es el ciclo de feedback previsto, no una señal de que alguien dejó de leer." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Fatigue shows up as rubber-stamping: near-total unchanged approvals, decisions too fast to have read anything, and planted bad items slipping through. The fix is fewer, more decidable prompts: auto-approve low-risk actions with sampling, and show diffs instead of JSON.",
+        "es": "La fatiga se nota como aprobación automática: casi todo pasa sin cambios, las decisiones son demasiado rápidas para haber leído algo y los casos malos sembrados se cuelan. La solución son menos solicitudes y más fáciles de decidir: aprueba en automático las de bajo riesgo con muestreo y muestra diffs en vez de JSON."
+      }
+    },
+    {
+      "id": "human-in-the-loop.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A reviewer approves the agent's plan: \"Refund the customer for the damaged item.\" The agent then calls `issue_refund` for the full order total. What's the design flaw?",
+        "es": "Un revisor aprueba el plan del agente: \"Reembolsar al cliente el artículo dañado\". Luego el agente llama a `issue_refund` por el total del pedido. ¿Cuál es la falla de diseño?"
+      },
+      "options": [
+        { "text": { "en": "The approval wasn't bound to the exact call and arguments", "es": "La aprobación no quedó atada a la llamada y los argumentos exactos" },
+          "why": { "en": "Approve the concrete call with its amount and recipient, then execute exactly that.", "es": "Aprueba la llamada concreta, con su monto y destinatario, y después ejecuta exactamente eso." } },
+        { "text": { "en": "The agent should use a stronger model for refunds", "es": "El agente debería usar un modelo más fuerte para los reembolsos" },
+          "why": { "en": "Any model can drift between plan and call; the guarantee has to come from the gate, not the model.", "es": "Cualquier modelo puede desviarse entre el plan y la llamada; la garantía tiene que venir del control, no del modelo." } },
+        { "text": { "en": "Refunds should be tier 1 instead of tier 2", "es": "Los reembolsos deberían ser nivel 1 en vez de nivel 2" },
+          "why": { "en": "Money is tier 2 by design; a lower tier would weaken the gate, not fix it.", "es": "El dinero es nivel 2 por diseño; bajar el nivel debilitaría el control, no lo arreglaría." } },
+        { "text": { "en": "Plans should be approved by two reviewers", "es": "Los planes deberían aprobarlos dos revisores" },
+          "why": { "en": "Two people approving a vague plan still let a different amount execute.", "es": "Dos personas aprobando un plan vago igual dejan que se ejecute otro monto." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "An approval only means something for what the reviewer actually saw. Show the exact effect (amount, recipient, diff), approve that specific call and execute it unchanged; if the agent wants different arguments, that needs a new approval.",
+        "es": "Una aprobación solo vale para lo que el revisor realmente vio. Muestra el efecto exacto (monto, destinatario, diff), aprueba esa llamada específica y ejecútala sin cambios; si el agente quiere otros argumentos, eso requiere una nueva aprobación."
+      }
+    }
+  ]
+}

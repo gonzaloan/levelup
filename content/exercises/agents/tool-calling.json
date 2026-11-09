@@ -1,0 +1,75 @@
+{
+  "concept": "tool-calling",
+  "items": [
+    {
+      "id": "tool-calling.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Security review of a banking assistant: the tool `search_transactions(account_id, start, end)` gets `account_id` from the model, which reads it from the conversation. A tester's injected prompt pulls another customer's transactions. Best fix?",
+        "es": "Revisión de seguridad de un asistente bancario: la tool `search_transactions(account_id, start, end)` recibe `account_id` del modelo, que lo lee de la conversación. Un prompt inyectado por un tester trae las transacciones de otro cliente. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Drop `account_id` from the schema and inject it server-side from the session", "es": "Quitar `account_id` del schema e inyectarlo del lado del servidor desde la sesión" },
+          "why": { "en": "The model can no longer choose whose data is read, whatever the prompt says.", "es": "El modelo ya no puede elegir de quién son los datos que se leen, diga lo que diga el prompt." } },
+        { "text": { "en": "Enable `strict: true` so the model can only emit a well-formed `account_id`", "es": "Activar `strict: true` para que el modelo solo emita un `account_id` bien formado" },
+          "why": { "en": "Another customer's id is perfectly well formed. Strict schemas guard shape, not authorization.", "es": "El id de otro cliente está perfectamente bien formado. Los schemas estrictos cuidan la forma, no la autorización." } },
+        { "text": { "en": "Add a system-prompt rule: only ever use the logged-in user's account", "es": "Agregar una regla al system prompt: usar solo la cuenta del usuario autenticado" },
+          "why": { "en": "Instructions are exactly what prompt injection overrides. Access control has to live in code.", "es": "Las instrucciones son justo lo que una prompt injection anula. El control de acceso tiene que vivir en el código." } },
+        { "text": { "en": "Force this tool with `tool_choice` so the model can't improvise other calls", "es": "Forzar esta tool con `tool_choice` para que el modelo no improvise otras llamadas" },
+          "why": { "en": "Forcing which tool runs doesn't constrain its arguments, and the arguments are the attack surface.", "es": "Forzar qué tool se ejecuta no restringe sus argumentos, y los argumentos son la superficie de ataque." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The model only asks; your code decides what runs, so your code is the security boundary. Anything that decides whose data is touched (identity, tenant, account) comes from the authenticated session, never from model-supplied arguments, which are as attacker-controllable as the prompt itself.",
+        "es": "El modelo solo pide; tu código decide qué se ejecuta, así que tu código es la frontera de seguridad. Todo lo que define de quién son los datos (identidad, tenant, cuenta) sale de la sesión autenticada, nunca de argumentos que entrega el modelo, que un atacante controla tanto como el propio prompt."
+      }
+    },
+    {
+      "id": "tool-calling.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the error branch of this tool loop so a failing tool doesn't end the run.",
+        "es": "Completa la rama de error de este loop de tools para que una tool que falla no termine la ejecución."
+      },
+      "lang": "python",
+      "code": "results = []\nfor b in [b for b in resp.content if b.type == \"tool_use\"]:\n    try:\n        out, err = str(IMPL[b.name](**b.input)), False\n    except Exception as e:\n        ____\n    results.append({\"type\": \"tool_result\", \"tool_use_id\": b.id,\n                    \"content\": out, \"is_error\": err})\nmessages.append({\"role\": \"user\", \"content\": results})",
+      "options": [
+        { "text": "out, err = f\"Error: {e}\", True" },
+        { "text": "raise",
+          "why": { "en": "The loop dies on the first bad id or timeout, where the model could have retried or asked the user.", "es": "El loop muere con el primer id inválido o timeout, cuando el modelo podría haber reintentado o preguntado al usuario." } },
+        { "text": "continue",
+          "why": { "en": "That call id gets no `tool_result`, so the next request has a mismatched call and the API rejects it.", "es": "Ese id de llamada queda sin `tool_result`, así que la siguiente solicitud tiene una llamada sin pareja y la API la rechaza." } },
+        { "text": "out, err = \"\", False",
+          "why": { "en": "An empty success hides the failure: the model can't tell it should retry and may invent an answer.", "es": "Un éxito vacío esconde la falla: el modelo no sabe que debe reintentar y puede inventar una respuesta." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Errors are results. Return the failure as a `tool_result` tied to the same call id, with `is_error: true`, so the model sees what went wrong and can fix the argument, try another tool or ask the user. Every call in the turn still gets exactly one result, all in one message.",
+        "es": "Los errores son resultados. Devuelve la falla como un `tool_result` ligado al mismo id de llamada, con `is_error: true`, para que el modelo vea qué salió mal y pueda corregir el argumento, probar otra tool o preguntarle al usuario. Cada llamada del turno sigue recibiendo exactamente un resultado, todos en un mismo mensaje."
+      }
+    },
+    {
+      "id": "tool-calling.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: \"We turned on `strict: true` for every tool, so we can delete our argument validation.\" What is wrong with that?",
+        "es": "Un compañero dice: \"Activamos `strict: true` en todas las tools, así que podemos borrar la validación de argumentos\". ¿Qué tiene de malo?"
+      },
+      "options": [
+        { "text": { "en": "It guarantees the shape, not the values: ids and dates can still be wrong", "es": "Garantiza la forma, no los valores: ids y fechas pueden seguir estando mal" },
+          "why": { "en": "Constrained decoding enforces types and required fields; it can't know the right order id or date range.", "es": "La decodificación restringida impone tipos y campos obligatorios; no puede saber cuál es el id de orden o el rango de fechas correcto." } },
+        { "text": { "en": "Nothing: constrained decoding makes invalid argument values impossible", "es": "Nada: la decodificación restringida hace imposibles los valores inválidos" },
+          "why": { "en": "A well-typed `order_id` can still point at the wrong order or an invented one.", "es": "Un `order_id` con el tipo correcto puede seguir apuntando a la orden equivocada o a una inventada." } },
+        { "text": { "en": "`strict` exists only in OpenAI, so Anthropic calls still need validation", "es": "`strict` existe solo en OpenAI, así que las llamadas a Anthropic siguen necesitando validación" },
+          "why": { "en": "Both providers offer strict schemas, and in either one a valid shape is not a correct value.", "es": "Ambos proveedores ofrecen schemas estrictos, y en cualquiera de los dos una forma válida no es un valor correcto." } },
+        { "text": { "en": "Only write tools need validation; read tools can trust strict arguments", "es": "Solo las tools de escritura necesitan validación; las de lectura pueden confiar en argumentos estrictos" },
+          "why": { "en": "A wrong id on a read misleads the answer or exposes someone else's data; reads need checks too.", "es": "Un id equivocado en una lectura engaña la respuesta o expone datos de otra persona; las lecturas también necesitan validación." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Strict schemas remove a whole class of failures (malformed JSON, missing fields, wrong types), which is why they are worth turning on. But arguments can be valid and wrong. Keep checking values against business rules and authorization, because the model only proposed them.",
+        "es": "Los schemas estrictos eliminan toda una clase de fallas (JSON malformado, campos faltantes, tipos equivocados), por eso vale la pena activarlos. Pero los argumentos pueden ser válidos y estar mal. Sigue validando los valores contra las reglas de negocio y la autorización, porque el modelo solo los propuso."
+      }
+    }
+  ]
+}

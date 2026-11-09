@@ -1,0 +1,73 @@
+{
+  "concept": "sql-vs-nosql",
+  "items": [
+    {
+      "id": "sql-vs-nosql.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A chat assistant (~50k daily users) runs on one Postgres. LLM traces, append-only at ~2 KB per call and queried as aggregates, now dominate its load. What do you do?",
+        "es": "Un asistente de chat (~50k usuarios diarios) corre sobre un solo Postgres. Las trazas del LLM, append-only a ~2 KB por llamada y consultadas con agregaciones, ya dominan su carga. ¿Qué haces?"
+      },
+      "options": [
+        { "text": { "en": "Move traces to a columnar store like ClickHouse; keep app data in Postgres", "es": "Mover las trazas a un almacén columnar como ClickHouse y dejar los datos de la app en Postgres" },
+          "why": { "en": "Append-only analytics is exactly what columnar stores are built for; the relational core stays put.", "es": "La analítica append-only es justo para lo que están hechos los almacenes columnares; el núcleo relacional se queda donde está." } },
+        { "text": { "en": "Migrate the whole app to MongoDB for schema flexibility", "es": "Migrar toda la app a MongoDB por flexibilidad de esquema" },
+          "why": { "en": "Schema isn't the problem; you'd rebuild joins, constraints and transactions in application code.", "es": "El esquema no es el problema; terminarías reconstruyendo joins, restricciones y transacciones en el código." } },
+        { "text": { "en": "Move traces to DynamoDB with the trace id as partition key", "es": "Mover las trazas a DynamoDB con el id de traza como partition key" },
+          "why": { "en": "Key-value stores serve get/put by key; aggregates across all traces are their weak spot.", "es": "Los almacenes clave-valor sirven get/put por clave; las agregaciones sobre todas las trazas son su punto débil." } },
+        { "text": { "en": "Shard Postgres with Citus so it can absorb the trace volume", "es": "Particionar Postgres con Citus para que absorba el volumen de trazas" },
+          "why": { "en": "Real work to keep analytics in an OLTP row store; that workload belongs in a columnar one.", "es": "Mucho trabajo para mantener analítica en un almacén OLTP de filas; esa carga pertenece a uno columnar." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Split by access pattern, one workload at a time, on a measured limit. Traces are append-only and read as aggregates, a different shape from transactional chat data, so they're usually the first thing to leave Postgres.",
+        "es": "Separa por patrón de acceso, una carga a la vez y ante un límite medido. Las trazas son append-only y se leen con agregaciones, una forma distinta de los datos transaccionales del chat, así que suelen ser lo primero que sale de Postgres."
+      }
+    },
+    {
+      "id": "sql-vs-nosql.a2",
+      "type": "match",
+      "prompt": {
+        "en": "Match each store type to the workload it fits best.",
+        "es": "Relaciona cada tipo de almacén con la carga de trabajo que mejor le queda."
+      },
+      "pairs": [
+        { "left": { "en": "Key-value (Redis)", "es": "Clave-valor (Redis)" },
+          "right": { "en": "Get and put session tokens by key with flat latency at any scale", "es": "Leer y escribir tokens de sesión por clave con latencia estable a cualquier escala" } },
+        { "left": { "en": "Wide-column (Cassandra)", "es": "Columnas anchas (Cassandra)" },
+          "right": { "en": "Massive write rate of agent steps, partitioned by session and sorted by time", "es": "Tasa enorme de escritura de pasos de agente, particionada por sesión y ordenada por tiempo" } },
+        { "left": { "en": "Graph (Neo4j)", "es": "Grafos (Neo4j)" },
+          "right": { "en": "Multi-hop questions, such as who reports to whom across teams", "es": "Preguntas de varios saltos, como quién le reporta a quién entre equipos" } },
+        { "left": { "en": "Relational (Postgres)", "es": "Relacional (Postgres)" },
+          "right": { "en": "Billing with joins, constraints and ACID transactions across tables", "es": "Facturación con joins, restricciones y transacciones ACID entre tablas" } }
+      ],
+      "explain": {
+        "en": "Start from the dominant query. Ad-hoc questions and transactions favor relational; one known access pattern at extreme scale favors the store built for that shape, whether by key, time-ordered partition or relationship hops.",
+        "es": "Parte de la consulta dominante. Las preguntas ad hoc y las transacciones favorecen lo relacional; un patrón de acceso conocido a escala extrema favorece el almacén hecho para esa forma, ya sea por clave, partición ordenada por tiempo o saltos entre relaciones."
+      }
+    },
+    {
+      "id": "sql-vs-nosql.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Two agent workers concurrently read a tenant's token quota in Postgres (default settings), subtract usage in app code and write the new value back. Some usage silently disappears. Why?",
+        "es": "Dos workers de agentes leen a la vez la cuota de tokens de un tenant en Postgres (configuración por defecto), restan el uso en el código y escriben el valor nuevo. Parte del uso desaparece sin avisar. ¿Por qué?"
+      },
+      "options": [
+        { "text": { "en": "Default isolation is Read Committed, so concurrent read-modify-write cycles overwrite each other", "es": "El aislamiento por defecto es Read Committed, así que los ciclos concurrentes de leer-modificar-escribir se pisan" },
+          "why": { "en": "Both read the same value; the second write overwrites the first. Use an atomic UPDATE, a row lock or Serializable.", "es": "Ambos leen el mismo valor; la segunda escritura pisa la primera. Usa un UPDATE atómico, un lock de fila o Serializable." } },
+        { "text": { "en": "Updates to JSONB columns aren't covered by Postgres transactions", "es": "Las actualizaciones de columnas JSONB no están cubiertas por las transacciones de Postgres" },
+          "why": { "en": "JSONB is transactional like any column; the race is in the isolation level, not the type.", "es": "JSONB es transaccional como cualquier columna; la carrera está en el nivel de aislamiento, no en el tipo." } },
+        { "text": { "en": "Async replication lag drops some writes committed on the primary", "es": "El lag de la replicación asíncrona descarta algunas escrituras confirmadas en el primario" },
+          "why": { "en": "Both workers write to the primary; replicas lag behind it but never undo its commits.", "es": "Ambos workers escriben en el primario; las réplicas se atrasan pero nunca deshacen sus commits." } },
+        { "text": { "en": "Postgres defaults to Serializable and silently drops the losing transaction", "es": "Postgres usa Serializable por defecto y descarta en silencio la transacción perdedora" },
+          "why": { "en": "The default is Read Committed; Serializable would raise an error to retry, not drop work silently.", "es": "El valor por defecto es Read Committed; Serializable lanzaría un error para reintentar, no descartaría trabajo en silencio." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Read Committed only promises you never see uncommitted data; it doesn't stop two transactions from reading the same value and both writing. Make the read-modify-write atomic, lock the row, or run Serializable with retries.",
+        "es": "Read Committed solo promete que nunca verás datos sin confirmar; no impide que dos transacciones lean el mismo valor y ambas escriban. Haz atómico el leer-modificar-escribir, bloquea la fila o usa Serializable con reintentos."
+      }
+    }
+  ]
+}

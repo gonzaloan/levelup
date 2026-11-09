@@ -1,0 +1,75 @@
+{
+  "concept": "api-design",
+  "items": [
+    {
+      "id": "api-design.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "An admin UI pages through a live audit-log table with `?page=N`, implemented as `OFFSET`. Users report rows that repeat or vanish between pages, and page 10,000 takes seconds. Best fix?",
+        "es": "Una UI de administración pagina una tabla de auditoría en vivo con `?page=N`, implementado con `OFFSET`. Los usuarios ven filas que se repiten o desaparecen entre páginas, y la página 10 000 tarda segundos. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Switch to an opaque cursor backed by `WHERE id > $1 ORDER BY id`", "es": "Pasar a un cursor opaco basado en `WHERE id > $1 ORDER BY id`" },
+          "why": { "en": "A keyset cursor seeks straight to its position via the index, and inserts can't shift it.", "es": "Un cursor keyset va directo a su posición por el índice, y las inserciones no lo corren." } },
+        { "text": { "en": "Add an index on the sort column to speed up the OFFSET", "es": "Agregar un índice sobre la columna de orden para acelerar el OFFSET" },
+          "why": { "en": "OFFSET still walks and discards every skipped row, and new inserts still shift the pages.", "es": "El OFFSET igual recorre y descarta cada fila salteada, y las inserciones nuevas siguen corriendo las páginas." } },
+        { "text": { "en": "Cache each page's results for a few minutes", "es": "Cachear los resultados de cada página por unos minutos" },
+          "why": { "en": "Masks the shifting briefly but serves stale rows, and deep pages are still slow on a cache miss.", "es": "Oculta el corrimiento un rato pero sirve filas viejas, y las páginas profundas siguen lentas sin caché." } },
+        { "text": { "en": "Raise the page size so users need fewer pages", "es": "Subir el tamaño de página para que se necesiten menos páginas" },
+          "why": { "en": "Fewer requests, but each one still scans all skipped rows, and rows still shift.", "es": "Menos requests, pero cada uno sigue recorriendo todas las filas salteadas, y las filas se siguen corriendo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "`OFFSET 500000` reads and discards 500,000 rows, and a page boundary defined by position moves whenever rows are inserted or deleted. A keyset cursor encodes the last row seen, so the query seeks straight there via the index and stays stable as data changes. Keep it opaque so you can change it later.",
+        "es": "`OFFSET 500000` lee y descarta 500 mil filas, y un límite de página definido por posición se corre cada vez que se insertan o borran filas. Un cursor keyset codifica la última fila vista, así que la consulta va directo ahí por el índice y se mantiene estable aunque cambien los datos. Mantenlo opaco para poder cambiarlo después."
+      }
+    },
+    {
+      "id": "api-design.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the endpoint so a retried `POST` with the same `Idempotency-Key` returns the original job instead of starting a second paid LLM run.",
+        "es": "Completa el endpoint para que un `POST` reintentado con la misma `Idempotency-Key` devuelva el job original en vez de lanzar otra ejecución paga del LLM."
+      },
+      "lang": "python",
+      "code": "JOBS: dict[str, dict] = {}   # job id -> job\nKEYS: dict[str, str] = {}    # idempotency key -> job id\n\n@app.post(\"/v1/summaries\", status_code=202)\nasync def create_summary(body: dict, response: Response,\n                         idempotency_key: str = Header()):\n    ____\n    if job_id is None:\n        job_id = KEYS[idempotency_key] = str(uuid.uuid4())\n        JOBS[job_id] = {\"id\": job_id, \"status\": \"queued\"}\n        await enqueue(\"summarize\", job_id, body[\"document_url\"])\n    response.headers[\"Location\"] = f\"/v1/jobs/{job_id}\"\n    return JOBS[job_id]",
+      "options": [
+        { "text": "job_id = KEYS.get(idempotency_key)" },
+        { "text": "job_id = None",
+          "why": { "en": "Every call, retries included, enqueues a new job: double LLM spend.", "es": "Cada llamada, reintentos incluidos, encola un job nuevo: gasto doble en el LLM." } },
+        { "text": "job_id = JOBS.get(idempotency_key)",
+          "why": { "en": "JOBS is keyed by job id, so this always misses and every retry starts a new run.", "es": "JOBS usa el id del job como clave, así que siempre falla y cada reintento lanza otra ejecución." } },
+        { "text": "job_id = KEYS.pop(idempotency_key, None)",
+          "why": { "en": "The first retry finds the job but deletes the key, so the next retry starts a new run.", "es": "El primer reintento encuentra el job pero borra la clave, así que el siguiente lanza otra ejecución." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "An idempotency key maps a client's logical request to its first result. Look it up before doing any work and store it when you create the job, so a retry after a timeout reuses the job. In production, make check-and-set atomic (e.g. Redis `SET NX`) and scope keys per client.",
+        "es": "Una idempotency key asocia el request lógico de un cliente con su primer resultado. Búscala antes de hacer cualquier trabajo y guárdala al crear el job, así un reintento tras un timeout reutiliza el job. En producción, haz atómico el chequeo y la escritura (por ejemplo, `SET NX` de Redis) y separa las claves por cliente."
+      }
+    },
+    {
+      "id": "api-design.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Your public API is at `/v1` with many clients. Which changes can ship inside `/v1` without breaking them? Select all that apply.",
+        "es": "Tu API pública está en `/v1` y tiene muchos clientes. ¿Qué cambios puedes publicar dentro de `/v1` sin romperlos? Marca todos los que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Add a new optional field to a response", "es": "Agregar un campo opcional nuevo a una respuesta" } },
+        { "text": { "en": "Add a new endpoint", "es": "Agregar un endpoint nuevo" } },
+        { "text": { "en": "Rename a response field to a clearer name", "es": "Renombrar un campo de la respuesta con un nombre más claro" },
+          "why": { "en": "Clients reading the old name break. Add the new field, deprecate the old one, remove it in `/v2`.", "es": "Los clientes que leen el nombre viejo se rompen. Agrega el campo nuevo, depreca el viejo y quítalo en `/v2`." } },
+        { "text": { "en": "Make a previously optional request field required", "es": "Hacer obligatorio un campo del request que era opcional" },
+          "why": { "en": "Stricter validation is breaking: requests that worked yesterday now fail.", "es": "Una validación más estricta rompe: requests que ayer funcionaban ahora fallan." } },
+        { "text": { "en": "Return 200 with an `error` object instead of a 4xx", "es": "Devolver 200 con un objeto `error` en vez de un 4xx" },
+          "why": { "en": "Clients, retries and monitoring rely on real status codes; this hides failures from all of them.", "es": "Los clientes, los reintentos y el monitoreo dependen de status codes reales; esto les oculta las fallas a todos." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Inside a version, only additive changes are safe: new endpoints, new optional fields. Anything that makes yesterday's valid request fail, or yesterday's parsed response unreadable, is breaking, stricter validation included. Ship those in `/v2` or behind a dated version header, with a deprecation window.",
+        "es": "Dentro de una versión solo son seguros los cambios aditivos: endpoints nuevos, campos opcionales nuevos. Todo lo que haga fallar un request que ayer era válido, o vuelva ilegible una respuesta que ayer se parseaba, rompe, incluida una validación más estricta. Publica esos cambios en `/v2` o detrás de un header de versión con fecha, con una ventana de deprecación."
+      }
+    }
+  ]
+}
