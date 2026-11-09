@@ -1,0 +1,89 @@
+{
+  "id": "learning-to-rank",
+  "domain": "ml",
+  "level": "advanced",
+  "title": { "en": "Learning to rank (LTR)", "es": "Learning to rank (LTR)" },
+  "aliases": ["LTR", "LambdaMART", "LambdaRank", "RankNet", "NDCG", "pairwise ranking", "unbiased learning to rank", "position bias"],
+  "tldr": {
+    "en": "Train a model to order candidates for a query or user so the best land on top: pointwise, pairwise or listwise losses, LambdaMART as the workhorse, NDCG@k to measure, debiased clicks as labels.",
+    "es": "Entrena un modelo para ordenar los candidatos de una consulta o usuario de modo que los mejores queden arriba: pérdidas pointwise, pairwise o listwise, LambdaMART como caballo de batalla, NDCG@k para medir y clics sin sesgo como etiquetas."
+  },
+  "analogy": {
+    "en": "A sommelier finds it easier to say \"A beats B\" than to give each wine an absolute score, and what matters is getting the top three right, not #40 vs #41.",
+    "es": "A un sommelier le resulta más fácil decir \"A le gana a B\" que darle a cada vino un puntaje absoluto, y lo que importa es acertar los tres primeros, no el #40 contra el #41."
+  },
+  "explain": {
+    "en": "**Learning to rank** trains a scoring function `f(query, item)` whose *order* matches relevance. It sits **after retrieval**: BM25 or ANN return ~100–1,000 candidates, the LTR model scores each with rich features (text match, embedding similarity, quality, popularity, personalization), then a re-ranker applies diversity and business rules.\n\nThree ways to define the loss:\n\n- **Pointwise:** predict each item's label alone (regression, or pCTR via log loss). Simple and calibrated, but blind to relative order.\n- **Pairwise:** for two items of one query, learn which goes higher (RankNet). Better order, but an error at rank 1 costs the same as at rank 50.\n- **Listwise:** optimize the list. **LambdaMART** scales RankNet's pairwise gradients by the **|ΔNDCG|** of swapping each pair and boosts trees on them: the default for feature-based search ranking.\n\n**Metrics** reward the top: **NDCG@k** (graded gains, log discount, normalized by the ideal order), **MRR** (1/rank of the first relevant hit, for one-answer tasks), **MAP** (binary relevance, all relevant hits).\n\n**Clicks are biased labels:** users click higher positions regardless of relevance, so a model trained on raw clicks relearns the old ranker. **Unbiased LTR** estimates each position's examination propensity (randomized swaps, intervention harvesting) and weights clicks by `1 / propensity` (IPS), or trains with position as a feature and fixes it at serving.",
+    "es": "**Learning to rank** entrena una función de puntaje `f(consulta, ítem)` cuyo *orden* coincida con la relevancia. Va **después de la recuperación**: BM25 o ANN devuelven ~100–1.000 candidatos, el modelo LTR puntúa cada uno con features ricas (coincidencia de texto, similitud de embeddings, calidad, popularidad, personalización) y luego un re-ranker aplica diversidad y reglas de negocio.\n\nTres formas de definir la pérdida:\n\n- **Pointwise:** predice la etiqueta de cada ítem por separado (regresión, o pCTR con log loss). Simple y calibrado, pero ciego al orden relativo.\n- **Pairwise:** para dos ítems de una misma consulta, aprende cuál va más arriba (RankNet). Mejor orden, pero un error en el puesto 1 cuesta lo mismo que en el 50.\n- **Listwise:** optimiza la lista. **LambdaMART** escala los gradientes pairwise de RankNet por el **|ΔNDCG|** de intercambiar cada par y entrena árboles boosteados sobre ellos: el default para ranking de búsqueda con features.\n\nLas **métricas** premian lo de arriba: **NDCG@k** (ganancias graduadas, descuento logarítmico, normalizado por el orden ideal), **MRR** (1/puesto del primer acierto, para tareas de una sola respuesta), **MAP** (relevancia binaria, todos los aciertos).\n\n**Los clics son etiquetas sesgadas:** la gente hace clic en las posiciones altas sin importar la relevancia, así que un modelo entrenado con clics crudos reaprende el ranker anterior. El **LTR insesgado** estima la propensión de examen de cada posición (intercambios aleatorios, intervention harvesting) y pondera los clics por `1 / propensión` (IPS), o entrena con la posición como feature y la fija al servir."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  Q[Query or user] --> R[\"Retrieval: BM25, ANN<br/>~1,000 candidates\"]\n  R --> F[\"Features per pair<br/>text, quality, user\"]\n  F --> L[\"LTR model<br/>LambdaMART or DNN\"]\n  L --> B[\"Re-rank: diversity,<br/>rules\"]\n  B --> S[Top 10 shown]\n  S -->|clicks, skips| LOG[(Logs with position)]\n  LOG --> IPS[\"IPS debiasing<br/>clicks ÷ propensity\"]\n  IPS -.->|retrain| L",
+    "caption": {
+      "en": "LTR orders the few hundred candidates retrieval found; its click labels carry the old ranking's position bias, so they are reweighted before retraining.",
+      "es": "El LTR ordena los pocos cientos de candidatos que encontró la recuperación; sus etiquetas de clics arrastran el sesgo de posición del ranking anterior, así que se reponderan antes de reentrenar."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "LambdaMART with XGBoost, evaluated on NDCG@10", "es": "LambdaMART con XGBoost, evaluado con NDCG@10" },
+    "source": "import xgboost as xgb\n\n# One row per (query, doc): features + graded label 0-4 (or clicks); rows sorted by qid\nX_tr, y_tr, qid_tr = load_split(\"train\")   # split by query, never by row\nX_va, y_va, qid_va = load_split(\"valid\")\n\nranker = xgb.XGBRanker(\n    objective=\"rank:ndcg\",            # LambdaMART: pairwise lambdas weighted by |delta NDCG|\n    lambdarank_pair_method=\"topk\",    # build pairs around the top of each list...\n    lambdarank_num_pair_per_sample=10, # ...truncated at k=10, what users actually see\n    eval_metric=[\"ndcg@10\", \"map@10\"],\n    n_estimators=2000, learning_rate=0.05, max_depth=6,\n    early_stopping_rounds=100,\n    # lambdarank_unbiased=True,       # click labels: learn position bias (XGBoost >= 2.0)\n)\nranker.fit(X_tr, y_tr, qid=qid_tr, eval_set=[(X_va, y_va)], eval_qid=[qid_va])\n\ndef rank(query, candidates, k=10):\n    # Serve: score the ~1,000 retrieved candidates for one query, keep the top k\n    scores = ranker.predict(features(query, candidates))\n    order = scores.argsort()[::-1][:k]\n    return [candidates[i] for i in order]"
+  },
+  "example": {
+    "en": "A marketplace ranks ~1,000 BM25 + ANN candidates per query with LambdaMART over ~200 features. Retrained on 30 days of raw clicks, it gains 4% offline NDCG@10 but loses the A/B test: most clicks sat in positions 1–3, so it mostly relearned the old order. The team swaps random adjacent pairs in the top 5 on 1% of traffic to estimate examination propensities, weights clicks by 1/propensity, and validates on human-graded queries. The next A/B test wins on purchases per search.",
+    "es": "Un marketplace ordena ~1.000 candidatos de BM25 + ANN por consulta con LambdaMART sobre ~200 features. Reentrenado con 30 días de clics crudos, gana 4% de NDCG@10 offline, pero pierde el A/B test: la mayoría de los clics estaba en las posiciones 1–3, así que casi solo reaprendió el orden anterior. El equipo intercambia pares adyacentes al azar en el top 5 sobre 1% del tráfico para estimar las propensiones de examen, pondera los clics por 1/propensión y valida con consultas etiquetadas por personas. El siguiente A/B test gana en compras por búsqueda."
+  },
+  "pros": [
+    { "en": "Optimizes what users experience, the top of the list, instead of per-item accuracy.", "es": "Optimiza lo que el usuario vive, la parte de arriba de la lista, en lugar del acierto por ítem." },
+    { "en": "LambdaMART is cheap to train and serve and uses hundreds of heterogeneous features.", "es": "LambdaMART es barato de entrenar y servir y aprovecha cientos de features heterogéneas." },
+    { "en": "Click logs give labels at scale for free, once debiased.", "es": "Los logs de clics dan etiquetas a escala y gratis, una vez que les quitas el sesgo." }
+  ],
+  "cons": [
+    { "en": "Click labels carry position, selection and trust bias; debiasing needs randomization traffic.", "es": "Las etiquetas de clics arrastran sesgo de posición, de selección y de confianza; quitarlo requiere tráfico aleatorizado." },
+    { "en": "Pairwise and listwise scores aren't probabilities, so they can't feed auctions or blends as-is.", "es": "Los puntajes pairwise y listwise no son probabilidades, así que no sirven tal cual para subastas o mezclas." },
+    { "en": "Offline NDCG often disagrees with online metrics; you still need interleaving or A/B tests.", "es": "El NDCG offline muchas veces no coincide con las métricas online; igual necesitas interleaving o A/B tests." }
+  ],
+  "whenToUse": {
+    "en": "The ranking stage of search, recommendations, feeds and RAG, when you have relevance judgments or logged interactions and only the top k positions matter.",
+    "es": "La etapa de ranking de búsqueda, recomendaciones, feeds y RAG, cuando tienes juicios de relevancia o interacciones registradas y solo importan las primeras k posiciones."
+  },
+  "whenNotToUse": {
+    "en": "When the score feeds another computation (ad auctions, multi-objective blends): use calibrated pointwise models. With tiny traffic and no labels, a tuned BM25 plus a cross-encoder may be enough.",
+    "es": "Cuando el puntaje alimenta otro cálculo (subastas de ads, mezclas multiobjetivo): usa modelos pointwise calibrados. Con poco tráfico y sin etiquetas, BM25 ajustado más un cross-encoder puede alcanzar."
+  },
+  "numbers": [
+    { "en": "NDCG discount 1/log2(rank + 1): rank 1 = 1.0, rank 3 = 0.5, rank 10 ≈ 0.29.", "es": "Descuento de NDCG 1/log2(puesto + 1): puesto 1 = 1,0, puesto 3 = 0,5, puesto 10 ≈ 0,29." },
+    { "en": "An ensemble of LambdaMART rankers won Track 1 of the 2010 Yahoo! Learning to Rank Challenge (Burges, 2010).", "es": "Un ensamble de rankers LambdaMART ganó el Track 1 del Yahoo! Learning to Rank Challenge de 2010 (Burges, 2010)." },
+    { "en": "MSLR-WEB30K benchmark: ~30K queries, 136 features per query–document pair, labels 0–4.", "es": "Benchmark MSLR-WEB30K: ~30K consultas, 136 features por par consulta–documento, etiquetas de 0 a 4." },
+    { "en": "Rule of thumb: retrieve 100–1,000, rank with LTR, show 10–20.", "es": "Regla práctica: recuperar 100–1.000, ordenar con LTR, mostrar 10–20." },
+    { "en": "XGBoost's `rank:ndcg` uses gain 2^rel − 1 by default, so labels must be ≤ 31.", "es": "`rank:ndcg` de XGBoost usa por defecto la ganancia 2^rel − 1, así que las etiquetas deben ser ≤ 31." }
+  ],
+  "pitfalls": [
+    { "en": "Treating raw clicks as relevance: the model learns position bias and the old ranker's order.", "es": "Tratar los clics crudos como relevancia: el modelo aprende el sesgo de posición y el orden del ranker anterior." },
+    { "en": "Splitting train and test by row instead of by query, so the same query leaks across sets.", "es": "Separar train y test por fila en vez de por consulta, así la misma consulta se filtra entre sets." },
+    { "en": "Queries with no relevant item have IDCG = 0; libraries score them as 1 or 0, silently skewing the average.", "es": "Las consultas sin ningún ítem relevante tienen IDCG = 0; las librerías les ponen 1 o 0 y sesgan el promedio sin avisar." },
+    { "en": "Measuring NDCG over the whole list when the UI shows 10: evaluate @k at the cutoff users see.", "es": "Medir NDCG sobre toda la lista cuando la interfaz muestra 10: evalúa @k en el corte que ve el usuario." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Pointwise, pairwise or listwise: which would you use for a ranker?", "es": "Pointwise, pairwise o listwise: ¿cuál usarías para un ranker?" },
+      "a": {
+        "en": "It depends on what consumes the score. For search with graded labels and hand-built features, I start with LambdaMART: it targets the top of the list through ΔNDCG-weighted pairs and is cheap to train and serve. When the score feeds another computation, like an auction's bid times pCTR or a feed's weighted blend of pLike, pComment and pWatch, I go pointwise with calibrated multi-task probabilities, because order alone isn't enough. Pairwise losses fit preference data such as 'A clicked over B'. Whatever the loss, I judge it on NDCG@k offline and interleaving or an A/B test online.",
+        "es": "Depende de qué consume el puntaje. Para búsqueda con etiquetas graduadas y features construidas, empiezo con LambdaMART: apunta a la parte de arriba de la lista mediante pares ponderados por ΔNDCG y es barato de entrenar y servir. Cuando el puntaje alimenta otro cálculo, como el bid por pCTR de una subasta o la mezcla ponderada de pLike, pComment y pWatch de un feed, uso pointwise con probabilidades multitarea calibradas, porque el orden solo no alcanza. Las pérdidas pairwise encajan con datos de preferencia como 'A tuvo clic antes que B'. Sea cual sea la pérdida, la juzgo con NDCG@k offline e interleaving o un A/B test online."
+      }
+    },
+    {
+      "q": { "en": "You train a ranker on click logs. What goes wrong, and how do you fix it?", "es": "Entrenas un ranker con logs de clics. ¿Qué sale mal y cómo lo arreglas?" },
+      "a": {
+        "en": "Clicks are biased: position bias (people click what's on top), trust bias, and selection bias (items never shown get no clicks). A model trained on raw clicks relearns the old ranker and locks in a feedback loop. I'd estimate examination propensity per position with small randomized swaps or by harvesting existing A/B tests, then weight clicks by inverse propensity, as in Joachims' unbiased LTR, or use XGBoost's unbiased LambdaMART. Alternatively, train with position as a feature and set it to a constant at serving. I'd add exploration for unseen items and validate on human-graded queries.",
+        "es": "Los clics están sesgados: sesgo de posición (la gente hace clic en lo de arriba), de confianza y de selección (lo que nunca se mostró no recibe clics). Un modelo entrenado con clics crudos reaprende el ranker anterior y fija un ciclo de retroalimentación. Estimaría la propensión de examen por posición con pequeños intercambios aleatorios o aprovechando A/B tests existentes, y luego ponderaría los clics por la inversa de la propensión, como en el LTR insesgado de Joachims, o usaría el LambdaMART insesgado de XGBoost. Otra opción: entrenar con la posición como feature y fijarla en una constante al servir. Sumaría exploración para ítems no vistos y validaría con consultas etiquetadas por personas."
+      }
+    }
+  ],
+  "related": ["gbdt", "reranking", "recsys", "case-feed-ranking", "bandits", "imbalance-calibration"],
+  "sources": [
+    { "title": "Burges — From RankNet to LambdaRank to LambdaMART: An Overview (Microsoft Research, 2010)", "url": "https://www.microsoft.com/en-us/research/publication/from-ranknet-to-lambdarank-to-lambdamart-an-overview/" },
+    { "title": "Joachims, Swaminathan & Schnabel — Unbiased Learning-to-Rank with Biased Feedback (WSDM 2017)", "url": "https://arxiv.org/abs/1608.04468" },
+    { "title": "Hu et al. — Unbiased LambdaMART: An Unbiased Pairwise Learning-to-Rank Algorithm (WWW 2019)", "url": "https://arxiv.org/abs/1809.05818" },
+    { "title": "XGBoost docs — Learning to Rank", "url": "https://xgboost.readthedocs.io/en/stable/tutorials/learning_to_rank.html" }
+  ]
+}

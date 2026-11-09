@@ -1,0 +1,97 @@
+{
+  "id": "imbalance-calibration",
+  "domain": "ml",
+  "level": "advanced",
+  "title": { "en": "Class imbalance & calibration", "es": "Desbalance de clases y calibración" },
+  "aliases": ["imbalanced data", "class weights", "SMOTE", "focal loss", "Platt scaling", "isotonic regression", "ECE", "negative downsampling"],
+  "tldr": {
+    "en": "When positives are rare, fix the metric and the threshold before the data; when decisions use the probability itself (auctions, expected loss), calibrate it so a score of 0.02 really means 2%.",
+    "es": "Cuando los positivos son raros, arregla la métrica y el umbral antes que los datos; cuando las decisiones usan la probabilidad en sí (subastas, pérdida esperada), calíbrala para que un puntaje de 0,02 signifique de verdad 2%."
+  },
+  "analogy": {
+    "en": "A forecaster is calibrated if it rains on ~30% of the days she says \"30%\". Ranking days by rain risk is easy; promising the real odds is what lets you decide whether to carry an umbrella.",
+    "es": "Una meteoróloga está calibrada si llueve en ~30% de los días en que dice \"30%\". Ordenar días por riesgo de lluvia es fácil; prometer la probabilidad real es lo que te deja decidir si llevas paraguas."
+  },
+  "explain": {
+    "en": "**Imbalance.** At 0.1–1% positives (fraud, clicks, abuse), a model can lower its loss by leaning to \"negative\", and accuracy hides it. Levers, cheapest first:\n\n- **Threshold by cost:** flag when `p > c_FP / (c_FP + c_FN)`. Needs calibrated `p`.\n- **Class weights** (`scale_pos_weight`, `class_weight`): upweight positives in the loss, no data dropped.\n- **Resampling:** downsample negatives (cheap, standard in ads); oversampling or SMOTE rarely helps strong learners.\n- **Focal loss:** down-weights easy examples so rare, hard ones dominate.\n- Judge with **PR-AUC**, not accuracy ([[classification-metrics]]).\n\n**Calibration** means predicted probabilities match observed frequencies: of items scored 0.2, ~20% are positive. Weighting, resampling, boosting and deep nets distort it. Fix it on an *unsampled* holdout:\n\n- **Platt scaling:** logistic regression on the score; 2 parameters, good for small data.\n- **Isotonic regression:** monotone step function; more flexible, needs ≳1,000 samples.\n- **Temperature scaling** for neural nets.\n\nMeasure with a **reliability diagram** (predicted vs observed rate per bin), **ECE** or log loss; AUC can't see miscalibration.\n\n**Why ads and fraud care:** auctions rank by `bid × pCTR`, fraud compares `p × amount` with review cost, and `pCTR × pCVR` only works if both are calibrated. After **downsampling negatives** at rate `w`, map back with `q = p / (p + (1 − p)/w)`.",
+    "es": "**Desbalance.** Con 0,1–1% de positivos (fraude, clics, abuso), un modelo puede bajar su pérdida inclinándose a \"negativo\", y el accuracy lo esconde. Palancas, de la más barata a la más cara:\n\n- **Umbral por costo:** marca cuando `p > c_FP / (c_FP + c_FN)`. Requiere un `p` calibrado.\n- **Pesos por clase** (`scale_pos_weight`, `class_weight`): dan más peso a los positivos en la pérdida, sin descartar datos.\n- **Remuestreo:** submuestrea negativos (barato y estándar en ads); el sobremuestreo o SMOTE rara vez ayuda a modelos fuertes.\n- **Focal loss:** le quita peso a los ejemplos fáciles para que dominen los raros y difíciles.\n- Evalúa con **PR-AUC**, no con accuracy ([[classification-metrics]]).\n\n**Calibración** significa que las probabilidades predichas coinciden con las frecuencias observadas: de los ítems con puntaje 0,2, ~20% son positivos. Los pesos, el remuestreo, el boosting y las redes profundas la distorsionan. Se corrige sobre un holdout *sin submuestrear*:\n\n- **Platt scaling:** regresión logística sobre el puntaje; 2 parámetros, sirve con pocos datos.\n- **Regresión isotónica:** función escalonada monótona; más flexible, necesita ≳1.000 muestras.\n- **Temperature scaling** para redes neuronales.\n\nSe mide con un **diagrama de confiabilidad** (tasa predicha vs observada por bin), **ECE** o log loss; el AUC no ve la descalibración.\n\n**Por qué importa en ads y fraude:** las subastas ordenan por `bid × pCTR`, el fraude compara `p × monto` con el costo de revisión, y `pCTR × pCVR` solo funciona si ambos están calibrados. Si **submuestreas negativos** con tasa `w`, corrige con `q = p / (p + (1 − p)/w)`."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  D[(\"Logs: 1% positives\")] --> S[\"Keep all positives,<br/>sample negatives at w\"]\n  S --> M[\"Train: class weights<br/>or focal loss\"]\n  M --> R[\"Raw scores:<br/>inflated, miscalibrated\"]\n  R --> C[\"Undo downsampling<br/>q = p/(p+(1-p)/w)\"]\n  C --> K[\"Calibrate on holdout<br/>Platt or isotonic\"]\n  K --> V[\"Check reliability<br/>diagram, ECE\"]\n  K --> X{Expected-value decision}\n  X -->|ads| A[\"Rank by bid × pCTR\"]\n  X -->|fraud| F[\"Review if p × amount<br/>beats review cost\"]",
+    "caption": {
+      "en": "Sampling and weighting buy recall and speed but bend the probabilities; correct and calibrate before anything multiplies them by money.",
+      "es": "El submuestreo y los pesos compran recall y velocidad, pero tuercen las probabilidades; corrígelas y calíbralas antes de que algo las multiplique por dinero."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Weight, calibrate, measure ECE, decide by cost", "es": "Ponderar, calibrar, medir ECE y decidir por costo" },
+    "source": "import numpy as np\nfrom sklearn.calibration import CalibratedClassifierCV, calibration_curve\nfrom sklearn.metrics import average_precision_score, brier_score_loss\nfrom xgboost import XGBClassifier\n\n# Fraud, ~0.5% positives. Upweighting positives helps ranking but inflates p.\nneg, pos = np.bincount(y_tr)\nxgb = XGBClassifier(n_estimators=400, learning_rate=0.05, max_depth=6,\n                    scale_pos_weight=neg / pos)  # common starting point; tune it\n\n# Learn the score -> probability map on held-out folds (isotonic: needs > ~1k rows)\nmodel = CalibratedClassifierCV(xgb, method=\"isotonic\", cv=5).fit(X_tr, y_tr)\np = model.predict_proba(X_te)[:, 1]\nprint(f\"PR-AUC {average_precision_score(y_te, p):.3f}  Brier {brier_score_loss(y_te, p):.5f}\")\n\ndef ece(y, p, bins=10):\n    # Equal-mass bins: with rare events, equal-width bins put almost everything in bin 0\n    edges = np.quantile(p, np.linspace(0, 1, bins + 1))\n    idx = np.clip(np.searchsorted(edges, p, side=\"right\") - 1, 0, bins - 1)\n    return sum((idx == b).mean() * abs(p[idx == b].mean() - y[idx == b].mean())\n               for b in range(bins) if (idx == b).any())\n\nobs, pred = calibration_curve(y_te, p, n_bins=10, strategy=\"quantile\")  # reliability diagram\nprint(\"ECE:\", ece(y_te, p))\n\n# Decide on expected value, not 0.5: review when expected fraud loss beats review cost\nREVIEW_COST = 5.0\nreview = p * amount_te > REVIEW_COST\n\n# Trained on negatives downsampled at rate w? Undo the prior shift before calibrating\ndef undo_downsampling(p, w):\n    return p / (p + (1 - p) / w)"
+  },
+  "example": {
+    "en": "An ads team keeps all clicks but only 5% of non-clicks, shrinking a 1%-CTR dataset ~17×. The model learns odds 20× too high and predicts ~0.17 for an average ad. Fed raw into the auction, `bid × pCTR` would overstate every ad's value ~17× against reserve prices and organic content. Mapping back with `q = p / (p + (1 − p)/w)` turns 0.17 into ~0.010; a final isotonic fit on a fresh, unsampled day brings the calibration ratio (predicted ÷ observed clicks) from 1.12 to 1.01.",
+    "es": "Un equipo de ads conserva todos los clics pero solo 5% de los no-clics, y así reduce ~17× un dataset con 1% de CTR. El modelo aprende odds 20× más altos y predice ~0,17 para un anuncio promedio. Si eso entra crudo a la subasta, `bid × pCTR` sobrestima ~17× el valor de cada anuncio frente a los precios de reserva y al contenido orgánico. Corregir con `q = p / (p + (1 − p)/w)` convierte 0,17 en ~0,010; un ajuste isotónico final sobre un día nuevo y sin submuestrear lleva el ratio de calibración (clics predichos ÷ observados) de 1,12 a 1,01."
+  },
+  "pros": [
+    { "en": "Threshold tuning and class weights are nearly free and often enough.", "es": "Ajustar el umbral y usar pesos por clase es casi gratis y muchas veces alcanza." },
+    { "en": "Calibrated scores compose: multiply pCTR × pCVR, compare with costs, feed auctions and pacing.", "es": "Los puntajes calibrados se pueden combinar: multiplicar pCTR × pCVR, comparar con costos, alimentar subastas y pacing." },
+    { "en": "Downsampling negatives to 5% shrinks a 1%-CTR dataset ~17×, with a closed-form correction.", "es": "Submuestrear negativos al 5% reduce ~17× un dataset con 1% de CTR, con una corrección en fórmula cerrada." }
+  ],
+  "cons": [
+    { "en": "Every reweighting or resampling trick distorts probabilities, so you must recalibrate.", "es": "Todo truco de reponderación o remuestreo distorsiona las probabilidades, así que debes recalibrar." },
+    { "en": "Isotonic overfits small calibration sets; Platt can't fix non-sigmoid distortions.", "es": "La isotónica sobreajusta con sets de calibración chicos; Platt no corrige distorsiones que no tengan forma sigmoide." },
+    { "en": "Calibration drifts when base rates shift (seasonality, new markets), so it needs monitoring and refits.", "es": "La calibración se desvía cuando cambian las tasas base (estacionalidad, mercados nuevos), así que requiere monitoreo y reajustes." },
+    { "en": "Oversampling or SMOTE rarely helps strong learners and can invent unrealistic examples.", "es": "El sobremuestreo o SMOTE rara vez ayuda a modelos fuertes y puede inventar ejemplos irreales." }
+  ],
+  "whenToUse": {
+    "en": "Rare-event problems (fraud, abuse, CTR, churn), and any system that acts on the probability itself: auctions, expected-value decisions, combining models, risk scores shown to people.",
+    "es": "Problemas de eventos raros (fraude, abuso, CTR, churn) y cualquier sistema que actúa sobre la probabilidad en sí: subastas, decisiones por valor esperado, combinación de modelos, puntajes de riesgo que ven personas."
+  },
+  "whenNotToUse": {
+    "en": "Calibration for pure ranking where only order matters: it leaves AUC and NDCG unchanged. Resampling on mildly imbalanced data (~10–40% positives) buys little.",
+    "es": "Calibrar para ranking puro donde solo importa el orden: no cambia ni el AUC ni el NDCG. Remuestrear datos levemente desbalanceados (~10–40% de positivos) aporta poco."
+  },
+  "numbers": [
+    { "en": "Cost threshold (Elkan, 2001): t = c_FP / (c_FP + c_FN); a $5 review vs a $100 missed fraud gives t ≈ 0.048.", "es": "Umbral por costo (Elkan, 2001): t = c_FP / (c_FP + c_FN); una revisión de US$5 frente a un fraude perdido de US$100 da t ≈ 0,048." },
+    { "en": "Downsampling correction (He et al., Facebook, 2014): q = p / (p + (1 − p)/w), with w the negative sampling rate.", "es": "Corrección por submuestreo (He et al., Facebook, 2014): q = p / (p + (1 − p)/w), donde w es la tasa de muestreo de negativos." },
+    { "en": "Focal loss (Lin et al., 2017): γ = 2, α = 0.25 worked best for RetinaNet; γ = 0 is plain cross-entropy.", "es": "Focal loss (Lin et al., 2017): γ = 2 y α = 0,25 funcionaron mejor en RetinaNet; con γ = 0 es cross-entropy normal." },
+    { "en": "scikit-learn: isotonic matches or beats sigmoid (Platt) with more than ~1,000 calibration samples.", "es": "scikit-learn: la isotónica iguala o supera a la sigmoide (Platt) con más de ~1.000 muestras de calibración." },
+    { "en": "Facebook's calibration metric: average predicted CTR ÷ observed CTR; target ≈ 1.0.", "es": "Métrica de calibración de Facebook: CTR predicho promedio ÷ CTR observado; objetivo ≈ 1,0." }
+  ],
+  "pitfalls": [
+    { "en": "Calibrating on downsampled or reweighted training data instead of an unsampled, recent holdout.", "es": "Calibrar con datos de entrenamiento submuestreados o reponderados en vez de un holdout reciente y sin submuestrear." },
+    { "en": "Judging calibration by AUC, which ignores monotone transforms. Use reliability diagrams, ECE, log loss or Brier.", "es": "Juzgar la calibración con AUC, que ignora transformaciones monótonas. Usa diagramas de confiabilidad, ECE, log loss o Brier." },
+    { "en": "Equal-width ECE bins on rare events: nearly everything lands in the first bin. Use equal-mass bins and check per segment.", "es": "Bins de ECE de ancho fijo con eventos raros: casi todo cae en el primer bin. Usa bins de igual masa y revisa por segmento." },
+    { "en": "Shipping 0.5 as the threshold, or tuning it on the test set.", "es": "Desplegar 0,5 como umbral, o ajustarlo sobre el set de test." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "You're building fraud detection with 0.2% positives. How do you handle the imbalance?", "es": "Estás construyendo detección de fraude con 0,2% de positivos. ¿Cómo manejas el desbalance?" },
+      "a": {
+        "en": "I treat it as a metric and threshold problem before a data problem. I evaluate with PR-AUC and precision at a recall target, never accuracy. I train a GBDT, maybe with moderate class weights or negative downsampling for speed, and skip SMOTE as a first move. Then I calibrate on a recent, unsampled holdout and set the threshold by cost: review when expected loss, p times amount, exceeds the review cost. The failure mode I watch is label delay: chargebacks arrive weeks later, so the newest data looks cleaner than it is.",
+        "es": "Lo trato como un problema de métrica y de umbral antes que de datos. Evalúo con PR-AUC y precisión a un recall objetivo, nunca con accuracy. Entreno un GBDT, quizá con pesos por clase moderados o submuestreo de negativos para ir más rápido, y no uso SMOTE como primer paso. Después calibro sobre un holdout reciente y sin submuestrear y fijo el umbral por costo: reviso cuando la pérdida esperada, p por monto, supera el costo de revisión. El modo de falla que vigilo es el retraso de etiquetas: los contracargos llegan semanas después, así que los datos más nuevos parecen más limpios de lo que son."
+      }
+    },
+    {
+      "q": { "en": "Why does an ads system need calibrated pCTR, when AUC only cares about order?", "es": "¿Por qué un sistema de ads necesita un pCTR calibrado, si al AUC solo le importa el orden?" },
+      "a": {
+        "en": "Because the auction uses the value, not just the order. Ads are ranked and priced by bid times pCTR across advertisers, often multiplied by a pCVR from another model, and budget pacing and advertiser ROI depend on the actual numbers. If one campaign's pCTR is 30% high, it wins auctions it shouldn't and pays the wrong price. AUC is blind to this because monotone transforms leave it unchanged. So I track log loss plus a calibration ratio, predicted over observed clicks near 1.0, per segment, and recalibrate after any sampling change.",
+        "es": "Porque la subasta usa el valor, no solo el orden. Los anuncios se ordenan y se cobran por bid por pCTR entre anunciantes, muchas veces multiplicado por un pCVR de otro modelo, y el pacing de presupuesto y el ROI del anunciante dependen de los números reales. Si el pCTR de una campaña está 30% arriba, gana subastas que no debería y paga un precio equivocado. El AUC no lo ve porque las transformaciones monótonas no lo cambian. Por eso sigo el log loss más un ratio de calibración, clics predichos sobre observados cerca de 1,0, por segmento, y recalibro después de cualquier cambio de muestreo."
+      }
+    },
+    {
+      "q": { "en": "Platt scaling or isotonic regression?", "es": "¿Platt scaling o regresión isotónica?" },
+      "a": {
+        "en": "Platt fits a sigmoid on the score: two parameters, data-efficient, but it only fixes sigmoid-shaped distortion, typical of SVMs and boosted trees. Isotonic fits any monotone step function, so it fixes arbitrary distortion but overfits small sets; scikit-learn suggests it above ~1,000 calibration samples. With rare positives, what matters is positives per bin, not total rows. For neural nets I start with temperature scaling. Either way I calibrate on data the model didn't train on, from the most recent period.",
+        "es": "Platt ajusta una sigmoide sobre el puntaje: dos parámetros, eficiente con pocos datos, pero solo corrige distorsiones con forma sigmoide, típicas de SVMs y árboles boosteados. La isotónica ajusta cualquier función escalonada monótona, así que corrige distorsiones arbitrarias, pero sobreajusta con sets chicos; scikit-learn la sugiere por encima de ~1.000 muestras de calibración. Con positivos raros, lo que importa son los positivos por bin, no el total de filas. Para redes neuronales empiezo con temperature scaling. En cualquier caso, calibro con datos que el modelo no vio en entrenamiento y del período más reciente."
+      }
+    }
+  ],
+  "related": ["classification-metrics", "gbdt", "case-ads-ctr", "case-fraud-detection", "ml-monitoring", "learning-to-rank"],
+  "sources": [
+    { "title": "scikit-learn — Probability calibration", "url": "https://scikit-learn.org/stable/modules/calibration.html" },
+    { "title": "He et al. — Practical Lessons from Predicting Clicks on Ads at Facebook (ADKDD 2014)", "url": "https://research.facebook.com/publications/practical-lessons-from-predicting-clicks-on-ads-at-facebook/" },
+    { "title": "Guo et al. — On Calibration of Modern Neural Networks (ICML 2017)", "url": "https://arxiv.org/abs/1706.04599" },
+    { "title": "Lin et al. — Focal Loss for Dense Object Detection (ICCV 2017)", "url": "https://arxiv.org/abs/1708.02002" }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "id": "gbdt",
+  "domain": "ml",
+  "level": "core",
+  "title": { "en": "Gradient-boosted trees (GBDT)", "es": "Árboles con gradient boosting (GBDT)" },
+  "aliases": ["GBDT", "GBM", "gradient boosting", "XGBoost", "LightGBM", "CatBoost", "boosted trees", "MART"],
+  "tldr": {
+    "en": "Build hundreds of small decision trees in sequence, each one fitting the errors the ensemble still makes; on tabular data XGBoost and LightGBM remain the default to beat.",
+    "es": "Construye cientos de árboles de decisión pequeños en secuencia, cada uno ajustando los errores que el ensamble todavía comete; en datos tabulares, XGBoost y LightGBM siguen siendo la referencia a vencer."
+  },
+  "analogy": {
+    "en": "Golf: the first shot lands near the hole, each next shot is a short correction from where the ball stopped, and you swing softly (learning rate) so you don't overshoot.",
+    "es": "Golf: el primer golpe deja la pelota cerca del hoyo, cada golpe siguiente es una corrección corta desde donde quedó, y golpeas suave (learning rate) para no pasarte."
+  },
+  "explain": {
+    "en": "A **decision tree** splits rows on feature thresholds (`amount > 500?`, `country = BR?`) until each leaf holds similar targets. One tree is weak and unstable; **gradient boosting** adds many small ones, **sequentially**:\n\n1. Start from a constant: the mean, or the base-rate log-odds.\n2. For each row, compute the **negative gradient** of the loss. For squared error it is just the residual `y − ŷ`; for log loss, `y − p`.\n3. Fit a shallow tree to those gradients and add it, shrunk by the **learning rate**: `F ← F + η · tree`.\n4. Repeat hundreds to thousands of times; **early stopping** on a validation set picks how many.\n\nEach tree fixes what the ensemble still gets wrong. **XGBoost** adds second-order gradients and leaf-weight regularization; **LightGBM** uses histogram bins and leaf-wise growth for speed; **CatBoost** handles categories with ordered target statistics.\n\n**Why they still win on tabular data:** no scaling, native missing values, robust to useless columns, and they fit the sharp, irregular boundaries that neural nets tend to smooth over, in minutes on a CPU.\n\n**Knobs:** learning rate (0.01–0.1) × number of trees (via early stopping), depth or `num_leaves`, min samples per leaf, row and column subsampling. Explain predictions with **SHAP**, not split counts.",
+    "es": "Un **árbol de decisión** divide las filas con umbrales sobre las features (`amount > 500?`, `country = BR?`) hasta que cada hoja agrupa objetivos parecidos. Un solo árbol es débil e inestable; el **gradient boosting** suma muchos árboles chicos, **en secuencia**:\n\n1. Empieza con una constante: la media, o el log-odds de la tasa base.\n2. Para cada fila, calcula el **gradiente negativo** de la pérdida. Con error cuadrático es simplemente el residuo `y − ŷ`; con log loss, `y − p`.\n3. Ajusta un árbol poco profundo a esos gradientes y súmalo, reducido por el **learning rate**: `F ← F + η · árbol`.\n4. Repite cientos o miles de veces; el **early stopping** sobre un set de validación decide cuántos.\n\nCada árbol corrige lo que el ensamble todavía hace mal. **XGBoost** agrega gradientes de segundo orden y regularización de los pesos de las hojas; **LightGBM** usa histogramas y crecimiento por hoja (leaf-wise) para ir más rápido; **CatBoost** maneja categorías con estadísticas de target ordenadas.\n\n**Por qué siguen ganando en datos tabulares:** no hay que escalar, manejan valores faltantes de forma nativa, toleran columnas inútiles y ajustan las fronteras abruptas e irregulares que las redes neuronales tienden a suavizar, en minutos y en CPU.\n\n**Perillas:** learning rate (0,01–0,1) × número de árboles (vía early stopping), profundidad o `num_leaves`, mínimo de muestras por hoja, submuestreo de filas y columnas. Explica las predicciones con **SHAP**, no con conteos de splits."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  D[(Training data)] --> F0[\"Start: F0 =<br/>base-rate log-odds\"]\n  F0 --> G[\"Gradients per row<br/>y minus prediction\"]\n  G --> T[\"Fit shallow tree<br/>to gradients\"]\n  T --> U[\"F += lr × tree\"]\n  U --> V{\"Validation loss<br/>improved?\"}\n  V -->|yes| G\n  V -->|no for N rounds| S[\"Stop: keep<br/>best iteration\"]",
+    "caption": {
+      "en": "Each round fits a small tree to what the ensemble still gets wrong; early stopping on validation data decides when to stop.",
+      "es": "Cada ronda ajusta un árbol chico a lo que el ensamble todavía falla; el early stopping sobre datos de validación decide cuándo parar."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "LightGBM with early stopping, then SHAP", "es": "LightGBM con early stopping y luego SHAP" },
+    "source": "import lightgbm as lgb\nimport shap\n\nX_tr, y_tr, X_va, y_va = time_split(load_transactions())  # validate on the latest weeks\n\nmodel = lgb.LGBMClassifier(\n    n_estimators=5000,          # a cap: early stopping picks the real number\n    learning_rate=0.05,         # smaller steps -> more trees, better generalization\n    num_leaves=63,              # main complexity knob (leaf-wise growth)\n    min_child_samples=100,      # no leaf fitted on a handful of rows\n    subsample=0.8, subsample_freq=1,  # row bagging every iteration\n    colsample_bytree=0.8,       # feature bagging per tree\n    reg_lambda=1.0,             # L2 penalty on leaf weights\n)\nmodel.fit(\n    X_tr, y_tr,\n    eval_set=[(X_va, y_va)], eval_metric=\"average_precision\",\n    callbacks=[lgb.early_stopping(100), lgb.log_evaluation(200)],\n)\nprint(\"trees kept:\", model.best_iteration_)\n\n# Exact per-prediction attributions for trees (TreeSHAP), not split counts\nexplanation = shap.TreeExplainer(model)(X_va.iloc[:2000])\nshap.plots.beeswarm(explanation)       # global: which features matter, which direction\nshap.plots.waterfall(explanation[0])   # local: why this one transaction scored high"
+  },
+  "example": {
+    "en": "A payments team predicts fraud on 40M card transactions with ~300 engineered features: amount, merchant category, card velocity over 1h and 24h, device age. A tuned MLP reaches PR-AUC 0.58 after a week of work; LightGBM with near-default settings reaches 0.66 in 25 minutes on one CPU machine, early-stopping at tree 1,840. TreeSHAP then gives analysts the top reasons behind every blocked payment, e.g. *\"6 transactions in the last hour, device seen for the first time\"*.",
+    "es": "Un equipo de pagos predice fraude sobre 40M de transacciones con ~300 features construidas: monto, categoría del comercio, velocidad de la tarjeta en 1h y 24h, antigüedad del dispositivo. Un MLP ajustado llega a PR-AUC 0,58 tras una semana de trabajo; LightGBM con parámetros casi por defecto llega a 0,66 en 25 minutos en una sola máquina con CPU, y el early stopping corta en el árbol 1.840. Después, TreeSHAP les da a los analistas las razones principales de cada pago bloqueado, p. ej. *\"6 transacciones en la última hora, dispositivo visto por primera vez\"*."
+  },
+  "pros": [
+    { "en": "Best out-of-the-box accuracy on tabular data, with little preprocessing: no scaling, native missing values.", "es": "La mejor precisión de entrada en datos tabulares, con poco preprocesamiento: sin escalar y con valores faltantes nativos." },
+    { "en": "Trains in minutes on CPUs; scoring a row is a few thousand comparisons, cheap to serve.", "es": "Entrena en minutos en CPU; puntuar una fila son unos pocos miles de comparaciones, barato de servir." },
+    { "en": "Explainable enough for risk teams: TreeSHAP gives exact per-prediction attributions.", "es": "Lo bastante explicable para equipos de riesgo: TreeSHAP da atribuciones exactas por predicción." }
+  ],
+  "cons": [
+    { "en": "Can't learn representations from raw text, images or sequences; it needs engineered features or embeddings as input.", "es": "No aprende representaciones de texto, imágenes o secuencias crudas; necesita features construidas o embeddings como entrada." },
+    { "en": "No extrapolation: predictions are piecewise constant and flat beyond the training range.", "es": "No extrapola: las predicciones son constantes por tramos y planas fuera del rango de entrenamiento." },
+    { "en": "Billion-row sparse ID data favors learned embeddings; trees are also hard to update online.", "es": "Con miles de millones de filas e IDs dispersos ganan los embeddings aprendidos; además, los árboles son difíciles de actualizar online." }
+  ],
+  "whenToUse": {
+    "en": "Structured problems such as fraud, credit risk, churn, pricing, CTR baselines and feature-based ranking, from thousands to hundreds of millions of rows. Start here before any neural net.",
+    "es": "Problemas estructurados como fraude, riesgo crediticio, churn, pricing, baselines de CTR y ranking con features, desde miles hasta cientos de millones de filas. Empieza aquí antes de cualquier red neuronal."
+  },
+  "whenNotToUse": {
+    "en": "Raw text, images or audio; long sequences where order matters; or billion-scale sparse IDs where embeddings and end-to-end training win.",
+    "es": "Texto, imágenes o audio crudos; secuencias largas donde importa el orden; o IDs dispersos a escala de miles de millones, donde ganan los embeddings y el entrenamiento end-to-end."
+  },
+  "numbers": [
+    { "en": "XGBoost paper (2016): 17 of the 29 Kaggle challenge-winning solutions published in 2015 used XGBoost.", "es": "Paper de XGBoost (2016): 17 de las 29 soluciones ganadoras de Kaggle publicadas en 2015 usaron XGBoost." },
+    { "en": "Grinsztajn et al. (NeurIPS 2022): on 45 datasets, trees still beat deep nets on medium-sized tabular data (~10K rows).", "es": "Grinsztajn et al. (NeurIPS 2022): en 45 datasets, los árboles siguen ganándoles a las redes profundas en datos tabulares medianos (~10K filas)." },
+    { "en": "Defaults: XGBoost learning rate 0.3, max_depth 6; LightGBM learning rate 0.1, num_leaves 31. Rule of thumb: 0.01–0.1 plus early stopping.", "es": "Valores por defecto: XGBoost learning rate 0,3 y max_depth 6; LightGBM learning rate 0,1 y num_leaves 31. Regla práctica: 0,01–0,1 con early stopping." },
+    { "en": "LightGBM (NeurIPS 2017) reported up to 20×+ faster training than conventional GBDT at almost the same accuracy.", "es": "LightGBM (NeurIPS 2017) reportó entrenamiento hasta más de 20× más rápido que el GBDT convencional, con casi la misma precisión." },
+    { "en": "Facebook ads (He et al., 2014): boosted trees as feature transforms plus logistic regression beat either alone by over 3%.", "es": "Ads de Facebook (He et al., 2014): árboles boosteados como transformación de features más regresión logística superaron a cada uno por separado en más de 3%." }
+  ],
+  "pitfalls": [
+    { "en": "Setting `n_estimators` by hand instead of a high cap plus early stopping on a time-based validation set, never the test set.", "es": "Fijar `n_estimators` a mano en vez de un tope alto con early stopping sobre un set de validación temporal, nunca el de test." },
+    { "en": "Trusting gain or split-count importance: it is biased toward high-cardinality features. Use SHAP or permutation importance.", "es": "Confiar en la importancia por gain o por conteo de splits: está sesgada hacia features de alta cardinalidad. Usa SHAP o importancia por permutación." },
+    { "en": "Expecting extrapolation: a demand model trained on prices up to $100 predicts flat at $300.", "es": "Esperar extrapolación: un modelo de demanda entrenado con precios de hasta US$100 predice plano a US$300." },
+    { "en": "One-hot encoding thousands of categories; use native categorical support (LightGBM, CatBoost) or out-of-fold target encoding.", "es": "Hacer one-hot de miles de categorías; usa el soporte nativo de categóricas (LightGBM, CatBoost) o target encoding out-of-fold." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why do GBDTs still beat deep learning on tabular data, and when would you switch?", "es": "¿Por qué los GBDT todavía le ganan al deep learning en datos tabulares, y cuándo cambiarías?" },
+      "a": {
+        "en": "Tabular features are heterogeneous (amounts, counts, categories) and the target is often a sharp, irregular function of a few of them. Trees split on thresholds, so they ignore scale and useless columns and capture those cliffs, while MLPs tend to learn overly smooth functions; Grinsztajn et al. showed this across 45 datasets. I'd switch to, or add, a neural net for raw text, images or sequences, for high-cardinality IDs that need learned embeddings at billions of rows, as in large ads and feed systems, or for one multi-task model. Even then the GBDT is my baseline: Airbnb documented a long series of attempts before deep learning beat its tuned GBDT search ranker.",
+        "es": "Las features tabulares son heterogéneas (montos, conteos, categorías) y el objetivo suele ser una función abrupta e irregular de unas pocas. Los árboles cortan por umbrales, así que ignoran la escala y las columnas inútiles y capturan esos saltos, mientras que los MLP tienden a aprender funciones demasiado suaves; Grinsztajn et al. lo mostraron en 45 datasets. Cambiaría a una red neuronal, o la sumaría, para texto, imágenes o secuencias crudas, para IDs de alta cardinalidad que necesitan embeddings aprendidos con miles de millones de filas, como en grandes sistemas de ads y feeds, o para un modelo multitarea. Aun así, el GBDT es mi baseline: Airbnb documentó una larga serie de intentos antes de que el deep learning superara a su ranker de búsqueda GBDT bien ajustado."
+      }
+    },
+    {
+      "q": { "en": "Random forest or gradient boosting?", "es": "¿Random forest o gradient boosting?" },
+      "a": {
+        "en": "Both are tree ensembles, but they attack different errors. A random forest trains deep trees independently on bootstrap samples and averages them, which cuts variance: more trees never hurts, it parallelizes trivially and needs almost no tuning. Boosting trains shallow trees sequentially on the ensemble's gradients, which cuts bias, so it is usually more accurate but can overfit with too many trees or too high a learning rate, and needs early stopping. I use a random forest as a two-minute baseline and a tuned LightGBM or XGBoost for production.",
+        "es": "Los dos son ensambles de árboles, pero atacan errores distintos. Un random forest entrena árboles profundos de forma independiente sobre muestras bootstrap y los promedia, lo que reduce la varianza: más árboles nunca empeoran, se paraleliza trivialmente y casi no requiere ajuste. El boosting entrena árboles poco profundos en secuencia sobre los gradientes del ensamble, lo que reduce el sesgo, así que suele ser más preciso, pero puede sobreajustar con demasiados árboles o un learning rate muy alto, y necesita early stopping. Uso un random forest como baseline de dos minutos y un LightGBM o XGBoost ajustado para producción."
+      }
+    },
+    {
+      "q": { "en": "Feature importance says `user_id` is your top feature. What do you do?", "es": "La importancia de features dice que `user_id` es tu feature principal. ¿Qué haces?" },
+      "a": {
+        "en": "I distrust it twice. Gain and split-count importances favor high-cardinality features because they offer more split points, so an ID can look important just by memorizing training users. And if it truly drives predictions, the model is memorizing, not generalizing, and it will fail on new users. I'd check SHAP and permutation importance on a time-based validation set, replace the raw ID with point-in-time aggregates such as the user's historical rates, and confirm the score improves on users the model never saw.",
+        "es": "Desconfío por partida doble. Las importancias por gain y por conteo de splits favorecen features de alta cardinalidad porque ofrecen más puntos de corte, así que un ID puede parecer importante solo por memorizar a los usuarios de entrenamiento. Y si de verdad domina las predicciones, el modelo está memorizando, no generalizando, y fallará con usuarios nuevos. Revisaría SHAP e importancia por permutación sobre un set de validación temporal, reemplazaría el ID crudo por agregados point-in-time como las tasas históricas del usuario y confirmaría que el puntaje mejora con usuarios que el modelo nunca vio."
+      }
+    }
+  ],
+  "related": ["feature-engineering", "learning-to-rank", "imbalance-calibration", "neural-networks", "regularization", "case-fraud-detection"],
+  "sources": [
+    { "title": "Chen & Guestrin — XGBoost: A Scalable Tree Boosting System (KDD 2016)", "url": "https://arxiv.org/abs/1603.02754" },
+    { "title": "LightGBM docs — Parameters Tuning", "url": "https://lightgbm.readthedocs.io/en/latest/Parameters-Tuning.html" },
+    { "title": "Grinsztajn, Oyallon & Varoquaux — Why do tree-based models still outperform deep learning on tabular data? (NeurIPS 2022)", "url": "https://arxiv.org/abs/2207.08815" },
+    { "title": "Lundberg, Erion & Lee — Consistent Individualized Feature Attribution for Tree Ensembles (TreeSHAP)", "url": "https://arxiv.org/abs/1802.03888" }
+  ]
+}

@@ -1,0 +1,89 @@
+{
+  "id": "feature-engineering",
+  "domain": "ml",
+  "level": "core",
+  "title": { "en": "Feature engineering & data leakage", "es": "Feature engineering y fuga de datos" },
+  "aliases": ["feature engineering", "data leakage", "target leakage", "target encoding", "hashing trick", "feature crosses", "point-in-time correctness", "time-based split"],
+  "tldr": {
+    "en": "Turn raw events into signals a model can use (scaled numbers, encoded categories, crosses, time-window aggregates) while making sure no feature peeks at the label or the future.",
+    "es": "Convierte eventos crudos en señales que el modelo pueda usar (números escalados, categorías codificadas, cruces, agregados por ventana de tiempo) y asegúrate de que ninguna feature espíe la etiqueta o el futuro."
+  },
+  "analogy": {
+    "en": "Leakage is a student who saw the answer key: a perfect score on the practice exam, then a fail on the real one. A time-based split locks the key away until the exam is over.",
+    "es": "El leakage es un estudiante que vio la hoja de respuestas: saca 10 en el simulacro y reprueba el examen real. Un split por tiempo guarda la hoja bajo llave hasta que termina el examen."
+  },
+  "explain": {
+    "en": "**Feature engineering** turns raw data into inputs that make the pattern easy to learn.\n\n- **Numbers:** standardize for linear models, neural nets and kNN (trees don't care); `log1p` heavy tails like amounts and counts; clip outliers.\n- **Categories:** one-hot for a few dozen values; **target encoding** (category → smoothed mean label, computed out-of-fold) for high cardinality; the **hashing trick** for open vocabularies; **learned embeddings** for huge ID spaces in neural nets.\n- **Crosses:** `country × device` lets a linear model learn interactions.\n- **Time-window aggregates:** a card's transactions in the last 1h/24h/7d, a user's 30-day CTR; often the strongest features in fraud and ads.\n- **Text:** TF-IDF, sentence embeddings or LLM-extracted attributes.\n\n**Data leakage** is information in training that won't exist at prediction time:\n\n1. **Target leakage:** a feature that encodes the outcome (`chargeback_count` when predicting fraud).\n2. **Contamination:** scalers or encoders fit on all data before the split; the same user in train and test.\n3. **Time travel:** aggregates computed from today's table, or random splits on time-ordered data.\n\nThe cure: compute every feature **as of the event timestamp** (point-in-time joins, a [[feature-store]]), **split by time** (and by user), and fit all transforms on the training window only. A suspiciously great offline score is a leakage alarm.",
+    "es": "El **feature engineering** convierte datos crudos en entradas que hacen fácil aprender el patrón.\n\n- **Números:** estandariza para modelos lineales, redes neuronales y kNN (a los árboles no les importa); aplica `log1p` a colas pesadas como montos y conteos; recorta outliers.\n- **Categorías:** one-hot para unas pocas decenas de valores; **target encoding** (categoría → media suavizada de la etiqueta, calculada out-of-fold) para alta cardinalidad; el **hashing trick** para vocabularios abiertos; **embeddings aprendidos** para espacios enormes de IDs en redes neuronales.\n- **Cruces:** `country × device` le permite a un modelo lineal aprender interacciones.\n- **Agregados por ventana de tiempo:** las transacciones de una tarjeta en la última 1h/24h/7d, el CTR de un usuario en 30 días; suelen ser las features más fuertes en fraude y ads.\n- **Texto:** TF-IDF, embeddings de oraciones o atributos extraídos con un LLM.\n\nLa **fuga de datos (leakage)** es información presente en el entrenamiento que no existirá al momento de predecir:\n\n1. **Fuga del target:** una feature que codifica el resultado (`chargeback_count` al predecir fraude).\n2. **Contaminación:** scalers o encoders ajustados con todos los datos antes del split; el mismo usuario en train y en test.\n3. **Viaje en el tiempo:** agregados calculados con la tabla de hoy, o splits aleatorios sobre datos ordenados en el tiempo.\n\nLa cura: calcula cada feature **a la fecha del evento** (joins point-in-time, un [[feature-store]]), **separa por tiempo** (y por usuario) y ajusta todas las transformaciones solo con la ventana de entrenamiento. Un puntaje offline sospechosamente bueno es una alarma de leakage."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  E[(Raw events + labels)] --> P[\"Point-in-time features<br/>as of event time\"]\n  P --> S{Split by time}\n  S -->|past| TR[Training window]\n  S -->|future| VA[Validation window]\n  TR --> F[\"Fit scalers, encoders<br/>on train only\"]\n  F --> M[Train model]\n  F -.->|apply, never refit| VA\n  M --> EV[Evaluate on future]\n  VA --> EV",
+    "caption": {
+      "en": "Every arrow points forward in time: features use only the past, and transforms are fit on the training window and merely applied to the future.",
+      "es": "Todas las flechas apuntan hacia adelante en el tiempo: las features usan solo el pasado, y las transformaciones se ajustan con la ventana de entrenamiento y solo se aplican al futuro."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Point-in-time features, time split, leak-free pipeline", "es": "Features point-in-time, split temporal y pipeline sin fugas" },
+    "source": "import numpy as np\nfrom sklearn.compose import ColumnTransformer\nfrom sklearn.linear_model import LogisticRegression\nfrom sklearn.metrics import average_precision_score\nfrom sklearn.pipeline import make_pipeline\nfrom sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler, TargetEncoder\n\ntx = load_transactions().sort_values(\"ts\")  # card_id, merchant_id, country, amount, ts, is_fraud\n\n# Point-in-time aggregate: this card's transactions in the 24h BEFORE each one\ntx[\"n_tx_24h\"] = (tx.set_index(\"ts\").groupby(\"card_id\")[\"amount\"]\n                    .transform(lambda s: s.rolling(\"24h\", closed=\"left\").count())\n                    .fillna(0).to_numpy())\n\n# Time-based split: train on the past, validate on the future (never a random split)\ncut = tx[\"ts\"].quantile(0.8)\ntrain, valid = tx[tx[\"ts\"] < cut], tx[tx[\"ts\"] >= cut]\ncols = [\"amount\", \"n_tx_24h\", \"country\", \"merchant_id\"]\n\nfeatures = ColumnTransformer([\n    (\"num\", make_pipeline(FunctionTransformer(np.log1p), StandardScaler()), [\"amount\", \"n_tx_24h\"]),\n    (\"low_card\", OneHotEncoder(handle_unknown=\"ignore\"), [\"country\"]),\n    (\"high_card\", TargetEncoder(), [\"merchant_id\"]),  # cross-fitted (5 folds) inside fit\n])\nmodel = make_pipeline(features, LogisticRegression(max_iter=1000))\nmodel.fit(train[cols], train[\"is_fraud\"])  # every encoder sees the training window only\n\np = model.predict_proba(valid[cols])[:, 1]\nprint(\"PR-AUC on the future:\", average_precision_score(valid[\"is_fraud\"], p))"
+  },
+  "example": {
+    "en": "A fraud model scores 0.99 ROC-AUC offline but ~0.70 in shadow mode. SHAP shows the top feature is `card_chargebacks_30d`, computed from today's table: for fraudulent training rows it already counted the chargeback filed *weeks after* the transaction. The team recomputes every aggregate as of the transaction timestamp, replaces the random split with train on January–September and validate on October, and moves the target encoder inside the pipeline. Offline AUC drops to 0.86, and now it matches production.",
+    "es": "Un modelo de fraude saca 0,99 de ROC-AUC offline, pero ~0,70 en modo sombra. SHAP muestra que la feature principal es `card_chargebacks_30d`, calculada con la tabla de hoy: en las filas fraudulentas de entrenamiento ya contaba el contracargo presentado *semanas después* de la transacción. El equipo recalcula cada agregado a la fecha de la transacción, cambia el split aleatorio por entrenar con enero–septiembre y validar con octubre, y mete el target encoder dentro del pipeline. El AUC offline baja a 0,86, y ahora sí coincide con producción."
+  },
+  "pros": [
+    { "en": "Usually the biggest lever on tabular models, often bigger than switching algorithms.", "es": "Suele ser la mayor palanca en modelos tabulares, muchas veces más que cambiar de algoritmo." },
+    { "en": "Encodes domain knowledge (velocity, recency, ratios) that a model can't find in single raw rows.", "es": "Codifica conocimiento del dominio (velocidad, recencia, proporciones) que el modelo no encuentra en filas crudas aisladas." },
+    { "en": "Simple models on good features are fast, debuggable and explainable.", "es": "Modelos simples con buenas features son rápidos, fáciles de depurar y explicables." }
+  ],
+  "cons": [
+    { "en": "Manual and domain-specific; hard to reuse across teams without a feature store.", "es": "Es manual y específico del dominio; difícil de reutilizar entre equipos sin un feature store." },
+    { "en": "Each feature must be computed identically offline and online, or you get training-serving skew.", "es": "Cada feature debe calcularse igual offline y online, o aparece el training-serving skew." },
+    { "en": "More features mean more leakage surface and more pipelines to monitor.", "es": "Más features significan más superficie de leakage y más pipelines que monitorear." }
+  ],
+  "whenToUse": {
+    "en": "Always for tabular models (GBDT, linear); with deep models too, for aggregates, recency and business signals the network can't see in a single raw event.",
+    "es": "Siempre en modelos tabulares (GBDT, lineales); también con modelos profundos, para agregados, recencia y señales de negocio que la red no ve en un solo evento crudo."
+  },
+  "whenNotToUse": {
+    "en": "Hand-crafting features from raw text, images or audio: pretrained encoders learn better ones end to end. Engineer the context around them instead.",
+    "es": "Construir a mano features de texto, imágenes o audio crudos: los encoders preentrenados aprenden mejores de punta a punta. Mejor diseña el contexto a su alrededor."
+  },
+  "numbers": [
+    { "en": "Kapoor & Narayanan: leakage affected ~300 published papers across 17 scientific fields (294 in the 2023 Patterns version).", "es": "Kapoor y Narayanan: el leakage afectó ~300 papers publicados en 17 campos científicos (294 en la versión de Patterns de 2023)." },
+    { "en": "Facebook ads (He et al., 2014): \"the most important thing is to have the right features\"; historical user and ad features dominated.", "es": "Ads de Facebook (He et al., 2014): \"lo más importante es tener las features correctas\"; dominaron las features históricas de usuario y anuncio." },
+    { "en": "Rule of thumb: one-hot up to ~tens of categories; beyond that, target encoding, hashing or embeddings.", "es": "Regla práctica: one-hot hasta ~decenas de categorías; más allá, target encoding, hashing o embeddings." },
+    { "en": "Rule of thumb (Google, TensorFlow feature columns): embedding size ≈ fourth root of the category count, e.g. 10,000 → 10.", "es": "Regla práctica (Google, feature columns de TensorFlow): tamaño del embedding ≈ raíz cuarta del número de categorías, p. ej. 10.000 → 10." },
+    { "en": "scikit-learn's `TargetEncoder` (≥ 1.3) cross-fits with 5 folds in `fit_transform`, so no row's encoding sees its own label.", "es": "El `TargetEncoder` de scikit-learn (≥ 1.3) hace cross-fitting con 5 folds en `fit_transform`, así ninguna fila ve su propia etiqueta en su codificación." }
+  ],
+  "pitfalls": [
+    { "en": "Fitting scalers, imputers or target encoders on the full dataset before splitting.", "es": "Ajustar scalers, imputadores o target encoders con todo el dataset antes de separar." },
+    { "en": "Random train/test splits on time-ordered data: the model trains on the future.", "es": "Splits aleatorios de train/test sobre datos ordenados en el tiempo: el modelo entrena con el futuro." },
+    { "en": "The same user or session on both sides of the split: the model memorizes users. Use group splits.", "es": "El mismo usuario o sesión a ambos lados del split: el modelo memoriza usuarios. Usa splits por grupo." },
+    { "en": "Aggregates computed from today's snapshot instead of as of each event's timestamp.", "es": "Agregados calculados con la foto de hoy en vez de a la fecha de cada evento." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your model shows 0.99 AUC offline and disappoints in production. How do you debug it?", "es": "Tu modelo muestra 0,99 de AUC offline y decepciona en producción. ¿Cómo lo depuras?" },
+      "a": {
+        "en": "I assume leakage until proven otherwise. First, the top features by SHAP: for each one I ask whether that exact value would exist at prediction time. Post-outcome fields and aggregates computed from today's tables are the usual culprits. Second, the split: random rows on time-ordered data, or the same user on both sides, inflate scores, so I re-run with a time split and a group split. Third, preprocessing fit before the split. If it survives all that, I compare offline and online feature values for the same requests to rule out training-serving skew.",
+        "es": "Asumo leakage hasta que se demuestre lo contrario. Primero, las features principales según SHAP: para cada una me pregunto si ese valor exacto existiría al momento de predecir. Los campos posteriores al resultado y los agregados calculados con las tablas de hoy son los culpables de siempre. Segundo, el split: filas aleatorias sobre datos temporales, o el mismo usuario a ambos lados, inflan los puntajes, así que repito con un split por tiempo y otro por grupo. Tercero, preprocesamiento ajustado antes del split. Si sobrevive a todo eso, comparo los valores de las features offline y online para las mismas solicitudes y descarto el training-serving skew."
+      }
+    },
+    {
+      "q": { "en": "How do you encode a categorical feature with a million values, like merchant_id?", "es": "¿Cómo codificas una feature categórica con un millón de valores, como merchant_id?" },
+      "a": {
+        "en": "One-hot gives a million sparse columns and learns nothing for rare merchants. My options: the hashing trick into, say, 2^20 buckets, with no vocabulary to maintain but some collisions; smoothed target encoding computed out-of-fold, compact and great with GBDTs, but it leaks if done naively and drifts as rates change; or a learned embedding in a neural net, best with lots of data but cold for new IDs. With a GBDT I'd use out-of-fold target encoding plus a frequency count; with a deep model, hashed embeddings. Either way, rare and unseen values go to an 'other' bucket.",
+        "es": "El one-hot da un millón de columnas dispersas y no aprende nada de los comercios raros. Mis opciones: el hashing trick en, digamos, 2^20 buckets, sin vocabulario que mantener pero con colisiones; target encoding suavizado y calculado out-of-fold, compacto y excelente con GBDT, pero con fuga si se hace ingenuamente y con drift cuando cambian las tasas; o un embedding aprendido en una red neuronal, lo mejor con muchos datos pero frío para IDs nuevos. Con un GBDT usaría target encoding out-of-fold más un conteo de frecuencia; con un modelo profundo, embeddings con hashing. En ambos casos, los valores raros o nunca vistos van a un bucket 'otros'."
+      }
+    }
+  ],
+  "related": ["training-serving-skew", "feature-store", "gbdt", "embeddings", "imbalance-calibration", "case-fraud-detection"],
+  "sources": [
+    { "title": "scikit-learn — Common pitfalls and recommended practices (data leakage)", "url": "https://scikit-learn.org/stable/common_pitfalls.html" },
+    { "title": "scikit-learn — Target Encoder", "url": "https://scikit-learn.org/stable/modules/preprocessing.html#target-encoder" },
+    { "title": "Kapoor & Narayanan — Leakage and the Reproducibility Crisis in ML-based Science", "url": "https://arxiv.org/abs/2207.07048" },
+    { "title": "Weinberger et al. — Feature Hashing for Large Scale Multitask Learning (ICML 2009)", "url": "https://arxiv.org/abs/0902.2206" }
+  ]
+}
