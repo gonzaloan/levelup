@@ -12,6 +12,7 @@ import { Diagram } from "@/components/Diagram";
 import { DomainChip, LevelBadge } from "@/components/Bits";
 import { MasteredDot, MasteredToggle } from "@/components/Mastered";
 import { Toc } from "@/components/Toc";
+import { KeyNav } from "@/components/KeyNav";
 
 type P = { params: Promise<{ locale: Locale; id: string }> };
 export const dynamicParams = false;
@@ -74,6 +75,19 @@ export default async function ConceptPage({ params }: P) {
           <h1>{t(c.title, locale)}</h1>
           {c.aliases.length > 0 && <p className="aliases">{c.aliases.join(" · ")}</p>}
         </header>
+
+        <details className="topic-nav only-narrow">
+          <summary><Icon name={d.icon} size={16} /> {L("conceptsInDomain")}: {t(d.title, locale)} <span>({siblings.findIndex((s) => s.id === id) + 1}/{siblings.length})</span></summary>
+          <ol className="sibling-list">
+            {siblings.map((s) => (
+              <li key={s.id}>
+                <Link href={`/${locale}/c/${s.id}/`} className={s.id === id ? "current" : ""} aria-current={s.id === id ? "page" : undefined}>
+                  <MasteredDot id={s.id} />{t(s.title, locale)}
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </details>
 
         <section id="tldr" className="tldr">
           <div className="tldr-label">{L("tldr")}</div>
@@ -186,6 +200,7 @@ export default async function ConceptPage({ params }: P) {
         </nav>
       </article>
 
+      <KeyNav prev={prev ? `/${locale}/c/${prev.id}/` : undefined} next={next ? `/${locale}/c/${next.id}/` : undefined} />
       <aside className="rail rail-right">
         <MasteredToggle id={c.id} label={L("markKnown")} doneLabel={L("known")} />
         <Toc items={toc} title={L("onThisPage")} />

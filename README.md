@@ -7,9 +7,12 @@ Live: https://levelup.skillrealm.dev
 
 ## What's inside
 
-- **12 topics, ~180 concepts**, in study order: LLM fundamentals · prompting & context
+- **14 topics, ~210 concepts**, in study order: LLM fundamentals · prompting & context
   engineering · RAG · agents · evals · fine-tuning · inference & cost · security & governance ·
-  MLOps · distributed systems · AI system-design cases · Staff/Principal leadership.
+  AI architecture · ML foundations · MLOps · distributed systems · system-design cases (incl. feed
+  ranking, ads CTR, fraud, deep research, inference platform) · Staff/Principal leadership.
+- **Architecture map:** the reference architecture of a production AI system, layer by layer;
+  every box opens its concept.
 - **Every concept on one page, same shape every time:** the one sentence you'd say in an interview,
   how it works, a diagram, runnable-ish code, a real example with numbers, what you gain / what you
   pay, when (not) to use it, numbers to remember, common pitfalls, interview questions with model

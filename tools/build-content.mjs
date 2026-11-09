@@ -29,6 +29,18 @@ for (const c of concepts.values()) {
   }
 }
 
+// The architecture map may only point at concepts in the syllabus.
+const mapFile = path.join(ROOT, "content", "architecture-map.json");
+if (fs.existsSync(mapFile)) {
+  const map = JSON.parse(fs.readFileSync(mapFile, "utf8"));
+  const known = new Set(domains.flatMap((d) => d.concepts));
+  if (!known.has(map.hub)) errors.push(`architecture-map: hub "${map.hub}" is not a concept id`);
+  for (const g of [...map.layers, ...map.crosscutting]) for (const id of g.items) {
+    if (!known.has(id)) errors.push(`architecture-map: "${id}" (${g.id}) is not a concept id`);
+    else if (!concepts.has(id)) (allowMissing ? warnings : errors).push(`architecture-map: "${id}" is not written yet`);
+  }
+}
+
 const plain = (s) => String(s || "").replace(/\[\[([a-z0-9-]+)\]\]/g, (_, id) => concepts.get(id)?.title?.en || id).replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/[*_`#>]/g, "").replace(/\s+/g, " ").trim();
 const domainOf = new Map();
 domains.forEach((d) => d.concepts.forEach((id) => domainOf.set(id, d.id)));

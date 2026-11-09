@@ -1,3 +1,5 @@
-// One hue per domain, in domains.json order. Used as `--h` in oklch() colors (see globals.css).
-const HUES = [255, 300, 195, 150, 45, 330, 85, 15, 125, 225, 60, 280];
-export const hueFor = (index: number) => HUES[((index % HUES.length) + HUES.length) % HUES.length];
+// Per-domain hue for oklch() colors (see globals.css), spread evenly around the wheel in syllabus
+// order — derived from the number of domains, so adding a domain never collides two colors.
+import { domainCount } from "./content";
+
+export const hueFor = (index: number) => Math.round((205 + (index * 360) / Math.max(1, domainCount())) % 360);

@@ -9,6 +9,8 @@ const UI = {
   brand: { en: "AI Architect Field Guide", es: "Guía de campo · AI Architect" },
   brandShort: { en: "Field Guide", es: "Guía de campo" },
   navDomains: { en: "Topics", es: "Temas" },
+  navMap: { en: "Map", es: "Mapa" },
+  openMap: { en: "Architecture map", es: "Mapa de arquitectura" },
   navCheatsheet: { en: "Cheatsheet", es: "Cheatsheet" },
   navInterview: { en: "Interview", es: "Entrevista" },
   navPractice: { en: "Practice", es: "Práctica" },
@@ -101,7 +103,7 @@ const UI = {
   conceptsInDomain: { en: "In this topic", es: "En este tema" },
   levelFilter: { en: "Level", es: "Nivel" },
   random: { en: "Random concept", es: "Concepto al azar" },
-  shortcuts: { en: "Press / or ⌘K to search from anywhere.", es: "Presiona / o ⌘K para buscar desde cualquier parte." },
+  shortcuts: { en: "Press / or ⌘K to search from anywhere; ← → to move between concepts.", es: "Presiona / o ⌘K para buscar desde cualquier parte; ← → para moverte entre conceptos." },
 } satisfies Record<string, I18n>;
 
 export type UIKey = keyof typeof UI;

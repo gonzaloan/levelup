@@ -8,7 +8,7 @@ import { Icon } from "@/components/Icon";
 import { SearchButton } from "@/components/SearchButton";
 import { ProgressMeter } from "@/components/Mastered";
 
-const HOT = ["rag", "reranking", "agents-vs-workflows", "tool-calling", "mcp", "prompt-injection", "llm-as-judge", "kv-cache", "prompt-caching", "model-routing", "hallucinations", "design-framework"];
+const HOT = ["llm-reference-architecture", "rag", "reranking", "agents-vs-workflows", "mcp", "prompt-injection", "llm-as-judge", "kv-cache", "prompt-caching", "model-routing", "ai-tradeoff-triangle", "llm-resilience", "hallucinations", "design-framework", "case-feed-ranking"];
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
   const { locale } = await params;
@@ -38,6 +38,7 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
         <SearchButton big label={L("search")} placeholder={L("searchPlaceholder")} />
         <div className="hero-ctas">
           {first && <Link className="btn btn-primary" href={`/${locale}/c/${first}/`}>{L("startHere")} <Icon name="right" size={16} /></Link>}
+          <Link className="btn" href={`/${locale}/map/`}><Icon name="map" size={16} /> {L("openMap")}</Link>
           <Link className="btn" href={`/${locale}/cheatsheet/`}><Icon name="list" size={16} /> {L("openCheatsheet")}</Link>
           <Link className="btn" href={`/${locale}/practice/`}><Icon name="cards" size={16} /> {L("practiceQuestions")}</Link>
         </div>

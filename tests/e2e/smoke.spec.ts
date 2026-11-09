@@ -1,8 +1,12 @@
 import { expect, test } from "@playwright/test";
+import fs from "node:fs";
+
+// Derived from the data, never hardcoded: a new topic must not break the suite.
+const DOMAINS: { id: string; concepts: string[] }[] = JSON.parse(fs.readFileSync("content/domains.json", "utf8"));
 
 test("home lists every topic and search opens a concept", async ({ page }) => {
   await page.goto("/es/");
-  await expect(page.locator(".domain-card")).toHaveCount(12);
+  await expect(page.locator(".domain-card")).toHaveCount(DOMAINS.length);
   await page.locator(".search-hero").click();
   await page.keyboard.type("hnsw");
   await expect(page.locator(".palette-results li").first()).toContainText(/HNSW/);
@@ -63,4 +67,21 @@ test("practice reveals and grades a card", async ({ page }) => {
   await expect(page.locator(".flash-a")).toBeVisible();
   await page.locator(".btn-good").click();
   await expect(page.locator(".flash-stats")).toContainText("1 reviewed");
+});
+
+test("architecture map links every box to a concept", async ({ page }) => {
+  await page.goto("/en/map/");
+  const chips = page.locator(".arch-chip");
+  expect(await chips.count()).toBeGreaterThan(40);
+  await chips.first().click();
+  await expect(page).toHaveURL(/\/en\/c\/[a-z0-9-]+\/$/);
+});
+
+test("arrow keys move between concepts in a topic", async ({ page }) => {
+  const rag = DOMAINS.find((d) => d.id === "rag")!.concepts;
+  await page.goto(`/en/c/${rag[1]}/`);
+  await page.keyboard.press("ArrowRight");
+  await expect(page).toHaveURL(new RegExp(`/en/c/${rag[2]}/$`));
+  await page.keyboard.press("ArrowLeft");
+  await expect(page).toHaveURL(new RegExp(`/en/c/${rag[1]}/$`));
 });

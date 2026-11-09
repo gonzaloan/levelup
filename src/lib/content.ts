@@ -1,7 +1,7 @@
 // Server-only: reads the content-as-data at build time. Never import from a client component.
 import fs from "node:fs";
 import path from "node:path";
-import type { Concept, Domain } from "./types";
+import type { Concept, Domain, I18n } from "./types";
 
 const ROOT = process.cwd();
 const CONTENT = path.join(ROOT, "content");
@@ -41,8 +41,19 @@ export function getDiagram(id: string): { dark: string; light: string } | null {
   return dark && light ? { dark, light } : null;
 }
 
-/** Domain index (1-based) for a stable per-domain hue. */
+/** Domain position in the syllabus (0-based); drives its hue. */
 export const domainIndex = (id: string) => load().domains.findIndex((d) => d.id === id);
+export const domainCount = () => load().domains.length;
+
+export interface MapGroup { id: string; title: I18n; note?: I18n; items: string[] }
+export interface ArchitectureMap { title: I18n; subtitle: I18n; hub: string; layers: MapGroup[]; crosscutting: MapGroup[] }
+
+/** The clickable reference-architecture map (content/architecture-map.json); unknown ids are dropped. */
+export function getArchitectureMap(): ArchitectureMap {
+  const m: ArchitectureMap = JSON.parse(fs.readFileSync(path.join(CONTENT, "architecture-map.json"), "utf8"));
+  const keep = (g: MapGroup) => ({ ...g, items: g.items.filter((id) => load().concepts.has(id)) });
+  return { ...m, layers: m.layers.map(keep), crosscutting: m.crosscutting.map(keep) };
+}
 
 export function neighbors(id: string) {
   const c = getConcept(id);

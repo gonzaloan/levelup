@@ -23,7 +23,7 @@ export default async function Interview({ params }: P) {
   const domains = getDomains();
   const fw = getConcept("design-framework");
   const cases = conceptsOf("design").filter((c) => c.id !== "design-framework");
-  const behavioral = ["behavioral-star", "staff-role", "influence", "tradeoff-communication"].map(getConcept).filter((c): c is NonNullable<typeof c> => !!c);
+  const behavioral = ["behavioral-star", "staff-role", "influence", "tradeoff-communication", "ai-assisted-engineering", "one-way-doors"].map(getConcept).filter((c): c is NonNullable<typeof c> => !!c);
   const totalQ = domains.reduce((n, d) => n + conceptsOf(d.id).reduce((k, c) => k + c.interview.length, 0), 0);
 
   return (
