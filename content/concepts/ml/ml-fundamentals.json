@@ -1,0 +1,95 @@
+{
+  "id": "ml-fundamentals",
+  "domain": "ml",
+  "level": "core",
+  "title": { "en": "Supervised learning, bias–variance & overfitting", "es": "Aprendizaje supervisado, sesgo–varianza y overfitting" },
+  "aliases": ["bias-variance tradeoff", "overfitting", "underfitting", "cross-validation", "k-fold", "train/validation/test split", "learning curves", "generalization"],
+  "tldr": {
+    "en": "Supervised learning fits a function from labeled examples; what matters is error on unseen data, so you hold data out to measure it and balance underfitting (high bias) against overfitting (high variance).",
+    "es": "El aprendizaje supervisado ajusta una función a partir de ejemplos etiquetados; lo que importa es el error sobre datos no vistos, así que apartas datos para medirlo y equilibras underfitting (sesgo alto) contra overfitting (varianza alta)."
+  },
+  "analogy": {
+    "en": "A student who memorizes last year's exam aces the practice test and fails the real one (overfitting). One who only learned \"when in doubt, pick C\" fails both (underfitting).",
+    "es": "Un estudiante que memoriza el examen del año pasado saca 10 en el de práctica y reprueba el real (overfitting). Uno que solo aprendió \"si dudas, marca la C\" reprueba ambos (underfitting)."
+  },
+  "explain": {
+    "en": "**Supervised learning** fits a function f(x) → y from labeled examples: *regression* when y is a number, *classification* when it's a class. The only score that matters is **generalization**: error on data the model has never seen. So you hold data out:\n\n- **Train** (~70–80%): fits the weights.\n- **Validation** (~10–15%): chooses hyperparameters and models.\n- **Test** (~10–15%): touched *once*, for the number you report.\n\nWith little data, use **k-fold cross-validation** (k = 5 or 10): train k times, each fold is the validation set once, average the scores.\n\nExpected error on new data splits into **bias² + variance + irreducible noise**:\n\n- **Underfitting (high bias)**: the model is too simple for the pattern. Train and validation error are *both* high.\n- **Overfitting (high variance)**: the model memorizes noise. Train error is low, validation error much higher.\n\nMore capacity lowers bias and raises variance: that's the trade-off. A **learning curve** (error vs. training-set size) tells you which side you're on: a big gap that shrinks as data grows means more data will help; two flat, high curves mean it won't.\n\n- Underfit → bigger model, better features, less regularization, train longer.\n- Overfit → more data, [[regularization]], simpler model, early stopping.",
+    "es": "El **aprendizaje supervisado** ajusta una función f(x) → y a partir de ejemplos etiquetados: *regresión* cuando y es un número, *clasificación* cuando es una clase. La única nota que importa es la **generalización**: el error sobre datos que el modelo nunca vio. Por eso apartas datos:\n\n- **Train** (~70–80%): ajusta los pesos.\n- **Validación** (~10–15%): elige hiperparámetros y modelos.\n- **Test** (~10–15%): se usa *una sola vez*, para el número que reportas.\n\nCon pocos datos, usa **validación cruzada k-fold** (k = 5 o 10): entrenas k veces, cada fold es el set de validación una vez, y promedias.\n\nEl error esperado sobre datos nuevos se descompone en **sesgo² + varianza + ruido irreducible**:\n\n- **Underfitting (sesgo alto)**: el modelo es demasiado simple para el patrón. El error de train y el de validación son *ambos* altos.\n- **Overfitting (varianza alta)**: el modelo memoriza el ruido. El error de train es bajo y el de validación, mucho más alto.\n\nMás capacidad baja el sesgo y sube la varianza: ese es el trade-off. Una **curva de aprendizaje** (error vs. tamaño del set de entrenamiento) te dice de qué lado estás: una brecha grande que se cierra al crecer los datos indica que más datos ayudarán; dos curvas planas y altas, que no.\n\n- Underfitting → modelo más grande, mejores features, menos regularización, entrenar más.\n- Overfitting → más datos, [[regularization]], modelo más simple, early stopping."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  D[(Labeled data)] --> S[\"Split: train / val / test\"]\n  S --> T[Fit on train]\n  T --> E{\"Train vs val error?\"}\n  E -->|both high| U[\"Underfit: high bias\"]\n  E -->|low train, high val| O[\"Overfit: high variance\"]\n  E -->|both low, small gap| G[Evaluate test once]\n  U --> U2[\"More capacity,<br/>better features\"]\n  O --> O2[\"More data,<br/>regularize, simplify\"]\n  U2 --> T\n  O2 --> T",
+    "caption": {
+      "en": "The train–validation gap is the diagnosis: both high means underfit, a large gap means overfit. The test set is only for the final number.",
+      "es": "La brecha entre train y validación es el diagnóstico: ambos altos indican underfitting y una brecha grande, overfitting. El test es solo para el número final."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Complexity sweep, cross-validation and learning curve (sklearn)", "es": "Barrido de complejidad, validación cruzada y curva de aprendizaje (sklearn)" },
+    "source": "import numpy as np\nfrom sklearn.datasets import make_classification\nfrom sklearn.model_selection import train_test_split, cross_val_score, learning_curve\nfrom sklearn.tree import DecisionTreeClassifier\n\nX, y = make_classification(n_samples=5000, n_features=20, n_informative=10,\n                           flip_y=0.1, random_state=0)   # 10% of labels randomized\n# Carve out the test set FIRST; it is not touched until the very end\nX_dev, X_test, y_dev, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=0)\n\n# Complexity sweep: shallow trees underfit (high bias), unlimited depth overfits (high variance)\nfor depth in [1, 4, 8, None]:\n    m = DecisionTreeClassifier(max_depth=depth, random_state=0)\n    train = m.fit(X_dev, y_dev).score(X_dev, y_dev)\n    cv = cross_val_score(m, X_dev, y_dev, cv=5).mean()      # 5-fold CV on dev only\n    print(f\"depth={depth}: train={train:.2f} cv={cv:.2f} gap={train - cv:.2f}\")\n# depth=1: 0.60 / 0.59 (underfit) ... depth=8: 0.90 / 0.83 ... None: 1.00 / 0.80 (overfit)\n\n# Learning curve of the overfit model: does more data close the gap?\nsizes, tr, va = learning_curve(DecisionTreeClassifier(random_state=0), X_dev, y_dev,\n                               cv=5, train_sizes=np.linspace(0.1, 1.0, 4))\nfor n, a, b in zip(sizes, tr.mean(axis=1), va.mean(axis=1)):\n    print(f\"n={n}: train={a:.2f} val={b:.2f}\")   # val still rising => more data helps\n\nfinal = DecisionTreeClassifier(max_depth=8, random_state=0).fit(X_dev, y_dev)  # chosen by CV\nprint(f\"test={final.score(X_test, y_test):.2f}\")   # report once, never tune on it"
+  },
+  "example": {
+    "en": "A churn model (gradient-boosted trees, depth 12, 1,000 trees) scores **0.99 AUC on train and 0.74 on validation**: a 0.25 gap, classic overfitting. The learning curve shows validation AUC still climbing at the full 40k rows, but there is no more data. You cut depth to 6, require 100 rows per leaf and stop adding trees when validation AUC stalls: **train 0.86, validation 0.82**. Then you notice the same users appear in both splits; re-splitting by user drops validation to 0.79, the honest number. Test AUC, measured once: 0.79.",
+    "es": "Un modelo de churn (árboles con gradient boosting, profundidad 12, 1,000 árboles) saca **0.99 de AUC en train y 0.74 en validación**: una brecha de 0.25, overfitting de manual. La curva de aprendizaje muestra que el AUC de validación sigue subiendo con las 40k filas completas, pero no hay más datos. Bajas la profundidad a 6, exiges 100 filas por hoja y dejas de agregar árboles cuando el AUC de validación se estanca: **train 0.86, validación 0.82**. Luego notas que los mismos usuarios aparecen en ambos splits; al separar por usuario, validación baja a 0.79, el número honesto. AUC en test, medido una vez: 0.79."
+  },
+  "pros": [
+    { "en": "The train–validation gap is a cheap, model-agnostic diagnostic that tells you which lever to pull.", "es": "La brecha train–validación es un diagnóstico barato y agnóstico al modelo que te dice qué palanca mover." },
+    { "en": "k-fold CV uses every row for both training and validation, and gives an error bar (std across folds).", "es": "k-fold CV usa cada fila tanto para entrenar como para validar, y te da una barra de error (desviación entre folds)." },
+    { "en": "An untouched test set is your only unbiased estimate on new data from the same distribution.", "es": "Un test intacto es tu única estimación sin sesgo sobre datos nuevos de la misma distribución." }
+  ],
+  "cons": [
+    { "en": "k-fold costs k× the training compute; for large deep nets a single holdout is the norm.", "es": "k-fold cuesta k veces el cómputo de entrenamiento; en redes profundas grandes lo normal es un solo holdout." },
+    { "en": "Random splits lie on time series, grouped data (same user in train and val) and near-duplicates.", "es": "Los splits aleatorios mienten con series de tiempo, datos agrupados (el mismo usuario en train y validación) y casi duplicados." },
+    { "en": "Hundreds of tuning runs against one validation set slowly overfit it too.", "es": "Cientos de corridas de tuning contra un mismo set de validación terminan sobreajustándolo también." }
+  ],
+  "whenToUse": {
+    "en": "Always: every supervised model needs a held-out estimate. Use k-fold CV when data is small and training is cheap (most tabular work); a fixed train/val/test split when training is expensive.",
+    "es": "Siempre: todo modelo supervisado necesita una estimación con datos apartados. Usa k-fold CV cuando hay pocos datos y entrenar es barato (casi todo lo tabular); un split fijo train/val/test cuando entrenar es caro."
+  },
+  "whenNotToUse": {
+    "en": "Don't shuffle-split time series (use forward-chaining, e.g. `TimeSeriesSplit`) or grouped data (use `GroupKFold`), and don't k-fold a model that takes days to train.",
+    "es": "No hagas splits aleatorios en series de tiempo (usa validación hacia adelante, p. ej. `TimeSeriesSplit`) ni en datos agrupados (usa `GroupKFold`), y no hagas k-fold con un modelo que tarda días en entrenar."
+  },
+  "numbers": [
+    { "en": "Expected squared error = bias² + variance + irreducible noise σ².", "es": "Error cuadrático esperado = sesgo² + varianza + ruido irreducible σ²." },
+    { "en": "Split rule of thumb: 80/10/10 or 70/15/15; with millions of examples, 98/1/1 still leaves 10k+ rows for val and for test.", "es": "Regla práctica de split: 80/10/10 o 70/15/15; con millones de ejemplos, 98/1/1 igual deja más de 10k filas para validación y para test." },
+    { "en": "k = 5 or 10 folds; Kohavi (1995) recommended stratified 10-fold CV for model selection.", "es": "k = 5 o 10 folds; Kohavi (1995) recomendó 10-fold estratificado para selección de modelos." },
+    { "en": "Test noise: at ~90% accuracy on 1,000 examples, the 95% confidence interval is about ±1.9 points.", "es": "Ruido del test: con ~90% de accuracy sobre 1,000 ejemplos, el intervalo de confianza al 95% es de unos ±1.9 puntos." }
+  ],
+  "pitfalls": [
+    { "en": "Leakage: fitting the scaler, imputer or feature selection on all data before splitting. Put preprocessing in a `Pipeline` so it's fit per fold.", "es": "Fuga de datos (leakage): ajustar el scaler, el imputador o la selección de features con todos los datos antes de separar. Mete el preprocesamiento en un `Pipeline` para que se ajuste en cada fold." },
+    { "en": "Random splits on time series or grouped data: the same user in train and val inflates every metric.", "es": "Splits aleatorios en series de tiempo o datos agrupados: el mismo usuario en train y validación infla todas las métricas." },
+    { "en": "Peeking at the test set to pick a model: its number stops being an unbiased estimate.", "es": "Mirar el test para elegir modelo: su número deja de ser una estimación sin sesgo." },
+    { "en": "Assuming validation looks like production: a great score on last year's data says little after drift.", "es": "Suponer que validación se parece a producción: un gran puntaje sobre datos del año pasado dice poco después del drift." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Train accuracy is 98%, validation 75%. What do you do?", "es": "La accuracy en train es 98% y en validación 75%. ¿Qué haces?" },
+      "a": {
+        "en": "That 23-point gap says high variance, but first I rule out a broken split: leakage, duplicates, or train and validation from different periods or users. If the split is sound, I plot a learning curve. If validation is still climbing with more data, the best fix is more or augmented data. Otherwise I cut effective capacity: stronger regularization, early stopping, fewer or better features, a smaller model. I change one lever at a time, track the gap on validation and keep the test set untouched until the end.",
+        "es": "Esa brecha de 23 puntos indica varianza alta, pero primero descarto un split roto: leakage, duplicados, o train y validación de periodos o usuarios distintos. Si el split está bien, grafico una curva de aprendizaje. Si la validación sigue subiendo con más datos, la mejor solución es conseguir más datos o aumentarlos. Si no, reduzco la capacidad efectiva: más regularización, early stopping, menos features o mejores, un modelo más chico. Cambio una palanca a la vez, sigo la brecha en validación y no toco el test hasta el final."
+      }
+    },
+    {
+      "q": { "en": "Explain the bias–variance trade-off.", "es": "Explica el trade-off entre sesgo y varianza." },
+      "a": {
+        "en": "Expected error on new data is bias squared plus variance plus irreducible noise. Bias is systematic error from wrong assumptions, like a straight line through curved data: it misses the same way whatever the training sample. Variance is sensitivity to the particular sample: retrain on fresh data and you get a different model. More capacity lowers bias and raises variance. Bagging mainly cuts variance, boosting mainly cuts bias. One caveat: huge over-parameterized networks show *double descent* and generalize well past the classic sweet spot, so I diagnose with validation curves instead of assuming a U-shape.",
+        "es": "El error esperado sobre datos nuevos es sesgo al cuadrado más varianza más ruido irreducible. El sesgo es el error sistemático por supuestos equivocados, como una recta sobre datos curvos: falla igual con cualquier muestra de entrenamiento. La varianza es la sensibilidad a la muestra concreta: reentrenas con datos nuevos y obtienes otro modelo. Más capacidad baja el sesgo y sube la varianza. El bagging reduce sobre todo varianza; el boosting, sobre todo sesgo. Un matiz: las redes enormes sobreparametrizadas muestran *double descent* y generalizan bien más allá del punto óptimo clásico, así que diagnostico con curvas de validación en lugar de asumir la forma de U."
+      }
+    },
+    {
+      "q": { "en": "When does random k-fold cross-validation give you the wrong answer?", "es": "¿Cuándo te da una respuesta equivocada el k-fold aleatorio?" },
+      "a": {
+        "en": "Whenever rows aren't independent. With time series, random folds let the model train on the future and predict the past, so I use forward-chaining splits that mimic deployment. With grouped data, like many rows per user or patient, the model recognizes the entity instead of learning the pattern, so I use GroupKFold. With near-duplicates, I dedupe before splitting. With heavy class imbalance I stratify so every fold has the rare class. The rule: the split must mimic how the model meets data in production.",
+        "es": "Siempre que las filas no sean independientes. En series de tiempo, los folds aleatorios dejan que el modelo entrene con el futuro y prediga el pasado, así que uso splits hacia adelante que imitan el despliegue. Con datos agrupados, como muchas filas por usuario o paciente, el modelo reconoce a la entidad en lugar de aprender el patrón, así que uso GroupKFold. Con casi duplicados, deduplico antes de separar. Con clases muy desbalanceadas estratifico para que cada fold tenga la clase rara. La regla: el split debe imitar cómo el modelo verá los datos en producción."
+      }
+    }
+  ],
+  "related": ["regularization", "gradient-descent", "feature-engineering", "classification-metrics", "imbalance-calibration", "drift"],
+  "sources": [
+    { "title": "scikit-learn — Cross-validation: evaluating estimator performance", "url": "https://scikit-learn.org/stable/modules/cross_validation.html" },
+    { "title": "scikit-learn — Validation curves and learning curves", "url": "https://scikit-learn.org/stable/modules/learning_curve.html" },
+    { "title": "Kohavi (1995) — A Study of Cross-Validation and Bootstrap for Accuracy Estimation and Model Selection", "url": "https://www.ijcai.org/Proceedings/95-2/Papers/016.pdf" },
+    { "title": "Nakkiran et al. — Deep Double Descent: Where Bigger Models and More Data Hurt", "url": "https://arxiv.org/abs/1912.02292" }
+  ]
+}

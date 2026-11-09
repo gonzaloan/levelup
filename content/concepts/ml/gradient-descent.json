@@ -1,0 +1,96 @@
+{
+  "id": "gradient-descent",
+  "domain": "ml",
+  "level": "core",
+  "title": { "en": "Loss functions & gradient descent", "es": "Funciones de pérdida y descenso de gradiente" },
+  "aliases": ["SGD", "Adam", "AdamW", "learning rate", "cross-entropy", "MSE", "momentum", "LR warmup"],
+  "tldr": {
+    "en": "Training means minimizing a loss: compute the gradient on a mini-batch and step weights the opposite way, scaled by the learning rate. Cross-entropy for classification, MSE for regression, AdamW with warmup for transformers.",
+    "es": "Entrenar es minimizar una pérdida: calculas el gradiente en un mini-batch y mueves los pesos en sentido contrario, escalado por el learning rate. Entropía cruzada para clasificar, MSE para regresión, AdamW con warmup para transformers."
+  },
+  "analogy": {
+    "en": "Walking downhill in thick fog: you only feel the slope under your feet, so you step downhill and check again. The learning rate is your stride: too long overshoots the valley, too short never gets there.",
+    "es": "Bajar una montaña con niebla espesa: solo sientes la pendiente bajo tus pies, así que das un paso cuesta abajo y vuelves a tantear. El learning rate es el largo del paso: muy largo te pasas del valle, muy corto nunca llegas."
+  },
+  "explain": {
+    "en": "A **loss function** turns \"how wrong is the model\" into one number to minimize:\n\n- **MSE** (mean squared error) for regression: squares errors, so big misses dominate.\n- **Cross-entropy / log loss** for classification: −log p(true class). It's the negative log-likelihood of a softmax or sigmoid output, so minimizing it is maximum likelihood; its gradient w.r.t. the logits is simply **p − y**, large when the model is confidently wrong.\n\n**Gradient descent** moves every weight downhill: **w ← w − η·∇L(w)**. The **learning rate** η is the most important hyperparameter: too high diverges, too low crawls.\n\n- **Mini-batch SGD**: estimate the gradient on ~32–4,096 examples instead of the full dataset. Cheap per step, GPU-friendly, and the noise is a mild regularizer.\n- **Momentum** (β ≈ 0.9): a running average of gradients, so you roll along narrow valleys instead of zig-zagging.\n- **Adam**: momentum plus a per-parameter step size from a running average of squared gradients. **AdamW** applies weight decay separately from that adaptive step; it's the default for transformers.\n- **Schedules**: **warmup** ramps the LR up over the first few hundred to few thousand steps, while Adam's statistics are still noisy; then **cosine or linear decay** lets the model settle.",
+    "es": "Una **función de pérdida** convierte \"qué tan mal está el modelo\" en un solo número a minimizar:\n\n- **MSE** (error cuadrático medio) para regresión: eleva los errores al cuadrado, así que los fallos grandes dominan.\n- **Entropía cruzada / log loss** para clasificación: −log p(clase correcta). Es la log-verosimilitud negativa de una salida softmax o sigmoide, así que minimizarla es máxima verosimilitud; su gradiente respecto de los logits es simplemente **p − y**, grande cuando el modelo se equivoca con confianza.\n\nEl **descenso de gradiente** mueve cada peso cuesta abajo: **w ← w − η·∇L(w)**. La **tasa de aprendizaje** (learning rate) η es el hiperparámetro más importante: muy alta diverge, muy baja avanza a paso de tortuga.\n\n- **SGD con mini-batches**: estima el gradiente con ~32–4,096 ejemplos en lugar de todo el dataset. Cada paso es barato, aprovecha la GPU y el ruido funciona como un regularizador leve.\n- **Momentum** (β ≈ 0.9): un promedio móvil de gradientes, para avanzar por valles angostos en lugar de zigzaguear.\n- **Adam**: momentum más un tamaño de paso por parámetro, calculado con un promedio móvil de los gradientes al cuadrado. **AdamW** aplica el weight decay aparte de ese paso adaptativo; es el default para transformers.\n- **Schedules**: el **warmup** sube el LR durante los primeros cientos o miles de pasos, mientras las estadísticas de Adam todavía son ruidosas; luego un **decaimiento coseno o lineal** deja que el modelo se asiente."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  B[Sample mini-batch] --> F[Forward pass]\n  W[(Weights)] --> F\n  F --> L[\"Loss<br/>cross-entropy or MSE\"]\n  L --> G[\"Backprop:<br/>gradient of loss\"]\n  G --> O[\"AdamW step<br/>momentum + adaptive\"]\n  S[\"LR schedule<br/>warmup then decay\"] -.->|lr| O\n  O -->|update| W\n  O -->|next step| B",
+    "caption": {
+      "en": "Every training step is the same loop: sample, forward, loss, gradient, update. The schedule only changes how big each step is.",
+      "es": "Cada paso de entrenamiento es el mismo ciclo: muestrear, forward, pérdida, gradiente, actualizar. El schedule solo cambia el tamaño de cada paso."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Mini-batch SGD with momentum on logistic regression (numpy)", "es": "SGD con mini-batches y momentum en regresión logística (numpy)" },
+    "source": "import numpy as np\n\n# Tiny logistic regression trained with mini-batch SGD + momentum\nrng = np.random.default_rng(0)\nX = rng.normal(size=(2000, 2))\ntrue_w, true_b = np.array([2.0, -3.0]), 0.5\ny = (X @ true_w + true_b + rng.logistic(size=2000) > 0).astype(float)\n\ndef sigmoid(z): return 1 / (1 + np.exp(-z))\n\ndef log_loss(w, b):  # binary cross-entropy = negative log-likelihood\n    p = np.clip(sigmoid(X @ w + b), 1e-7, 1 - 1e-7)\n    return -np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))\n\nw, b = np.zeros(2), 0.0\nvw, vb = np.zeros(2), 0.0                  # momentum buffers\nlr, beta, batch = 0.05, 0.9, 64\n\nfor step in range(2001):\n    idx = rng.integers(0, len(X), batch)   # sample a mini-batch\n    p = sigmoid(X[idx] @ w + b)\n    err = p - y[idx]                       # dLoss/dlogit for sigmoid + cross-entropy\n    gw, gb = X[idx].T @ err / batch, err.mean()\n    vw = beta * vw + gw                    # momentum: running sum of gradients\n    vb = beta * vb + gb\n    w, b = w - lr * vw, b - lr * vb        # step against the gradient\n    if step % 500 == 0:\n        print(f\"step {step:4d}  loss {log_loss(w, b):.3f}\")   # 0.688 -> ~0.33\n\nprint(\"learned:\", w.round(2), round(b, 2), \" true:\", true_w, true_b)  # ~[1.9 -2.8] 0.55\n\n# Transformer-style in PyTorch: AdamW + warmup + cosine decay\n# opt = torch.optim.AdamW(model.parameters(), lr=3e-4, betas=(0.9, 0.95), weight_decay=0.1)\n# sched = transformers.get_cosine_schedule_with_warmup(opt, 2_000, 100_000)"
+  },
+  "example": {
+    "en": "You fine-tune BERT-base for ticket classification with Adam's textbook LR of **1e-3**. Within a few hundred steps the model collapses to predicting the majority class: the pretrained weights get wrecked. You switch to the BERT paper's range: **LR 2e-5 to 5e-5, batch 16–32, 2–4 epochs**, with linear warmup over the first 10% of steps, then linear decay. Loss falls smoothly and validation accuracy plateaus by epoch 3. Lesson: check the LR first, and fine-tuning wants a far smaller LR than training from scratch.",
+    "es": "Haces fine-tuning de BERT-base para clasificar tickets con el LR de manual de Adam, **1e-3**. En unos cientos de pasos el modelo colapsa y predice siempre la clase mayoritaria: los pesos preentrenados quedan destruidos. Cambias al rango del paper de BERT: **LR de 2e-5 a 5e-5, batch de 16–32, 2–4 épocas**, con warmup lineal en el primer 10% de los pasos y después decaimiento lineal. La pérdida baja sin sobresaltos y la accuracy de validación se estabiliza en la época 3. Lección: revisa primero el LR; el fine-tuning necesita un LR mucho más chico que entrenar desde cero."
+  },
+  "pros": [
+    { "en": "Cost per step doesn't depend on dataset size: mini-batch SGD scales to billions of examples and parameters.", "es": "El costo por paso no depende del tamaño del dataset: SGD con mini-batches escala a miles de millones de ejemplos y parámetros." },
+    { "en": "AdamW works across architectures with little tuning beyond the learning rate.", "es": "AdamW funciona en casi cualquier arquitectura con poco tuning además del learning rate." },
+    { "en": "Cross-entropy yields probabilities you can threshold and calibrate, not just a ranking.", "es": "La entropía cruzada da probabilidades a las que puedes aplicar un umbral y calibrar, no solo un ranking." }
+  ],
+  "cons": [
+    { "en": "Adam stores two moment tensors per parameter: optimizer state is 2× the weights at equal precision, more in mixed precision.", "es": "Adam guarda dos tensores de momentos por parámetro: el estado del optimizador ocupa el doble que los pesos a igual precisión, y más en precisión mixta." },
+    { "en": "Very sensitive to the learning rate; a wrong one wastes a whole run.", "es": "Muy sensible al learning rate; uno equivocado desperdicia una corrida completa." },
+    { "en": "On non-convex losses there's no global-optimum guarantee; results vary with seed and init.", "es": "En pérdidas no convexas no hay garantía de óptimo global; los resultados varían con la semilla y la inicialización." }
+  ],
+  "whenToUse": {
+    "en": "AdamW + warmup + cosine decay for transformers and most deep nets. SGD + momentum remains a strong choice for CNNs on vision (the ResNet recipe).",
+    "es": "AdamW + warmup + decaimiento coseno para transformers y la mayoría de las redes profundas. SGD + momentum sigue siendo una opción fuerte para CNNs de visión (la receta de ResNet)."
+  },
+  "whenNotToUse": {
+    "en": "Small convex problems: closed-form least squares or L-BFGS (scikit-learn's default for `LogisticRegression`) are faster and need no LR. Gradient-boosted trees fit each tree to gradients, not via backprop.",
+    "es": "Problemas convexos pequeños: mínimos cuadrados en forma cerrada o L-BFGS (el default de `LogisticRegression` en scikit-learn) son más rápidos y no necesitan LR. Los árboles con gradient boosting ajustan cada árbol a los gradientes, no usan backprop."
+  },
+  "numbers": [
+    { "en": "Adam defaults: lr 1e-3, β1 0.9, β2 0.999, ε 1e-8 (Kingma & Ba); LLM pretraining often uses β2 0.95 (GPT-3, LLaMA).", "es": "Defaults de Adam: lr 1e-3, β1 0.9, β2 0.999, ε 1e-8 (Kingma y Ba); el preentrenamiento de LLMs suele usar β2 0.95 (GPT-3, LLaMA)." },
+    { "en": "LLaMA recipe: AdamW, weight decay 0.1, 2,000 warmup steps, cosine decay to 10% of peak LR, gradient clipping 1.0.", "es": "Receta de LLaMA: AdamW, weight decay 0.1, 2,000 pasos de warmup, decaimiento coseno hasta el 10% del LR máximo, gradient clipping de 1.0." },
+    { "en": "BERT fine-tuning grid: LR 5e-5, 3e-5 or 2e-5; batch 16 or 32; 2–4 epochs.", "es": "Grid de fine-tuning de BERT: LR 5e-5, 3e-5 o 2e-5; batch 16 o 32; 2–4 épocas." },
+    { "en": "Mixed-precision Adam needs ~16 bytes per parameter (weights, grads, fp32 master + 2 moments): ~112 GB for 7B, before activations.", "es": "Adam en precisión mixta necesita ~16 bytes por parámetro (pesos, gradientes, copia maestra fp32 + 2 momentos): ~112 GB para 7B, sin contar activaciones." },
+    { "en": "Original Transformer: 4,000 warmup steps, then LR decays ∝ 1/√step.", "es": "Transformer original: 4,000 pasos de warmup y luego el LR decae ∝ 1/√paso." }
+  ],
+  "pitfalls": [
+    { "en": "MSE on sigmoid outputs for classification: gradients vanish exactly when the model is confidently wrong.", "es": "MSE sobre salidas sigmoide para clasificar: los gradientes se desvanecen justo cuando el modelo se equivoca con confianza." },
+    { "en": "Adam + L2 in the loss instead of AdamW: the adaptive step rescales the penalty and weakens it.", "es": "Adam + L2 en la pérdida en vez de AdamW: el paso adaptativo reescala la penalización y la debilita." },
+    { "en": "Changing batch size without retuning LR; for SGD start from the linear-scaling rule plus warmup (Goyal et al., 2017).", "es": "Cambiar el batch size sin reajustar el LR; con SGD parte de la regla de escalado lineal más warmup (Goyal et al., 2017)." },
+    { "en": "Training transformers without warmup or gradient clipping: early loss spikes and NaNs.", "es": "Entrenar transformers sin warmup ni gradient clipping: picos de pérdida y NaNs al inicio." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why cross-entropy and not MSE for classification?", "es": "¿Por qué entropía cruzada y no MSE para clasificar?" },
+      "a": {
+        "en": "Three reasons. First, cross-entropy is the negative log-likelihood of a categorical model, so minimizing it is maximum likelihood and gives usable probabilities. Second, gradients: with sigmoid or softmax, the gradient w.r.t. the logits is p − y, big when the model is confidently wrong. With MSE on a sigmoid it gets multiplied by p(1 − p), which goes to zero when the output saturates, so learning stalls exactly when the model is most wrong. Third, for logistic regression cross-entropy is convex in the weights; MSE isn't.",
+        "es": "Por tres razones. Primero, la entropía cruzada es la log-verosimilitud negativa de un modelo categórico, así que minimizarla es máxima verosimilitud y da probabilidades útiles. Segundo, los gradientes: con sigmoide o softmax, el gradiente respecto de los logits es p − y, grande cuando el modelo se equivoca con confianza. Con MSE sobre una sigmoide se multiplica por p(1 − p), que tiende a cero cuando la salida se satura, así que el aprendizaje se frena justo cuando el modelo está más equivocado. Tercero, en regresión logística la entropía cruzada es convexa en los pesos; MSE no lo es."
+      }
+    },
+    {
+      "q": { "en": "Your training loss spikes to NaN after a few hundred steps. What do you check?", "es": "Tu pérdida de entrenamiento salta a NaN después de unos cientos de pasos. ¿Qué revisas?" },
+      "a": {
+        "en": "In order of likelihood. Learning rate: cut it 3–10× or lengthen warmup, because early Adam steps are large while its variance estimate is noisy. Gradient norm: log it every step and clip at 1.0. Numerics: fp16 overflow, so switch to bf16 or use loss scaling, and check custom losses for log(0). Data: log the batch that spiked; empty, corrupt or extreme examples are common culprits. I reproduce on a small model first so each experiment takes minutes, not hours.",
+        "es": "Por orden de probabilidad. Learning rate: lo bajo 3–10× o alargo el warmup, porque los primeros pasos de Adam son grandes mientras su estimación de varianza es ruidosa. Norma del gradiente: la registro en cada paso y hago clipping en 1.0. Numérica: overflow en fp16, así que paso a bf16 o uso loss scaling, y reviso que no haya log(0) en pérdidas propias. Datos: registro el batch del pico; los ejemplos vacíos, corruptos o extremos son culpables frecuentes. Primero lo reproduzco en un modelo chico para que cada experimento tome minutos, no horas."
+      }
+    },
+    {
+      "q": { "en": "Adam or SGD with momentum: which and why?", "es": "¿Adam o SGD con momentum? ¿Cuál y por qué?" },
+      "a": {
+        "en": "For transformers, AdamW: per-parameter step sizes cope with the very different gradient scales across embeddings, attention and MLP layers, and it converges fast with little tuning. SGD with momentum keeps one state buffer instead of two and is still standard for CNN image classification, where it generalizes as well or slightly better. If Adam's memory blocks a huge model, I shard optimizer state with FSDP/ZeRO or try a memory-light optimizer like Adafactor before giving up adaptivity.",
+        "es": "Para transformers, AdamW: el tamaño de paso por parámetro maneja las escalas de gradiente muy distintas entre embeddings, atención y capas MLP, y converge rápido con poco tuning. SGD con momentum guarda un buffer de estado en lugar de dos y sigue siendo estándar en clasificación de imágenes con CNNs, donde generaliza igual o un poco mejor. Si la memoria de Adam bloquea un modelo enorme, particiono el estado del optimizador con FSDP/ZeRO o pruebo un optimizador liviano como Adafactor antes de renunciar a la adaptividad."
+      }
+    }
+  ],
+  "related": ["neural-networks", "regularization", "ml-fundamentals", "distributed-training", "gpu-memory-math", "transformer"],
+  "sources": [
+    { "title": "Ruder — An overview of gradient descent optimization algorithms", "url": "https://arxiv.org/abs/1609.04747" },
+    { "title": "Kingma & Ba — Adam: A Method for Stochastic Optimization", "url": "https://arxiv.org/abs/1412.6980" },
+    { "title": "Loshchilov & Hutter — Decoupled Weight Decay Regularization (AdamW)", "url": "https://arxiv.org/abs/1711.05101" },
+    { "title": "Touvron et al. — LLaMA: Open and Efficient Foundation Language Models", "url": "https://arxiv.org/abs/2302.13971" }
+  ]
+}

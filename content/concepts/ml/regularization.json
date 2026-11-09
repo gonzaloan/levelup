@@ -1,0 +1,96 @@
+{
+  "id": "regularization",
+  "domain": "ml",
+  "level": "core",
+  "title": { "en": "Regularization", "es": "Regularización" },
+  "aliases": ["weight decay", "L2", "L1", "lasso", "dropout", "early stopping", "label smoothing", "data augmentation"],
+  "tldr": {
+    "en": "Regularization trades a little training fit for better generalization: penalize large weights (L2/L1), inject noise (dropout, augmentation, label smoothing) or stop before the model memorizes (early stopping).",
+    "es": "La regularización cambia un poco de ajuste en train por mejor generalización: penaliza pesos grandes (L2/L1), inyecta ruido (dropout, data augmentation, label smoothing) o se detiene antes de que el modelo memorice (early stopping)."
+  },
+  "analogy": {
+    "en": "Packing for a flight with a strict weight limit: you bring only what you really need. The penalty forces the model to explain the data with fewer, smaller weights instead of memorizing every quirk.",
+    "es": "Hacer la maleta para un vuelo con límite de peso estricto: llevas solo lo que de verdad necesitas. La penalización obliga al modelo a explicar los datos con menos pesos y más chicos, en lugar de memorizar cada rareza."
+  },
+  "explain": {
+    "en": "**Regularization** constrains a model so it learns the signal, not the noise in its training set. It cuts variance at the price of a little bias (see [[ml-fundamentals]]); the best regularizer is still more data.\n\n- **L2 / weight decay**: add λ·Σw² to the loss. Shrinks all weights smoothly toward zero, giving a smoother function. With Adam, use **AdamW** (decoupled decay), not L2 inside the loss.\n- **L1 (lasso)**: add λ·Σ|w|. Its constant pull drives many weights to *exactly* zero, so it selects features. **Elastic net** mixes L1 and L2.\n- **Dropout**: in training, zero each activation with probability p and scale the survivors by 1/(1−p); at inference use every unit. Like averaging many thinned networks.\n- **Early stopping**: track validation loss, keep the best checkpoint, stop after N epochs without improvement.\n- **Data augmentation**: crops, flips, noise, paraphrases. More varied data teaches the invariances you care about.\n- **Label smoothing**: train on soft targets (1−ε on the true class, ε spread across all classes) so the model can't push logits toward infinity.\n\nTune each strength (λ, p, ε, patience) on validation, never on test.",
+    "es": "La **regularización** restringe al modelo para que aprenda la señal y no el ruido de su set de entrenamiento. Reduce varianza a cambio de un poco de sesgo (ver [[ml-fundamentals]]); el mejor regularizador sigue siendo tener más datos.\n\n- **L2 / weight decay**: suma λ·Σw² a la pérdida. Encoge todos los pesos suavemente hacia cero y la función resultante es más suave. Con Adam, usa **AdamW** (decay desacoplado), no L2 dentro de la pérdida.\n- **L1 (lasso)**: suma λ·Σ|w|. Su tirón constante lleva muchos pesos a *exactamente* cero, así que selecciona features. **Elastic net** combina L1 y L2.\n- **Dropout**: en entrenamiento, apaga cada activación con probabilidad p y escala las que quedan por 1/(1−p); en inferencia usa todas las unidades. Es como promediar muchas redes adelgazadas.\n- **Early stopping**: sigue la pérdida de validación, guarda el mejor checkpoint y detente tras N épocas sin mejora.\n- **Data augmentation**: recortes, flips, ruido, paráfrasis. Datos más variados enseñan las invarianzas que te importan.\n- **Label smoothing**: entrena con objetivos suaves (1−ε para la clase correcta, ε repartido entre todas las clases) para que el modelo no empuje los logits hacia el infinito.\n\nAjusta cada intensidad (λ, p, ε, paciencia) en validación, nunca en test."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  D[(Training data)] --> A[\"Augment<br/>crop, flip, noise\"]\n  A --> M[Model with dropout]\n  M --> L[\"Loss with<br/>label smoothing\"]\n  L --> R[\"Optional L1 penalty\"]\n  R --> O[\"AdamW step<br/>decoupled weight decay\"]\n  O -->|next epoch| A\n  O --> V{\"Val loss improved?\"}\n  V -->|yes| K[Save checkpoint]\n  V -->|no for N epochs| S[\"Stop, restore best\"]",
+    "caption": {
+      "en": "Each technique plugs into a different part of the loop: the data, the model, the loss, the optimizer, or the decision to stop.",
+      "es": "Cada técnica se conecta en una parte distinta del ciclo: los datos, el modelo, la pérdida, el optimizador o la decisión de parar."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Dropout, label smoothing, AdamW decay, L1 and early stopping (PyTorch)", "es": "Dropout, label smoothing, decay de AdamW, L1 y early stopping (PyTorch)" },
+    "source": "import torch, torch.nn as nn\nimport torchvision.transforms as T\n\n# Augmentation: a new random variant of each 28x28 image every epoch (train set only)\naugment = T.Compose([T.RandomAffine(degrees=10, translate=(0.1, 0.1)), T.ToTensor()])\n\nmodel = nn.Sequential(\n    nn.Flatten(), nn.Linear(28 * 28, 512), nn.ReLU(),\n    nn.Dropout(p=0.3),                        # zeroes 30% of activations, train mode only\n    nn.Linear(512, 10),\n)\nloss_fn = nn.CrossEntropyLoss(label_smoothing=0.1)  # true class target 0.91, others 0.01\n# AdamW: decoupled weight decay (L2-style shrink) applied outside the adaptive step\nopt = torch.optim.AdamW(model.parameters(), lr=1e-3, weight_decay=0.05)\n\ndef l1(m, lam=1e-6):                          # optional L1 term: pushes weights to exactly 0\n    return lam * sum(p.abs().sum() for p in m.parameters())\n\nbest, patience, bad = float(\"inf\"), 5, 0\nfor epoch in range(100):\n    model.train()                             # dropout ON\n    for x, y in train_loader:                 # dataset built with transform=augment\n        loss = loss_fn(model(x), y) + l1(model)\n        opt.zero_grad(); loss.backward(); opt.step()\n    model.eval()                              # dropout OFF for evaluation\n    with torch.no_grad():\n        val = sum(loss_fn(model(x), y).item() for x, y in val_loader) / len(val_loader)\n    if val < best:                            # early stopping: keep the best checkpoint\n        best, bad = val, 0\n        torch.save(model.state_dict(), \"best.pt\")\n    else:\n        bad += 1\n        if bad >= patience: break\nmodel.load_state_dict(torch.load(\"best.pt\"))"
+  },
+  "example": {
+    "en": "A product-photo classifier (ResNet-50, 20k images, 50 classes) reaches **99% train / 78% validation** accuracy, and validation loss starts rising at epoch 12 while train loss keeps falling. You add random crops and flips, weight decay, label smoothing 0.1 and early stopping with patience 5. Train accuracy drops to ~90% and validation rises to ~86%: the gap shrinks from 21 to ~4 points. The lower train score is the point: the model stopped memorizing backgrounds and started learning products.",
+    "es": "Un clasificador de fotos de productos (ResNet-50, 20k imágenes, 50 clases) llega a **99% en train y 78% en validación**, y la pérdida de validación empieza a subir en la época 12 mientras la de train sigue bajando. Agregas recortes y flips aleatorios, weight decay, label smoothing de 0.1 y early stopping con paciencia 5. La accuracy en train baja a ~90% y la de validación sube a ~86%: la brecha pasa de 21 a ~4 puntos. Que train baje es justamente la idea: el modelo dejó de memorizar fondos y empezó a aprender productos."
+  },
+  "pros": [
+    { "en": "Cheap: usually one hyperparameter and one line of code each.", "es": "Barato: casi siempre es un hiperparámetro y una línea de código por técnica." },
+    { "en": "Composable: augmentation, weight decay and early stopping stack well.", "es": "Combinable: data augmentation, weight decay y early stopping se suman bien." },
+    { "en": "L1 yields sparse, more interpretable models and doubles as feature selection.", "es": "L1 da modelos dispersos y más interpretables, y de paso selecciona features." }
+  ],
+  "cons": [
+    { "en": "Every knob is another hyperparameter; too much regularization causes underfitting.", "es": "Cada perilla es otro hiperparámetro; regularizar de más provoca underfitting." },
+    { "en": "Dropout slows convergence and can clash with BatchNorm (variance shift between train and eval).", "es": "El dropout hace más lenta la convergencia y puede chocar con BatchNorm (cambio de varianza entre train y eval)." },
+    { "en": "Label smoothing makes models worse teachers for knowledge distillation (Müller et al., 2019).", "es": "El label smoothing empeora a los modelos como profesores para knowledge distillation (Müller et al., 2019)." },
+    { "en": "None of it fixes a train/production mismatch; it only fights memorizing noise.", "es": "Nada de esto arregla un desajuste entre train y producción; solo combate la memorización del ruido." }
+  ],
+  "whenToUse": {
+    "en": "Whenever validation lags training. Start with early stopping and weight decay; add augmentation for vision, audio or text, dropout in big dense layers, and L1 when you need a few interpretable features.",
+    "es": "Siempre que validación quede detrás de train. Empieza con early stopping y weight decay; agrega data augmentation para visión, audio o texto, dropout en capas densas grandes y L1 cuando necesites pocas features interpretables."
+  },
+  "whenNotToUse": {
+    "en": "When you're underfitting (train error already high): remove regularization and add capacity. Huge-data pretraining often drops dropout entirely: PaLM trained with none, using 0.1 only for fine-tuning.",
+    "es": "Cuando hay underfitting (el error en train ya es alto): quita regularización y agrega capacidad. El preentrenamiento con datos enormes suele eliminar el dropout: PaLM se entrenó sin dropout y usó 0.1 solo en fine-tuning."
+  },
+  "numbers": [
+    { "en": "Dropout paper: keep hidden units with p 0.5–0.8 (drop 20–50%), inputs ~0.8; original Transformer: dropout 0.1.", "es": "Paper de dropout: conservar las unidades ocultas con p de 0.5–0.8 (apagar 20–50%), entradas ~0.8; Transformer original: dropout 0.1." },
+    { "en": "Label smoothing ε = 0.1 in Inception-v3 and the original Transformer.", "es": "Label smoothing ε = 0.1 en Inception-v3 y en el Transformer original." },
+    { "en": "Weight decay: 0.1 with AdamW in LLM pretraining (GPT-3, LLaMA); 1e-4 with SGD in the ResNet recipe.", "es": "Weight decay: 0.1 con AdamW en preentrenamiento de LLMs (GPT-3, LLaMA); 1e-4 con SGD en la receta de ResNet." },
+    { "en": "Early-stopping patience of ~5–10 epochs is a common rule of thumb.", "es": "Una paciencia de ~5–10 épocas para early stopping es una regla práctica común." }
+  ],
+  "pitfalls": [
+    { "en": "Forgetting `model.eval()` at inference: dropout stays on and predictions turn noisy.", "es": "Olvidar `model.eval()` en inferencia: el dropout sigue activo y las predicciones salen ruidosas." },
+    { "en": "Decaying biases and LayerNorm/BatchNorm weights; standard recipes exclude them from weight decay.", "es": "Aplicar weight decay a los bias y a los pesos de LayerNorm/BatchNorm; las recetas estándar los excluyen." },
+    { "en": "Augmentations that change the label (a 6 rotated 180° is a 9), or augmented copies leaking across train and validation.", "es": "Augmentations que cambian la etiqueta (un 6 rotado 180° es un 9), o copias aumentadas que se filtran entre train y validación." },
+    { "en": "Early stopping on a noisy metric with patience 1, or choosing the epoch by looking at the test set.", "es": "Hacer early stopping sobre una métrica ruidosa con paciencia 1, o elegir la época mirando el test." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "L1 vs L2: why does L1 give sparse weights?", "es": "L1 vs L2: ¿por qué L1 produce pesos dispersos?" },
+      "a": {
+        "en": "Look at the penalty's gradient. L2's is 2λw: proportional to the weight, so the pull fades as w approaches zero and weights end up small but rarely exactly zero. L1's is λ·sign(w): a constant pull however small the weight, so any weight whose data gradient is weaker than λ gets pinned at exactly zero. Geometrically, the L1 ball is a diamond with corners on the axes, and the loss contours usually touch it at a corner. I default to L2, use L1 for feature selection, and elastic net when features are correlated.",
+        "es": "Mira el gradiente de la penalización. El de L2 es 2λw: proporcional al peso, así que el tirón se desvanece cuando w se acerca a cero y los pesos quedan chicos pero rara vez en cero exacto. El de L1 es λ·sign(w): un tirón constante por pequeño que sea el peso, así que cualquier peso cuyo gradiente de datos sea más débil que λ queda fijo en cero. Geométricamente, la bola de L1 es un rombo con esquinas sobre los ejes, y las curvas de nivel de la pérdida suelen tocarla en una esquina. Por defecto uso L2, L1 para seleccionar features y elastic net cuando las features están correlacionadas."
+      }
+    },
+    {
+      "q": { "en": "Why does dropout work, and what changes at inference?", "es": "¿Por qué funciona el dropout y qué cambia en inferencia?" },
+      "a": {
+        "en": "Each step drops a random subset of units, so the network can't rely on fragile co-adapted features and has to spread information redundantly. It approximates averaging an exponential number of thinned subnetworks that share weights. At inference I keep every unit; with inverted dropout, which PyTorch uses, survivors were already scaled by 1/(1−p) during training, so the only change is calling `model.eval()`. Trade-offs: slower convergence, and I avoid putting it right before BatchNorm. In LLM pretraining on huge data it's often off entirely.",
+        "es": "En cada paso apaga un subconjunto aleatorio de unidades, así que la red no puede depender de features frágiles coadaptadas y tiene que repartir la información de forma redundante. Aproxima promediar una cantidad exponencial de subredes adelgazadas que comparten pesos. En inferencia uso todas las unidades; con inverted dropout, que es lo que usa PyTorch, las activaciones ya se escalaron por 1/(1−p) en entrenamiento, así que el único cambio es llamar a `model.eval()`. Trade-offs: converge más lento y evito ponerlo justo antes de BatchNorm. En el preentrenamiento de LLMs con datos enormes muchas veces se apaga por completo."
+      }
+    },
+    {
+      "q": { "en": "Your fine-tune on 2k examples overfits after one epoch. What do you do?", "es": "Tu fine-tuning con 2k ejemplos hace overfitting después de una época. ¿Qué haces?" },
+      "a": {
+        "en": "Data is the first lever: I check for duplicates and leakage, then add or augment examples, for example paraphrases or human-reviewed synthetic data. Then I cut effective capacity: LoRA instead of full fine-tuning, a lower learning rate, fewer epochs, and early stopping with validation run several times per epoch. Weight decay and LoRA dropout help at the margin. I judge by a task metric, not only validation loss, since loss can rise from overconfidence while accuracy still improves.",
+        "es": "La primera palanca son los datos: reviso duplicados y leakage, y luego agrego o aumento ejemplos, por ejemplo paráfrasis o datos sintéticos revisados por personas. Después reduzco la capacidad efectiva: LoRA en lugar de fine-tuning completo, un learning rate más bajo, menos épocas y early stopping con validación varias veces por época. El weight decay y el dropout de LoRA ayudan en el margen. Juzgo con una métrica de la tarea, no solo con la pérdida de validación, porque la pérdida puede subir por exceso de confianza mientras la accuracy sigue mejorando."
+      }
+    }
+  ],
+  "related": ["ml-fundamentals", "gradient-descent", "neural-networks", "lora", "synthetic-data", "distillation"],
+  "sources": [
+    { "title": "Srivastava et al. — Dropout: A Simple Way to Prevent Neural Networks from Overfitting (JMLR 2014)", "url": "https://jmlr.org/papers/v15/srivastava14a.html" },
+    { "title": "Loshchilov & Hutter — Decoupled Weight Decay Regularization (AdamW)", "url": "https://arxiv.org/abs/1711.05101" },
+    { "title": "Müller, Kornblith & Hinton — When Does Label Smoothing Help?", "url": "https://arxiv.org/abs/1906.02629" },
+    { "title": "Goodfellow, Bengio & Courville — Deep Learning, ch. 7: Regularization", "url": "https://www.deeplearningbook.org/contents/regularization.html" }
+  ]
+}

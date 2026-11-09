@@ -1,0 +1,95 @@
+{
+  "id": "neural-networks",
+  "domain": "ml",
+  "level": "core",
+  "title": { "en": "Neural networks & backpropagation", "es": "Redes neuronales y backpropagation" },
+  "aliases": ["backprop", "MLP", "multilayer perceptron", "ReLU", "GELU", "vanishing gradients", "residual connections", "activation functions"],
+  "tldr": {
+    "en": "A neural network stacks linear layers with nonlinear activations; backpropagation runs the chain rule backward from the loss to get every weight's gradient in one pass, which gradient descent then uses.",
+    "es": "Una red neuronal apila capas lineales con activaciones no lineales; backpropagation aplica la regla de la cadena hacia atrás desde la pérdida para obtener el gradiente de cada peso en una sola pasada, que luego usa el descenso de gradiente."
+  },
+  "analogy": {
+    "en": "An assembly line: each station (layer) reshapes the part a little. When the final product is off, blame flows backward station by station, and each one adjusts in proportion to how much it caused the defect.",
+    "es": "Una línea de ensamblaje: cada estación (capa) transforma un poco la pieza. Cuando el producto final sale mal, la culpa viaja hacia atrás estación por estación, y cada una se ajusta según cuánto contribuyó al defecto."
+  },
+  "explain": {
+    "en": "A **neuron** computes a weighted sum plus a bias, then a nonlinearity: a = φ(w·x + b). A **layer** does many at once as a matrix multiply, h = φ(Wx + b), and a network stacks layers. Without φ the whole stack collapses into one linear map; the nonlinearity is what makes depth useful.\n\n**Activations**: **ReLU**, max(0, z), is cheap and doesn't saturate for z > 0. **GELU** is a smooth variant used in BERT and GPT-2; many recent LLMs (LLaMA, PaLM) use **SwiGLU**. Sigmoid and tanh saturate, so they survive mainly in gates and outputs.\n\n**Training** loops three steps: the **forward pass** computes outputs and the loss; **backprop** applies the chain rule from the loss back to every weight, reusing the stored activations, for ~2× the forward cost; then a [[gradient-descent]] step updates the weights.\n\n**Vanishing/exploding gradients**: backprop multiplies one factor per layer, so gradients shrink or blow up exponentially with depth. Fixes: ReLU-family activations, **He/Xavier init** (keeps activation variance stable), **normalization** (BatchNorm, LayerNorm), **residual connections** (y = x + F(x) gives gradients a direct path) and gradient clipping.\n\n**Universal approximation**: one wide-enough hidden layer can approximate any continuous function on a bounded domain. In practice, depth gets there with far fewer parameters.",
+    "es": "Una **neurona** calcula una suma ponderada más un bias y luego aplica una no linealidad: a = φ(w·x + b). Una **capa** hace muchas a la vez como una multiplicación de matrices, h = φ(Wx + b), y una red apila capas. Sin φ, toda la pila colapsa en un solo mapa lineal; la no linealidad es lo que hace útil la profundidad.\n\n**Activaciones**: **ReLU**, max(0, z), es barata y no se satura para z > 0. **GELU** es una variante suave que usan BERT y GPT-2; muchos LLMs recientes (LLaMA, PaLM) usan **SwiGLU**. Sigmoide y tanh se saturan, así que sobreviven sobre todo en compuertas y salidas.\n\nEl **entrenamiento** repite tres pasos: el **forward pass** calcula salidas y pérdida; **backprop** aplica la regla de la cadena desde la pérdida hasta cada peso, reutilizando las activaciones guardadas, por ~2× el costo del forward; y luego un paso de [[gradient-descent]] actualiza los pesos.\n\n**Gradientes que se desvanecen o explotan**: backprop multiplica un factor por capa, así que los gradientes se encogen o crecen exponencialmente con la profundidad. Soluciones: activaciones tipo ReLU, **inicialización He/Xavier** (mantiene estable la varianza de las activaciones), **normalización** (BatchNorm, LayerNorm), **conexiones residuales** (y = x + F(x) le da al gradiente un camino directo) y gradient clipping.\n\n**Aproximación universal**: una sola capa oculta suficientemente ancha puede aproximar cualquier función continua en un dominio acotado. En la práctica, la profundidad lo logra con muchos menos parámetros."
+  },
+  "diagram": {
+    "code": "flowchart TD\n  X[Input x] --> L1[\"Linear: W1 x + b1\"]\n  L1 --> A[ReLU]\n  A --> L2[\"Linear: W2 h + b2\"]\n  L2 --> S[\"Softmax + cross-entropy\"]\n  Y[Label y] --> S\n  S -.->|grad: p - y| L2\n  L2 -.->|dL/dh| A\n  A -.->|masked by ReLU| L1\n  L1 -.->|all dL/dW| U[Optimizer step]",
+    "caption": {
+      "en": "Solid arrows: the forward pass stores activations. Dotted: backprop sends the gradient back layer by layer via the chain rule, reusing those activations.",
+      "es": "Flechas sólidas: el forward pass guarda las activaciones. Punteadas: backprop envía el gradiente hacia atrás, capa por capa, con la regla de la cadena y reutilizando esas activaciones."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A tiny MLP and the 4-step training loop (PyTorch)", "es": "Un MLP mínimo y el ciclo de entrenamiento de 4 pasos (PyTorch)" },
+    "source": "import torch, torch.nn as nn\nfrom sklearn.datasets import make_moons\n\nX, y = make_moons(n_samples=2000, noise=0.2, random_state=0)   # not linearly separable\nX, y = torch.tensor(X, dtype=torch.float32), torch.tensor(y)\n\n# 2 -> 64 -> 64 -> 2 MLP. Remove the ReLUs and it collapses to one linear map.\nmodel = nn.Sequential(\n    nn.Linear(2, 64), nn.ReLU(),\n    nn.Linear(64, 64), nn.ReLU(),\n    nn.Linear(64, 2),                  # raw logits: CrossEntropyLoss applies log-softmax\n)\nloss_fn = nn.CrossEntropyLoss()\nopt = torch.optim.AdamW(model.parameters(), lr=1e-2)\n\nfor epoch in range(101):\n    for idx in torch.randperm(len(X)).split(128):    # shuffled mini-batches\n        logits = model(X[idx])                       # 1. forward pass\n        loss = loss_fn(logits, y[idx])               # 2. loss\n        opt.zero_grad()                              # grads accumulate unless cleared\n        loss.backward()                              # 3. backprop: chain rule via autograd\n        opt.step()                                   # 4. gradient-descent update\n    if epoch % 25 == 0:\n        with torch.no_grad():\n            acc = (model(X).argmax(dim=1) == y).float().mean()\n        print(f\"epoch {epoch:3d}  loss {loss.item():.3f}  acc {acc:.3f}\")   # acc ~0.97\n\n# Per-layer gradient norms: the first thing to log when training stalls or explodes\nfor name, p in model.named_parameters():\n    print(f\"{name:10s} grad norm {p.grad.norm():.4f}\")"
+  },
+  "example": {
+    "en": "In the ResNet paper, a **56-layer** plain CNN had *higher training error* than a **20-layer** one on CIFAR-10. That isn't overfitting (train error is worse) but an optimization problem; the authors even checked that BatchNorm kept gradient norms healthy. Identity shortcuts, y = x + F(x), make the identity trivial to learn and give gradients a direct path: a 110-layer ResNet trained fine on CIFAR-10, and an ensemble of ResNets up to 152 layers won ImageNet 2015 at 3.57% top-5 error. Debugging rule: if a deeper model is worse on *training* loss, fix optimization (architecture, init, LR), not data.",
+    "es": "En el paper de ResNet, una CNN plana de **56 capas** tenía *más error de entrenamiento* que una de **20 capas** en CIFAR-10. No es overfitting (el error de train es peor), es un problema de optimización; los autores incluso verificaron que BatchNorm mantenía sanas las normas de los gradientes. Los atajos de identidad, y = x + F(x), hacen trivial aprender la identidad y le dan al gradiente un camino directo: una ResNet de 110 capas entrenó sin problema en CIFAR-10, y un ensamble de ResNets de hasta 152 capas ganó ImageNet 2015 con 3.57% de error top-5. Regla de depuración: si un modelo más profundo es peor en la pérdida de *entrenamiento*, arregla la optimización (arquitectura, inicialización, LR), no los datos."
+  },
+  "pros": [
+    { "en": "Learn features straight from raw pixels, tokens or audio instead of hand-engineering them.", "es": "Aprenden features directamente de píxeles, tokens o audio crudos, sin diseñarlas a mano." },
+    { "en": "Backprop gets every gradient for ~2× a forward pass, whatever the parameter count.", "es": "Backprop obtiene todos los gradientes por ~2× el costo de un forward, sin importar cuántos parámetros haya." },
+    { "en": "Quality keeps improving predictably with more data and compute (scaling laws).", "es": "La calidad sigue mejorando de forma predecible con más datos y cómputo (scaling laws)." }
+  ],
+  "cons": [
+    { "en": "Data- and compute-hungry; on medium-sized tabular data gradient-boosted trees usually still win.", "es": "Necesitan muchos datos y cómputo; en datos tabulares medianos los árboles con gradient boosting suelen seguir ganando." },
+    { "en": "Hard to interpret, and confidently wrong on out-of-distribution inputs.", "es": "Difíciles de interpretar, y se equivocan con mucha confianza ante entradas fuera de distribución." },
+    { "en": "Many interacting knobs (init, LR, normalization); failures are often silent stalls or NaNs.", "es": "Muchas perillas que interactúan (inicialización, LR, normalización); las fallas suelen ser estancamientos silenciosos o NaNs." }
+  ],
+  "whenToUse": {
+    "en": "Unstructured data (images, text, audio), very large datasets, or when you want learned embeddings you can reuse across tasks.",
+    "es": "Datos no estructurados (imágenes, texto, audio), datasets muy grandes, o cuando quieres embeddings aprendidos que puedas reutilizar entre tareas."
+  },
+  "whenNotToUse": {
+    "en": "Small or medium tabular data, where XGBoost/LightGBM are usually stronger, cheaper and easier to explain, or when a regulator requires a fully interpretable model.",
+    "es": "Datos tabulares chicos o medianos, donde XGBoost/LightGBM suelen ser más fuertes, baratos y fáciles de explicar, o cuando un regulador exige un modelo totalmente interpretable."
+  },
+  "numbers": [
+    { "en": "Sigmoid's derivative peaks at 0.25: across 10 sigmoid layers the activation factors alone can shrink gradients to 0.25¹⁰ ≈ 10⁻⁶.", "es": "La derivada de la sigmoide vale como máximo 0.25: en 10 capas sigmoide, solo los factores de activación pueden encoger el gradiente a 0.25¹⁰ ≈ 10⁻⁶." },
+    { "en": "Training ≈ 6·N FLOPs per token (2N forward, ~4N backward), i.e. ~3× inference (Kaplan et al., 2020).", "es": "Entrenar cuesta ≈ 6·N FLOPs por token (2N forward, ~4N backward), o sea ~3× la inferencia (Kaplan et al., 2020)." },
+    { "en": "He init for ReLU: weight variance 2/fan_in; Xavier/Glorot: 2/(fan_in + fan_out).", "es": "Inicialización He para ReLU: varianza de pesos 2/fan_in; Xavier/Glorot: 2/(fan_in + fan_out)." },
+    { "en": "Activation checkpointing recomputes activations instead of storing them: ~one extra forward pass (~33% more compute) for much less memory.", "es": "El activation checkpointing recalcula las activaciones en lugar de guardarlas: ~un forward extra (~33% más de cómputo) a cambio de mucha menos memoria." }
+  ],
+  "pitfalls": [
+    { "en": "Forgetting `optimizer.zero_grad()`: PyTorch accumulates gradients, so each step adds up all previous ones.", "es": "Olvidar `optimizer.zero_grad()`: PyTorch acumula gradientes, así que cada paso suma todos los anteriores." },
+    { "en": "Adding a softmax before `nn.CrossEntropyLoss`, which expects raw logits: the double softmax squashes gradients.", "es": "Poner un softmax antes de `nn.CrossEntropyLoss`, que espera logits crudos: el doble softmax aplasta los gradientes." },
+    { "en": "Zero or identical init: every neuron in a layer gets the same gradient and they never differentiate.", "es": "Inicializar en cero o con valores idénticos: todas las neuronas de una capa reciben el mismo gradiente y nunca se diferencian." },
+    { "en": "Dead ReLUs after a too-high LR: units output 0 for every input and stop learning. Track the fraction of zero activations.", "es": "ReLUs muertas por un LR demasiado alto: las unidades devuelven 0 para toda entrada y dejan de aprender. Mide la fracción de activaciones en cero." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Explain backpropagation.", "es": "Explica backpropagation." },
+      "a": {
+        "en": "It's the chain rule applied efficiently. In the forward pass each layer computes its output, and we keep those activations. Going backward from the loss, each layer receives the gradient of the loss w.r.t. its output, multiplies by its local derivative to get the gradient for its own weights, and passes the gradient w.r.t. its input to the layer below. Because every intermediate result is reused, all gradients cost about two forward passes. That's why training is ~3× inference FLOPs per token, and why stored activations are a big chunk of training memory.",
+        "es": "Es la regla de la cadena aplicada de forma eficiente. En el forward pass cada capa calcula su salida y guardamos esas activaciones. Al ir hacia atrás desde la pérdida, cada capa recibe el gradiente de la pérdida respecto de su salida, lo multiplica por su derivada local para obtener el gradiente de sus propios pesos y pasa el gradiente respecto de su entrada a la capa de abajo. Como cada resultado intermedio se reutiliza, todos los gradientes cuestan unas dos pasadas forward. Por eso entrenar cuesta ~3× los FLOPs de inferencia por token, y por eso las activaciones guardadas son una parte grande de la memoria de entrenamiento."
+      }
+    },
+    {
+      "q": { "en": "What causes vanishing gradients, and how do modern networks avoid them?", "es": "¿Qué causa el desvanecimiento de gradientes y cómo lo evitan las redes modernas?" },
+      "a": {
+        "en": "The gradient at an early layer is a product of one factor per later layer. If those factors are mostly below 1 (sigmoid's derivative is at most 0.25), it shrinks exponentially with depth; above 1, it explodes. Modern stacks attack it at every level: ReLU or GELU, which don't saturate for positive inputs; He or Xavier init to keep variance stable; LayerNorm or BatchNorm; and residual connections, an identity path the gradient flows through unmultiplied. For explosions I add gradient clipping at norm 1.0, and I monitor per-layer gradient norms.",
+        "es": "El gradiente de una capa temprana es un producto de un factor por cada capa posterior. Si esos factores suelen ser menores que 1 (la derivada de la sigmoide es como máximo 0.25), se encoge exponencialmente con la profundidad; si son mayores que 1, explota. Las arquitecturas modernas lo atacan en todos los niveles: ReLU o GELU, que no se saturan con entradas positivas; inicialización He o Xavier para mantener estable la varianza; LayerNorm o BatchNorm; y conexiones residuales, un camino de identidad por el que el gradiente fluye sin multiplicarse. Para las explosiones agrego gradient clipping con norma 1.0 y monitoreo la norma del gradiente por capa."
+      }
+    },
+    {
+      "q": { "en": "If one hidden layer is a universal approximator, why go deep?", "es": "Si una sola capa oculta es un aproximador universal, ¿para qué ir en profundidad?" },
+      "a": {
+        "en": "The theorem says a wide enough single layer *can* represent any continuous function, not that it's efficient or learnable from finite data. Some functions need exponentially more units when the network is shallow. Depth composes features, edges into textures into parts into objects, so the same function takes far fewer parameters and the reusable hierarchy generalizes better. The cost is harder optimization, which is why I pair depth with residuals, normalization and good init, and pick width and depth by compute budget.",
+        "es": "El teorema dice que una sola capa suficientemente ancha *puede* representar cualquier función continua, no que sea eficiente ni que se pueda aprender con datos finitos. Algunas funciones necesitan exponencialmente más unidades si la red es poco profunda. La profundidad compone features (bordes en texturas, texturas en partes, partes en objetos), así que la misma función requiere muchos menos parámetros y esa jerarquía reutilizable generaliza mejor. El costo es una optimización más difícil; por eso combino profundidad con residuales, normalización y buena inicialización, y elijo ancho y profundidad según el presupuesto de cómputo."
+      }
+    }
+  ],
+  "related": ["gradient-descent", "regularization", "transformer", "gbdt", "computer-vision", "scaling-laws"],
+  "sources": [
+    { "title": "Goodfellow, Bengio & Courville — Deep Learning, ch. 6: Deep Feedforward Networks", "url": "https://www.deeplearningbook.org/contents/mlp.html" },
+    { "title": "Stanford CS231n — Backpropagation, Intuitions", "url": "https://cs231n.github.io/optimization-2/" },
+    { "title": "He et al. — Deep Residual Learning for Image Recognition", "url": "https://arxiv.org/abs/1512.03385" },
+    { "title": "Kaplan et al. — Scaling Laws for Neural Language Models", "url": "https://arxiv.org/abs/2001.08361" }
+  ]
+}
