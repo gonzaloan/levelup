@@ -1,0 +1,95 @@
+{
+  "concept": "case-deep-research",
+  "items": [
+    {
+      "id": "case-deep-research.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Each research report runs as one long HTTP request on a worker. After every deploy, in-flight reports die around minute 12, and the client's retry starts from zero, paying for every token again. What do you change?",
+        "es": "Cada reporte de investigación corre como una sola petición HTTP larga en un worker. Después de cada deploy, los reportes en curso mueren cerca del minuto 12 y el reintento del cliente empieza de cero, pagando otra vez cada token. ¿Qué cambias?"
+      },
+      "options": [
+        {
+          "text": { "en": "Run each report as a checkpointed durable job with a progress stream", "es": "Correr cada reporte como un job durable con checkpoints y un stream de progreso" },
+          "why": { "en": "A crash or deploy resumes from the last finished step instead of re-spending dollars.", "es": "Un crash o un deploy retoma desde el último paso terminado en vez de volver a gastar." }
+        },
+        {
+          "text": { "en": "Raise the load balancer and worker timeouts to 30 minutes", "es": "Subir los timeouts del balanceador y del worker a 30 minutos" },
+          "why": { "en": "Deploys and crashes still kill the request, and the retry still starts over.", "es": "Los deploys y los crashes igual matan la petición, y el reintento igual empieza de cero." }
+        },
+        {
+          "text": { "en": "Freeze deploys while any report is still running", "es": "Congelar los deploys mientras haya algún reporte corriendo" },
+          "why": { "en": "With ~700 jobs in flight there is never a quiet moment, and worker crashes still lose everything.", "es": "Con ~700 jobs en curso nunca hay un momento tranquilo, y los crashes del worker igual pierden todo." }
+        },
+        {
+          "text": { "en": "Cache the final report so a retry returns it instantly", "es": "Cachear el reporte final para que un reintento lo devuelva al instante" },
+          "why": { "en": "The job died before any report existed; what's lost is the intermediate work.", "es": "El job murió antes de que existiera un reporte; lo que se pierde es el trabajo intermedio." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A 10–20 minute agent run is a job, not a request. A durable workflow (e.g. Temporal) persists plan, findings and spend after every step; the client holds a job id and reconnects to the SSE event log by last event id. Version the workflow so in-flight jobs finish on the old code.",
+        "es": "Una corrida de agente de 10–20 minutos es un job, no una petición. Un workflow durable (p. ej., Temporal) persiste el plan, los hallazgos y el gasto tras cada paso; el cliente guarda un id de job y se reconecta al log de eventos SSE con el último id de evento. Versiona el workflow para que los jobs en curso terminen con el código viejo."
+      }
+    },
+    {
+      "id": "case-deep-research.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "One report reads **~1.2M input** and writes **~60k output** tokens, plus **~60 searches**. Assumed prices: $3/M input, $15/M output, $5 per 1k searches. **70%** of input tokens are cache reads billed at **10%** of the input price. What does one report cost, in USD?",
+        "es": "Un reporte lee **~1.2M tokens de entrada**, escribe **~60k de salida** y hace **~60 búsquedas**. Precios supuestos: $3/M de entrada, $15/M de salida y $5 por cada 1k búsquedas. El **70%** de la entrada son lecturas de caché cobradas al **10%** del precio de entrada. ¿Cuánto cuesta un reporte, en USD?"
+      },
+      "answer": 2.5,
+      "tolerance": 0.1,
+      "unit": "USD",
+      "explain": {
+        "en": "Uncached input: 0.36M × $3 = $1.08. Cached: 0.84M × $0.30 = $0.25. Output: 0.06M × $15 = $0.90. Searches: 60 × $0.005 = $0.30. Total ≈ $2.50, vs ~$4.80 uncached. Agent loops re-read their context every turn, so input dominates and caching the stable prefix is the biggest lever.",
+        "es": "Entrada sin caché: 0.36M × $3 = $1.08. En caché: 0.84M × $0.30 = $0.25. Salida: 0.06M × $15 = $0.90. Búsquedas: 60 × $0.005 = $0.30. Total ≈ $2.50, frente a ~$4.80 sin caché. Los loops de agentes releen su contexto en cada turno, así que la entrada domina y cachear el prefijo estable es la palanca más grande."
+      }
+    },
+    {
+      "id": "case-deep-research.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the life of one deep-research request in order.",
+        "es": "Ordena la vida de una petición de investigación profunda."
+      },
+      "steps": [
+        { "en": "Create a durable job; the client gets a job id and an SSE stream", "es": "Crear un job durable; el cliente recibe un id de job y un stream SSE" },
+        { "en": "A small model asks clarifying questions and writes a brief", "es": "Un modelo chico hace preguntas aclaratorias y escribe un brief" },
+        { "en": "The lead splits the brief into sub-questions and sizes the effort", "es": "El agente líder divide el brief en subpreguntas y dimensiona el esfuerzo" },
+        { "en": "Parallel sub-agents search, read and return compressed findings with source ids", "es": "Sub-agentes en paralelo buscan, leen y devuelven hallazgos comprimidos con ids de fuente" },
+        { "en": "One synthesis pass drafts the report from the brief and findings", "es": "Una sola pasada de síntesis redacta el reporte a partir del brief y los hallazgos" },
+        { "en": "A checker tests each claim against its cited passage", "es": "Un verificador contrasta cada afirmación con el pasaje que cita" }
+      ],
+      "explain": {
+        "en": "Durability comes first so nothing later is lost. Scope and plan before fanning out, so sub-agents get sharp briefs; compress in the branches so the lead's context stays small; write once for coherence; verify last, because a wrong citation in a polished report is the costliest failure.",
+        "es": "La durabilidad va primero para que nada posterior se pierda. Delimita y planifica antes de abrir en paralelo, así los sub-agentes reciben briefs precisos; comprime en las ramas para que el contexto del líder siga chico; escribe una sola vez para tener coherencia; verifica al final, porque una cita equivocada en un reporte pulido es la falla más cara."
+      }
+    },
+    {
+      "id": "case-deep-research.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about orchestrating a deep-research agent are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la orquestación de un agente de investigación profunda son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Writing the report in one synthesis pass keeps it coherent", "es": "Redactar el reporte en una sola pasada de síntesis lo mantiene coherente" } },
+        { "text": { "en": "Sub-agents should hand the lead compressed findings, not raw pages", "es": "Los sub-agentes deben pasarle al líder hallazgos comprimidos, no páginas crudas" } },
+        { "text": { "en": "Input tokens dominate cost because agent loops re-read their context", "es": "Los tokens de entrada dominan el costo porque los loops de agentes releen su contexto" } },
+        { "text": { "en": "A larger lead context window removes the need to compress findings", "es": "Una ventana de contexto más grande en el líder elimina la necesidad de comprimir" },
+          "why": { "en": "A full context rots and costs more every turn; compression keeps the lead near ~20–30k tokens.", "es": "Un contexto lleno se degrada y cuesta más en cada turno; comprimir mantiene al líder cerca de ~20–30k tokens." } },
+        { "text": { "en": "Start every question with a wide fan-out, then prune", "es": "Empezar cada pregunta con un fan-out amplio y después podar" },
+          "why": { "en": "A single fact needs one agent; Anthropic's early leads spawned 50 sub-agents for simple queries.", "es": "Un solo dato necesita un agente; los primeros líderes de Anthropic lanzaban 50 sub-agentes para consultas simples." } },
+        { "text": { "en": "Budgets stated in the lead's prompt reliably cap spend", "es": "Los presupuestos escritos en el prompt del líder limitan el gasto de forma confiable" },
+          "why": { "en": "The model can ask for more; the orchestrator's meter and caps decide.", "es": "El modelo puede pedir más; deciden el medidor y los topes del orquestador." } }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "Clean contexts per branch, compression before the lead, and one writer are what keep quality up and cost bounded. Effort scales with the question, and budgets live in code: at ~80% spent the lead stops spawning and synthesizes a report that names its gaps.",
+        "es": "Contextos limpios por rama, compresión antes del líder y un solo redactor son lo que mantiene la calidad alta y el costo acotado. El esfuerzo escala con la pregunta y los presupuestos viven en el código: al ~80% gastado, el líder deja de lanzar agentes y sintetiza un reporte que nombra sus vacíos."
+      }
+    }
+  ]
+}

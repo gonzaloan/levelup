@@ -1,0 +1,71 @@
+{
+  "concept": "embedding-finetuning",
+  "items": [
+    {
+      "id": "embedding-finetuning.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You fine-tune an embedder on 52k LLM-generated (query, chunk) pairs. On a held-out slice of those same synthetic pairs, recall@10 jumps from 0.61 to 0.93. The team wants to re-index tonight. What do you do?",
+        "es": "Haces fine-tuning de un embedder con 52k pares (consulta, chunk) generados por un LLM. En una porción reservada de esos mismos pares sintéticos, el recall@10 salta de 0.61 a 0.93. El equipo quiere reindexar esta noche. ¿Qué haces?"
+      },
+      "options": [
+        { "text": { "en": "Hold the re-index until it beats the base on real, labelled user queries", "es": "Frenar la reindexación hasta que le gane al modelo base con consultas reales y etiquetadas" },
+          "why": { "en": "Synthetic queries from the same chunks share the generator's style; only real queries show whether retrieval improved.", "es": "Las consultas sintéticas de los mismos chunks comparten el estilo del generador; solo las consultas reales muestran si la recuperación mejoró." } },
+        { "text": { "en": "Re-index tonight: a 0.32 recall gain easily pays for the re-embed", "es": "Reindexar esta noche: una ganancia de 0.32 en recall paga de sobra regenerar los embeddings" },
+          "why": { "en": "The gain may be the model learning synthetic phrasing; you'd pay the re-index for a number that measures memorization.", "es": "La ganancia puede ser el modelo aprendiendo la redacción sintética; pagarías la reindexación por un número que mide memorización." } },
+        { "text": { "en": "Train another epoch first to push recall even higher", "es": "Entrenar otra época primero para subir aún más el recall" },
+          "why": { "en": "More training on the same distribution deepens overfitting to synthetic style; it doesn't validate anything.", "es": "Más entrenamiento sobre la misma distribución profundiza el sobreajuste al estilo sintético; no valida nada." } },
+        { "text": { "en": "Add a reranker on top and re-index if the combined score holds", "es": "Agregar un reranker encima y reindexar si el puntaje combinado se mantiene" },
+          "why": { "en": "The eval set is still synthetic; stacking models on a contaminated test proves nothing new.", "es": "El set de eval sigue siendo sintético; apilar modelos sobre un test contaminado no demuestra nada nuevo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Synthetic pairs are fine for training, never for the final verdict. Keep a few hundred real, labelled questions held out; in the helpdesk case the honest gain on 300 real questions was 0.61 → 0.74, enough to justify the re-index.",
+        "es": "Los pares sintéticos sirven para entrenar, nunca para el veredicto final. Guarda unos cientos de preguntas reales y etiquetadas; en el caso de la mesa de ayuda la ganancia honesta con 300 preguntas reales fue 0.61 → 0.74, suficiente para justificar la reindexación."
+      }
+    },
+    {
+      "id": "embedding-finetuning.a2",
+      "type": "order",
+      "prompt": {
+        "en": "Put an embedding fine-tuning project in order.",
+        "es": "Ordena un proyecto de fine-tuning de embeddings."
+      },
+      "steps": [
+        { "en": "An LLM writes 1–3 questions per chunk", "es": "Un LLM escribe 1–3 preguntas por chunk" },
+        { "en": "Keep pairs whose chunk ranks near the top for its question (round-trip filter)", "es": "Conservar los pares cuyo chunk queda arriba para su pregunta (filtro de ida y vuelta)" },
+        { "en": "Mine hard negatives from ranks ~10–50", "es": "Minar hard negatives de los puestos ~10–50" },
+        { "en": "Train with MultipleNegativesRankingLoss", "es": "Entrenar con MultipleNegativesRankingLoss" },
+        { "en": "Compare against the base model on held-out real queries", "es": "Comparar contra el modelo base con consultas reales reservadas" },
+        { "en": "Re-embed the whole corpus and swap the index", "es": "Regenerar los embeddings de todo el corpus y cambiar el índice" }
+      ],
+      "explain": {
+        "en": "Cheap synthetic data and mined negatives build the training set; real held-out queries decide; the expensive re-index comes last, only if the model earned it.",
+        "es": "Los datos sintéticos baratos y los negativos minados arman el set de entrenamiento; las consultas reales reservadas deciden; la reindexación, que es cara, va al final y solo si el modelo se la ganó."
+      }
+    },
+    {
+      "id": "embedding-finetuning.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "To skip a full re-embed, a teammate proposes using the fine-tuned embedder for new queries and new documents only, keeping the existing vectors. What happens?",
+        "es": "Para evitar regenerar todos los embeddings, alguien propone usar el embedder ajustado solo para consultas y documentos nuevos, y conservar los vectores existentes. ¿Qué pasa?"
+      },
+      "options": [
+        { "text": { "en": "Old and new vectors live in different spaces, so query-to-old-doc scores are meaningless", "es": "Los vectores viejos y nuevos viven en espacios distintos, así que comparar consultas con documentos viejos no significa nada" },
+          "why": { "en": "A fine-tune changes every vector; similarity is only defined between vectors from the same model.", "es": "Un fine-tuning cambia todos los vectores; la similitud solo tiene sentido entre vectores del mismo modelo." } },
+        { "text": { "en": "It works: fine-tuning only nudges vectors, so old ones stay close enough", "es": "Funciona: el fine-tuning solo mueve un poco los vectores, así que los viejos quedan suficientemente cerca" },
+          "why": { "en": "Fine-tuning exists to move vectors where it matters; nothing guarantees old ones line up with new queries.", "es": "El fine-tuning existe justo para mover vectores donde importa; nada garantiza que los viejos se alineen con las consultas nuevas." } },
+        { "text": { "en": "It works once every vector is normalized to unit length", "es": "Funciona una vez que todos los vectores se normalizan a longitud unitaria" },
+          "why": { "en": "Normalizing fixes magnitude, not direction; the two models still disagree about what's similar.", "es": "Normalizar corrige la magnitud, no la dirección; los dos modelos siguen sin coincidir en qué es similar." } },
+        { "text": { "en": "It works if you lower the similarity threshold for old documents", "es": "Funciona si bajas el umbral de similitud para los documentos viejos" },
+          "why": { "en": "A threshold can't repair scores between unrelated spaces; it just lets more noise through.", "es": "Un umbral no puede reparar puntajes entre espacios no relacionados; solo deja pasar más ruido." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A new embedding model is a new index: re-embed everything, build it alongside the old one, switch with a rollback path. If that cost is the blocker, fine-tune a reranker instead: it reorders candidates and needs no re-index.",
+        "es": "Un modelo de embeddings nuevo es un índice nuevo: regenera todo, constrúyelo junto al viejo y cambia con un camino de rollback. Si ese costo es el obstáculo, haz fine-tuning de un reranker: reordena candidatos y no necesita reindexar."
+      }
+    }
+  ]
+}

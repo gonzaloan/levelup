@@ -1,0 +1,85 @@
+{
+  "concept": "case-enterprise-rag",
+  "items": [
+    {
+      "id": "case-enterprise-rag.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your enterprise assistant stores, on every chunk, the expanded list of **user IDs** allowed to read it. A reorg moves 3,000 people between groups, and the ACL update job will take days over ~40M chunks. What should the design have been?",
+        "es": "Tu asistente empresarial guarda en cada chunk la lista expandida de **IDs de usuario** que pueden leerlo. Una reorganización mueve a 3,000 personas entre grupos, y el job que actualiza los ACL tardará días sobre ~40M de chunks. ¿Cómo debió ser el diseño?"
+      },
+      "options": [
+        { "text": { "en": "Store principal IDs (users and groups) per document; expand the user's groups at query time", "es": "Guardar IDs de principales (usuarios y grupos) por documento; expandir los grupos del usuario al consultar" },
+          "why": { "en": "A reorg then changes group membership in one place (plus a ~5 min cache), not millions of chunks.", "es": "Así una reorganización cambia la membresía de grupos en un solo lugar (más un cache de ~5 min), no millones de chunks." } },
+        { "text": { "en": "Re-embed the affected chunks overnight so the new ACLs are indexed", "es": "Regenerar los embeddings de los chunks afectados durante la noche para indexar los nuevos ACL" },
+          "why": { "en": "The text didn't change, so the vectors didn't either; only the ACL metadata is stale, and waiting leaves access wrong.", "es": "El texto no cambió, así que los vectores tampoco; solo la metadata de ACL está desactualizada, y esperar deja los accesos mal." } },
+        { "text": { "en": "Put each chunk's ACL in the prompt and tell the model to skip forbidden ones", "es": "Poner el ACL de cada chunk en el prompt y pedirle al modelo que omita los prohibidos" },
+          "why": { "en": "You can't ask a model to ignore text it already read; permissions must be enforced in retrieval code.", "es": "No le puedes pedir a un modelo que ignore un texto que ya leyó; los permisos se aplican en el código de recuperación." } },
+        { "text": { "en": "Drop ACLs from the index and filter the top 50 results afterwards", "es": "Quitar los ACL del índice y filtrar después los 50 mejores resultados" },
+          "why": { "en": "Post-filtering starves restricted users: someone who reads 1% of the corpus keeps ~1 of 100 hits.", "es": "Filtrar después deja sin resultados a los usuarios restringidos: quien lee el 1% del corpus conserva ~1 de cada 100 resultados." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Normalize every source's permission model to principal IDs per document and resolve identity at query time. Group membership changes often and must take effect in minutes; documents' sharing changes rarely. Keep the fast-changing part out of the 40M-row index.",
+        "es": "Normaliza el modelo de permisos de cada fuente a IDs de principales por documento y resuelve la identidad al consultar. La membresía de grupos cambia seguido y debe aplicarse en minutos; el uso compartido de los documentos cambia poco. Deja lo que cambia rápido fuera del índice de 40M de filas."
+      }
+    },
+    {
+      "id": "case-enterprise-rag.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size the query load: **50k employees**, **40%** use the assistant daily, **5 questions** each, spread over an **8-hour** working day, with a **2×** peak-to-average ratio. What is the peak QPS?",
+        "es": "Dimensiona la carga de consultas: **50k empleados**, el **40%** usa el asistente cada día, **5 preguntas** cada uno, repartidas en una jornada de **8 horas**, con una relación pico/promedio de **2×**. ¿Cuál es el QPS en el pico?"
+      },
+      "answer": 7,
+      "tolerance": 0.15,
+      "unit": "QPS",
+      "explain": {
+        "en": "50k × 0.4 × 5 = 100k questions/day. Over 8 h (28,800 s) that's ≈ 3.5 QPS, ≈ 7 at peak. Query load is modest; the hard parts are the 40M-chunk index, four connectors with their permission models, and LLM cost.",
+        "es": "50k × 0.4 × 5 = 100k preguntas/día. En 8 h (28,800 s) son ≈ 3.5 QPS, ≈ 7 en el pico. La carga de consultas es moderada; lo difícil es el índice de 40M de chunks, cuatro conectores con sus modelos de permisos y el costo del LLM."
+      }
+    },
+    {
+      "id": "case-enterprise-rag.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the online path of one employee question in order (query rewriting left out).",
+        "es": "Ordena el camino online de una pregunta de un empleado (se omite la reescritura de la consulta)."
+      },
+      "steps": [
+        { "en": "SSO identifies the user; their groups are expanded (cached ~5 min)", "es": "El SSO identifica al usuario; se expanden sus grupos (cache de ~5 min)" },
+        { "en": "Hybrid search with a permission pre-filter returns the top 50", "es": "La búsqueda híbrida con pre-filtro de permisos devuelve el top 50" },
+        { "en": "The reranker keeps 8 chunks", "es": "El reranker conserva 8 chunks" },
+        { "en": "Live ACL re-check on the chunks that will reach the prompt", "es": "Se vuelve a verificar el ACL en vivo sobre los chunks que llegarán al prompt" },
+        { "en": "LLM answers with numbered citations, or abstains and shows links", "es": "El LLM responde con citas numeradas, o se abstiene y muestra enlaces" }
+      ],
+      "explain": {
+        "en": "Identity first, because the filter is built from it. The index's ACL copy can lag, so the cheap live check runs only on the few chunks that reach the model. Generation comes last and only sees permitted, cited evidence.",
+        "es": "Primero la identidad, porque el filtro se construye con ella. La copia del ACL en el índice puede atrasarse, así que el chequeo en vivo, que es barato, corre solo sobre los pocos chunks que llegan al modelo. La generación va al final y solo ve evidencia permitida y citada."
+      }
+    },
+    {
+      "id": "case-enterprise-rag.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate proposes: \"Simplest permission model: search the whole index for the top 50, then drop the chunks the user can't read.\" What's the strongest critique?",
+        "es": "Alguien propone: \"El modelo de permisos más simple: buscar el top 50 en todo el índice y luego descartar los chunks que el usuario no puede leer\". ¿Cuál es la crítica más fuerte?"
+      },
+      "options": [
+        { "text": { "en": "Restricted users get starved of results; pre-filter inside the search", "es": "Los usuarios restringidos se quedan sin resultados; filtra dentro de la búsqueda" },
+          "why": { "en": "A user who can read 1% of the corpus keeps ~1 of 100 hits, so good answers vanish for exactly those users.", "es": "Un usuario que puede leer el 1% del corpus conserva ~1 de cada 100 resultados, así que las buenas respuestas desaparecen justo para ellos." } },
+        { "text": { "en": "None: forbidden chunks never reach the prompt, so it's safe and complete", "es": "Ninguna: los chunks prohibidos nunca llegan al prompt, así que es seguro y completo" },
+          "why": { "en": "Safe, yes; complete, no. The top 50 is mostly other people's content, so restricted users lose recall.", "es": "Seguro, sí; completo, no. El top 50 es casi todo contenido de otros, así que los usuarios restringidos pierden recall." } },
+        { "text": { "en": "It leaks, because the model has already read the dropped chunks", "es": "Filtra información, porque el modelo ya leyó los chunks descartados" },
+          "why": { "en": "The drop happens before generation; the failure is recall, not a leak.", "es": "El descarte ocurre antes de generar; la falla es de recall, no una fuga." } },
+        { "text": { "en": "It works once k is raised from 50 to 5,000", "es": "Funciona una vez que subes k de 50 a 5,000" },
+          "why": { "en": "100× more candidates to fetch and fuse per query, and a user who reads 0.1% still keeps only ~5.", "es": "100× más candidatos que traer y fusionar por consulta, y un usuario que lee el 0.1% sigue quedándose con ~5." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Permission filtering belongs inside the search, as a pre-filter built from the user's principals, so the top 50 is the top 50 the user may read. Post-filtering is safe but silently degrades answers for the most restricted users.",
+        "es": "El filtro de permisos va dentro de la búsqueda, como un pre-filtro construido con los principales del usuario, para que el top 50 sea el top 50 que el usuario puede leer. Filtrar después es seguro, pero degrada en silencio las respuestas de los usuarios más restringidos."
+      }
+    }
+  ]
+}

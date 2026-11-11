@@ -1,0 +1,102 @@
+{
+  "concept": "case-semantic-search",
+  "items": [
+    {
+      "id": "case-semantic-search.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Product search: a shopper asks for *running shoes, size 7, in stock, under $50*. Your system takes the ANN top 1,000, then applies the filters, and the page shows **2 items** although the catalog has hundreds that match. Best fix?",
+        "es": "Búsqueda de productos: una compradora pide *tenis para correr, talla 7, en stock, menos de $50*. Tu sistema toma el top 1,000 de ANN, luego aplica los filtros, y la página muestra **2 productos** aunque el catálogo tiene cientos que coinciden. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Apply the filters inside the ANN search", "es": "Aplicar los filtros dentro de la búsqueda ANN" },
+          "why": { "en": "The search then only walks matching products, so the top results already satisfy every constraint.", "es": "Así la búsqueda solo recorre productos que cumplen, y los primeros resultados ya respetan todas las restricciones." }
+        },
+        {
+          "text": { "en": "Embed price, size and stock into each product vector", "es": "Meter precio, talla y stock en el vector de cada producto" },
+          "why": { "en": "Similarity doesn't enforce hard constraints, and re-embedding drops freshness to hours; sold-out items rise to the top.", "es": "La similitud no impone restricciones duras, y regenerar embeddings baja la frescura a horas; los agotados suben al tope." }
+        },
+        {
+          "text": { "en": "Rerank the 1,000 candidates with a cross-encoder", "es": "Reordenar los 1,000 candidatos con un cross-encoder" },
+          "why": { "en": "A reranker only reorders what it receives; it can't bring back matches that never made the top 1,000.", "es": "Un reranker solo reordena lo que recibe; no puede traer coincidencias que nunca entraron al top 1,000." }
+        },
+        {
+          "text": { "en": "Relax the filters when fewer than 10 items remain", "es": "Relajar los filtros cuando quedan menos de 10 productos" },
+          "why": { "en": "Fills the page with items the shopper excluded, such as out-of-stock or wrong-size shoes.", "es": "Llena la página con productos que la compradora excluyó, como tenis agotados o de otra talla." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Post-filtering runs the constraint after the candidate cut, so a selective filter empties the list. Filtering inside the ANN search (or widening k adaptively) keeps recall. Price and stock stay out of embeddings: a stream writes them to filters and ranking features within seconds.",
+        "es": "Post-filtrar aplica la restricción después del corte de candidatos, así que un filtro selectivo vacía la lista. Filtrar dentro de la búsqueda ANN (o ampliar k de forma adaptativa) conserva el recall. El precio y el stock se quedan fuera de los embeddings: un stream los escribe en filtros y features de ranking en segundos."
+      }
+    },
+    {
+      "id": "case-semantic-search.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Your catalog has **50M products**, each embedded as a **768-dim** vector, quantized to **int8** (1 byte per dimension). How many GB of raw vector data does each replica hold in RAM, excluding HNSW links?",
+        "es": "Tu catálogo tiene **50M de productos**, cada uno con un embedding de **768 dimensiones**, cuantizado a **int8** (1 byte por dimensión). ¿Cuántos GB de datos vectoriales crudos guarda cada réplica en RAM, sin contar los enlaces HNSW?"
+      },
+      "answer": 38.4,
+      "tolerance": 0.15,
+      "unit": "GB",
+      "explain": {
+        "en": "50M × 768 × 1 B ≈ 38.4 GB; HNSW links (M=16) add ~6 GB. In float32 it would be ~154 GB per replica. Because every query fans out to every shard and p99 follows the slowest one, vectors must live in RAM, so quantization decides how many machines you need.",
+        "es": "50M × 768 × 1 B ≈ 38.4 GB; los enlaces HNSW (M=16) suman ~6 GB. En float32 serían ~154 GB por réplica. Como cada consulta llega a todos los shards y el p99 depende del más lento, los vectores deben vivir en RAM, así que la cuantización decide cuántas máquinas necesitas."
+      }
+    },
+    {
+      "id": "case-semantic-search.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the online path of one product-search query in order.",
+        "es": "Ordena el camino online de una consulta de búsqueda de productos."
+      },
+      "steps": [
+        { "en": "Parse the query: cache lookup for head, distilled parser for tail", "es": "Interpretar la consulta: cache para las frecuentes, parser destilado para la cola larga" },
+        { "en": "Embed the query and fan it out to every shard", "es": "Generar el embedding de la consulta y distribuirla a todos los shards" },
+        { "en": "Each shard runs BM25 and filtered ANN in parallel", "es": "Cada shard corre BM25 y ANN filtrado en paralelo" },
+        { "en": "Fuse the lists with RRF into ~1,000 candidates", "es": "Fusionar las listas con RRF en ~1,000 candidatos" },
+        { "en": "Gradient-boosted ranker scores relevance, behavior and business features", "es": "El ranker de gradient boosting puntúa features de relevancia, comportamiento y negocio" },
+        { "en": "Count facets and assemble the results page", "es": "Contar las facetas y armar la página de resultados" }
+      ],
+      "explain": {
+        "en": "The LLM never sits on the hot path: head parses are precomputed offline and the tail uses a small distilled parser. Retrieval is wide and cheap (two indexes, fused), ranking is narrow and feature-rich, and the whole path fits a 200 ms p99 budget.",
+        "es": "El LLM nunca está en el camino crítico: las interpretaciones de las consultas frecuentes se precalculan offline y la cola larga usa un parser chico destilado. La recuperación es amplia y barata (dos índices fusionados), el ranking es estrecho y rico en features, y todo el camino cabe en un presupuesto p99 de 200 ms."
+      }
+    },
+    {
+      "id": "case-semantic-search.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "You retrain the search ranker nightly on raw click logs. Over months, the same products keep the top slots and new products never surface, even good ones. What is the root cause?",
+        "es": "Reentrenas el ranker de búsqueda cada noche con logs de clics crudos. Con los meses, los mismos productos se quedan con los primeros lugares y los productos nuevos nunca aparecen, aunque sean buenos. ¿Cuál es la causa raíz?"
+      },
+      "options": [
+        {
+          "text": { "en": "Position bias: top slots get clicks because they're on top", "es": "Sesgo de posición: los primeros lugares reciben clics por estar arriba" },
+          "why": { "en": "Raw clicks reward placement, creating a popularity loop; correct with randomized top slots or inverse propensity weighting, plus exploration.", "es": "Los clics crudos premian la ubicación y crean un ciclo de popularidad; corrígelo con posiciones aleatorizadas o propensión inversa, más exploración." }
+        },
+        {
+          "text": { "en": "Too few features: the ranker needs more behavior signals", "es": "Pocas features: el ranker necesita más señales de comportamiento" },
+          "why": { "en": "More click-derived features feed the same biased signal back in and deepen the loop.", "es": "Más features derivadas de clics devuelven la misma señal sesgada y profundizan el ciclo." }
+        },
+        {
+          "text": { "en": "Model class: gradient-boosted trees can't learn to rank", "es": "Tipo de modelo: los árboles con gradient boosting no aprenden a rankear" },
+          "why": { "en": "LambdaMART-style boosted rankers are standard; any model trained on biased labels learns the bias.", "es": "Los rankers con boosting estilo LambdaMART son estándar; cualquier modelo entrenado con etiquetas sesgadas aprende el sesgo." }
+        },
+        {
+          "text": { "en": "Staleness: nightly retraining is too slow to keep up", "es": "Datos viejos: reentrenar cada noche es demasiado lento" },
+          "why": { "en": "Retraining faster on the same biased clicks just reinforces the loop faster.", "es": "Reentrenar más rápido con los mismos clics sesgados solo refuerza el ciclo más rápido." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Clicks are not relevance labels: they mix relevance with where the item was shown. A ranker trained on them learns to keep winners on top, and items that are never shown never earn data. Debias the labels and give new products an exploration slot.",
+        "es": "Los clics no son etiquetas de relevancia: mezclan relevancia con dónde se mostró el producto. Un ranker entrenado con ellos aprende a dejar arriba a los ganadores, y lo que nunca se muestra nunca acumula datos. Corrige el sesgo de las etiquetas y dales a los productos nuevos un espacio de exploración."
+      }
+    }
+  ]
+}

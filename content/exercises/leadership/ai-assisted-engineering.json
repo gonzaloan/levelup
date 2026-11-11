@@ -1,0 +1,99 @@
+{
+  "concept": "ai-assisted-engineering",
+  "items": [
+    {
+      "id": "ai-assisted-engineering.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "After 8 weeks, coding-agent pilot teams merge **25% more PRs** and cycle time is down 15% versus control. But PR size is up 60%, review wait up 40%, and one team's revert rate went from 2% to 3.5%. What's your next step?",
+        "es": "Tras 8 semanas, los equipos piloto con agentes de código hacen merge de **25% más PRs** y el cycle time bajó 15% frente al grupo de control. Pero el tamaño de los PRs subió 60%, la espera de review 40% y el revert rate de un equipo pasó de 2% a 3.5%. ¿Cuál es tu siguiente paso?"
+      },
+      "options": [
+        { "text": { "en": "Cap PR size, require tests in the PR, add an `AGENTS.md`, then re-measure", "es": "Limitar el tamaño de los PRs, exigir tests en el PR, agregar un `AGENTS.md` y volver a medir" },
+          "why": { "en": "Keeps the real speedup and fixes what the pilot exposed; the next cohort has to show it before expanding.", "es": "Conserva la mejora real y corrige lo que expuso el piloto; la siguiente cohorte debe demostrarlo antes de expandir." } },
+        { "text": { "en": "Expand org-wide now, since PR throughput is clearly up by 25%", "es": "Expandir a toda la organización ya, porque el throughput de PRs subió 25%" },
+          "why": { "en": "PR count rises with AI whether or not value does; expanding now spreads the review overload and the reverts.", "es": "La cantidad de PRs sube con IA aporte valor o no; expandir ahora propaga la sobrecarga de review y los reverts." } },
+        { "text": { "en": "Cancel the rollout, because the revert rate nearly doubled", "es": "Cancelar el rollout, porque el revert rate casi se duplicó" },
+          "why": { "en": "Throws away a measured gain; the regression came from large agent PRs, which the system can fix.", "es": "Desecha una mejora medida; la regresión vino de PRs grandes de agentes, algo que el sistema puede corregir." } },
+        { "text": { "en": "Add more senior reviewers to absorb the extra PR load", "es": "Sumar más reviewers senior para absorber la carga extra de PRs" },
+          "why": { "en": "Treats the symptom: bigger PRs still degrade review quality, and seniors are the scarcest capacity you have.", "es": "Trata el síntoma: los PRs más grandes siguen degradando la calidad del review, y los seniors son tu capacidad más escasa." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "AI amplifies the system it lands in. The pilot shows speed bought partly with quality: larger PRs overload review and leak reverts. Fix the system (small batches, tests with every change, shared rules files), then let the next cohort earn expansion with data against a control.",
+        "es": "La IA amplifica el sistema donde aterriza. El piloto muestra velocidad comprada en parte con calidad: PRs más grandes saturan el review y dejan pasar reverts. Arregla el sistema (lotes pequeños, tests con cada cambio, archivos de reglas compartidos) y deja que la siguiente cohorte se gane la expansión con datos contra un control."
+      }
+    },
+    {
+      "id": "ai-assisted-engineering.a2",
+      "type": "code",
+      "prompt": {
+        "en": "This query compares pilot and control teams before and after the rollout. Fill the gap with the column that catches **speed bought with quality**.",
+        "es": "Esta consulta compara equipos piloto y de control antes y después del rollout. Completa el hueco con la columna que detecta **velocidad comprada con calidad**."
+      },
+      "lang": "sql",
+      "code": "-- Pilot vs control, 8 weeks before vs after the rollout (2026-09-01)\nSELECT t.cohort,                                  -- 'pilot' | 'control'\n       CASE WHEN p.merged_at < DATE '2026-09-01'\n            THEN 'before' ELSE 'after' END AS period,\n       PERCENTILE_CONT(0.5) WITHIN GROUP (\n         ORDER BY EXTRACT(EPOCH FROM p.merged_at - p.opened_at) / 3600) AS median_cycle_h,\n       ____\nFROM prs p JOIN teams t USING (team_id)\nWHERE p.merged_at >= DATE '2026-07-07' AND p.merged_at < DATE '2026-10-27'\nGROUP BY 1, 2\nORDER BY cohort, period DESC;",
+      "options": [
+        { "text": "AVG(CASE WHEN p.reverted_30d THEN 1 ELSE 0 END) AS revert_rate",
+          "why": { "en": "An outcome metric: if agents ship faster but more changes get reverted, this rises.", "es": "Una métrica de resultado: si los agentes entregan más rápido pero se revierten más cambios, esto sube." } },
+        { "text": "SUM(p.lines_changed) AS total_lines",
+          "why": { "en": "Lines of code rise with AI whether or not value does; it measures activity, not quality.", "es": "Las líneas de código suben con IA aporte valor o no; mide actividad, no calidad." } },
+        { "text": "COUNT(*) AS prs_merged",
+          "why": { "en": "PR count is activity too: more PRs say nothing about whether they hold up in production.", "es": "La cantidad de PRs también es actividad: más PRs no dicen nada sobre si aguantan en producción." } },
+        { "text": "AVG(p.ai_suggestions_accepted) AS acceptance_rate",
+          "why": { "en": "Acceptance rate measures usage of the tool, not whether the accepted code was any good.", "es": "La tasa de aceptación mide el uso de la herramienta, no si el código aceptado era bueno." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Pair every speed metric with a quality guard. Cycle time alone rewards shipping fast and fixing later; the revert rate shows whether faster changes hold up. Read it as a difference-in-differences: (pilot after − before) − (control after − before), so seasonality and re-orgs cancel out.",
+        "es": "Acompaña cada métrica de velocidad con una de calidad. El cycle time solo premia entregar rápido y arreglar después; el revert rate muestra si los cambios más rápidos se sostienen. Léelo como diferencia en diferencias: (piloto después − antes) − (control después − antes), así la estacionalidad y las reorganizaciones se cancelan."
+      }
+    },
+    {
+      "id": "ai-assisted-engineering.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A pilot team's survey says developers **feel about 20% faster** with the coding agent. Your VP wants to use that to justify an org-wide rollout. What's the right response?",
+        "es": "La encuesta de un equipo piloto dice que los desarrolladores **se sienten cerca de 20% más rápidos** con el agente de código. Tu VP quiere usar eso para justificar un rollout en toda la organización. ¿Cuál es la respuesta correcta?"
+      },
+      "options": [
+        { "text": { "en": "Not enough: check delivery and quality metrics against a control group", "es": "No alcanza: revisar métricas de entrega y calidad contra un grupo de control" },
+          "why": { "en": "Perceived gains overstate measured ones; only a control separates AI impact from novelty and seasonality.", "es": "Las mejoras percibidas exageran las medidas; solo un control separa el impacto de la IA de la novedad y la estacionalidad." } },
+        { "text": { "en": "Enough: developer experience is the metric that matters most", "es": "Alcanza: la experiencia del desarrollador es la métrica que más importa" },
+          "why": { "en": "Experience matters, but in METR's RCT developers who felt ~20% faster were measured 19% slower.", "es": "La experiencia importa, pero en el RCT de METR quienes se sentían ~20% más rápidos midieron 19% más lentos." } },
+        { "text": { "en": "Enough, as long as more than 80% of respondents agree", "es": "Alcanza, siempre que más del 80% de quienes responden esté de acuerdo" },
+          "why": { "en": "A bigger majority of self-reports is still self-report; consensus doesn't fix the perception gap.", "es": "Una mayoría más grande de autorreportes sigue siendo autorreporte; el consenso no corrige la brecha de percepción." } },
+        { "text": { "en": "Reject it: studies show AI tools slow experienced developers down", "es": "Rechazarlo: los estudios muestran que la IA vuelve más lentos a los desarrolladores experimentados" },
+          "why": { "en": "Overcorrection: the evidence is mixed. GitHub's RCT measured 55.8% faster on a greenfield task; measure your own case.", "es": "Es una sobrecorrección: la evidencia es mixta. El RCT de GitHub midió 55.8% más rápido en una tarea greenfield; mide tu propio caso." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Self-reports and measured outcomes diverge: in METR's 2025 study, experienced maintainers believed they were ~20% faster and measured 19% slower. Keep the survey, since experience matters, but decide on DORA and quality metrics against a control, segmented by task type and seniority.",
+        "es": "Los autorreportes y los resultados medidos divergen: en el estudio de METR de 2025, mantenedores experimentados creían ser ~20% más rápidos y midieron 19% más lentos. Conserva la encuesta, porque la experiencia importa, pero decide con métricas DORA y de calidad contra un control, segmentadas por tipo de tarea y seniority."
+      }
+    },
+    {
+      "id": "ai-assisted-engineering.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A team wires a coding agent to triage **public GitHub issues** and fix them. To save setup time, it runs with a developer's personal token, which can push to `main` and read production secrets. What's the most important change?",
+        "es": "Un equipo conecta un agente de código para clasificar **issues públicos de GitHub** y corregirlos. Para ahorrar configuración, corre con el token personal de un desarrollador, que puede hacer push a `main` y leer secretos de producción. ¿Cuál es el cambio más importante?"
+      },
+      "options": [
+        { "text": { "en": "Sandbox it with a scoped, short-lived token: no prod secrets, PRs only", "es": "Aislarlo en un sandbox con un token acotado y de corta vida: sin secretos de prod, solo PRs" },
+          "why": { "en": "Removes the blast radius: an injected agent can no longer push code or reach secrets.", "es": "Elimina el radio de impacto: un agente inyectado ya no puede hacer push ni llegar a los secretos." } },
+        { "text": { "en": "Add a system prompt telling the agent to ignore instructions in issues", "es": "Agregar un system prompt que le diga al agente que ignore instrucciones en los issues" },
+          "why": { "en": "Prompt injection isn't solved by asking nicely; the dangerous combination of access stays in place.", "es": "La prompt injection no se resuelve pidiéndolo amablemente; la combinación peligrosa de accesos sigue ahí." } },
+        { "text": { "en": "Keep the token, but run secret scanning on every commit it pushes", "es": "Mantener el token, pero correr secret scanning en cada commit que suba" },
+          "why": { "en": "Scanning catches secrets committed to code, not an agent pushing malicious changes or leaking data elsewhere.", "es": "El escaneo detecta secretos commiteados en el código, no un agente que sube cambios maliciosos o filtra datos por otro lado." } },
+        { "text": { "en": "Have a senior engineer review everything it merged, once a week", "es": "Que un ingeniero senior revise cada semana todo lo que mergeó" },
+          "why": { "en": "Review after merge is too late: agents may open PRs but never merge or push to protected branches.", "es": "Revisar después del merge es tarde: los agentes pueden abrir PRs, pero nunca hacer merge ni push a ramas protegidas." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Treat the agent as an untrusted contributor. Untrusted input (public issues), private data (prod secrets) and the power to act (push to `main`) in one session is the [[lethal-trifecta]]. Scoped, short-lived tokens in a sandbox, with humans reviewing and merging PRs, shrink the blast radius instead of hoping the model behaves.",
+        "es": "Trata al agente como un colaborador no confiable. Entrada no confiable (issues públicos), datos privados (secretos de prod) y poder de acción (push a `main`) en una misma sesión es la [[lethal-trifecta]]. Tokens acotados y de corta vida en un sandbox, con personas que revisan y hacen merge de los PRs, reducen el radio de impacto en vez de esperar que el modelo se porte bien."
+      }
+    }
+  ]
+}

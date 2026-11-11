@@ -1,0 +1,102 @@
+{
+  "concept": "case-feed-ranking",
+  "items": [
+    {
+      "id": "case-feed-ranking.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A value-model change raises the weight on comments. A one-week A/B test shows comments clearly up and time spent flat. The PM wants to ship to everyone. What do you do?",
+        "es": "Un cambio en el value model sube el peso de los comentarios. Un A/B test de una semana muestra los comentarios claramente arriba y el tiempo en la app sin cambios. El PM quiere lanzarlo a todos. ¿Qué haces?"
+      },
+      "options": [
+        {
+          "text": { "en": "Keep a long-running holdout and watch retention, hides, reports and surveys", "es": "Mantener un holdout largo y vigilar retención, ocultamientos, reportes y encuestas" },
+          "why": { "en": "Bait and outrage win short-term; only weeks of long-term metrics show whether trust erodes.", "es": "El bait y la indignación ganan en el corto plazo; solo semanas de métricas de largo plazo muestran si la confianza se erosiona." }
+        },
+        {
+          "text": { "en": "Ship it: comments are the meaningful interactions to reward", "es": "Lanzarlo: los comentarios son las interacciones significativas que hay que premiar" },
+          "why": { "en": "Comments are a proxy, and outrage and engagement bait earn plenty of them.", "es": "Los comentarios son un proxy, y la indignación y el engagement bait generan muchos." }
+        },
+        {
+          "text": { "en": "Ship it, then fit the weights by gradient descent on comment rate", "es": "Lanzarlo y luego ajustar los pesos con descenso de gradiente sobre la tasa de comentarios" },
+          "why": { "en": "Weights are a product decision tuned by experiment on long-term metrics; optimizing a proxy amplifies it.", "es": "Los pesos son una decisión de producto que se ajusta con experimentos sobre métricas de largo plazo; optimizar un proxy lo amplifica." }
+        },
+        {
+          "text": { "en": "Run one more week of the same test to reach significance", "es": "Correr una semana más del mismo test para alcanzar significancia" },
+          "why": { "en": "Significance isn't the gap: two weeks of a short-term proxy still miss decay that unfolds over months.", "es": "El problema no es la significancia: dos semanas de un proxy de corto plazo siguen sin ver un deterioro que tarda meses." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The highest-cost failure of feed ranking is optimizing a proxy that is easy to move. Value weights are policy: run weight vectors as A/B arms, read short-term proxies and the north star over weeks, and keep long-running holdouts. Integrity lives in a separate model so no weight change can trade it away.",
+        "es": "La falla más costosa del ranking de un feed es optimizar un proxy fácil de mover. Los pesos son política: corre vectores de pesos como brazos de un A/B, lee los proxies de corto plazo y la métrica norte durante semanas, y mantén holdouts largos. La integridad vive en un modelo aparte para que ningún cambio de pesos la sacrifique."
+      }
+    },
+    {
+      "id": "case-feed-ranking.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size the main pass: **2B daily users**, **10 feed loads/day** each (assumed), a **2× peak-to-average** ratio, and **500 candidates** scored by the heavy model per request. How many heavy-model scores per second at peak, in millions?",
+        "es": "Dimensiona la pasada principal: **2 mil millones de usuarios diarios**, **10 cargas del feed al día** cada uno (supuesto), una relación **pico/promedio de 2×** y **500 candidatos** que el modelo pesado puntúa por solicitud. ¿Cuántos puntajes del modelo pesado por segundo hay en el pico, en millones?"
+      },
+      "answer": 231,
+      "tolerance": 0.15,
+      "unit": "M scores/s",
+      "explain": {
+        "en": "20B requests/day ÷ 86,400 s ≈ 231k QPS average, ~463k at peak (call it ~500k). × 500 candidates ≈ 231M scores/s (~250M with the rounded peak). That is why serving batches all of a request's candidates on accelerators and computes the user side once per request, not 500 times.",
+        "es": "20 mil millones de solicitudes/día ÷ 86,400 s ≈ 231k QPS promedio, ~463k en el pico (digamos ~500k). × 500 candidatos ≈ 231M de puntajes/s (~250M con el pico redondeado). Por eso el serving agrupa todos los candidatos de una solicitud en aceleradores y calcula el lado del usuario una vez por solicitud, no 500 veces."
+      }
+    },
+    {
+      "id": "case-feed-ranking.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the ranking path of one feed request in order.",
+        "es": "Ordena el camino de ranking de una solicitud del feed."
+      },
+      "steps": [
+        { "en": "Pull candidates from the graph inventory and two-tower ANN in parallel", "es": "Traer candidatos del inventario del grafo y del ANN two-tower en paralelo" },
+        { "en": "Dedupe and drop ineligible posts: privacy, blocks, already seen", "es": "Quitar duplicados y posts no elegibles: privacidad, bloqueos, ya vistos" },
+        { "en": "A light first-pass model keeps ~500 candidates", "es": "Un modelo liviano de primera pasada conserva ~500 candidatos" },
+        { "en": "Multi-task model predicts like, comment, share, hide and dwell", "es": "El modelo multitarea predice like, comentario, compartir, ocultar y dwell" },
+        { "en": "Value model combines the predictions with weights", "es": "El value model combina las predicciones con pesos" },
+        { "en": "Final pass re-ranks for diversity, freshness and integrity", "es": "La pasada final re-rankea por diversidad, frescura e integridad" }
+      ],
+      "explain": {
+        "en": "Each stage trades recall for cost: cheap sources and filters on ~1,000–2,000 posts, a distilled model to cut to ~500, the heavy model only on those. Per-item scores come before list-level goals, because diversity and author caps depend on what is already on the page.",
+        "es": "Cada etapa cambia recall por costo: fuentes y filtros baratos sobre ~1,000–2,000 posts, un modelo destilado para bajar a ~500 y el modelo pesado solo sobre esos. Los puntajes por ítem van antes que las metas de lista, porque la diversidad y los topes por autor dependen de lo que ya está en la página."
+      }
+    },
+    {
+      "id": "case-feed-ranking.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "After a routine retrain, comment bait floods the feed, though nobody touched the value weights. For the comment head, Σ predicted / Σ actual is **2.0**. Root cause and fix?",
+        "es": "Tras un reentrenamiento de rutina, el comment bait inunda el feed, aunque nadie tocó los pesos del value model. Para el head de comentarios, Σ predicho / Σ real es **2.0**. ¿Causa raíz y corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Miscalibrated head: recalibrate it and alert outside ~0.95–1.05", "es": "Head descalibrado: recalibrarlo y alertar fuera de ~0.95–1.05" },
+          "why": { "en": "P(comment) running 2× high doubles its effective weight in the sum without any config change.", "es": "Un P(comentario) 2× alto duplica su peso efectivo en la suma sin ningún cambio de configuración." }
+        },
+        {
+          "text": { "en": "Weight too high: halve the comment weight in the config", "es": "Peso muy alto: reducir a la mitad el peso de comentarios en la configuración" },
+          "why": { "en": "Patches this retrain only; the next drift breaks it again, and weights are product policy, not a calibration knob.", "es": "Solo parcha este reentrenamiento; la próxima deriva lo rompe otra vez, y los pesos son política de producto, no una perilla de calibración." }
+        },
+        {
+          "text": { "en": "Missing integrity: add a bait classifier to the final pass", "es": "Falta integridad: agregar un clasificador de bait en la pasada final" },
+          "why": { "en": "Treats one symptom; every comment-heavy post is still overrated relative to likes and shares.", "es": "Trata un síntoma; todos los posts con muchos comentarios siguen sobrevalorados frente a likes y compartidos." }
+        },
+        {
+          "text": { "en": "Position bias: add position as a training feature", "es": "Sesgo de posición: agregar la posición como feature de entrenamiento" },
+          "why": { "en": "Position correction fixes learning from slot order; it doesn't explain one head predicting double its observed rate.", "es": "Corregir la posición arregla el aprendizaje por orden de slot; no explica que un head prediga el doble de su tasa observada." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A weighted sum of predictions only means something if each prediction is a true probability. Calibrate every head on recent data (isotonic or Platt, per surface and country) and monitor Σ predicted / Σ actual per head and segment, or a retrain silently rewrites the product's priorities.",
+        "es": "Una suma ponderada de predicciones solo tiene sentido si cada predicción es una probabilidad real. Calibra cada head con datos recientes (isotónica o Platt, por superficie y país) y monitorea Σ predicho / Σ real por head y segmento, o un reentrenamiento reescribe en silencio las prioridades del producto."
+      }
+    }
+  ]
+}

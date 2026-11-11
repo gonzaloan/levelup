@@ -5,6 +5,7 @@ import { ThemeToggle } from "./ThemeToggle";
 import { LangSwitch } from "./LangSwitch";
 import { SearchButton } from "./SearchButton";
 import { Icon } from "./Icon";
+import { AccountButton } from "./Account";
 
 export function Header({ locale }: { locale: Locale }) {
   const L = (k: Parameters<typeof m>[0]) => m(k, locale);
@@ -28,6 +29,7 @@ export function Header({ locale }: { locale: Locale }) {
           <SearchButton label={L("search")} placeholder={L("searchPlaceholder")} />
           <LangSwitch locale={locale} label={L("language")} />
           <ThemeToggle label={L("theme")} />
+          <AccountButton locale={locale} />
         </div>
       </div>
     </header>

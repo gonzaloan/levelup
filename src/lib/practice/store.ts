@@ -51,10 +51,11 @@ export function loadState(): StudyState {
   return emptyState();
 }
 
-export function saveState(s: StudyState) {
+/** `fromSync` marks a save made by the sync itself, so the sync agent doesn't push it back (loop). */
+export function saveState(s: StudyState, opts?: { silent?: boolean }) {
   s.updatedAt = Date.now();
   try { localStorage.setItem(STUDY_KEY, JSON.stringify(s)); } catch { /* ignore */ }
-  try { window.dispatchEvent(new Event(STUDY_EVENT)); } catch { /* ignore */ }
+  try { window.dispatchEvent(new CustomEvent(STUDY_EVENT, { detail: { fromSync: !!opts?.silent } })); } catch { /* ignore */ }
 }
 
 /* ------------------------------------------------------------------ dates */

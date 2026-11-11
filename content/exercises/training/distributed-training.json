@@ -1,0 +1,66 @@
+{
+  "concept": "distributed-training",
+  "items": [
+    {
+      "id": "distributed-training.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A 2-node training job (8 H100s per node) uses **tensor parallelism of degree 16**, spanning both nodes over InfiniBand. Profiling shows GPUs mostly idle, waiting on communication. Best fix?",
+        "es": "Un trabajo de entrenamiento en 2 nodos (8 H100 por nodo) usa **paralelismo de tensores de grado 16**, repartido entre ambos nodos sobre InfiniBand. El profiling muestra GPUs casi siempre ociosas, esperando comunicación. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Keep TP inside each node over NVLink; use FSDP or PP across nodes", "es": "Dejar TP dentro de cada nodo sobre NVLink; usar FSDP o PP entre nodos" },
+          "why": { "en": "TP all-reduces inside every layer; NVLink is ~9× faster than a 400 Gb/s InfiniBand link, so TP belongs within the node.", "es": "TP hace all-reduce dentro de cada capa; NVLink es ~9× más rápido que un enlace InfiniBand de 400 Gb/s, así que TP va dentro del nodo." } },
+        { "text": { "en": "Add a third node so each GPU does less work per layer", "es": "Agregar un tercer nodo para que cada GPU haga menos trabajo por capa" },
+          "why": { "en": "More GPUs on the slow link means more cross-node traffic on every layer; the stall gets worse.", "es": "Más GPUs sobre el enlace lento significa más tráfico entre nodos en cada capa; la espera empeora." } },
+        { "text": { "en": "Raise the number of micro-batches to shrink the bubble", "es": "Subir la cantidad de micro-batches para achicar la burbuja" },
+          "why": { "en": "Bubbles are a pipeline-parallel problem; this job stalls on TP's per-layer all-reduces.", "es": "Las burbujas son un problema del paralelismo de pipeline; este trabajo se frena por los all-reduce por capa de TP." } },
+        { "text": { "en": "Turn on activation checkpointing to relieve memory pressure", "es": "Activar activation checkpointing para aliviar la presión de memoria" },
+          "why": { "en": "It trades ~33% more compute for memory; the bottleneck here is the link, not memory.", "es": "Cambia ~33% más de cómputo por memoria; aquí el cuello de botella es el enlace, no la memoria." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Map each parallelism to the link it can afford: TP (chatty, every layer) on NVLink inside a node; PP (activations only at stage boundaries) and FSDP across nodes. That's the shape of 3D parallelism.",
+        "es": "Asigna cada paralelismo al enlace que puede pagar: TP (mucha comunicación, en cada capa) sobre NVLink dentro del nodo; PP (solo activaciones en los límites entre etapas) y FSDP entre nodos. Esa es la forma del paralelismo 3D."
+      }
+    },
+    {
+      "id": "distributed-training.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "A pipeline-parallel run has **p = 8** stages and **m = 8** micro-batches per step. Using bubble ≈ (p−1)/(m+p−1), what percentage of each step do GPUs sit idle?",
+        "es": "Una corrida con paralelismo de pipeline tiene **p = 8** etapas y **m = 8** micro-batches por paso. Usando burbuja ≈ (p−1)/(m+p−1), ¿qué porcentaje de cada paso pasan ociosas las GPUs?"
+      },
+      "answer": 46.7,
+      "tolerance": 0.08,
+      "unit": "%",
+      "explain": {
+        "en": "(8−1)/(8+8−1) = 7/15 ≈ 46.7%: almost half the step wasted. With m = 64 it falls to 7/71 ≈ 10%. Micro-batches must far outnumber stages, which is why pipelines need large global batches.",
+        "es": "(8−1)/(8+8−1) = 7/15 ≈ 46.7%: casi medio paso desperdiciado. Con m = 64 baja a 7/71 ≈ 10%. Los micro-batches deben superar ampliamente a las etapas, por eso los pipelines necesitan batches globales grandes."
+      }
+    },
+    {
+      "id": "distributed-training.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about training memory and parallelism are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la memoria de entrenamiento y el paralelismo son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "With FSDP over N GPUs, per-GPU state is ~16 × params / N bytes", "es": "Con FSDP sobre N GPUs, el estado por GPU es ~16 × parámetros / N bytes" } },
+        { "text": { "en": "Activation checkpointing trades ~33% more compute for less activation memory", "es": "El activation checkpointing cambia ~33% más de cómputo por menos memoria de activaciones" } },
+        { "text": { "en": "Adding GPUs to plain DDP lets a too-big model fit", "es": "Agregar GPUs a un DDP simple permite que quepa un modelo demasiado grande" },
+          "why": { "en": "DDP replicates the full state on every GPU: it scales throughput, never memory.", "es": "DDP replica el estado completo en cada GPU: escala el throughput, nunca la memoria." } },
+        { "text": { "en": "The ~16 bytes per parameter already include activations", "es": "Los ~16 bytes por parámetro ya incluyen las activaciones" },
+          "why": { "en": "It's only weights, gradients and optimizer state; with long sequences, activations can exceed the weights.", "es": "Son solo pesos, gradientes y estado del optimizador; con secuencias largas, las activaciones pueden superar a los pesos." } },
+        { "text": { "en": "Tensor parallelism communicates only at stage boundaries", "es": "El paralelismo de tensores se comunica solo en los límites entre etapas" },
+          "why": { "en": "That's pipeline parallelism; TP all-reduces inside every layer.", "es": "Eso es el paralelismo de pipeline; TP hace all-reduce dentro de cada capa." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Do the memory math first: ~16 bytes/param of state plus activations. An 8B full fine-tune is ~128 GB, so DDP on 80 GB GPUs fails even at batch 1, while FSDP on 8 GPUs leaves ~16 GB of state each.",
+        "es": "Haz primero la cuenta de memoria: ~16 bytes/parámetro de estado más activaciones. Un fine-tuning completo de 8B son ~128 GB, así que DDP en GPUs de 80 GB falla incluso con batch de 1, mientras que FSDP en 8 GPUs deja ~16 GB de estado en cada una."
+      }
+    }
+  ]
+}

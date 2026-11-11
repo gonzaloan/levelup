@@ -1,0 +1,94 @@
+{
+  "concept": "case-document-extraction",
+  "items": [
+    {
+      "id": "case-document-extraction.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "An invoice's IBAN passes the checksum, maps to an OCR span and clears its 99.9% calibrated threshold, but it **differs from the vendor master record**. Every other field passes. What should the pipeline do?",
+        "es": "El IBAN de una factura pasa el checksum, corresponde a un span del OCR y supera su umbral calibrado de 99.9%, pero **no coincide con el registro maestro del proveedor**. Todos los demás campos pasan. ¿Qué debe hacer el pipeline?"
+      },
+      "options": [
+        {
+          "text": { "en": "Send only the IBAN to review, verified out of band", "es": "Mandar solo el IBAN a revisión, verificado por otro canal" },
+          "why": { "en": "A changed bank detail is a business rule failure, whatever the extraction confidence says.", "es": "Un dato bancario cambiado es una falla de regla de negocio, diga lo que diga la confianza de extracción." }
+        },
+        {
+          "text": { "en": "Auto-post: checksum, grounding and confidence all pass", "es": "Publicar automáticamente: checksum, grounding y confianza pasan" },
+          "why": { "en": "Those prove the text was read correctly, not that the account is legitimate; this is classic invoice fraud.", "es": "Eso prueba que el texto se leyó bien, no que la cuenta sea legítima; es el fraude de facturas clásico." }
+        },
+        {
+          "text": { "en": "Update the vendor master with the new IBAN, then post", "es": "Actualizar el maestro del proveedor con el nuevo IBAN y publicar" },
+          "why": { "en": "Lets an attacker rewrite your source of truth; bank changes need verification first.", "es": "Deja que un atacante reescriba tu fuente de verdad; los cambios bancarios se verifican primero." }
+        },
+        {
+          "text": { "en": "Send the whole invoice for full manual re-keying", "es": "Mandar la factura completa a recaptura manual" },
+          "why": { "en": "Review is ~90% of the cost; route per field so the reviewer touches only what was flagged.", "es": "La revisión es ~90% del costo; enruta por campo para que el revisor toque solo lo marcado." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Confidence answers \"did we read it right?\"; rules answer \"is it right?\". A valid-checksum IBAN that differs from master data is the classic business email compromise, so a rule routes that single field to review, and the reviewer confirms by calling the vendor's number on file.",
+        "es": "La confianza responde \"¿lo leímos bien?\"; las reglas responden \"¿es correcto?\". Un IBAN con checksum válido que difiere del maestro es el clásico business email compromise, así que una regla manda ese único campo a revisión y el revisor confirma llamando al número del proveedor que ya está registrado."
+      }
+    },
+    {
+      "id": "case-document-extraction.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Price the human side: **1M documents/month**, **8%** flagged for review, **~60 s** per review, reviewers at **$25/h** (all assumptions). What is the monthly review cost, in USD?",
+        "es": "Calcula el costo humano: **1M de documentos al mes**, **8%** marcados para revisión, **~60 s** por revisión y revisores a **$25/h** (todo supuesto). ¿Cuál es el costo mensual de revisión, en USD?"
+      },
+      "answer": 33300,
+      "tolerance": 0.15,
+      "unit": "USD/month",
+      "explain": {
+        "en": "1M × 8% = 80k docs × 60 s = 4.8M s ≈ 1,330 h ≈ 8 FTE × $25 ≈ $33k/month. Model spend is ~$1.2k through a batch API, so review is ~90% of the total and each point of review rate is worth ~$4k/month: calibration, not a cheaper model, is the cost lever.",
+        "es": "1M × 8% = 80k documentos × 60 s = 4.8M s ≈ 1,330 h ≈ 8 FTE × $25 ≈ $33k/mes. El modelo cuesta ~$1.2k con una API batch, así que la revisión es ~90% del total y cada punto de tasa de revisión vale ~$4k/mes: la palanca de costo es la calibración, no un modelo más barato."
+      }
+    },
+    {
+      "id": "case-document-extraction.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the per-document extraction job in order.",
+        "es": "Ordena el job de extracción de cada documento."
+      },
+      "steps": [
+        { "en": "Store the original, dedupe by hash, classify and split", "es": "Guardar el original, deduplicar por hash, clasificar y dividir" },
+        { "en": "Read the text layer, or OCR with word boxes if there is none", "es": "Leer la capa de texto, o hacer OCR con cajas de palabras si no existe" },
+        { "en": "LLM fills the per-type JSON schema with structured outputs", "es": "El LLM llena el esquema JSON del tipo de documento con structured outputs" },
+        { "en": "Run arithmetic, checksum, master-data and grounding checks", "es": "Correr chequeos aritméticos, de checksum, de datos maestros y de grounding" },
+        { "en": "Route fields below their calibrated threshold to review", "es": "Mandar a revisión los campos bajo su umbral calibrado" },
+        { "en": "Write to the ERP keyed by vendor + invoice number", "es": "Escribir en el ERP con clave proveedor + número de factura" }
+      ],
+      "explain": {
+        "en": "Cheap, deterministic steps bracket the model: dedupe and split before spending tokens, then rules and grounding catch silent errors before confidence routing. The export is idempotent on a business key, so a retried job never double-posts.",
+        "es": "Los pasos baratos y deterministas rodean al modelo: deduplicar y dividir antes de gastar tokens, y luego reglas y grounding atrapan los errores silenciosos antes del ruteo por confianza. La exportación es idempotente sobre una clave de negocio, así que un job reintentado nunca publica dos veces."
+      }
+    },
+    {
+      "id": "case-document-extraction.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about confidence and evaluation in this pipeline are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la confianza y la evaluación en este pipeline son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Schema-valid structured output can still hold a hallucinated invoice number", "es": "Una salida estructurada válida según el esquema puede traer un número de factura alucinado" } },
+        { "text": { "en": "The calibrator must be refit after a model or prompt change", "es": "El calibrador se debe reajustar tras un cambio de modelo o de prompt" } },
+        { "text": { "en": "The model's self-reported confidence can serve directly as the threshold", "es": "La confianza que reporta el modelo sirve directamente como umbral" },
+          "why": { "en": "Self-reported scores aren't calibrated; combine signals and fit them to reviewer outcomes.", "es": "Los puntajes autorreportados no están calibrados; combina señales y ajústalas a los resultados de los revisores." } },
+        { "text": { "en": "Per-document accuracy is the right headline metric", "es": "La exactitud por documento es la métrica principal correcta" },
+          "why": { "en": "A 30-field invoice with one wrong total hides in a document-level average; score per field.", "es": "Una factura de 30 campos con un total equivocado se esconde en un promedio por documento; mide por campo." } },
+        { "text": { "en": "Auditing flagged documents is enough to measure the escape rate", "es": "Auditar los documentos marcados alcanza para medir la tasa de escape" },
+          "why": { "en": "Escapes live in what skipped review; audit a random 1–2% of straight-through documents.", "es": "Los escapes están en lo que no pasó por revisión; audita al azar un 1–2% de los documentos que pasaron directo." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Structured outputs guarantee shape, not truth, so grounding and rules still run. Trustworthy confidence comes from combined signals (log-probs, agreement, OCR confidence, rules) calibrated on reviewer outcomes, and calibration does not transfer across model or prompt changes.",
+        "es": "Las salidas estructuradas garantizan la forma, no la verdad, así que el grounding y las reglas siguen corriendo. Una confianza confiable sale de señales combinadas (log-probs, acuerdo, confianza del OCR, reglas) calibradas con los resultados de los revisores, y la calibración no se transfiere entre cambios de modelo o de prompt."
+      }
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { Header } from "@/components/Header";
 import { SearchPalette } from "@/components/SearchPalette";
+import { SyncAgent } from "@/components/Account";
 import { LOCALES, isLocale, m, t } from "@/lib/i18n";
 import { getDomains } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -20,6 +21,7 @@ export default async function LocaleLayout({ children, params }: { children: Rea
       <footer className="site-footer">
         <p>{m("footer", locale)} {m("shortcuts", locale)}</p>
       </footer>
+      <SyncAgent />
       <SearchPalette locale={locale} domains={domains}
         labels={{ placeholder: m("searchPlaceholder", locale), empty: m("searchEmpty", locale), hint: m("searchHint", locale), close: "Esc" }} />
     </>

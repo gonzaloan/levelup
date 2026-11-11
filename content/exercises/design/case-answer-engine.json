@@ -1,0 +1,102 @@
+{
+  "concept": "case-answer-engine",
+  "items": [
+    {
+      "id": "case-answer-engine.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "To raise the cache hit rate, your team added a **semantic cache** over answers. Now users asking about this month's Fed decision get last month's answer, with citations that look fine. What's the right fix?",
+        "es": "Para subir el hit rate, tu equipo agregó un **cache semántico** sobre las respuestas. Ahora quienes preguntan por la decisión de la Fed de este mes reciben la respuesta del mes pasado, con citas que se ven bien. ¿Cuál es la corrección correcta?"
+      },
+      "options": [
+        {
+          "text": { "en": "Use exact keys with a TTL per freshness class for time-sensitive intents", "es": "Usar claves exactas con un TTL por clase de frescura en las intenciones sensibles al tiempo" },
+          "why": { "en": "News, scores and prices get minutes; evergreen how-tos keep long TTLs and their hits.", "es": "Noticias, resultados y precios reciben minutos; las guías atemporales conservan TTLs largos y sus hits." }
+        },
+        {
+          "text": { "en": "Raise the similarity threshold until the two stop matching", "es": "Subir el umbral de similitud hasta que las dos dejen de coincidir" },
+          "why": { "en": "Both queries embed almost identically; no threshold separates them without killing the hit rate.", "es": "Ambas consultas generan embeddings casi idénticos; ningún umbral las separa sin matar el hit rate." }
+        },
+        {
+          "text": { "en": "Cut every answer TTL to a few minutes across the board", "es": "Bajar todos los TTL de respuesta a unos pocos minutos" },
+          "why": { "en": "Throws away evergreen hits; TTL should follow the query's intent, not one global value.", "es": "Desperdicia los hits atemporales; el TTL debe seguir la intención de la consulta, no un valor global." }
+        },
+        {
+          "text": { "en": "Remove the answer cache and generate every answer live", "es": "Quitar el cache de respuestas y generar todo en vivo" },
+          "why": { "en": "Overcorrection: traffic is Zipf-like, so a small exact cache on head queries absorbs a real share.", "es": "Sobrecorrección: el tráfico sigue una Zipf, así que un cache exacto chico sobre las consultas frecuentes absorbe una parte real." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Freshness is part of the question. Classify intent first, then cache head answers only with no conversation context, keyed by normalized query, locale and freshness bucket, with TTLs from minutes (news) to days (evergreen). Semantic matching is the wrong tool where the date is the whole difference.",
+        "es": "La frescura es parte de la pregunta. Clasifica primero la intención y luego cachea solo respuestas de consultas frecuentes sin contexto de conversación, con clave por consulta normalizada, locale y franja de frescura, y TTLs de minutos (noticias) a días (atemporal). El matching semántico es la herramienta equivocada cuando la fecha es toda la diferencia."
+      }
+    },
+    {
+      "id": "case-answer-engine.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Per query: **~6.5k input + ~300 output** tokens on a small model at **$0.40/M input and $1.60/M output**, plus one search API call at **$5 per 1k** (assumed prices). What does one query cost, in **cents**?",
+        "es": "Por consulta: **~6.5k tokens de entrada + ~300 de salida** en un modelo chico a **$0.40/M de entrada y $1.60/M de salida**, más una llamada a la API de búsqueda a **$5 por cada 1k** (precios supuestos). ¿Cuánto cuesta una consulta, en **centavos**?"
+      },
+      "answer": 0.8,
+      "tolerance": 0.15,
+      "unit": "¢",
+      "explain": {
+        "en": "Input: 6.5k × $0.40/M = $0.0026. Output: 300 × $1.60/M ≈ $0.0005. Model ≈ 0.3¢. Search: $5 / 1,000 = 0.5¢. Total ≈ 0.8¢. Search is the larger line: at 10M queries/day it's ~$50k/day vs ~$30k for the model, the build-vs-buy trigger for an own index.",
+        "es": "Entrada: 6.5k × $0.40/M = $0.0026. Salida: 300 × $1.60/M ≈ $0.0005. Modelo ≈ 0.3¢. Búsqueda: $5 / 1,000 = 0.5¢. Total ≈ 0.8¢. La búsqueda es la línea más grande: a 10M de consultas al día son ~$50k/día frente a ~$30k del modelo, el disparador para decidir entre comprar o construir un índice propio."
+      }
+    },
+    {
+      "id": "case-answer-engine.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the online path of one answer-engine query in order.",
+        "es": "Ordena la ruta online de una consulta al motor de respuestas."
+      },
+      "steps": [
+        { "en": "A small model classifies intent and rewrites the query", "es": "Un modelo chico clasifica la intención y reescribe la consulta" },
+        { "en": "Check the answer cache (head queries without history only)", "es": "Revisar el cache de respuestas (solo consultas frecuentes sin historial)" },
+        { "en": "Search returns ~15 URLs", "es": "La búsqueda devuelve ~15 URLs" },
+        { "en": "Fetch the top ~8 pages under an ~800 ms deadline", "es": "Traer las ~8 primeras páginas con un límite de ~800 ms" },
+        { "en": "A cross-encoder keeps ~12 passages", "es": "Un cross-encoder conserva ~12 pasajes" },
+        { "en": "The LLM streams an answer citing `[n]` per sentence", "es": "El LLM transmite una respuesta que cita `[n]` en cada oración" }
+      ],
+      "explain": {
+        "en": "The rewrite produces the standalone query and freshness class that the cache key needs. On a miss, search wide, fetch under a hard deadline so the tail can't set p99, narrow with the reranker, and generate only from numbered passages so every claim is checkable.",
+        "es": "La reescritura produce la consulta autónoma y la clase de frescura que necesita la clave del cache. Si no hay hit, busca amplio, trae páginas con un límite duro para que la cola no defina el p99, acota con el reranker y genera solo desde pasajes numerados para que cada afirmación sea verificable."
+      }
+    },
+    {
+      "id": "case-answer-engine.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Complaints about wrong answers are rising, and the team wants to move every query to a $3/$15 model. Your eval shows that in most failed answers, **none of the top 8 pages contained the answer**. What do you say?",
+        "es": "Aumentan las quejas por respuestas equivocadas y el equipo quiere pasar todas las consultas a un modelo de $3/$15. Tu eval muestra que en la mayoría de las fallas **ninguna de las 8 primeras páginas contenía la respuesta**. ¿Qué dices?"
+      },
+      "options": [
+        {
+          "text": { "en": "Fix retrieval and source ranking first", "es": "Arreglar primero la recuperación y el ranking de fuentes" },
+          "why": { "en": "The model can only cite what was fetched; this is a search failure, not a model one.", "es": "El modelo solo puede citar lo que se trajo; es una falla de búsqueda, no del modelo." }
+        },
+        {
+          "text": { "en": "Upgrade: a stronger model hallucinates less", "es": "Cambiar: un modelo más fuerte alucina menos" },
+          "why": { "en": "Without a supporting passage it just writes a more fluent unsupported answer, at several times the cost.", "es": "Sin un pasaje que lo respalde, solo escribe una respuesta sin sustento más fluida, a varias veces el costo." }
+        },
+        {
+          "text": { "en": "Let the model fill gaps from its own knowledge", "es": "Dejar que el modelo complete con su propio conocimiento" },
+          "why": { "en": "Uncited claims break the product's promise; it should say when sources are thin.", "es": "Las afirmaciones sin cita rompen la promesa del producto; debe decir cuando las fuentes son escasas." }
+        },
+        {
+          "text": { "en": "Rerank more passages from the same 8 pages", "es": "Reordenar más pasajes de las mismas 8 páginas" },
+          "why": { "en": "A reranker only reorders what was fetched; if the answer isn't there, no order finds it.", "es": "Un reranker solo reordena lo que se trajo; si la respuesta no está, ningún orden la encuentra." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Score retrieval and generation separately. Retrieval coverage (did the top 8 pages contain the answer?) splits search failures from model failures. Here search fails, so the levers are the query rewrite, authority priors, resolving copies to the original and the index, not the model tier.",
+        "es": "Evalúa la recuperación y la generación por separado. La cobertura de recuperación (¿las 8 primeras páginas contenían la respuesta?) separa las fallas de búsqueda de las del modelo. Aquí falla la búsqueda, así que las palancas son la reescritura de la consulta, los priors de autoridad, resolver copias al original y el índice, no el nivel del modelo."
+      }
+    }
+  ]
+}

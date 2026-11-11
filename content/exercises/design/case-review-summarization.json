@@ -1,0 +1,102 @@
+{
+  "concept": "case-review-summarization",
+  "items": [
+    {
+      "id": "case-review-summarization.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your v1 summarizes each product's reviews 100 at a time, then summarizes those summaries. On large products the page says *\"most buyers report battery problems\"*, but a manual count shows they are a small minority. What's the fix?",
+        "es": "Tu v1 resume las reseñas de cada producto de a 100 y luego resume esos resúmenes. En los productos grandes la página dice *\"la mayoría de los compradores reporta problemas de batería\"*, pero un conteo manual muestra que son una minoría chica. ¿Cuál es la corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Extract aspect rows per review and count them in code", "es": "Extraer filas de aspectos por reseña y contarlas en código" },
+          "why": { "en": "Counts stay exact at any size: the model labels and phrases, code does the arithmetic.", "es": "Los conteos quedan exactos a cualquier escala: el modelo etiqueta y redacta, el código hace la aritmética." }
+        },
+        {
+          "text": { "en": "Send all reviews to one long-context model", "es": "Mandar todas las reseñas a un solo modelo de contexto largo" },
+          "why": { "en": "A 50k-review product is ~5M tokens and fits no window; the model would still guess numbers.", "es": "Un producto con 50k reseñas son ~5M tokens y no cabe en ninguna ventana; el modelo igual adivinaría números." }
+        },
+        {
+          "text": { "en": "Instruct the writer to report exact percentages", "es": "Indicarle al redactor que reporte porcentajes exactos" },
+          "why": { "en": "An instruction doesn't make a model count; numbers must come from a table.", "es": "Una instrucción no hace que un modelo cuente; los números deben salir de una tabla." }
+        },
+        {
+          "text": { "en": "Raise the group size to 500 to cut summary levels", "es": "Subir el tamaño de grupo a 500 para tener menos niveles" },
+          "why": { "en": "Fewer levels, same flaw: each level still loses counts and adds drift.", "es": "Menos niveles, el mismo defecto: cada nivel igual pierde conteos y suma deriva." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Summarizing summaries loses counts and compounds drift at every level. Map each review to schema-bound `{aspect, polarity, quote}` rows, count distinct reviews per aspect in code, and let the writer phrase from that table while code fills in every number.",
+        "es": "Resumir resúmenes pierde los conteos y acumula deriva en cada nivel. Convierte cada reseña en filas `{aspect, polarity, quote}` atadas a un esquema, cuenta en código las reseñas distintas por aspecto y deja que el redactor escriba a partir de esa tabla mientras el código completa cada número."
+      }
+    },
+    {
+      "id": "case-review-summarization.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Daily map step: **500k new reviews/day**, ~140 input tokens and ~60 output tokens each. Assumed prices: **$0.40/M input, $1.60/M output**, with a **50% batch discount**. What does the map step cost per day, in USD?",
+        "es": "Paso de map diario: **500k reseñas nuevas al día**, ~140 tokens de entrada y ~60 de salida cada una. Precios supuestos: **$0.40/M de entrada, $1.60/M de salida**, con **50% de descuento por batch**. ¿Cuánto cuesta el paso de map por día, en USD?"
+      },
+      "answer": 38,
+      "tolerance": 0.15,
+      "unit": "USD/day",
+      "explain": {
+        "en": "Input: 500k × 140 = 70M × $0.40/M = $28. Output: 500k × 60 = 30M × $1.60/M = $48. $76 × 50% = $38/day. Each review is mapped once, so cost tracks new reviews, not catalog size; naive daily re-summarization of 2M products would be ~$4k/day even batched.",
+        "es": "Entrada: 500k × 140 = 70M × $0.40/M = $28. Salida: 500k × 60 = 30M × $1.60/M = $48. $76 × 50% = $38/día. Cada reseña se procesa una sola vez, así que el costo sigue a las reseñas nuevas y no al tamaño del catálogo; re-resumir a diario 2M de productos costaría ~$4k/día incluso en batch."
+      }
+    },
+    {
+      "id": "case-review-summarization.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the offline summary pipeline for one product in order.",
+        "es": "Ordena el pipeline offline de resumen de un producto."
+      },
+      "steps": [
+        { "en": "Filter spam, scrub PII and flag likely injections", "es": "Filtrar spam, quitar PII y marcar posibles inyecciones" },
+        { "en": "A small batch model emits aspect rows; non-verbatim quotes are dropped", "es": "Un modelo chico en batch emite filas de aspectos; se descartan las citas que no son textuales" },
+        { "en": "Code counts distinct reviews per aspect and polarity", "es": "El código cuenta reseñas distintas por aspecto y polaridad" },
+        { "en": "A change detector decides whether a rewrite is warranted", "es": "Un detector de cambios decide si hace falta reescribir" },
+        { "en": "A writer phrases pros and cons; code fills in the numbers", "es": "Un redactor escribe pros y contras; el código completa los números" },
+        { "en": "A verifier checks entailment and coverage, then publishes", "es": "Un verificador revisa entailment y cobertura, y luego publica" }
+      ],
+      "explain": {
+        "en": "Untrusted text is cleaned before any model sees it, the model only labels, and code owns the counts. The change detector keeps rewrites near 5% of products a day, and nothing reaches the page without passing verification.",
+        "es": "El texto no confiable se limpia antes de que lo vea cualquier modelo, el modelo solo etiqueta y el código es dueño de los conteos. El detector de cambios mantiene las reescrituras cerca del 5% de los productos por día, y nada llega a la página sin pasar la verificación."
+      }
+    },
+    {
+      "id": "case-review-summarization.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your verifier confirms every published sentence is entailed by its quotes, and every number matches the counts table. Yet a product's **most-mentioned complaint** is missing from its summary. What check was missing?",
+        "es": "Tu verificador confirma que cada oración publicada está respaldada por sus citas y que cada número coincide con la tabla de conteos. Aun así, la **queja más mencionada** de un producto no aparece en su resumen. ¿Qué chequeo faltó?"
+      },
+      "options": [
+        {
+          "text": { "en": "Coverage: the top cons by count must appear", "es": "Cobertura: los principales contras por conteo deben aparecer" },
+          "why": { "en": "Omission is unfaithful too; only a coverage check can see what was left out.", "es": "Omitir también es infiel; solo un chequeo de cobertura ve lo que quedó afuera." }
+        },
+        {
+          "text": { "en": "A stricter entailment threshold per sentence", "es": "Un umbral de entailment más estricto por oración" },
+          "why": { "en": "Precision was already fine; tightening it can't detect a claim that was never written.", "es": "La precisión ya estaba bien; endurecerla no detecta una afirmación que nunca se escribió." }
+        },
+        {
+          "text": { "en": "A judge from the writer's own model family", "es": "Un juez de la misma familia de modelos que el redactor" },
+          "why": { "en": "Backwards: the verifier should not share the writer's blind spots.", "es": "Al revés: el verificador no debería compartir los puntos ciegos del redactor." }
+        },
+        {
+          "text": { "en": "A regex that blocks any digit not from the table", "es": "Un regex que bloquee todo dígito que no venga de la tabla" },
+          "why": { "en": "Already satisfied here: exact numbers say nothing about completeness.", "es": "Aquí ya se cumplía: que los números sean exactos no dice nada sobre la completitud." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Faithfulness has three checks: precision (each claim is supported), exact numbers (filled by code) and coverage (the top 3 cons by count must appear, and a product with many 1–2 star ratings can't have an empty cons list). A summary can be 100% precise and still hide the complaint that matters.",
+        "es": "La fidelidad tiene tres chequeos: precisión (cada afirmación está respaldada), números exactos (los completa el código) y cobertura (los 3 contras con más conteo deben aparecer, y un producto con muchas calificaciones de 1–2 estrellas no puede tener la lista de contras vacía). Un resumen puede ser 100% preciso y aun así esconder la queja que importa."
+      }
+    }
+  ]
+}
