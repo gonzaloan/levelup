@@ -1,17 +1,24 @@
 // Optional login + cross-device sync, reusing get-certified's Cognito user pool (same accounts).
 // INERT without config: with no NEXT_PUBLIC_* values the site is exactly local-first, no network.
 //
-// Flow: OAuth 2 Authorization Code + PKCE (S256) against the Cognito Hosted UI → tokens in
-// localStorage → GET/PUT `${api}/apps/levelup/state` with the id_token. The server stores one
-// opaque blob per user; the browser owns the merge (union: nothing studied on any device is lost).
+// Flow: OAuth 2 Authorization Code + PKCE (S256) against the Cognito Hosted UI → id_token →
+// one-hour AWS credentials from an identity pool → the browser reads/writes ITS OWN item in a
+// DynamoDB table (the IAM role allows only the caller's identity id as key).
+//
+// Why no API: the table is PROVISIONED with fixed capacity, so the monthly cost has a ceiling set
+// by the template, whatever anyone sends (over capacity = throttled, not billed). An API Gateway +
+// Lambda in front would bill every request. Budget: deploy/get-certified/README.md.
 import { emptyState, loadState, merge, saveState, type CardRec, type StudyState } from "./practice/store";
 
 export const SYNC_CONFIG = {
   domain: process.env.NEXT_PUBLIC_COGNITO_DOMAIN ?? "",
   clientId: process.env.NEXT_PUBLIC_COGNITO_CLIENT_ID ?? "",
-  api: process.env.NEXT_PUBLIC_SYNC_API ?? "",
+  userPoolId: process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID ?? "",
+  identityPoolId: process.env.NEXT_PUBLIC_IDENTITY_POOL_ID ?? "",
+  table: process.env.NEXT_PUBLIC_SYNC_TABLE ?? "",
 };
-export const syncEnabled = () => !!(SYNC_CONFIG.domain && SYNC_CONFIG.clientId && SYNC_CONFIG.api);
+export const syncEnabled = () => Object.values(SYNC_CONFIG).every(Boolean);
+const region = () => SYNC_CONFIG.userPoolId.split("_")[0];
 
 const TOK = "fg.auth.v1";
 const PKCE = "fg.pkce";
@@ -36,6 +43,7 @@ function getTokens(): Tokens | null {
 }
 function setTokens(t: Tokens | null) {
   try { if (t) localStorage.setItem(TOK, JSON.stringify(t)); else localStorage.removeItem(TOK); } catch { /* ignore */ }
+  if (!t) creds = null;
   try { window.dispatchEvent(new Event(AUTH_EVENT)); } catch { /* ignore */ }
 }
 export const isLoggedIn = () => !!getTokens();
@@ -106,9 +114,50 @@ async function freshIdToken(): Promise<string | null> {
   return nt.id_token;
 }
 
+/* ------------------------------------------------------------------ AWS credentials
+ * Kept in memory only: a page reload asks the identity pool again (free), so no AWS secret ever
+ * sits in localStorage. */
+interface Creds { accessKeyId: string; secretAccessKey: string; sessionToken: string; expiration: number; identityId: string }
+let creds: Creds | null = null;
+
+class AwsError extends Error { constructor(public status: number, public type: string) { super(`${status} ${type}`); } }
+
+async function cognitoIdentity<T>(target: string, body: unknown): Promise<T> {
+  const r = await fetch(`https://cognito-identity.${region()}.amazonaws.com/`, {
+    method: "POST",
+    headers: { "content-type": "application/x-amz-json-1.1", "x-amz-target": `AWSCognitoIdentityService.${target}` },
+    body: JSON.stringify(body),
+  });
+  if (!r.ok) throw new AwsError(r.status, String((await r.json().catch(() => ({})))?.__type ?? ""));
+  return r.json() as Promise<T>;
+}
+
+async function awsCreds(idToken: string): Promise<Creds> {
+  if (creds && creds.expiration > Date.now() + 120_000) return creds;
+  const Logins = { [`cognito-idp.${region()}.amazonaws.com/${SYNC_CONFIG.userPoolId}`]: idToken };
+  const { IdentityId } = await cognitoIdentity<{ IdentityId: string }>("GetId", { IdentityPoolId: SYNC_CONFIG.identityPoolId, Logins });
+  const { Credentials: c } = await cognitoIdentity<{ Credentials: { AccessKeyId: string; SecretKey: string; SessionToken: string; Expiration: number } }>(
+    "GetCredentialsForIdentity", { IdentityId, Logins });
+  creds = { accessKeyId: c.AccessKeyId, secretAccessKey: c.SecretKey, sessionToken: c.SessionToken, expiration: c.Expiration * 1000, identityId: IdentityId };
+  return creds;
+}
+
+type Op = "GetItem" | "PutItem" | "DeleteItem";
+async function ddb<T = Record<string, unknown>>(op: Op, body: Record<string, unknown>, c: Creds): Promise<T> {
+  const { AwsClient } = await import("aws4fetch"); // signing code loads only for signed-in users
+  const aws = new AwsClient({ accessKeyId: c.accessKeyId, secretAccessKey: c.secretAccessKey, sessionToken: c.sessionToken, service: "dynamodb", region: region() });
+  const r = await aws.fetch(`https://dynamodb.${region()}.amazonaws.com/`, {
+    method: "POST",
+    headers: { "content-type": "application/x-amz-json-1.0", "x-amz-target": `DynamoDB_20120810.${op}` },
+    body: JSON.stringify({ TableName: SYNC_CONFIG.table, ...body }),
+  });
+  if (!r.ok) throw new AwsError(r.status, String((await r.json().catch(() => ({})))?.__type ?? ""));
+  return r.json() as Promise<T>;
+}
+
 /* ------------------------------------------------------------------ compact wire format
- * A DynamoDB item is capped at 400 KB. Cards as arrays of numbers (minutes, 3-decimal floats) keep
- * ~1,000 reviewed items around 60 KB instead of ~200 KB. */
+ * Cards as arrays of numbers (minutes, 3-decimal floats), then gzip: every write costs capacity by
+ * the KB, so smaller items mean more syncs inside the fixed budget. */
 type Packed = { v: 1; c: Record<string, number[]>; d: Record<string, number[]>; r: Record<string, number>; g: number; u: number };
 const min = (iso?: string) => (iso ? Math.round(Date.parse(iso) / 60000) : 0);
 const iso = (m: number) => (m ? new Date(m * 60000).toISOString() : undefined);
@@ -136,30 +185,75 @@ export function unpack(p: Partial<Packed> | null | undefined): StudyState {
   return s;
 }
 
+/** What two states hold, ignoring when they were saved: equal content means no write is needed. */
+const contentOf = (s: StudyState) => { const p = pack(s); return JSON.stringify([p.c, p.d, p.r, p.g]); };
+
+const toB64 = (bytes: Uint8Array) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
+const fromB64 = (b: string) => Uint8Array.from(atob(b), (ch) => ch.charCodeAt(0));
+
+type Attr = { S?: string; B?: string; N?: string };
+export async function encode(s: StudyState): Promise<Record<string, Attr>> {
+  const json = JSON.stringify(pack(s));
+  if (typeof CompressionStream === "undefined") return { j: { S: json } };
+  const gz = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
+  return { s: { B: toB64(new Uint8Array(await new Response(gz).arrayBuffer())) } };
+}
+export async function decode(item: Record<string, Attr> | undefined): Promise<StudyState> {
+  if (item?.s?.B) {
+    const raw = new Blob([fromB64(item.s.B)]).stream().pipeThrough(new DecompressionStream("gzip"));
+    return unpack(JSON.parse(await new Response(raw).text()));
+  }
+  if (item?.j?.S) return unpack(JSON.parse(item.j.S));
+  return emptyState();
+}
+
 /* ------------------------------------------------------------------ sync */
 let pushTimer: ReturnType<typeof setTimeout> | undefined;
 let lastSynced = 0;
 export const lastSyncedAt = () => lastSynced;
 
-/** Pull the server copy, merge it into this device, and push the union back. */
-export async function syncNow(): Promise<boolean> {
+/** Pull this account's copy, merge it into this device, and write the union back if it changed. */
+export async function syncNow(retry = true): Promise<boolean> {
   if (!syncEnabled()) return false;
   const tok = await freshIdToken();
   if (!tok) return false;
-  const url = `${SYNC_CONFIG.api}/apps/levelup/state`;
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${tok}` } }).catch(() => null);
-  if (!res || !res.ok) return false;
-  const remote = unpack((await res.json()) as Packed);
-  const merged = merge(loadState(), remote);
-  saveState(merged, { silent: true });
-  const put = await fetch(url, { method: "PUT", headers: { Authorization: `Bearer ${tok}`, "content-type": "application/json" }, body: JSON.stringify(pack(merged)) }).catch(() => null);
-  if (put?.ok) lastSynced = Date.now();
-  try { window.dispatchEvent(new Event(AUTH_EVENT)); } catch { /* ignore */ }
-  return !!put?.ok;
+  try {
+    const c = await awsCreds(tok);
+    const Key = { id: { S: c.identityId } };
+    const got = await ddb<{ Item?: Record<string, Attr> }>("GetItem", { Key }, c);
+    const remote = await decode(got.Item);
+    const merged = merge(loadState(), remote);
+    saveState(merged, { silent: true });
+    if (!got.Item || contentOf(merged) !== contentOf(remote)) {
+      await ddb("PutItem", { Item: { ...Key, ...(await encode(merged)), u: { N: String(Date.now()) } } }, c);
+    }
+    lastSynced = Date.now();
+    try { window.dispatchEvent(new Event(AUTH_EVENT)); } catch { /* ignore */ }
+    return true;
+  } catch (e) {
+    if (e instanceof AwsError) {
+      // Over the table's fixed capacity: that is the cost ceiling working. Try again later.
+      if (e.type.endsWith("ProvisionedThroughputExceededException") || e.type.endsWith("ThrottlingException")) schedulePush(120_000);
+      else if (retry && (e.type.endsWith("ExpiredTokenException") || e.status === 403)) { creds = null; return syncNow(false); }
+    }
+    return false;
+  }
 }
 
-/** Debounced push after local study activity. */
-export function schedulePush(delay = 4000) {
+/** Delete this account's synced copy (this device keeps its local progress). */
+export async function deleteSynced(): Promise<boolean> {
+  const tok = syncEnabled() ? await freshIdToken() : null;
+  if (!tok) return false;
+  try {
+    const c = await awsCreds(tok);
+    await ddb("DeleteItem", { Key: { id: { S: c.identityId } } }, c);
+    lastSynced = 0;
+    return true;
+  } catch { return false; }
+}
+
+/** Debounced push after local study activity: one write per burst of answers, not per answer. */
+export function schedulePush(delay = 30_000) {
   if (!syncEnabled() || !isLoggedIn()) return;
   clearTimeout(pushTimer);
   pushTimer = setTimeout(() => { void syncNow(); }, delay);

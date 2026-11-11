@@ -1,454 +1,85 @@
 diff --git a/deploy/README.md b/deploy/README.md
-index 631a236..9941c00 100644
+index 631a236..2960f21 100644
 --- a/deploy/README.md
 +++ b/deploy/README.md
-@@ -201,6 +201,32 @@ which could also change the account's email or delete it. The account always com
+@@ -201,6 +201,38 @@ which could also change the account's email or delete it. The account always com
  token. Guests have nothing to manage: their progress stays in the browser, and a guest result is
  stored only if they typed a name, with no link to anything else.
  
-+## Another site on the same login (levelup)
++## levelup on the same accounts
 +
-+The levelup site (https://levelup.skillrealm.dev) signs in with this user pool, through its own app
-+client (`LevelupUserPoolClient`, output `LevelupClientId`), and keeps its progress here:
-+`GET /apps/{app}/state` and `PUT /apps/{app}/state`, authorized by the same Cognito JWT.
++levelup (a second study site) signs in with this user pool through its own app client and syncs
++its study state **from the browser straight to `LevelupSyncTable`**, with one-hour credentials
++from an identity pool. There is no API route, no Lambda and no log for it, and get-certified's
++progress, results and leaderboard are untouched.
 +
-+- **Isolation.** The row lives in `ProgressTable` under `userId = "<sub>#app:<app>"` with only
-+  `state` and `updatedAt`. It never has `scores`, so the leaderboard never lists it, and the
-+  get-certified `/state` blob is never read or written by these routes (and the reverse).
-+- **Allowlist.** `APPS` in `lambda/domain/apps.mjs` (today `levelup`). Any other name is a 404
-+  `unknown_app`. A body must be a JSON object of at most 300 KB (413 `too_large`).
-+- **Account data.** `GET /me/export` adds `apps: { levelup: <blob or null> }` and `DELETE /me`
-+  removes every app row before the Cognito user.
-+- **Parameter.** `LevelupOrigin` (default the URL above; empty turns the client, its CORS origins
-+  and its audience entry off). `deploy.sh` passes it on every run (`LEVELUP_ORIGIN=` to disable) and
-+  adds it and `http://localhost:3000` to the CORS origins it applies after the stack update.
-+- **Cost.** A second Cognito app client and two routes on the existing API and Lambda: $0 extra
-+  fixed. Per request about $1.00 per million API calls plus Lambda and a DynamoDB on-demand read or
-+  write (about $0.125 per million read units, $0.625 per million write units, one unit per 1 KB
-+  written; approximate us-east-1 list prices, assumptions to re-check, not verified when written).
-+  Typical blobs are a few KB, so about $1 per million saves.
-+  Worst case: the throttle is per route, not per account: 2 requests per second sustained (burst 10)
-+  is at most about 5.2M writes a month. If every one were a 300 KB blob that is about $1,000 a month
-+  in DynamoDB writes, but it needs a signed-in caller sustaining the limit all month; the
-+  `MonthlyCostBudget` alert fires first. Lower the throttle or the 300 KB cap if that is too much.
++- **Isolation.** The role lets a signed-in identity `GetItem`, `PutItem` and `DeleteItem` only the
++  item whose key is its own identity id (`dynamodb:LeadingKeys`), and `PutItem` only with the
++  attributes `id`, `s`, `j`, `u`. Guests get no credentials (`AllowUnauthenticatedIdentities: false`).
++- **Account data.** levelup has its own "delete synced data" (the `DeleteItem` above) and exports
++  its state from the browser. `DELETE /me` here removes the Cognito user but not that item, which
++  is keyed by identity id, not by `sub`.
++- **Off switch.** Deploy with `LevelupOrigin=''` to remove the client, identity pool and role. The
++  table is retained.
++
++**Cost: fixed by the template, not by traffic.** The table is `PROVISIONED` at 5 read and 5 write
++units with no autoscaling, so a request over capacity is throttled, not billed. `check:infra`
++fails the gate if that table ever becomes on-demand, autoscaled or larger than 10 + 10 units.
++
++| Item | Worst case per month |
++|---|---|
++| Capacity, 5 WCU + 5 RCU | $0 inside DynamoDB's always-free 25 WCU + 25 RCU (per account and Region, provisioned tables only; the other tables here are on-demand, so it is unused). Without it: 5 × $0.00065 + 5 × $0.00013 per hour × 730 h ≈ **$2.85** (us-east-1 list price, checked 2026-11-11) |
++| Storage | One item per identity, at most 400 KB (DynamoDB's item limit). Identities come only from verified accounts, and Cognito's default email sender caps verification emails per day (forum reports put it at 50). About 0.6 GB a month at most, inside the 25 GB always-free, then $0.25/GB |
++| Identity pool | No charge (Cognito pricing page) |
++| API Gateway, Lambda, logs | None used |
++
++So the worst case is **$0 with the always-free tier and under $3 without it**, whatever a caller
++does. The price of the bound: under a flood, sync slows for everyone (throttled), while each
++browser keeps working on its local copy and retries later. MAUs from levelup sign-ins count
++toward the user pool's free monthly active users like any other sign-in.
 +
  ## Testimonials
  
  Learners' stories at `#/testimonials`, on the home page and on each cert's landing page.
-diff --git a/deploy/deploy.sh b/deploy/deploy.sh
-index a1436cf..58eb9ef 100755
---- a/deploy/deploy.sh
-+++ b/deploy/deploy.sh
-@@ -123,6 +123,10 @@ if [[ -n "${ALARM_EMAIL:-}" ]]; then
-   PARAM_OVERRIDES+=("AlarmEmail=$ALARM_EMAIL")
-   echo "▶ Alarm email:   set (SNS emails a confirmation link the first time)"
- fi
-+# The levelup site signs in with this pool and syncs through /apps/levelup/state. Always passed,
-+# because a parameter left out reverts to its default; set LEVELUP_ORIGIN= (empty) to turn it off.
-+LEVELUP_ORIGIN="${LEVELUP_ORIGIN-https://levelup.skillrealm.dev}"
-+PARAM_OVERRIDES+=("LevelupOrigin=$LEVELUP_ORIGIN")
- if [[ "$SITE_ONLY" != "1" && -n "$CUSTOM_DOMAIN" && -z "$ACM_CERT_ARN" ]]; then
-   # Half-attached custom-domain state: the domain is registered in Cognito
-   # callbacks / API CORS but CloudFront has NO alias (it needs the cert). This is
-@@ -243,6 +247,9 @@ if [[ "$DRYRUN" != "1" && "$SITE_ONLY" != "1" && -n "$API_URL" ]]; then
-   if [[ -n "$CUSTOM_DOMAIN" ]]; then
-     CORS_ORIGINS="${CUSTOM_DOMAIN},${CORS_ORIGINS}"
-   fi
-+  if [[ -n "$LEVELUP_ORIGIN" ]]; then
-+    CORS_ORIGINS="${CORS_ORIGINS},${LEVELUP_ORIGIN},http://localhost:3000"
-+  fi
-   echo "▶ Applying API CORS origins: $CORS_ORIGINS"
-   aws apigatewayv2 update-api --api-id "$API_ID" --region "$REGION" \
-     --cors-configuration "AllowOrigins=${CORS_ORIGINS},AllowHeaders=authorization,content-type,AllowMethods=GET,PUT,POST,DELETE,OPTIONS" \
-diff --git a/deploy/lambda/domain/account.mjs b/deploy/lambda/domain/account.mjs
-index 6cf50a3..dc8dd14 100644
---- a/deploy/lambda/domain/account.mjs
-+++ b/deploy/lambda/domain/account.mjs
-@@ -1,6 +1,7 @@
- /* A PERSON'S OWN DATA: a copy of it, and a way to remove it. The account comes from the verified
-  * token, so nobody can ask for someone else's. Guests have nothing here: their results carry only
-  * the name they typed, and their progress never leaves the browser. */
-+import { exportAppStates, removeAppStates } from "./apps.mjs";
- import { ownView, testimonialId, withdrawTestimonial } from "./testimonials.mjs";
- 
- export function accountRoute(method, path) {
-@@ -13,7 +14,7 @@ export function deleteConfirmed(body) {
-   return !!body && body.confirm === "DELETE";
- }
- 
--export function buildExport({ email, now, row, results, testimonial }) {
-+export function buildExport({ email, now, row, results, testimonial, apps }) {
-   return {
-     exportedAt: now,
-     account: { email: email || null },
-@@ -21,14 +22,15 @@ export function buildExport({ email, now, row, results, testimonial }) {
-     leaderboard: row ? { label: row.label || null, scores: row.scores || null } : null,
-     examResults: results.map(({ userId, ...rest }) => rest),
-     testimonial: testimonial || null,
-+    apps: apps || {},
-   };
- }
- 
- export async function exportAccount({ userId, email, now }, { progress, results, testimonials }) {
--  const [row, examResults, testimonial] = await Promise.all([
--    progress.row(userId), results.ofUser(userId), testimonials.get(testimonialId(userId)),
-+  const [row, examResults, testimonial, apps] = await Promise.all([
-+    progress.row(userId), results.ofUser(userId), testimonials.get(testimonialId(userId)), exportAppStates(userId, progress),
-   ]);
--  return buildExport({ email, now, row, results: examResults, testimonial: ownView(testimonial) });
-+  return buildExport({ email, now, row, results: examResults, testimonial: ownView(testimonial), apps });
- }
- 
- const BATCH_SIZE = 25;
-@@ -52,6 +54,7 @@ export async function writeDeletes(ids, send, { pauseMs = 200 } = {}) {
-  * to repeat. */
- export async function deleteAccount({ userId, username }, { progress, results, testimonials, identity, clock }) {
-   await progress.remove(userId);
-+  await removeAppStates(userId, progress);
-   const own = await results.ofUser(userId);
-   await writeDeletes(own.map((r) => r.id), results.deleteBatch);
-   await withdrawTestimonial({ userId, now: clock() }, testimonials);
-diff --git a/deploy/lambda/domain/apps.mjs b/deploy/lambda/domain/apps.mjs
-new file mode 100644
-index 0000000..8f39824
---- /dev/null
-+++ b/deploy/lambda/domain/apps.mjs
-@@ -0,0 +1,59 @@
-+/* OTHER SITES' PROGRESS. A second site signs in with this pool and keeps one blob here, in the same
-+ * table as the get-certified blob but under its own key, so neither can read or overwrite the other.
-+ *
-+ * The key is `<sub>#app:<app>`. A Cognito sub is a bare UUID and never holds "#", so no account's
-+ * own row can collide with an app row. The row has `state` and `updatedAt` only: the leaderboard
-+ * Scan keeps rows that have `scores`, so an app row can never appear on it.
-+ *
-+ * `APPS` is the allowlist. Adding a site is a code change plus a Cognito client in the template,
-+ * never something a request can do: the app name in the path is checked against it.
-+ *
-+ * The store is an argument: `row(userId)`, `save(item)`, `remove(userId)`. */
-+export const APPS = ["levelup"];
-+
-+// Under DynamoDB's 400 KB item limit, with room for the key and timestamp.
-+export const MAX_APP_STATE_BYTES = 300 * 1024;
-+
-+const STATE_PATH = /\/apps\/([^/]+)\/state$/;
-+
-+export function isKnownApp(app) {
-+  return APPS.includes(app);
-+}
-+
-+export function appUserId(sub, app) {
-+  return sub + "#app:" + app;
-+}
-+
-+// { app, action: "get" | "put" } for the two state routes, else null. The app is not validated here.
-+export function appStateRoute(method, path) {
-+  const match = STATE_PATH.exec(path);
-+  if (!match || (method !== "GET" && method !== "PUT")) return null;
-+  return { app: match[1], action: method === "GET" ? "get" : "put" };
-+}
-+
-+export function isPlainObject(value) {
-+  return typeof value === "object" && value !== null && !Array.isArray(value);
-+}
-+
-+export function exceedsLimit(value) {
-+  return new TextEncoder().encode(JSON.stringify(value)).length > MAX_APP_STATE_BYTES;
-+}
-+
-+export async function loadAppState({ sub, app }, store) {
-+  const item = await store.row(appUserId(sub, app));
-+  return (item && item.state) || {};
-+}
-+
-+export async function saveAppState({ sub, app, state, now }, store) {
-+  await store.save({ userId: appUserId(sub, app), state, updatedAt: now });
-+}
-+
-+// null for an app with nothing saved, so an export tells "never used" from "used, empty".
-+export async function exportAppStates(sub, store) {
-+  const rows = await Promise.all(APPS.map((app) => store.row(appUserId(sub, app))));
-+  return Object.fromEntries(APPS.map((app, i) => [app, (rows[i] && rows[i].state) || null]));
-+}
-+
-+export async function removeAppStates(sub, store) {
-+  await Promise.all(APPS.map((app) => store.remove(appUserId(sub, app))));
-+}
-diff --git a/deploy/lambda/http/routes.mjs b/deploy/lambda/http/routes.mjs
-index a9ccf94..fc0c9e6 100644
---- a/deploy/lambda/http/routes.mjs
-+++ b/deploy/lambda/http/routes.mjs
-@@ -7,6 +7,9 @@
-  * Public routes need no token and are matched first. Everything else needs a `sub`.
-  * ========================================================================== */
- import { accountRoute, deleteAccount, deleteConfirmed, exportAccount } from "../domain/account.mjs";
-+import {
-+  appStateRoute, exceedsLimit, isKnownApp, isPlainObject, loadAppState, saveAppState,
-+} from "../domain/apps.mjs";
- import { isAdmin, usernameOf } from "../domain/identity.mjs";
- import { loadState, saveState } from "../domain/progress.mjs";
- import { listResults, recordGuestResult, recordMemberResult } from "../domain/results.mjs";
-@@ -20,6 +23,9 @@ import { FORBIDDEN, INTERNAL_ERROR, INVALID_JSON } from "./response.mjs";
- const ok = (body) => ({ statusCode: 200, body });
- const get = (suffix) => (method, path) => method === "GET" && path.endsWith(suffix);
- const testimonialRouteIs = (name) => (method, path) => testimonialRoute(method, path) === name;
-+const UNKNOWN_APP = { statusCode: 404, body: { error: "unknown_app" } };
-+const TOO_LARGE = { statusCode: 413, body: { error: "too_large" } };
-+const appStateRouteIs = (action) => (method, path) => appStateRoute(method, path)?.action === action;
- const accountRouteIs = (name) => (method, path) => accountRoute(method, path) === name;
- 
- export function buildRoutes(deps) {
-@@ -59,6 +65,30 @@ export function buildRoutes(deps) {
-       },
-     },
- 
-+    // Another site's blob. The account is the token's sub; the path only names the app, and only
-+    // an allowlisted name gets through. Before the catch-all GET/PUT below, which would answer these
-+    // paths with the get-certified blob.
-+    {
-+      matches: appStateRouteIs("get"),
-+      handle: async ({ method, path, userId }) => {
-+        const { app } = appStateRoute(method, path);
-+        if (!isKnownApp(app)) return UNKNOWN_APP;
-+        return ok(await loadAppState({ sub: userId, app }, progress));
-+      },
-+    },
-+    {
-+      matches: appStateRouteIs("put"),
-+      handle: async ({ event, method, path, userId }) => {
-+        const { app } = appStateRoute(method, path);
-+        if (!isKnownApp(app)) return UNKNOWN_APP;
-+        const state = event.body ? parseBody(event) : null;
-+        if (!isPlainObject(state)) return INVALID_JSON;
-+        if (exceedsLimit(state)) return TOO_LARGE;
-+        await saveAppState({ sub: userId, app, state, now: clock() }, progress);
-+        return ok({ ok: true });
-+      },
-+    },
-+
-     {
-       matches: testimonialRouteIs("own"),
-       handle: async ({ userId }) => ok({ testimonial: ownView(await testimonials.get(testimonialId(userId))) }),
-diff --git a/deploy/lambda/index.mjs b/deploy/lambda/index.mjs
-index ba484b9..8eadf74 100644
---- a/deploy/lambda/index.mjs
-+++ b/deploy/lambda/index.mjs
-@@ -7,6 +7,7 @@
-  *   POST /results      -> a guest's finished practice exam, under the name they typed (no auth)
-  *   POST /me/results   -> a signed-in user's finished practice exam, labelled from the JWT
-  *   GET  /admin/results -> every stored attempt, for members of the admin group only
-+ *   GET|PUT /apps/{app}/state -> another site's blob for this user (domain/apps.mjs), same table
-  *   GET  /me/export    -> everything stored for this account, as a download
-  *   DELETE /me         -> delete this account and everything stored for it
-  *   GET|PUT|DELETE /me/testimonial -> this account's own story (domain/testimonials.mjs)
-diff --git a/deploy/lambda/test-account.mjs b/deploy/lambda/test-account.mjs
-index a10b6d2..80e5dac 100644
---- a/deploy/lambda/test-account.mjs
-+++ b/deploy/lambda/test-account.mjs
-@@ -6,7 +6,7 @@
-  * The domain modules import no SDK, so they run here as they run in Lambda.
-  */
- import { readFileSync } from "node:fs";
--import { accountRoute, buildExport, deleteAccount, deleteConfirmed, writeDeletes } from "./domain/account.mjs";
-+import { accountRoute, buildExport, deleteAccount, exportAccount, deleteConfirmed, writeDeletes } from "./domain/account.mjs";
- import { usernameOf } from "./domain/identity.mjs";
- import { testimonialId } from "./domain/testimonials.mjs";
- import { createHandler } from "./http/handler.mjs";
-@@ -61,6 +61,25 @@ ok("...or the sub, which Cognito also accepts", usernameOf({ sub: "s" }) === "s"
-   ok("an account with nothing synced exports empty, not an error", same(out.progress, {}) && out.leaderboard === null && out.examResults.length === 0);
- }
- 
-+/* ---- other sites' state ---- */
-+{
-+  const out = buildExport({ email: "a@b.c", now: "t", row: null, results: [], apps: { levelup: { mastered: ["a"] } } });
-+  ok("the export has each app's blob under apps", same(out.apps, { levelup: { mastered: ["a"] } }));
-+  ok("...and an empty apps object when none is given", same(buildExport({ email: "a@b.c", now: "t", row: null, results: [] }).apps, {}));
-+}
-+{
-+  const rows = { "u1#app:levelup": { userId: "u1#app:levelup", state: { x: 1 } } };
-+  const out = await exportAccount({ userId: "u1", email: "a@b.c", now: NOW }, {
-+    progress: { row: async (id) => rows[id] || null },
-+    results: { ofUser: async () => [] },
-+    testimonials: { get: async () => null },
-+  });
-+  ok("exportAccount reads every allowlisted app row by sub#app:name", same(out.apps, { levelup: { x: 1 } }), out.apps);
-+  ok("...and a missing row is null", same((await exportAccount({ userId: "u2", now: NOW }, {
-+    progress: { row: async () => null }, results: { ofUser: async () => [] }, testimonials: { get: async () => null },
-+  })).apps, { levelup: null }));
-+}
-+
- /* ---- delete: data first, account last ---- */
- function fakeStore(over) {
-   const calls = [];
-@@ -80,7 +99,7 @@ function fakeStore(over) {
-   const store = fakeStore();
-   const out = await deleteAccount({ userId: "u1", username: "abc" }, store);
-   ok("everything goes, the account last", same(store.calls,
--    ["progress:u1", "list", "results:r1,r2", "testimonial:" + testimonialId("u1"), "identity:abc"]), store.calls);
-+    ["progress:u1", "progress:u1#app:levelup", "list", "results:r1,r2", "testimonial:" + testimonialId("u1"), "identity:abc"]), store.calls);
-   ok("it reports what went", out.deletedResults === 2);
- }
- {
-@@ -123,6 +142,13 @@ ok("the template exposes both routes", /Method: GET\s+Path: \/me\/export/.test(t
- ok("CORS allows DELETE in the template", /AllowMethods: \[GET, PUT, POST, DELETE, OPTIONS\]/.test(template));
- ok("...and where deploy.sh re-applies it", /AllowMethods=GET,PUT,POST,DELETE,OPTIONS/.test(deployScript));
- ok("the function may delete a Cognito user, in this pool only", /cognito-idp:AdminDeleteUser\s+Resource: !GetAtt UserPool\.Arn/.test(template));
-+ok("the template wires the app state routes", /Method: GET\s+Path: \/apps\/\{app\}\/state/.test(template) && /Method: PUT\s+Path: \/apps\/\{app\}\/state/.test(template));
-+ok("PUT /apps/{app}/state is throttled", /"PUT \/apps\/\{app\}\/state":\s+ThrottlingBurstLimit: 10\s+ThrottlingRateLimit: 2/.test(template));
-+ok("the levelup client is on the same pool and is in the authorizer audience",
-+  /LevelupUserPoolClient:\s+Type: AWS::Cognito::UserPoolClient\s+Condition: HasLevelupOrigin\s+Properties:\s+UserPoolId: !Ref UserPool\b/.test(template) &&
-+  /audience:\s+- !Ref UserPoolClient\s+- !If \[HasLevelupOrigin, !Ref LevelupUserPoolClient, !Ref 'AWS::NoValue'\]/.test(template));
-+ok("deploy.sh passes LevelupOrigin and re-applies the CORS origins with it",
-+  /LevelupOrigin=\$LEVELUP_ORIGIN/.test(deployScript) && /\$\{LEVELUP_ORIGIN\},http:\/\/localhost:3000/.test(deployScript));
- ok("the function knows the pool", /USER_POOL_ID: !Ref UserPool/.test(template));
- 
- if (fail) { console.log(fail + " account assertion(s) failed"); process.exit(1); }
-diff --git a/deploy/lambda/test-handler.mjs b/deploy/lambda/test-handler.mjs
-index 07c6577..c279fe6 100644
---- a/deploy/lambda/test-handler.mjs
-+++ b/deploy/lambda/test-handler.mjs
-@@ -145,6 +145,71 @@ const ana = claims("ana", { "cognito:username": "ana-name" });
-   ok("no account id is shipped", !res.body.includes("userId"));
- }
- 
-+/* ---- other sites' state: GET|PUT /apps/{app}/state ---- */
-+{
-+  const { handle, progressRows } = fresh();
-+  const app = (method, path, extra) => handle(event(method, path, { claims: ana, ...extra }));
-+  const LEVELUP = { mastered: ["rag/reranking"], scores: { retained: 99, displayName: "Sneaky" } };
-+
-+  const empty = await app("GET", "/apps/levelup/state");
-+  ok("an app with nothing saved reads as {}", empty.statusCode === 200 && same(bodyOf(empty), {}));
-+  const saved = await app("PUT", "/apps/levelup/state", { body: LEVELUP });
-+  ok("PUT stores the blob and answers { ok: true }", saved.statusCode === 200 && same(bodyOf(saved), { ok: true }));
-+  ok("GET returns what was stored", same(bodyOf(await app("GET", "/apps/levelup/state")), LEVELUP));
-+  const row = progressRows.get("ana#app:levelup");
-+  ok("the row is keyed by the token sub and the app, with only state and updatedAt",
-+    row && same(Object.keys(row).sort(), ["state", "updatedAt", "userId"]) && row.updatedAt === NOW);
-+  ok("a scores field inside the blob is never lifted into a leaderboard attribute", !("scores" in row));
-+
-+  ok("the get-certified /state blob is untouched by the levelup PUT",
-+    same(bodyOf(await app("GET", "/state")), {}) && !progressRows.has("ana"));
-+  await app("PUT", "/state", { body: { certs: { clf: {} }, scores: { displayName: "Ana D.", days30: 3 } } });
-+  await app("PUT", "/apps/levelup/state", { body: { other: 1 } });
-+  ok("...and the levelup PUT never changes it later either", bodyOf(await app("GET", "/state")).certs.clf !== undefined);
-+  await app("PUT", "/state", { body: { certs: {} } });
-+  ok("a get-certified PUT never changes the levelup blob", same(bodyOf(await app("GET", "/apps/levelup/state")), { other: 1 }));
-+
-+  await app("PUT", "/state", { body: { scores: { displayName: "Ana D.", days30: 3 } } });
-+  const board = JSON.stringify(bodyOf(await app("GET", "/leaderboard")));
-+  ok("the leaderboard lists the person once and never an app row",
-+    board.includes("Ana D.") && !board.includes("Sneaky") && !board.includes("#app:") && !board.includes("99"));
-+
-+  const bob = claims("bob");
-+  ok("another account reads its own empty state",
-+    same(bodyOf(await handle(event("GET", "/apps/levelup/state", { claims: bob }))), {}));
-+  await handle(event("PUT", "/apps/levelup/state", { claims: bob, body: { mine: true } }));
-+  ok("...and the first account's state is unchanged", same(bodyOf(await app("GET", "/apps/levelup/state")), { other: 1 }));
-+  await handle(event("PUT", "/apps/levelup/state", { claims: bob, body: { sub: "ana", userId: "ana" } }));
-+  ok("a sub in the body or the path changes nothing: only the token decides",
-+    same(bodyOf(await app("GET", "/apps/levelup/state")), { other: 1 }));
-+  ok("the state routes need a token", (await handle(event("GET", "/apps/levelup/state"))).statusCode === 401 &&
-+    (await handle(event("PUT", "/apps/levelup/state", { body: {} }))).statusCode === 401);
-+}
-+{
-+  const { handle, progressRows } = fresh();
-+  const app = (method, path, extra) => handle(event(method, path, { claims: ana, ...extra }));
-+  for (const method of ["GET", "PUT"]) {
-+    const res = await app(method, "/apps/nope/state", { body: {} });
-+    ok(method + " for an unknown app is a 404 unknown_app", res.statusCode === 404 && same(bodyOf(res), { error: "unknown_app" }));
-+  }
-+  ok("a path-crafted app name cannot reach another row",
-+    (await app("PUT", "/apps/levelup%23x/state", { body: {} })).statusCode === 404 && progressRows.size === 0);
-+  ok("the app name is matched exactly, not by prefix", (await app("GET", "/apps/levelup2/state")).statusCode === 404);
-+  for (const [name, rawBody] of [["not JSON", "{nope"], ["an array", "[1]"], ["null", "null"], ["a number", "5"], ["a string", '"x"']]) {
-+    const res = await app("PUT", "/apps/levelup/state", { rawBody });
-+    ok("a body that is " + name + " is a 400", res.statusCode === 400 && same(bodyOf(res), { error: "invalid JSON body" }));
-+  }
-+  ok("a missing body is a 400", (await app("PUT", "/apps/levelup/state")).statusCode === 400);
-+  const atLimit = { pad: "x".repeat(300 * 1024 - '{"pad":""}'.length) };
-+  ok("a blob of exactly 300 KB is accepted", (await app("PUT", "/apps/levelup/state", { body: atLimit })).statusCode === 200);
-+  const over = await app("PUT", "/apps/levelup/state", { body: { pad: "x".repeat(300 * 1024) } });
-+  ok("a blob over 300 KB is a 413 too_large", over.statusCode === 413 && same(bodyOf(over), { error: "too_large" }));
-+  ok("a refused blob does not replace the stored one",
-+    JSON.stringify(progressRows.get("ana#app:levelup").state).length === 300 * 1024);
-+  ok("other methods on the path are a 405", (await app("DELETE", "/apps/levelup/state")).statusCode === 405 &&
-+    (await app("POST", "/apps/levelup/state", { body: {} })).statusCode === 405);
-+}
-+
- /* ---- account export and deletion ---- */
- {
-   const { handle } = fresh();
-@@ -153,25 +218,33 @@ const ana = claims("ana", { "cognito:username": "ana-name" });
-   const res = await handle(event("GET", "/me/export", { claims: ana }));
-   const out = bodyOf(res);
-   ok("the export is a 200 with its parts", res.statusCode === 200 &&
--    same(Object.keys(out), ["exportedAt", "account", "progress", "leaderboard", "examResults", "testimonial"]));
-+    same(Object.keys(out), ["exportedAt", "account", "progress", "leaderboard", "examResults", "testimonial", "apps"]));
-   ok("the export names the account email and holds the results without ids",
-     out.account.email === "ana@example.com" && out.examResults.length === 1 && !("userId" in out.examResults[0]));
-   ok("the export is not answered by the catch-all GET, which would return the progress blob",
-     out.exportedAt === NOW && out.progress.state === 1);
-   ok("the export needs a token", (await handle(event("GET", "/me/export"))).statusCode === 401);
-+  ok("the export says an app with nothing saved is null", same(out.apps, { levelup: null }));
-+  await handle(event("PUT", "/apps/levelup/state", { claims: ana, body: { mastered: ["a"] } }));
-+  const again = bodyOf(await handle(event("GET", "/me/export", { claims: ana })));
-+  ok("the export carries the levelup blob, and the get-certified one stays apart",
-+    same(again.apps, { levelup: { mastered: ["a"] } }) && again.progress.state === 1);
- }
- {
-   const { handle, progressRows, resultItems, removedIdentities, testimonialItems } = fresh();
-   await handle(event("PUT", "/state", { claims: ana, body: { state: 1 } }));
-   await handle(event("POST", "/me/results", { claims: ana, body: { result: GOOD_RESULT } }));
-   await handle(event("PUT", "/me/testimonial", { claims: ana, body: STORY }));
-+  await handle(event("PUT", "/apps/levelup/state", { claims: ana, body: { mastered: ["a"] } }));
-+  await handle(event("PUT", "/apps/levelup/state", { claims: claims("bob"), body: { mine: true } }));
-   const refused = await handle(event("DELETE", "/me", { claims: ana }));
-   ok("DELETE /me without confirmation is a 400", refused.statusCode === 400 && same(bodyOf(refused), { error: "confirmation_required" }));
-   ok("a wrong confirmation is a 400 too", (await handle(event("DELETE", "/me", { claims: ana, body: { confirm: "delete" } }))).statusCode === 400);
--  ok("nothing was deleted by the refusals", progressRows.size === 1 && resultItems.length === 1 && removedIdentities.length === 0);
-+  ok("nothing was deleted by the refusals", progressRows.size === 3 && resultItems.length === 1 && removedIdentities.length === 0);
-   const done = await handle(event("DELETE", "/me", { claims: ana, body: { confirm: "DELETE" } }));
-   ok("a confirmed delete is a 200 reporting the results removed", done.statusCode === 200 && same(bodyOf(done), { deletedResults: 1 }));
--  ok("it removed the progress, the results and the testimonial", progressRows.size === 0 && resultItems.length === 0 && testimonialItems.size === 0);
-+  ok("it removed the progress, the app rows, the results and the testimonial; another account keeps its own",
-+    same([...progressRows.keys()], ["bob#app:levelup"]) && resultItems.length === 0 && testimonialItems.size === 0);
-   ok("...and the sign-in, by the token's Cognito username", same(removedIdentities, ["ana-name"]));
-   await handle(event("DELETE", "/me", { claims: { sub: "nouser" }, body: { confirm: "DELETE" } }));
-   ok("with no username claim the sub is used", removedIdentities[1] === "nouser");
 diff --git a/deploy/template.yaml b/deploy/template.yaml
-index 5a89416..5dafa9b 100644
+index 5a89416..6e53914 100644
 --- a/deploy/template.yaml
 +++ b/deploy/template.yaml
-@@ -43,6 +43,14 @@ Parameters:
-     Description: >
-       Monthly AWS spend for the WHOLE account that triggers an email to AlarmEmail, at 80% of
-       actual spend and at 100% of forecast. AWS Budgets itself is free. Ignored without AlarmEmail.
+@@ -36,6 +36,14 @@ Parameters:
+       Optional address that receives the alarms (API 5xx, Lambda errors, telemetry silent,
+       event flood, client-error spike). SNS emails a confirmation link first; nothing arrives
+       until it is clicked. Leave empty to see alarm state on the dashboard only.
 +  LevelupOrigin:
 +    Type: String
 +    Default: 'https://levelup.skillrealm.dev'
 +    Description: >
-+      Origin of the levelup site (NO trailing slash), which signs in with this user pool through its
-+      own app client and stores its progress through GET|PUT /apps/levelup/state. Added to the API
-+      CORS allow-list together with http://localhost:3000. Leave empty to turn the integration off:
-+      the client, its CORS origins and its audience entry are not created.
- 
- Conditions:
-   # CustomDomain is set -> wire it into Cognito callbacks and API CORS.
-@@ -52,6 +60,7 @@ Conditions:
-   HasCert: !And
++      Origin of levelup (a second study site on the same accounts), no trailing slash. It
++      signs in with this user pool and syncs its study state from the browser straight to
++      LevelupSyncTable. Empty removes the app client, identity pool and role; the table is
++      retained.
+   MonthlyBudgetUsd:
+     Type: Number
+     Default: 10
+@@ -53,6 +61,7 @@ Conditions:
      - !Not [ !Equals [ !Ref CustomDomain, '' ] ]
      - !Not [ !Equals [ !Ref AcmCertificateArn, '' ] ]
-+  HasLevelupOrigin: !Not [ !Equals [ !Ref LevelupOrigin, '' ] ]
    HasAlarmEmail: !Not [ !Equals [ !Ref AlarmEmail, '' ] ]
++  HasLevelupOrigin: !Not [ !Equals [ !Ref LevelupOrigin, '' ] ]
  
  Globals:
-@@ -288,6 +297,35 @@ Resources:
-         IdToken: minutes
-         RefreshToken: days
+   Function:
+@@ -345,6 +354,116 @@ Resources:
+         - AttributeName: id
+           KeyType: HASH
  
-+  # A second site on the SAME pool, so one account signs in to both. Its own client keeps the
-+  # callback URLs apart, and its id is a separate entry in the API authorizer audience. It has no
-+  # secret (a browser app) and uses the code flow, like the client above.
++  # ─────────────────────────────────────────────────────────
++  # levelup: a second site on the same accounts, with a cost ceiling set here
++  # ─────────────────────────────────────────────────────────
++  # The browser reads and writes only its own item, with one-hour credentials from the
++  # identity pool: no API route, no Lambda, no logs. The table is PROVISIONED with fixed
++  # capacity and no autoscaling, so the bill cannot follow the traffic: a request over
++  # capacity is throttled, not billed. tools/check-infra.cjs keeps it that way. Worst case and
++  # the math: "levelup" in deploy/README.md.
 +  LevelupUserPoolClient:
 +    Type: AWS::Cognito::UserPoolClient
 +    Condition: HasLevelupOrigin
@@ -458,7 +89,7 @@ index 5a89416..5dafa9b 100644
 +      GenerateSecret: false
 +      AllowedOAuthFlowsUserPoolClient: true
 +      AllowedOAuthFlows: [code]
-+      AllowedOAuthScopes: [openid, email, profile]
++      AllowedOAuthScopes: [openid, email]
 +      SupportedIdentityProviders: [COGNITO]
 +      CallbackURLs:
 +        - !Sub '${LevelupOrigin}/auth/'
@@ -475,70 +106,250 @@ index 5a89416..5dafa9b 100644
 +        IdToken: minutes
 +        RefreshToken: days
 +
++  # One item per identity (id = identity id), holding a gzipped blob. No point-in-time
++  # recovery: every signed-in browser keeps a full copy and the sync is a union merge.
++  LevelupSyncTable:
++    Type: AWS::DynamoDB::Table
++    Condition: HasLevelupOrigin
++    DeletionPolicy: Retain
++    UpdateReplacePolicy: Retain
++    Properties:
++      TableName: !Sub '${ProjectName}-levelup-sync'
++      BillingMode: PROVISIONED
++      ProvisionedThroughput:
++        ReadCapacityUnits: 5
++        WriteCapacityUnits: 5
++      AttributeDefinitions:
++        - AttributeName: id
++          AttributeType: S
++      KeySchema:
++        - AttributeName: id
++          KeyType: HASH
++
++  LevelupIdentityPool:
++    Type: AWS::Cognito::IdentityPool
++    Condition: HasLevelupOrigin
++    Properties:
++      IdentityPoolName: levelup_sync
++      AllowUnauthenticatedIdentities: false
++      AllowClassicFlow: false
++      CognitoIdentityProviders:
++        - ClientId: !Ref LevelupUserPoolClient
++          ProviderName: !GetAtt UserPool.ProviderName
++          ServerSideTokenCheck: true
++
++  # Signed-in identities only, and only the item whose key is their own identity id.
++  LevelupSyncRole:
++    Type: AWS::IAM::Role
++    Condition: HasLevelupOrigin
++    Properties:
++      AssumeRolePolicyDocument:
++        Version: '2012-10-17'
++        Statement:
++          - Effect: Allow
++            Principal:
++              Federated: cognito-identity.amazonaws.com
++            Action: sts:AssumeRoleWithWebIdentity
++            Condition:
++              StringEquals:
++                'cognito-identity.amazonaws.com:aud': !Ref LevelupIdentityPool
++              'ForAnyValue:StringLike':
++                'cognito-identity.amazonaws.com:amr': authenticated
++      Policies:
++        - PolicyName: own-item-only
++          PolicyDocument:
++            Version: '2012-10-17'
++            Statement:
++              - Effect: Allow
++                Action: [dynamodb:GetItem, dynamodb:DeleteItem]
++                Resource: !GetAtt LevelupSyncTable.Arn
++                Condition:
++                  'ForAllValues:StringEquals':
++                    'dynamodb:LeadingKeys': ['${cognito-identity.amazonaws.com:sub}']
++              - Effect: Allow
++                Action: dynamodb:PutItem
++                Resource: !GetAtt LevelupSyncTable.Arn
++                Condition:
++                  'ForAllValues:StringEquals':
++                    'dynamodb:LeadingKeys': ['${cognito-identity.amazonaws.com:sub}']
++                    'dynamodb:Attributes': [id, s, j, u]
++
++  LevelupIdentityPoolRoles:
++    Type: AWS::Cognito::IdentityPoolRoleAttachment
++    Condition: HasLevelupOrigin
++    Properties:
++      IdentityPoolId: !Ref LevelupIdentityPool
++      Roles:
++        authenticated: !GetAtt LevelupSyncRole.Arn
++
    # ─────────────────────────────────────────────────────────
-   # Storage: one item per user, keyed by Cognito sub
+   # Sync API: HTTP API with JWT authorizer -> Lambda -> DynamoDB
    # ─────────────────────────────────────────────────────────
-@@ -420,6 +458,20 @@ Resources:
-             ApiId: !Ref HttpApi
-             Method: PUT
-             Path: /state
-+        # Another site's progress blob (domain/apps.mjs), in the same table under `<sub>#app:<app>`.
-+        # Authorized like /state; the Lambda checks the app name against its allowlist.
-+        GetAppState:
-+          Type: HttpApi
-+          Properties:
-+            ApiId: !Ref HttpApi
-+            Method: GET
-+            Path: /apps/{app}/state
-+        PutAppState:
-+          Type: HttpApi
-+          Properties:
-+            ApiId: !Ref HttpApi
-+            Method: PUT
-+            Path: /apps/{app}/state
-         # Authenticated like the others: the board is for the cohort, not the internet.
-         GetLeaderboard:
-           Type: HttpApi
-@@ -536,8 +588,12 @@ Resources:
-           - - !Sub 'https://${SiteDistribution.DomainName}'
-             - 'http://localhost:8000'
-             - !Ref CustomDomain
-+            - !If [HasLevelupOrigin, !Ref LevelupOrigin, !Ref 'AWS::NoValue']
-+            - !If [HasLevelupOrigin, 'http://localhost:3000', !Ref 'AWS::NoValue']
-           - - !Sub 'https://${SiteDistribution.DomainName}'
-             - 'http://localhost:8000'
-+            - !If [HasLevelupOrigin, !Ref LevelupOrigin, !Ref 'AWS::NoValue']
-+            - !If [HasLevelupOrigin, 'http://localhost:3000', !Ref 'AWS::NoValue']
-         AllowHeaders: [authorization, content-type]
-         AllowMethods: [GET, PUT, POST, DELETE, OPTIONS]
-       RouteSettings:
-@@ -550,6 +606,10 @@ Resources:
-         "POST /events":
-           ThrottlingBurstLimit: 50
-           ThrottlingRateLimit: 5
-+        # A browser saves its blob after a change, not on a timer; this caps a runaway client.
-+        "PUT /apps/{app}/state":
-+          ThrottlingBurstLimit: 10
-+          ThrottlingRateLimit: 2
-         # A person posts a story once. Anything faster than this is not a person.
-         "PUT /me/testimonial":
-           ThrottlingBurstLimit: 5
-@@ -562,6 +622,7 @@ Resources:
-             JwtConfiguration:
-               audience:
-                 - !Ref UserPoolClient
-+                - !If [HasLevelupOrigin, !Ref LevelupUserPoolClient, !Ref 'AWS::NoValue']
-               issuer: !Sub 'https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}'
- 
-   # ─────────────────────────────────────────────────────────
-@@ -814,6 +875,10 @@ Outputs:
-     Value: !Ref UserPool
-   CognitoClientId:
-     Value: !Ref UserPoolClient
+@@ -826,6 +945,16 @@ Outputs:
+   AlarmTopicArn:
+     Description: SNS topic the alarms publish to. Subscribe more endpoints here if needed.
+     Value: !Ref AlarmTopic
 +  LevelupClientId:
 +    Condition: HasLevelupOrigin
-+    Description: Cognito app client id for the levelup site (same user pool as CognitoClientId).
++    Description: levelup's app client on the shared user pool.
 +    Value: !Ref LevelupUserPoolClient
-   SageAdminGroupName:
-     Description: Cognito group whose members may host Sage games (tools/sage-admin.sh).
-     Value: !Ref SageAdminsGroup
++  LevelupIdentityPoolId:
++    Condition: HasLevelupOrigin
++    Value: !Ref LevelupIdentityPool
++  LevelupSyncTableName:
++    Condition: HasLevelupOrigin
++    Value: !Ref LevelupSyncTable
+   CognitoHostedUiDomain:
+     Description: Hosted UI base domain for login/signup.
+     Value: !Sub 'https://getcertified-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com'
+diff --git a/tools/check-infra.cjs b/tools/check-infra.cjs
+index 3339ead..8ac8c9a 100644
+--- a/tools/check-infra.cjs
++++ b/tools/check-infra.cjs
+@@ -17,6 +17,12 @@
+  *                                table. Raising the ceiling is a decision, made here in one place.
+  *   PUBLIC_ROUTE_UNTHROTTLED     an HttpApi event with `Authorizer: NONE` has a RouteSettings
+  *                                entry (or DefaultRouteSettings) with a ThrottlingRateLimit.
++ *   BROWSER_TABLE_UNBOUNDED      a DynamoDB table that a browser role can reach (a role assumed
++ *                                through cognito-identity.amazonaws.com) is PROVISIONED, at most
++ *                                MAX_BROWSER_CAPACITY read and write units, literal numbers, with no
++ *                                autoscaling target. Browsers call DynamoDB with no API throttle in
++ *                                front, so the provisioned capacity IS the cost ceiling: on-demand
++ *                                or autoscaling would bill whatever a signed-in caller sends.
+  *
+  * Scope of the last rule: it covers a route that opts OUT of a default authorizer, which is the
+  * mistake this repository can make in deploy/template.yaml. The Sage API has no default
+@@ -34,14 +40,21 @@ const RULE = {
+   FUNCTION_WITHOUT_LOG_GROUP: "FUNCTION_WITHOUT_LOG_GROUP",
+   LOG_GROUP_WITHOUT_RETENTION: "LOG_GROUP_WITHOUT_RETENTION",
+   LOG_RETENTION_TOO_LONG: "LOG_RETENTION_TOO_LONG",
+-  PUBLIC_ROUTE_UNTHROTTLED: "PUBLIC_ROUTE_UNTHROTTLED"
++  PUBLIC_ROUTE_UNTHROTTLED: "PUBLIC_ROUTE_UNTHROTTLED",
++  BROWSER_TABLE_UNBOUNDED: "BROWSER_TABLE_UNBOUNDED"
+ };
+ 
+ const MAX_RETENTION_DAYS = 60;
++// Units per table, read and write each. 10 + 10 is about $5.50 a month at list price outside
++// the free tier; the levelup table uses 5 + 5. Raising this is a cost decision, made here.
++const MAX_BROWSER_CAPACITY = 10;
+ 
+ const FUNCTION_TYPES = /^\s+Type:\s*AWS::(Serverless::Function|Lambda::Function)\s*$/m;
+ const LOG_GROUP_TYPE = /^\s+Type:\s*AWS::Logs::LogGroup\s*$/m;
+ const HTTP_API_TYPE = /^\s+Type:\s*AWS::Serverless::HttpApi\s*$/m;
++const ROLE_TYPE = /^\s+Type:\s*AWS::IAM::Role\s*$/m;
++const TABLE_TYPE = /^\s+Type:\s*AWS::DynamoDB::Table\s*$/m;
++const SCALABLE_TARGET_TYPE = /^\s+Type:\s*AWS::ApplicationAutoScaling::ScalableTarget\s*$/m;
+ 
+ const indentOf = (line) => line.match(/^ */)[0].length;
+ const isContent = (line) => line.trim() !== "" && !line.trim().startsWith("#");
+@@ -103,6 +116,34 @@ function throttledRoutes(resources) {
+   return { all, routes };
+ }
+ 
++/* Tables named (`!GetAtt T.Arn` or `${T.Arn}`) by a role that browsers assume via an identity pool. */
++function browserTables(resources) {
++  const names = new Set();
++  Object.values(resources)
++    .filter((b) => ROLE_TYPE.test(b) && /cognito-identity\.amazonaws\.com/.test(section(b, "AssumeRolePolicyDocument", 6) || ""))
++    .forEach((role) => {
++      for (const m of role.matchAll(/!GetAtt\s+(\w+)\.Arn|\$\{(\w+)\.Arn\}/g)) names.add(m[1] || m[2]);
++    });
++  return [...names].filter((n) => resources[n] && TABLE_TYPE.test(resources[n]));
++}
++
++function capacityFaults(name, block, resources) {
++  const out = [];
++  if (value(block, "BillingMode") !== "PROVISIONED") {
++    out.push("BillingMode must be PROVISIONED: on-demand bills every request a signed-in browser sends");
++  }
++  const units = [...block.matchAll(/^\s+(Read|Write)CapacityUnits:\s*(.+?)\s*$/gm)];
++  if (!units.length) out.push("set ProvisionedThroughput with literal Read/WriteCapacityUnits");
++  units.forEach(([, kind, v]) => {
++    if (!/^\d+$/.test(v)) out.push(kind + "CapacityUnits must be a literal number, not " + v);
++    else if (Number(v) > MAX_BROWSER_CAPACITY) out.push(kind + "CapacityUnits " + v + " is over the ceiling of " + MAX_BROWSER_CAPACITY);
++  });
++  const scaled = Object.values(resources).some((b) => SCALABLE_TARGET_TYPE.test(b) &&
++    new RegExp("(!Ref\\s+" + name + "\\b|\\$\\{" + name + "\\}|table/" + name + "\\b)").test(b));
++  if (scaled) out.push("an autoscaling target lifts the capacity ceiling; remove it");
++  return out;
++}
++
+ function auditTemplate(text, file) {
+   const resources = splitResources(text);
+   const faults = [];
+@@ -133,10 +174,13 @@ function auditTemplate(text, file) {
+       }
+     });
+   });
++  browserTables(resources).forEach((name) => {
++    capacityFaults(name, resources[name], resources).forEach((d) => fault(RULE.BROWSER_TABLE_UNBOUNDED, name, d));
++  });
+   return faults;
+ }
+ 
+-module.exports = { RULE, MAX_RETENTION_DAYS, splitResources, auditTemplate };
++module.exports = { RULE, MAX_RETENTION_DAYS, MAX_BROWSER_CAPACITY, splitResources, auditTemplate };
+ 
+ /* -------------------------------------------------------------------------- */
+ /* CLI                                                                        */
+@@ -153,7 +197,7 @@ function main() {
+     return 1;
+   }
+   console.log("INFRA OK — " + TEMPLATES.length + " template(s): every Lambda logs to a group kept at most " + MAX_RETENTION_DAYS + " days, " +
+-    "every route that opts out of the authorizer is throttled.");
++    "every route that opts out of the authorizer is throttled, every table a browser reaches has a fixed capacity.");
+   return 0;
+ }
+ 
+diff --git a/tools/check-infra.test.cjs b/tools/check-infra.test.cjs
+index b064724..7eac12e 100644
+--- a/tools/check-infra.test.cjs
++++ b/tools/check-infra.test.cjs
+@@ -86,4 +86,47 @@ ok("an authorized route needs no throttle",
+ ok("every finding names its resource",
+   I.auditTemplate(template(FUNCTION().slice(0, 4))).every((f) => f.resource === "ApiFunction" && f.detail));
+ 
++const BROWSER_ROLE = [
++  "  SyncRole:",
++  "    Type: AWS::IAM::Role",
++  "    Properties:",
++  "      AssumeRolePolicyDocument:",
++  "        Statement:",
++  "          - Principal:",
++  "              Federated: cognito-identity.amazonaws.com",
++  "      Policies:",
++  "        - PolicyDocument:",
++  "            Statement:",
++  "              - Resource: !GetAtt SyncTable.Arn"
++];
++const TABLE = (mode, read, write) => [
++  "  SyncTable:",
++  "    Type: AWS::DynamoDB::Table",
++  "    Properties:",
++  "      BillingMode: " + mode
++].concat(read === undefined ? [] : ["      ProvisionedThroughput:", "        ReadCapacityUnits: " + read, "        WriteCapacityUnits: " + write]);
++const bounded = (extra) => rules(I.auditTemplate(template(BROWSER_ROLE.concat(extra))));
++const unbounded = (found) => found.length > 0 && found.every((r) => r === I.RULE.BROWSER_TABLE_UNBOUNDED);
++
++ok("a provisioned table at fixed capacity behind a browser role passes", bounded(TABLE("PROVISIONED", 5, 5)).length === 0);
++
++ok("an on-demand table a browser can write fails: nothing caps its bill",
++  unbounded(bounded(TABLE("PAY_PER_REQUEST"))));
++
++ok("capacity over the ceiling fails",
++  unbounded(bounded(TABLE("PROVISIONED", 5, I.MAX_BROWSER_CAPACITY + 1))));
++
++ok("capacity from a parameter fails: the ceiling must be readable in the template",
++  unbounded(bounded(TABLE("PROVISIONED", "!Ref Units", 5))));
++
++ok("an autoscaling target on the table fails",
++  unbounded(bounded(TABLE("PROVISIONED", 5, 5).concat(["  SyncScaling:", "    Type: AWS::ApplicationAutoScaling::ScalableTarget",
++    "    Properties:", "      ResourceId: !Sub 'table/${SyncTable}'"]))));
++
++ok("an on-demand table no browser role names is left alone",
++  rules(I.auditTemplate(template(TABLE("PAY_PER_REQUEST")))).length === 0);
++
++ok("a role a Lambda assumes does not make its tables browser tables",
++  rules(I.auditTemplate(template(BROWSER_ROLE.map((l) => l.replace("Federated: cognito-identity.amazonaws.com", "Service: lambda.amazonaws.com")).concat(TABLE("PAY_PER_REQUEST"))))).length === 0);
++
+ console.log("check-infra self-test OK (" + n + " assertions)");

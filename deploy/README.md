@@ -43,19 +43,20 @@ Upload uses typed passes — HTML `no-cache`, hashed `_next/*` assets
 ## Login and progress sync (optional)
 
 Signed out, progress stays in the browser. Sign-in reuses **get-certified's Cognito user pool**
-(same accounts) and stores one compact blob per user next to get-certified's data, in its own row.
+(same accounts). The browser then gets one-hour AWS credentials from an identity pool and reads
+and writes only its own item in a small DynamoDB table: no API, no Lambda, no logs.
 
-1. In the get-certified repo, apply the patch and deploy that stack's infrastructure (its normal
-   `deploy-infra` → `site` flow):
+**Cost ceiling: $5/month, never more.** The table is provisioned at a fixed 5 read + 5 write
+units with no autoscaling, so traffic over that is throttled, not billed: $0 inside DynamoDB's
+always-free tier, about $2.85/month without it (us-east-1, checked 2026-11-11). get-certified's
+`check:infra` fails if that table ever becomes on-demand, autoscaled or bigger. Full math:
+`deploy/get-certified/README.md`. Hosting: put this site's CloudFront distribution on the
+**Free flat-rate plan** (CloudFront console → the distribution → pricing plan): $0, no overage
+charges (1M requests / 100 GB a month allowance; past it delivery may slow, never bill). Its
+CloudFront Function (`cf-rewrite.js`) must not be shared with another distribution.
 
-   ```bash
-   git am /path/to/levelup/deploy/get-certified/*.patch
-   ```
-
-   It adds a second Cognito app client for levelup (callbacks `https://levelup.skillrealm.dev/auth/`
-   and `http://localhost:3000/auth/`), `GET|PUT /apps/levelup/state`, CORS for this origin, export
-   and delete of the new row, and the `LevelupClientId` output. Cost: one DynamoDB item per user
-   and a few requests per study session (pennies a month at this scale).
+1. In the get-certified repo, apply `deploy/get-certified/levelup-sync.diff` and deploy that
+   stack's infrastructure (steps in that folder's README).
 2. Here, write the build config from that stack's outputs, then build and deploy as usual:
 
    ```bash

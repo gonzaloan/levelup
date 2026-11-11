@@ -41,8 +41,9 @@ Simple and concise beats exhaustive. If a field needs scrolling to read, it is t
 - `src/lib/practice/` — the practice engine, pure and unit-tested: graders, seeded shuffles, FSRS
   state (ts-fsrs), sessions, XP/levels/streak, union `merge` for sync.
 - `src/lib/sync.ts` — optional login + sync, reusing get-certified's Cognito user pool. Inert
-  without `NEXT_PUBLIC_*` config (see `.env.example`, `deploy/sync-config.sh`). The server side is
-  a patch for get-certified in `deploy/get-certified/`.
+  without `NEXT_PUBLIC_*` config (see `.env.example`, `deploy/sync-config.sh`). The browser writes
+  its own item in a PROVISIONED DynamoDB table via an identity pool (no API, no Lambda): the
+  server side is `deploy/get-certified/levelup-sync.diff`.
 
 ## Rules
 - **Edit content as JSON, then validate.** Never hand-edit `content/diagrams` — run `npm run diagrams`.
@@ -83,6 +84,12 @@ Simple and concise beats exhaustive. If a field needs scrolling to read, it is t
   deprecated model ids, moved docs URLs and misattributions in every one of 12 domains.
 - Then `npm run links`, and a per-domain review for anything authored without verification.
 - AI facts go stale in months: date every price, spec version and product status.
+
+## Cost ceiling
+**AWS spend for levelup must never exceed $5/month, worst case included** (owner's rule). Bound it
+by construction, not by alarms: fixed provisioned capacity, no autoscaling, no pay-per-request
+service a browser can call (API Gateway, Lambda, on-demand tables), CloudFront on the Free
+flat-rate plan. State the worst-case math before adding any AWS resource.
 
 ## Deploy
 The owner deploys (`deploy/README.md`). Prepare code and a runbook; don't run the deploy.

@@ -1,19 +1,24 @@
 "use client";
 import { useEffect, useState } from "react";
 import type { Locale } from "@/lib/types";
-import { AUTH_EVENT, accountEmail, isLoggedIn, lastSyncedAt, login, logout, schedulePush, syncEnabled, syncNow } from "@/lib/sync";
+import { AUTH_EVENT, accountEmail, deleteSynced, isLoggedIn, lastSyncedAt, login, logout, schedulePush, syncEnabled, syncNow } from "@/lib/sync";
 import { STUDY_EVENT } from "@/lib/practice/store";
 import { Icon } from "./Icon";
 
-/** Keeps a signed-in learner's progress in sync: pull on load/focus, debounced push after study. */
+/** Keeps a signed-in learner's progress in sync: pull on load/focus, debounced push after study,
+ *  and a last push when the tab is hidden (closing it or switching apps) if answers are pending. */
 export function SyncAgent() {
   useEffect(() => {
     if (!syncEnabled()) return;
     let last = 0;
     const pull = () => { if (isLoggedIn() && Date.now() - last > 60_000) { last = Date.now(); void syncNow(); } };
-    const onStudy = (e: Event) => { if (!(e as CustomEvent).detail?.fromSync) schedulePush(); };
+    let pending = false;
+    const onStudy = (e: Event) => { if (!(e as CustomEvent).detail?.fromSync) { pending = true; schedulePush(); } };
     pull();
-    const onVis = () => document.visibilityState === "visible" && pull();
+    const onVis = () => {
+      if (document.visibilityState === "visible") pull();
+      else if (pending && isLoggedIn()) { pending = false; void syncNow(); }
+    };
     window.addEventListener(STUDY_EVENT, onStudy);
     document.addEventListener("visibilitychange", onVis);
     return () => { window.removeEventListener(STUDY_EVENT, onStudy); document.removeEventListener("visibilitychange", onVis); };
@@ -54,6 +59,11 @@ export function AccountButton({ locale }: { locale: Locale }) {
           <p className="am-sync">{synced ? `${es ? "Sincronizado" : "Synced"} ${new Date(synced).toLocaleTimeString()}` : es ? "Sincronizando…" : "Syncing…"}</p>
           <button type="button" role="menuitem" onClick={() => void syncNow()}>{es ? "Sincronizar ahora" : "Sync now"}</button>
           <button type="button" role="menuitem" onClick={logout}>{es ? "Cerrar sesión" : "Sign out"}</button>
+          <button type="button" role="menuitem" className="am-danger" onClick={() => {
+            // Signing out too: while signed in, the next sync would upload this device's copy again.
+            const msg = es ? "¿Borrar tu progreso guardado en la nube y cerrar sesión? Este dispositivo conserva su copia local." : "Delete your progress saved in the cloud and sign out? This device keeps its local copy.";
+            if (window.confirm(msg)) void deleteSynced().then((ok) => ok ? logout() : window.alert(es ? "No se pudo borrar. Intenta de nuevo." : "Could not delete. Try again."));
+          }}>{es ? "Borrar datos en la nube" : "Delete cloud data"}</button>
         </div>
       )}
     </div>

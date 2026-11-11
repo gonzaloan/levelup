@@ -5,9 +5,9 @@
 #
 #   STACK=aws-study-guide REGION=us-east-1 ./deploy/sync-config.sh
 #
-# Needs the get-certified stack deployed WITH the levelup patch (deploy/get-certified/*.patch),
-# which adds the LevelupClientId output and the /apps/{app}/state routes. Without that output the
-# script writes nothing and the site builds local-only (login hidden), exactly as before.
+# Needs the get-certified stack deployed WITH deploy/get-certified/levelup-sync.diff, which adds
+# the levelup app client, identity pool and fixed-capacity table. Without its outputs the script
+# writes nothing and the site builds local-only (login hidden), exactly as before.
 # ============================================================
 set -euo pipefail
 STACK="${STACK:-aws-study-guide}"
@@ -19,10 +19,12 @@ out() { aws cloudformation describe-stacks --region "$REGION" --stack-name "$STA
 
 CLIENT="$(out LevelupClientId)"
 DOMAIN="$(out CognitoHostedUiDomain)"
-API="$(out ApiBaseUrl)"
+POOL="$(out CognitoUserPoolId)"
+IDENTITY_POOL="$(out LevelupIdentityPoolId)"
+TABLE="$(out LevelupSyncTableName)"
 
 if [[ -z "$CLIENT" || "$CLIENT" == "None" ]]; then
-  echo "✗ $STACK has no LevelupClientId output: apply deploy/get-certified/*.patch and deploy that stack first." >&2
+  echo "✗ $STACK has no LevelupClientId output: apply deploy/get-certified/levelup-sync.diff and deploy that stack first." >&2
   echo "  Building without login (local-only progress) is still fine." >&2
   exit 1
 fi
@@ -30,6 +32,8 @@ fi
 cat > "$ROOT/.env.production.local" <<ENV
 NEXT_PUBLIC_COGNITO_DOMAIN=$DOMAIN
 NEXT_PUBLIC_COGNITO_CLIENT_ID=$CLIENT
-NEXT_PUBLIC_SYNC_API=$API
+NEXT_PUBLIC_COGNITO_USER_POOL_ID=$POOL
+NEXT_PUBLIC_IDENTITY_POOL_ID=$IDENTITY_POOL
+NEXT_PUBLIC_SYNC_TABLE=$TABLE
 ENV
-echo "✓ wrote .env.production.local (client $CLIENT, api $API). Now: npm run build && cd deploy && ./deploy.sh"
+echo "✓ wrote .env.production.local (client $CLIENT, table $TABLE). Now: npm run build && cd deploy && ./deploy.sh"
