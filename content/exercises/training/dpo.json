@@ -1,0 +1,96 @@
+{
+  "concept": "dpo",
+  "items": [
+    {
+      "id": "dpo.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "To build DPO pairs fast, you take **chosen** answers from a frontier model and **rejected** ones from a small open model. Training loss falls quickly, yet held-out win rate against your SFT model barely moves. Most likely cause?",
+        "es": "Para armar pares de DPO rápido, tomas las respuestas **elegidas** de un modelo de frontera y las **rechazadas** de un modelo abierto chico. La loss de entrenamiento baja rápido, pero el win rate en prompts reservados contra tu modelo SFT casi no se mueve. ¿Causa más probable?"
+      },
+      "options": [
+        {
+          "text": { "en": "Off-policy pairs: it learned the source's style, not better answers", "es": "Pares off-policy: aprendió el estilo de cada fuente, no a responder mejor" },
+          "why": { "en": "Style alone separates the two sides, so the loss falls while the policy's own outputs stay the same.", "es": "El estilo por sí solo separa los dos lados, así que la loss baja mientras las salidas de la propia política siguen igual." }
+        },
+        {
+          "text": { "en": "β too high: the reference anchor stops the model from moving", "es": "β demasiado alto: el ancla de referencia no deja que el modelo se mueva" },
+          "why": { "en": "A fast-falling loss shows it separated the pairs easily; the problem is what the pairs teach, not how far it may move.", "es": "Una loss que baja rápido muestra que separó los pares sin esfuerzo; el problema es lo que enseñan los pares, no cuánto puede moverse." }
+        },
+        {
+          "text": { "en": "Too little training: run more epochs at an SFT-like learning rate", "es": "Falta entrenamiento: correr más epochs con un learning rate como el de SFT" },
+          "why": { "en": "DPO overfits fast; SFT-like rates and many epochs make it unlearn good answers too.", "es": "DPO sobreajusta rápido; learning rates como los de SFT y muchas epochs hacen que también desaprenda respuestas buenas." }
+        },
+        {
+          "text": { "en": "No reward model: DPO needs one to turn pairs into a signal", "es": "Falta un reward model: DPO necesita uno para convertir los pares en señal" },
+          "why": { "en": "DPO's point is that the policy acts as its own reward model; the data is the issue, not a missing RM.", "es": "La gracia de DPO es que la política actúa como su propio reward model; el problema son los datos, no un RM faltante." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "DPO learns whatever separates chosen from rejected. When the two sides come from different models, the easiest signal is the source's style, not quality. Sample both answers from your own SFT model and let humans or a calibrated judge pick: on-policy pairs teach the model to improve the outputs it actually produces.",
+        "es": "DPO aprende lo que sea que separe la elegida de la rechazada. Si los dos lados vienen de modelos distintos, la señal más fácil es el estilo de la fuente, no la calidad. Muestrea ambas respuestas de tu propio modelo SFT y deja que elijan humanos o un juez calibrado: los pares on-policy le enseñan a mejorar las salidas que de verdad produce."
+      }
+    },
+    {
+      "id": "dpo.a2",
+      "type": "code",
+      "prompt": {
+        "en": "This is a **full fine-tuning** DPO run from your SFT checkpoint. Pick the learning-rate line.",
+        "es": "Es una corrida de DPO con **fine-tuning completo** desde tu checkpoint SFT. Elige la línea del learning rate."
+      },
+      "lang": "python",
+      "code": "args = DPOConfig(\n    output_dir=\"model-dpo\",\n    beta=0.1,\n    ____\n    num_train_epochs=1,\n    per_device_train_batch_size=4,\n    gradient_accumulation_steps=8,\n)\ntrainer = DPOTrainer(model=model, args=args,\n                     train_dataset=pairs, processing_class=tokenizer)\ntrainer.train()\n# Watch rewards/margins (should rise) and rewards/chosen (should not crash)",
+      "options": [
+        { "text": "learning_rate=5e-7," },
+        {
+          "text": "learning_rate=1e-5,",
+          "why": { "en": "That's SFT's rate. DPO overfits fast, and `rewards/chosen` crashes as it unlearns good answers.", "es": "Ese es el learning rate de SFT. DPO sobreajusta rápido, y `rewards/chosen` se desploma a medida que desaprende respuestas buenas." }
+        },
+        {
+          "text": "learning_rate=1e-3,",
+          "why": { "en": "Orders of magnitude too high for any fine-tune of a pretrained model; training destabilizes.", "es": "Varios órdenes de magnitud por encima de lo razonable para ajustar un modelo preentrenado; el entrenamiento se desestabiliza." }
+        },
+        {
+          "text": "learning_rate=5e-9,",
+          "why": { "en": "Far below the usual ~5e-7 to 1e-6 range: one epoch would barely change the model.", "es": "Muy por debajo del rango habitual de ~5e-7 a 1e-6: una epoch casi no cambiaría el modelo." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Preference tuning nudges a model that already works, so DPO with full fine-tuning uses ~5e-7 to 1e-6, far below SFT's ~1e-5, and usually one epoch. Judge it by held-out win rate and by `rewards/chosen` not crashing, never by training loss alone.",
+        "es": "El ajuste por preferencias empuja suavemente un modelo que ya funciona, así que DPO con fine-tuning completo usa ~5e-7 a 1e-6, muy por debajo de los ~1e-5 de SFT, y normalmente una sola epoch. Evalúalo por el win rate en prompts reservados y porque `rewards/chosen` no se desplome, nunca solo por la loss de entrenamiento."
+      }
+    },
+    {
+      "id": "dpo.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about DPO are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre DPO son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Its loss rewards the change in preference relative to a frozen reference", "es": "Su loss premia el cambio de preferencia respecto de una referencia congelada" } },
+        { "text": { "en": "KTO, a variant, learns from unpaired thumbs-up/down labels", "es": "KTO, una variante, aprende de etiquetas de pulgar arriba/abajo sin emparejar" } },
+        { "text": { "en": "It runs on standard fine-tuning infra, with no sampling during training", "es": "Corre sobre infraestructura estándar de fine-tuning, sin muestreo durante el entrenamiento" } },
+        {
+          "text": { "en": "A higher β lets the policy move further from the reference", "es": "Un β más alto deja que la política se aleje más de la referencia" },
+          "why": { "en": "β plays the KL penalty's role: higher is more conservative; a lower β allows a more aggressive update.", "es": "β cumple el papel de la penalización KL: más alto es más conservador; un β más bajo permite una actualización más agresiva." }
+        },
+        {
+          "text": { "en": "It can teach the model facts it is missing", "es": "Puede enseñarle al modelo hechos que le faltan" },
+          "why": { "en": "It shapes tone, verbosity and refusals; missing knowledge or skill needs retrieval or SFT.", "es": "Moldea el tono, el largo y los rechazos; el conocimiento o la habilidad que faltan se resuelven con retrieval o SFT." }
+        },
+        {
+          "text": { "en": "It explores beyond its dataset, like online RL", "es": "Explora más allá de su dataset, como el RL online" },
+          "why": { "en": "It's offline: it learns only from the pairs it gets. Iterative DPO regenerates pairs to recover part of that benefit.", "es": "Es offline: solo aprende de los pares que recibe. El DPO iterativo regenera pares para recuperar parte de ese beneficio." }
+        }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "DPO keeps RLHF's objective but drops the reward model and the RL loop: the policy's likelihood ratio against a frozen reference is the implicit reward, and β scales it like a KL penalty. The price of that simplicity is that it's offline and only reshapes preferences the data already contains.",
+        "es": "DPO conserva el objetivo de RLHF pero elimina el reward model y el loop de RL: la razón de verosimilitud de la política contra una referencia congelada es la recompensa implícita, y β la escala como una penalización KL. El precio de esa simplicidad es que es offline y solo reacomoda preferencias que los datos ya contienen."
+      }
+    }
+  ]
+}

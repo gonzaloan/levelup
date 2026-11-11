@@ -1,0 +1,107 @@
+{
+  "concept": "rlhf",
+  "items": [
+    {
+      "id": "rlhf.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Mid-PPO, the reward-model score rises at every checkpoint. Fresh human win rate against the SFT model peaked two checkpoints ago, and average answer length is up **40%**. Diagnosis and fix?",
+        "es": "En pleno PPO, el puntaje del reward model sube en cada checkpoint. El win rate con evaluadores humanos nuevos contra el modelo SFT tocó su máximo hace dos checkpoints, y el largo promedio de las respuestas subió **40%**. ¿Diagnóstico y corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Reward hacking: roll back a checkpoint, raise β, add length-controlled pairs", "es": "Reward hacking: volver a un checkpoint anterior, subir β y agregar pares con largo controlado" },
+          "why": { "en": "The policy found an RM blind spot (longer looks better). An earlier checkpoint, a stronger KL anchor and fixed data close it.", "es": "La política encontró un punto ciego del RM (más largo parece mejor). Un checkpoint anterior, un ancla KL más fuerte y datos corregidos lo cierran." }
+        },
+        {
+          "text": { "en": "Still improving: keep training until the reward-model score plateaus", "es": "Sigue mejorando: entrenar hasta que el puntaje del reward model se estanque" },
+          "why": { "en": "The RM is a proxy: its score keeps rising while real quality falls. Fresh human or judge win rate is the real signal.", "es": "El RM es un proxy: su puntaje sigue subiendo mientras la calidad real cae. El win rate con humanos o un juez nuevos es la señal real." }
+        },
+        {
+          "text": { "en": "Rater noise: trust the RM score, since it averages thousands of comparisons", "es": "Ruido de los evaluadores: confiar en el puntaje del RM, que promedia miles de comparaciones" },
+          "why": { "en": "The RM inherits rater biases and has blind spots; fresh evaluations are exactly what exposes the policy exploiting them.", "es": "El RM hereda los sesgos de los evaluadores y tiene puntos ciegos; las evaluaciones nuevas son justo lo que expone que la política los explota." }
+        },
+        {
+          "text": { "en": "Too little exploration: lower β so the policy gets past the RM's blind spots", "es": "Falta exploración: bajar β para que la política supere los puntos ciegos del RM" },
+          "why": { "en": "A lower β lets the policy drift further from SFT, which is how reward hacking grows. The fix goes the other way.", "es": "Un β más bajo deja que la política se aleje más del SFT, que es justo como crece el reward hacking. La corrección va al revés." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A reward model is a proxy trained on limited data, and RL finds whatever raises it: here, length. Optimizing harder against a fixed RM raises true quality, then lowers it. Never trust the RM score alone: track fresh win rate and length, and mitigate with the KL penalty, length-controlled data, early stopping and refreshed comparisons.",
+        "es": "Un reward model es un proxy entrenado con datos limitados, y el RL encuentra lo que sea que lo haga subir: aquí, el largo. Optimizar más fuerte contra un RM fijo primero sube la calidad real y después la baja. Nunca confíes solo en el puntaje del RM: sigue el win rate nuevo y el largo, y mitiga con la penalización KL, datos con largo controlado, early stopping y comparaciones renovadas."
+      }
+    },
+    {
+      "id": "rlhf.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the RL reward so PPO can't drift into text that games the reward model.",
+        "es": "Completa la recompensa de RL para que PPO no derive hacia texto que engañe al reward model."
+      },
+      "lang": "python",
+      "code": "BETA = 0.05\n\ndef rlhf_reward(rm, policy, ref, prompt, answer):\n    score = rm(prompt, answer)\n    logp = policy.token_logprobs(prompt, answer)\n    logp_ref = ref.token_logprobs(prompt, answer)  # frozen SFT copy\n    kl = (logp - logp_ref).sum(-1)                 # sample estimate of KL\n    ____",
+      "options": [
+        { "text": "return score - BETA * kl" },
+        {
+          "text": "return score + BETA * kl",
+          "why": { "en": "Wrong sign: the policy is paid to move away from the SFT model, the opposite of an anchor.", "es": "Signo equivocado: se le paga a la política por alejarse del modelo SFT, lo contrario de un ancla." }
+        },
+        {
+          "text": "return score",
+          "why": { "en": "No anchor at all: nothing stops the policy drifting into text that fools the RM.", "es": "Sin ancla: nada impide que la política derive hacia texto que engaña al RM." }
+        },
+        {
+          "text": "return score - BETA * logp.sum(-1)",
+          "why": { "en": "Ignores the reference: it penalizes the policy's own likelihood, not its distance from the SFT model.", "es": "Ignora la referencia: penaliza la verosimilitud de la propia política, no su distancia al modelo SFT." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The RLHF reward is `RM(x, y) − β·KL(π ‖ π_ref)`: the RM pulls toward preferred text, the KL term pulls back toward the frozen SFT model. β sets the balance: too low and the policy reward-hacks, too high and it barely moves.",
+        "es": "La recompensa de RLHF es `RM(x, y) − β·KL(π ‖ π_ref)`: el RM empuja hacia el texto preferido y el término KL tira de vuelta hacia el modelo SFT congelado. β fija el equilibrio: muy bajo y la política hace reward hacking; muy alto y casi no se mueve."
+      }
+    },
+    {
+      "id": "rlhf.a3",
+      "type": "numeric",
+      "prompt": {
+        "en": "As in InstructGPT, labelers rank several sampled answers per prompt instead of judging one pair at a time. A full ranking of **9** answers yields how many (chosen, rejected) pairs for reward-model training?",
+        "es": "Como en InstructGPT, los evaluadores ordenan varias respuestas muestreadas por prompt en lugar de juzgar un par a la vez. Un ranking completo de **9** respuestas, ¿cuántos pares (elegida, rechazada) aporta para entrenar el reward model?"
+      },
+      "answer": 36,
+      "tolerance": 0.05,
+      "unit": "pairs",
+      "explain": {
+        "en": "Every two answers in a ranking form one pair: 9 × 8 / 2 = 36. Counting ordered pairs (72) double-counts; counting neighbours (8) wastes the ranking. That's why ranking K samples is cheaper per comparison than judging pairs one by one.",
+        "es": "Cada dos respuestas de un ranking forman un par: 9 × 8 / 2 = 36. Contar pares ordenados (72) cuenta doble; contar solo vecinos (8) desperdicia el ranking. Por eso ordenar K muestras sale más barato por comparación que juzgar pares de a uno."
+      }
+    },
+    {
+      "id": "rlhf.a4",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about PPO-based RLHF are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre RLHF con PPO son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "PPO keeps four models busy: policy, reference, reward and value", "es": "PPO mantiene cuatro modelos ocupados: política, referencia, reward y value" } },
+        { "text": { "en": "The reference is a frozen copy of the SFT model", "es": "La referencia es una copia congelada del modelo SFT" } },
+        { "text": { "en": "Ranking answers is faster and more consistent than writing ideal ones", "es": "Ordenar respuestas es más rápido y consistente que escribir respuestas ideales" } },
+        {
+          "text": { "en": "The reward model is trained on ideal answers written by labelers", "es": "El reward model se entrena con respuestas ideales escritas por los evaluadores" },
+          "why": { "en": "It learns from comparisons: a Bradley–Terry loss makes the preferred answer score higher.", "es": "Aprende de comparaciones: una loss de Bradley–Terry hace que la respuesta preferida puntúe más alto." }
+        },
+        {
+          "text": { "en": "Raters prefer correct answers, so preference tuning steers away from flattery", "es": "Los evaluadores prefieren respuestas correctas, así que el ajuste por preferencias aleja la adulación" },
+          "why": { "en": "People also reward agreement and flattery, so the policy learns sycophancy: telling users what they want to hear.", "es": "La gente también premia que le den la razón y la adulación, así que la política aprende sycophancy: decirle al usuario lo que quiere oír." }
+        }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "RLHF's cost and its failure modes come from one design: a learned proxy trained on human comparisons, optimized by RL against a frozen anchor. The proxy inherits human biases, so \"preferred\" is not the same as \"correct\", and four models in memory is why many teams use DPO instead.",
+        "es": "El costo de RLHF y sus fallas salen de un mismo diseño: un proxy aprendido de comparaciones humanas, optimizado con RL contra un ancla congelada. El proxy hereda los sesgos humanos, así que \"preferido\" no es lo mismo que \"correcto\", y cuatro modelos en memoria explican por qué muchos equipos usan DPO."
+      }
+    }
+  ]
+}

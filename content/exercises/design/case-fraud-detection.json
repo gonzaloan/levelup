@@ -1,0 +1,102 @@
+{
+  "concept": "case-fraud-detection",
+  "items": [
+    {
+      "id": "case-fraud-detection.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A card-testing bot fires **40 attempts in 20 seconds** at one merchant from one IP. All are approved. Logs show the per-IP attempts-in-the-last-minute feature read **0** for every attempt. Root cause and fix?",
+        "es": "Un bot de card testing lanza **40 intentos en 20 segundos** contra un comercio desde una sola IP. Todos se aprueban. Los logs muestran que la feature de intentos por IP en el último minuto valía **0** en cada intento. ¿Causa raíz y corrección?"
+      },
+      "options": [
+        {
+          "text": { "en": "Short windows come only from the stream; count them in the request path", "es": "Las ventanas cortas salen solo del stream; contarlas en el camino de la solicitud" },
+          "why": { "en": "The async counter moves after the burst is already scored. Incrementing in the request lets each attempt see the previous ones.", "es": "El contador asíncrono se mueve cuando la ráfaga ya se puntuó. Incrementarlo en la solicitud permite que cada intento vea los anteriores." }
+        },
+        {
+          "text": { "en": "The GBDT under-weights velocity; retrain with more card-testing cases", "es": "El GBDT le da poco peso a la velocidad; reentrenar con más casos de card testing" },
+          "why": { "en": "The feature it received read 0; no model can weigh a burst its inputs never showed.", "es": "La feature que recibió valía 0; ningún modelo puede ponderar una ráfaga que sus entradas nunca mostraron." }
+        },
+        {
+          "text": { "en": "Flink windows are too long; switch to 10-second windows", "es": "Las ventanas de Flink son muy largas; cambiar a ventanas de 10 segundos" },
+          "why": { "en": "Window size isn't the issue: a stream-computed counter lags the requests it counts, whatever its window.", "es": "El tamaño de ventana no es el problema: un contador calculado en el stream va detrás de las solicitudes que cuenta, sea cual sea su ventana." }
+        },
+        {
+          "text": { "en": "Missing blocklist entry; add the bot's IP to the hard rules", "es": "Falta una entrada en la blocklist; agregar la IP del bot a las reglas duras" },
+          "why": { "en": "Stops this IP only; the next burst comes from another, and the velocity feature is still blind.", "es": "Solo frena esta IP; la próxima ráfaga viene de otra, y la feature de velocidad sigue ciega." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Velocity features are only as fresh as the path that updates them. Kafka → Flink suits long windows, up to 30 days, but a burst is faster than the stream. Increment short windows inside the request itself, and keep a hard card-testing burst rule ahead of the model.",
+        "es": "Las features de velocidad son tan frescas como el camino que las actualiza. Kafka → Flink sirve para ventanas largas, de hasta 30 días, pero una ráfaga es más rápida que el stream. Incrementa las ventanas cortas dentro de la propia solicitud y mantén una regla dura de ráfagas de card testing antes del modelo."
+      }
+    },
+    {
+      "id": "case-fraud-detection.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Assumed economics: approving a fraud costs the amount + a **$15** chargeback fee; declining a good customer costs **30%** margin on the amount + **$20** of future value. For a **$20** order, above what P(fraud) does declining beat approving? Answer in percent.",
+        "es": "Economía supuesta: aprobar un fraude cuesta el monto + un cargo por contracargo de **$15**; rechazar a un cliente bueno cuesta un margen del **30%** sobre el monto + **$20** de valor futuro. Para una orden de **$20**, ¿a partir de qué P(fraude) conviene más rechazar que aprobar? Responde en porcentaje."
+      },
+      "answer": 42.6,
+      "tolerance": 0.08,
+      "unit": "%",
+      "explain": {
+        "en": "Approve costs p × (20 + 15) = 35p. Decline costs (1 − p) × (0.30 × 20 + 20) = 26(1 − p). They are equal at p* = 26 / (26 + 35) ≈ 43%. For a $200 order, p* = 80 / (80 + 215) ≈ 27%. Cut-offs depend on the amount, and they only work if P(fraud) is calibrated.",
+        "es": "Aprobar cuesta p × (20 + 15) = 35p. Rechazar cuesta (1 − p) × (0.30 × 20 + 20) = 26(1 − p). Se igualan en p* = 26 / (26 + 35) ≈ 43%. Para una orden de $200, p* = 80 / (80 + 215) ≈ 27%. Los cortes dependen del monto, y solo funcionan si P(fraude) está calibrada."
+      }
+    },
+    {
+      "id": "case-fraud-detection.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put the online path of one payment authorization in order.",
+        "es": "Ordena el camino online de una autorización de pago."
+      },
+      "steps": [
+        { "en": "Payment API calls the risk service synchronously", "es": "La API de pagos llama al servicio de riesgo de forma síncrona" },
+        { "en": "One parallel fetch reads velocity, device and graph features", "es": "Una sola lectura en paralelo trae features de velocidad, dispositivo y grafo" },
+        { "en": "Hard rules run: blocklists, sanctions, card-testing bursts", "es": "Corren las reglas duras: blocklists, sanciones, ráfagas de card testing" },
+        { "en": "GBDT returns a calibrated P(fraud)", "es": "El GBDT devuelve una P(fraude) calibrada" },
+        { "en": "Expected-cost policy picks approve, step-up, review or decline", "es": "La política de costo esperado elige aprobar, step-up, revisión o rechazo" },
+        { "en": "Decision is logged with the exact features served", "es": "La decisión se registra con las features exactas que se sirvieron" }
+      ],
+      "explain": {
+        "en": "Features first, so rules and model share one snapshot; cheap, certain rules before the model; a score before the policy that turns it into money. Logging the served features last, asynchronously, keeps the ~100 ms p99 budget and gives training exactly what the model saw.",
+        "es": "Primero las features, para que reglas y modelo compartan una misma foto; reglas baratas y seguras antes del modelo; un puntaje antes de la política que lo convierte en dinero. Registrar al final, de forma asíncrona, las features servidas cuida el presupuesto de ~100 ms p99 y le da al entrenamiento exactamente lo que vio el modelo."
+      }
+    },
+    {
+      "id": "case-fraud-detection.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "A retrained model scores far above production on offline AUC. Its training features were **recomputed from the warehouse** after the fact. In shadow mode it flags no more fraud than the current model. Most likely cause?",
+        "es": "Un modelo reentrenado supera por mucho a producción en AUC offline. Sus features de entrenamiento se **recalcularon desde el warehouse** a posteriori. En shadow mode no detecta más fraude que el modelo actual. ¿Causa más probable?"
+      },
+      "options": [
+        {
+          "text": { "en": "Leakage: recomputed counts saw later events; train on logged features", "es": "Fuga: los conteos recalculados vieron eventos posteriores; entrenar con features registradas" },
+          "why": { "en": "Offline, the counters include what happened after each decision; production never has that.", "es": "Offline, los contadores incluyen lo que pasó después de cada decisión; producción nunca lo tiene." }
+        },
+        {
+          "text": { "en": "Overfitting: add regularization and retrain the GBDT", "es": "Sobreajuste: agregar regularización y reentrenar el GBDT" },
+          "why": { "en": "Overfitting shows up as a weak held-out score; here the held-out score is the inflated one.", "es": "El sobreajuste se ve como un puntaje bajo en datos reservados; aquí ese puntaje es justamente el inflado." }
+        },
+        {
+          "text": { "en": "Adaptation: fraudsters changed tactics once it went live", "es": "Adaptación: los estafadores cambiaron de táctica al salir en vivo" },
+          "why": { "en": "In shadow mode it takes no actions, so attackers have nothing to adapt to.", "es": "En shadow mode no toma acciones, así que los atacantes no tienen a qué adaptarse." }
+        },
+        {
+          "text": { "en": "Sample size: shadow traffic is too small; run it longer", "es": "Tamaño de muestra: el tráfico en shadow es muy chico; correrlo más tiempo" },
+          "why": { "en": "A gap this large would show quickly; the offline number itself is what's wrong.", "es": "Una brecha tan grande se vería rápido; lo que está mal es el número offline." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A counter recomputed at training time absorbs events after the decision, such as later cards on the same device, so offline the model sees the future and AUC soars. Log every decision with the exact features served and train on those rows; then what the model learns from is what it will see in production.",
+        "es": "Un contador recalculado al entrenar absorbe eventos posteriores a la decisión, como tarjetas que aparecieron después en el mismo dispositivo, así que offline el modelo ve el futuro y el AUC se dispara. Registra cada decisión con las features exactas que se sirvieron y entrena con esas filas; así lo que el modelo aprende es lo que verá en producción."
+      }
+    }
+  ]
+}

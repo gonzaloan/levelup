@@ -75,8 +75,12 @@ test("practice: answer, get feedback, earn XP and schedule the card", async ({ p
 
 test("practice: rebuild-the-diagram places components over the real diagram", async ({ page }) => {
   await page.goto("/en/practice/play/?mode=concept&id=reranking");
-  for (let i = 0; i < 10 && !(await page.locator(".p-dg-slot").count()); i++) {
+  // .p-dg-wrap renders at once; its slots appear only after the SVG loads, so wait on the wrapper.
+  await expect(page.locator(".p-type")).toBeVisible();
+  for (let i = 0; i < 10 && !(await page.locator(".p-dg-wrap").count()); i++) {
+    const before = await page.locator(".p-count").textContent();
     await page.locator(".p-actions .link-btn").click(); // skip to the diagram item
+    await expect(page.locator(".p-count")).not.toHaveText(before ?? "");
   }
   const slots = page.locator(".p-dg-slot");
   await expect(slots.first()).toBeVisible();

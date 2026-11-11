@@ -151,7 +151,8 @@ export function Player({ locale, mode, id }: { locale: Locale; mode: Mode; id?: 
 
         <div className="p-actions">
           {item!.type === "recall" ? (
-            current && <button type="button" className="btn btn-primary" onClick={next}>{idx + 1 < queue.length ? L("pNext") : L("pFinish")} <kbd>Enter</kbd></button>
+            current ? <button type="button" className="btn btn-primary" onClick={next}>{idx + 1 < queue.length ? L("pNext") : L("pFinish")} <kbd>Enter</kbd></button>
+              : <button type="button" className="link-btn p-skip" onClick={next}>{L("pSkip")}</button>
           ) : current ? (
             <button type="button" className="btn btn-primary" onClick={next}>{idx + 1 < queue.length ? L("pNext") : L("pFinish")} <kbd>Enter</kbd></button>
           ) : (

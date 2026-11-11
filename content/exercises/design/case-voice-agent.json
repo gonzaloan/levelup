@@ -1,0 +1,102 @@
+{
+  "concept": "case-voice-agent",
+  "items": [
+    {
+      "id": "case-voice-agent.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your voice agent's dashboard shows LLM time-to-first-token at **250 ms p50**, inside budget, yet recordings show callers repeating themselves and asking \"hello?\". What do you do first?",
+        "es": "El dashboard de tu agente de voz muestra el time-to-first-token del LLM en **250 ms p50**, dentro del presupuesto, pero las grabaciones muestran a los llamantes repitiendo lo que dicen y preguntando \"¿hola?\". ¿Qué haces primero?"
+      },
+      "options": [
+        {
+          "text": { "en": "Instrument voice-to-voice latency per turn, broken down by stage", "es": "Medir la latencia voz a voz por turno, desglosada por etapa" },
+          "why": { "en": "Callers feel end of speech to first audio; only a per-stage breakdown shows where the silence comes from.", "es": "Los llamantes sienten del fin de su voz al primer audio; solo un desglose por etapa muestra de dónde sale el silencio." }
+        },
+        {
+          "text": { "en": "Switch to a faster LLM to push TTFT under 150 ms", "es": "Cambiar a un LLM más rápido para bajar el TTFT de 150 ms" },
+          "why": { "en": "The LLM already meets its budget; the gap is likely in endpointing, TTS or network. Measure before optimizing.", "es": "El LLM ya cumple su presupuesto; la brecha probablemente está en el endpointing, el TTS o la red. Mide antes de optimizar." }
+        },
+        {
+          "text": { "en": "Cut the silence timeout to 100 ms so turns commit sooner", "es": "Bajar el timeout de silencio a 100 ms para cerrar turnos antes" },
+          "why": { "en": "A guess at the cause, and a timeout that short interrupts slow speakers mid-sentence.", "es": "Es adivinar la causa, y un timeout tan corto interrumpe a quienes hablan lento a mitad de frase." }
+        },
+        {
+          "text": { "en": "Add a spoken filler at the start of every reply", "es": "Agregar una muletilla hablada al inicio de cada respuesta" },
+          "why": { "en": "Fillers hide slow tools; without per-stage data you don't know whether a tool is even the problem.", "es": "Las muletillas esconden tools lentas; sin datos por etapa no sabes si una tool es siquiera el problema." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "LLM latency is one of six stages callers feel: endpointing, ASR final, TTFT, first sentence, TTS first audio and network, ~800 ms at p50. Past ~1.5 s callers start repeating themselves. Instrument every turn per stage, then fix the stage that actually blows the budget.",
+        "es": "La latencia del LLM es una de las seis etapas que siente el llamante: endpointing, transcripción final del ASR, TTFT, primera frase, primer audio del TTS y red, ~800 ms en p50. Pasado ~1.5 s, la gente empieza a repetirse. Mide cada turno por etapa y después corrige la etapa que de verdad rompe el presupuesto."
+      }
+    },
+    {
+      "id": "case-voice-agent.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size peak concurrency: **100k calls/day**, **4 minutes** average per call, and **~15%** of daily call-minutes land in the peak hour (assumed). How many calls are live at once at peak?",
+        "es": "Dimensiona la concurrencia pico: **100k llamadas/día**, **4 minutos** en promedio por llamada, y **~15%** de los minutos diarios cae en la hora pico (supuesto). ¿Cuántas llamadas hay en vivo al mismo tiempo en el pico?"
+      },
+      "answer": 1000,
+      "tolerance": 0.15,
+      "unit": "calls",
+      "explain": {
+        "en": "100k × 4 = 400k call-minutes/day; 15% → 60k minutes in the peak hour; 60k ÷ 60 ≈ 1,000 concurrent calls. Averaging over the whole day (400k ÷ 1,440 ≈ 280) under-provisions by ~3.6×. Each call is a long-lived stateful session, so this number sizes session workers and concurrent ASR and TTS streams.",
+        "es": "100k × 4 = 400k minutos-llamada/día; 15% → 60k minutos en la hora pico; 60k ÷ 60 ≈ 1,000 llamadas concurrentes. Promediar sobre todo el día (400k ÷ 1,440 ≈ 280) te deja corto por ~3.6×. Cada llamada es una sesión con estado de larga duración, así que este número dimensiona los workers de sesión y los streams concurrentes de ASR y TTS."
+      }
+    },
+    {
+      "id": "case-voice-agent.a3",
+      "type": "order",
+      "prompt": {
+        "en": "Put one conversational turn in order, from the caller's speech to the first agent audio.",
+        "es": "Ordena un turno de conversación, desde la voz del llamante hasta el primer audio del agente."
+      },
+      "steps": [
+        { "en": "Media server hands 20 ms audio frames to the session worker", "es": "El media server pasa frames de audio de 20 ms al worker de la sesión" },
+        { "en": "VAD and turn detector decide the caller has finished", "es": "El VAD y el detector de turno deciden que el llamante terminó" },
+        { "en": "Streaming ASR emits the final transcript", "es": "El ASR en streaming emite la transcripción final" },
+        { "en": "LLM streams its reply from a cached prompt", "es": "El LLM transmite su respuesta en streaming con un prompt en caché" },
+        { "en": "First complete sentence goes to streaming TTS", "es": "La primera frase completa va al TTS en streaming" },
+        { "en": "Caller hears the first audio", "es": "El llamante escucha el primer audio" }
+      ],
+      "explain": {
+        "en": "Every stage streams, so they overlap: ASR is nearly done when the turn commits, and TTS starts after the first sentence, not the full reply. The p50 budget: endpointing 200 + ASR 75 + TTFT 250 + first sentence 70 + TTS 100 + network 100 ≈ 800 ms.",
+        "es": "Todas las etapas van en streaming, así que se superponen: el ASR casi terminó cuando se cierra el turno, y el TTS arranca tras la primera frase, no la respuesta completa. Presupuesto p50: endpointing 200 + ASR 75 + TTFT 250 + primera frase 70 + TTS 100 + red 100 ≈ 800 ms."
+      }
+    },
+    {
+      "id": "case-voice-agent.a4",
+      "type": "mcq",
+      "prompt": {
+        "en": "After callers interrupt, the agent sometimes says \"as I mentioned, 4:00 also works\", though the caller cut it off before it ever said 4:00. What's the bug?",
+        "es": "Después de que el llamante interrumpe, el agente a veces dice \"como te mencioné, a las 4:00 también hay lugar\", aunque el llamante lo cortó antes de que dijera 4:00. ¿Cuál es el bug?"
+      },
+      "options": [
+        {
+          "text": { "en": "History keeps the full generated reply, not what was played", "es": "El historial guarda la respuesta generada completa, no lo que se reprodujo" },
+          "why": { "en": "The model believes it said text the caller never heard. Truncate the last turn to the played audio.", "es": "El modelo cree que dijo un texto que el llamante nunca escuchó. Trunca el último turno al audio reproducido." }
+        },
+        {
+          "text": { "en": "Streaming ASR transcribed the interruption too late", "es": "El ASR en streaming transcribió la interrupción demasiado tarde" },
+          "why": { "en": "Late ASR delays the next reply; it doesn't make the agent remember saying something it never played.", "es": "Un ASR tardío retrasa la siguiente respuesta; no hace que el agente recuerde haber dicho algo que nunca reprodujo." }
+        },
+        {
+          "text": { "en": "The LLM is hallucinating appointment slots", "es": "El LLM está alucinando horarios de citas" },
+          "why": { "en": "4:00 came from the tool; the model correctly recalls text it wrote, which the caller simply never heard.", "es": "Las 4:00 vinieron de la tool; el modelo recuerda bien un texto que escribió, solo que el llamante nunca lo escuchó." }
+        },
+        {
+          "text": { "en": "Barge-in detection is too sensitive to background noise", "es": "La detección de barge-in es demasiado sensible al ruido de fondo" },
+          "why": { "en": "That causes false interruptions; it doesn't explain the agent remembering unheard text.", "es": "Eso causa interrupciones falsas; no explica que el agente recuerde texto que nadie escuchó." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "On barge-in, stop playback within ~200 ms, cancel LLM and TTS generation, and rewrite the last assistant turn to the text actually played, marked as interrupted. The history must hold what the caller heard, not what the LLM wrote, or the model reasons from a conversation that never happened.",
+        "es": "Con barge-in, detén la reproducción en ~200 ms, cancela la generación del LLM y del TTS, y reescribe el último turno del asistente con el texto que de verdad se reprodujo, marcado como interrumpido. El historial debe guardar lo que el llamante escuchó, no lo que escribió el LLM, o el modelo razona sobre una conversación que nunca ocurrió."
+      }
+    }
+  ]
+}

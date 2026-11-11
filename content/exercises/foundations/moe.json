@@ -1,0 +1,81 @@
+{
+  "concept": "moe",
+  "items": [
+    {
+      "id": "moe.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "An internal assistant serves ~20 users with light, bursty traffic. A teammate wants to self-host **DeepSeek-V3** (671B total, 37B active) instead of a dense **70B**, because \"it computes only 37B per token, so it's cheaper.\" Your answer?",
+        "es": "Un asistente interno atiende a ~20 usuarios con tráfico bajo y a ráfagas. Un compañero quiere hacer self-hosting de **DeepSeek-V3** (671B totales, 37B activos) en lugar de un **70B** denso, porque \"solo calcula 37B por token, así que es más barato\". ¿Qué le respondes?"
+      },
+      "options": [
+        {
+          "text": { "en": "Likely costlier: you host a full node of memory, and small batches waste the FLOP saving", "es": "Probablemente sale más caro: alojas un nodo entero de memoria y los batches chicos desperdician el ahorro de FLOPs" },
+          "why": { "en": "Memory follows total parameters (~671 GB even in FP8); the per-token saving only becomes throughput when traffic fills large batches.", "es": "La memoria sigue a los parámetros totales (~671 GB incluso en FP8); el ahorro por token solo se vuelve throughput cuando el tráfico llena batches grandes." }
+        },
+        {
+          "text": { "en": "Agree: active parameters set both the compute and the GPU memory you need", "es": "De acuerdo: los parámetros activos definen tanto el cómputo como la memoria de GPU que necesitas" },
+          "why": { "en": "Classic sizing error: every expert must be loaded, so memory is set by total parameters.", "es": "Error clásico de dimensionamiento: todos los expertos deben estar cargados, así que la memoria la definen los parámetros totales." }
+        },
+        {
+          "text": { "en": "Disagree: an MoE does more FLOPs per token than a dense model of similar quality", "es": "En desacuerdo: un MoE hace más FLOPs por token que un modelo denso de calidad similar" },
+          "why": { "en": "The opposite: ~74 vs ~140 GFLOPs per token. Compute is the MoE's advantage; memory is its bill.", "es": "Es al revés: ~74 vs ~140 GFLOPs por token. El cómputo es la ventaja del MoE; la memoria es su costo." }
+        },
+        {
+          "text": { "en": "Agree, and benchmark it at batch 1 to confirm the latency win", "es": "De acuerdo, y medirlo con batch 1 para confirmar la ganancia en latencia" },
+          "why": { "en": "Batch-1 numbers don't extrapolate: MoE speed depends heavily on batch size and expert placement.", "es": "Los números con batch 1 no se extrapolan: la velocidad de un MoE depende mucho del tamaño de batch y de cómo se reparten los expertos." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "An MoE splits size into two numbers: total parameters set memory, active parameters set FLOPs per token. At low traffic, decode is memory-bound and a batch's tokens touch most experts anyway, so you pay for a node of mostly idle memory. Choose MoE when you can fill large batches; otherwise a dense model that fits one GPU is simpler and cheaper.",
+        "es": "Un MoE divide el tamaño en dos números: los parámetros totales definen la memoria y los activos, los FLOPs por token. Con poco tráfico, el decode está limitado por memoria y los tokens de un batch igual tocan casi todos los expertos, así que pagas un nodo de memoria casi ocioso. Elige MoE cuando puedas llenar batches grandes; si no, un modelo denso que cabe en una GPU es más simple y barato."
+      }
+    },
+    {
+      "id": "moe.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "You plan to serve **Qwen3-235B-A22B** (235B total, 22B active parameters) with **bf16** weights (2 bytes per parameter). Ignoring KV cache and activations, how many GB of GPU memory do the weights alone need?",
+        "es": "Planeas servir **Qwen3-235B-A22B** (235B parámetros totales, 22B activos) con pesos en **bf16** (2 bytes por parámetro). Sin contar KV cache ni activaciones, ¿cuántos GB de memoria de GPU necesitan solo los pesos?"
+      },
+      "answer": 470,
+      "tolerance": 0.1,
+      "unit": "GB",
+      "explain": {
+        "en": "Weight memory ≈ total params × bytes per param = 235B × 2 = 470 GB, so several 80 GB GPUs. Using active parameters gives 44 GB, an order of magnitude short. Active parameters matter for compute instead: ≈ 2 × 22B ≈ 44 GFLOPs per token, like a 22B dense model.",
+        "es": "Memoria de pesos ≈ parámetros totales × bytes por parámetro = 235B × 2 = 470 GB, o sea varias GPUs de 80 GB. Con los parámetros activos te daría 44 GB, un orden de magnitud corto. Los activos sirven para el cómputo: ≈ 2 × 22B ≈ 44 GFLOPs por token, como un modelo denso de 22B."
+      }
+    },
+    {
+      "id": "moe.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about Mixture of Experts models are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los modelos Mixture of Experts son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "The router picks experts per token and per layer", "es": "El router elige expertos por token y por capa" } },
+        { "text": { "en": "Attention stays shared; the FFN blocks become the experts", "es": "La atención sigue compartida; los bloques FFN se vuelven los expertos" } },
+        { "text": { "en": "Training-compute estimates like 6ND should use active parameters", "es": "Las estimaciones de cómputo de entrenamiento como 6ND deben usar los parámetros activos" } },
+        {
+          "text": { "en": "Each expert learns a domain, such as code or medicine", "es": "Cada experto aprende un dominio, como código o medicina" },
+          "why": { "en": "Routing is per token, and Mixtral's analysis found mostly syntactic patterns, not domain ones.", "es": "El ruteo es por token, y el análisis de Mixtral encontró sobre todo patrones sintácticos, no de dominio." }
+        },
+        {
+          "text": { "en": "Left alone, the router spreads tokens evenly across experts", "es": "Si no se interviene, el router reparte los tokens parejo entre los expertos" },
+          "why": { "en": "It collapses onto a few favourites unless an auxiliary loss or bias term balances the load.", "es": "Colapsa sobre unos pocos favoritos, salvo que una loss auxiliar o un término de sesgo balancee la carga." }
+        },
+        {
+          "text": { "en": "Mixtral 8x7B has 56B parameters because it holds eight 7B models", "es": "Mixtral 8x7B tiene 56B parámetros porque contiene ocho modelos de 7B" },
+          "why": { "en": "Only the FFNs are replicated; attention, embeddings and norms are shared, so the total is ~47B.", "es": "Solo se replican los FFNs; la atención, los embeddings y las normalizaciones se comparten, por eso el total es ~47B." }
+        }
+      ],
+      "answers": [0, 1, 2],
+      "explain": {
+        "en": "An MoE is a dense transformer whose FFN blocks were swapped for many experts plus a router. The experts are not topic specialists or whole models; they are FFNs chosen token by token, kept busy only by explicit load balancing, and compute scales with the few that run.",
+        "es": "Un MoE es un transformer denso al que le cambiaron los bloques FFN por muchos expertos más un router. Los expertos no son especialistas por tema ni modelos completos: son FFNs elegidos token por token, que solo se mantienen ocupados con balance de carga explícito, y el cómputo escala con los pocos que corren."
+      }
+    }
+  ]
+}
