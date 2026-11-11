@@ -5,6 +5,7 @@ import { m, t } from "@/lib/i18n";
 import { domainIndex, getArchitectureMap, getConcept, type MapGroup } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
+import { MasteredDot } from "@/components/Mastered";
 
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
@@ -21,7 +22,7 @@ function Chips({ group, locale }: { group: MapGroup; locale: Locale }) {
         return (
           <Link key={id} href={`/${locale}/c/${id}/`} className="arch-chip" title={t(c.tldr, locale)}
             style={{ ["--h" as string]: hueFor(domainIndex(c.domain)) }}>
-            {t(c.title, locale)}
+            <MasteredDot id={id} />{t(c.title, locale)}
           </Link>
         );
       })}

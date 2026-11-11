@@ -39,3 +39,27 @@ Upload uses typed passes — HTML `no-cache`, hashed `_next/*` assets
   (`https://levelup.skillrealm.dev`). If the domain changes, update it and rebuild.
 - **2026-11 rewrite:** the old routes (`/path`, `/lesson/*`, `/codex`, `/assess`, …) no longer
   exist. The prune-only `--delete` sync removes them from the bucket; old links land on `404.html`.
+
+## Login and progress sync (optional)
+
+Signed out, progress stays in the browser. Sign-in reuses **get-certified's Cognito user pool**
+(same accounts) and stores one compact blob per user next to get-certified's data, in its own row.
+
+1. In the get-certified repo, apply the patch and deploy that stack's infrastructure (its normal
+   `deploy-infra` → `site` flow):
+
+   ```bash
+   git am /path/to/levelup/deploy/get-certified/*.patch
+   ```
+
+   It adds a second Cognito app client for levelup (callbacks `https://levelup.skillrealm.dev/auth/`
+   and `http://localhost:3000/auth/`), `GET|PUT /apps/levelup/state`, CORS for this origin, export
+   and delete of the new row, and the `LevelupClientId` output. Cost: one DynamoDB item per user
+   and a few requests per study session (pennies a month at this scale).
+2. Here, write the build config from that stack's outputs, then build and deploy as usual:
+
+   ```bash
+   ./deploy/sync-config.sh && npm run build && cd deploy && ./deploy.sh
+   ```
+
+Without step 1 the script refuses and the site keeps working local-only (no login button).

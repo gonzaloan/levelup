@@ -23,8 +23,15 @@ Live: https://levelup.skillrealm.dev
 - **Interview mode:** the 45-minute GenAI system-design framework, worked designs (enterprise RAG,
   support agent, coding assistant, voice agent…), every number worth having at hand, and the full
   question bank.
-- **Practice:** flashcards from every interview question with a simple spaced-repetition loop.
-- Progress ("mastered", practice boxes) lives only in your browser.
+- **Study path:** every concept once, in 3 phases and 23 modules, from LLM basics to Staff level,
+  with "continue where you left off".
+- **Practice (the game):** ~1,500 verifiable exercises, no LLM needed to grade them: judgment
+  questions, select-all, ordering, matching, back-of-envelope estimates, complete-the-code,
+  rebuild-the-diagram and interview flashcards. Spaced repetition (FSRS) brings each one back
+  right before you'd forget it; daily session, weak spots, timed mock interviews, XP, career-ladder
+  levels, streaks and an activity heatmap.
+- **Progress** lives in your browser and can be backed up; optional sign-in (same account as
+  get-certified) syncs it across devices.
 
 ## Develop
 

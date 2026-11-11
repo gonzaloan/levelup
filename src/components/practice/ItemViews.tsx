@@ -140,9 +140,21 @@ export function MatchView({ item, seed, done, response, setResponse, label }: Vi
     setDraft(next);
     setResponse(next.every((x) => x >= 0) ? { type: "match", map: next } : null);
   };
+  // Lettered key + letter selects: a native <select> truncates long answers on phones, so the full
+  // text lives in the key (wraps) and each row only picks a letter.
+  const letter = (pos: number) => String.fromCharCode(65 + pos);
+  const posOf = new Map(rightOrder.map((ri, pos) => [ri, pos]));
   return (
     <div className="p-match">
       <p className="p-hint">{label("pMatchHint")}</p>
+      <ol className="p-match-key">
+        {rightOrder.map((ri, pos) => (
+          <li key={ri} className={current.includes(ri) ? "used" : undefined}>
+            <b>{letter(pos)}</b>
+            <Md src={pairs[ri].right} />
+          </li>
+        ))}
+      </ol>
       {pairs.map((p, row) => {
         const ok = done && current[row] === row;
         return (
@@ -150,9 +162,9 @@ export function MatchView({ item, seed, done, response, setResponse, label }: Vi
             <Md src={p.left} className="p-match-left" />
             <select disabled={done} value={current[row]} onChange={(e) => set(row, Number(e.target.value))} aria-label={p.left}>
               <option value={-1}>—</option>
-              {rightOrder.map((ri) => <option key={ri} value={ri}>{pairs[ri].right.replace(/\*\*|`/g, "")}</option>)}
+              {rightOrder.map((ri, pos) => <option key={ri} value={ri}>{letter(pos)}</option>)}
             </select>
-            {done && !ok && <Md src={p.right} className="p-why" />}
+            {done && !ok && <Md src={`**${letter(posOf.get(row) ?? 0)}** · ${p.right}`} className="p-why" />}
           </div>
         );
       })}

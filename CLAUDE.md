@@ -21,6 +21,12 @@ Simple and concise beats exhaustive. If a field needs scrolling to read, it is t
 - `content/domains.json` — the topics, their order and the ordered concept ids (the syllabus).
 - `content/architecture-map.json` — the clickable reference-architecture map (`/map`): layers +
   cross-cutting bands, each a list of concept ids (validated by the content gate).
+- `content/path.json` — the study path (`/path`): 3 phases → modules → every concept exactly once,
+  in learning order (the gate fails on a missing or duplicated concept).
+- `content/exercises/<domain>/<id>.json` — authored practice items per concept (rules:
+  `docs/EXERCISES.md`, gold: `content/exercises/rag/reranking.json`, validate with
+  `node tools/check-exercises.mjs`). The build adds auto items: "which concept is this?",
+  "rebuild the diagram" (from `content/diagrams/<id>.graph.json`) and interview flashcards.
 - `content/concepts/<domain>/<id>.json` — one concept per file. Schema: `src/lib/types.ts`.
   Authoring rules and limits: `docs/AUTHORING.md`. Gold example: `content/concepts/rag/reranking.json`.
 - `content/diagrams/<id>.{dark,light}.svg` — pre-rendered diagrams (generated, committed; each file
@@ -29,8 +35,14 @@ Simple and concise beats exhaustive. If a field needs scrolling to read, it is t
 - `tools/build-content.mjs` — the gate; also writes `src/generated/` (search + practice indexes,
   gitignored, regenerated on dev/build).
 - `src/lib/` — content loading (server-only), search, i18n, markdown, highlighting, progress.
-- `src/app/[locale]/` — routes: `/`, `/map`, `/d/[domain]`, `/c/[id]`, `/cheatsheet`, `/interview`,
-  `/questions`, `/practice`. `src/app/sitemap.ts` + `robots.ts` are generated statically.
+- `src/app/[locale]/` — routes: `/`, `/path`, `/map`, `/d/[domain]`, `/c/[id]`, `/cheatsheet`,
+  `/interview`, `/questions`, `/practice`, `/practice/play?mode=…`. `/auth` is the OAuth callback.
+  `src/app/sitemap.ts` + `robots.ts` are generated statically.
+- `src/lib/practice/` — the practice engine, pure and unit-tested: graders, seeded shuffles, FSRS
+  state (ts-fsrs), sessions, XP/levels/streak, union `merge` for sync.
+- `src/lib/sync.ts` — optional login + sync, reusing get-certified's Cognito user pool. Inert
+  without `NEXT_PUBLIC_*` config (see `.env.example`, `deploy/sync-config.sh`). The server side is
+  a patch for get-certified in `deploy/get-certified/`.
 
 ## Rules
 - **Edit content as JSON, then validate.** Never hand-edit `content/diagrams` — run `npm run diagrams`.
@@ -50,6 +62,18 @@ Simple and concise beats exhaustive. If a field needs scrolling to read, it is t
   hues are spread evenly from the domain count in `src/lib/hue.ts`).
 - **Same shape everywhere.** Every concept has the same sections in the same order; the validator
   enforces it. A field that doesn't add value is left out, never padded.
+
+## Practice rules (learning science + integrity)
+- **Retrieval practice + spacing** are the core (FSRS, target retention 0.9). Confidence is asked
+  before checking: a correct guess schedules as Hard, not Good.
+- **Grade on ORIGINAL indexes, display in a seeded shuffle** (`src/lib/practice/rng.ts`, seed =
+  item + reps). Authored content tends to put the right answer first; order/match displays use
+  `derange` so the authored order never shows as-is. A 2-pair match is solvable by elimination:
+  the validator requires ≥ 3 pairs.
+- **The correct option must not be the visibly longest** (validator warns at 1.6×).
+- Exercises take facts only from their concept file; never a new statistic.
+- The streak forgives one missed day per rolling week: punishing a single bad day teaches people
+  to quit.
 
 ## Content fleets (if you author many concepts with sub-agents)
 - Give each agent ≤5 concepts, the brief, and the rule to Write one file per concept and run the
