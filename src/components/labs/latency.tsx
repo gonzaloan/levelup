@@ -66,6 +66,7 @@ export default function LatencyLab({ locale }: { locale: Locale }) {
     return r >= 1 ? `×${fmtNum(Math.round(r * 10) / 10)}` : `÷${fmtNum(Math.round(10 / r) / 10)}`;
   };
   const vs = (a: string, c: string) => `${show(BY[a].ns)} vs ${show(BY[c].ns)}`;
+  const times = (a: string, c: string) => `~${fmtNum(BY[a].ns / BY[c].ns)}×`;
 
   return (
     <LabGrid
@@ -90,9 +91,9 @@ export default function LatencyLab({ locale }: { locale: Locale }) {
       }
     >
       <div className="lab-stats">
-        <Stat label={t.memL1} value="~100×" sub={vs("mem", "l1")} />
-        <Stat label={t.ssdMem} value="~160×" sub={vs("ssd", "mem")} />
-        <Stat label={t.wanDc} value="~300×" sub={vs("wan", "dc")} />
+        <Stat label={t.memL1} value={times("mem", "l1")} sub={vs("mem", "l1")} />
+        <Stat label={t.ssdMem} value={times("ssd", "mem")} sub={vs("ssd", "mem")} />
+        <Stat label={t.wanDc} value={times("wan", "dc")} sub={vs("wan", "dc")} />
       </div>
       <p className="lab-note" aria-live="polite">{t.caption(b[locale], show(b.ns))}</p>
       <div>

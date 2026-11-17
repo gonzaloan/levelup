@@ -20,14 +20,19 @@ const CLASSES: { label: string; lg: (n: number) => number }[] = [
 const LIMITS = [20, 500, 5_000, 1e6]; // the CPH ~1 s table's boundaries
 
 const SUP = "⁰¹²³⁴⁵⁶⁷⁸⁹";
-const sci = (lg: number) => { const k = Math.floor(lg); return `${(10 ** (lg - k)).toFixed(1)}×10${[...String(k)].map((d) => SUP[Number(d)]).join("")}`; };
+/** 10^lg as "4.6×10³⁰", for numbers far past Number.MAX_VALUE. */
+const sci = (lg: number) => {
+  let k = Math.floor(lg), m = Number((10 ** (lg - k)).toFixed(1));
+  if (m >= 10) { m = 1; k += 1; }
+  return `${m.toFixed(1)}×10${[...String(k)].map((d) => SUP[Number(d)]).join("")}`;
+};
 const TONE = { good: "var(--good)", warn: "var(--accent)", bad: "var(--bad)" } as const;
 const GRID = "repeating-linear-gradient(to right, var(--border) 0 calc(12.5% - 1px), var(--border-2) calc(12.5% - 1px) 12.5%)";
 const mono: CSSProperties = { font: "650 13px ui-monospace, Menlo, monospace", whiteSpace: "nowrap" };
 
 const T = {
   en: {
-    n: "Input size n", jump: "CPH limits (~1 s)", steps: "steps", years: "years",
+    n: "Input size n", jump: "CPH limits (~1 s)", step: "step", steps: "steps", years: "years",
     cph: "CPH rule for this n", or: "or", logn: "log₂ n", cheap: "a log factor is cheap",
     fits: "Slowest that fits 1 s", at: "at 10⁸ ops/s",
     formula: "time ≈ steps ÷ 10⁸ simple ops/s  ·  1 s budget ≈ 10⁸ steps  ·  vertical line = 1 s",
@@ -37,7 +42,7 @@ const T = {
     note: "Assumption: 10⁸ simple operations per second, the low end of the concept's \"some hundreds of millions\"; orange rows (1–10 s) are borderline, since a faster machine or a smaller constant can make them fit. Constants are dropped and log means log₂. Budget table: Laaksonen, Competitive Programmer's Handbook.",
   },
   es: {
-    n: "Tamaño de la entrada n", jump: "Límites del CPH (~1 s)", steps: "pasos", years: "años",
+    n: "Tamaño de la entrada n", jump: "Límites del CPH (~1 s)", step: "paso", steps: "pasos", years: "años",
     cph: "Regla del CPH para este n", or: "o", logn: "log₂ n", cheap: "un factor log es barato",
     fits: "Lo más lento que cabe en 1 s", at: "a 10⁸ ops/s",
     formula: "tiempo ≈ pasos ÷ 10⁸ operaciones simples/s  ·  presupuesto de 1 s ≈ 10⁸ pasos  ·  línea vertical = 1 s",
@@ -85,7 +90,7 @@ export default function BigOLab({ locale }: { locale: Locale }) {
               <span style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13.5 }}>
                 <strong style={{ ...mono, color: "var(--text)" }}>{r.label}</strong>
                 <span style={{ ...mono, color: r.tone === "good" ? "var(--text-2)" : TONE[r.tone], whiteSpace: "normal", textAlign: "right", overflowWrap: "anywhere", minWidth: 0 }}>
-                  {r.steps} {t.steps} · {r.time}
+                  {r.steps} {r.steps === "1" ? t.step : t.steps} · {r.time}
                 </span>
               </span>
               <span className="lb-track" style={{ display: "block", position: "relative", background: GRID }}>

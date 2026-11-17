@@ -126,7 +126,7 @@ export default function SlidingWindowLab({ locale }: { locale: Locale }) {
         <Stat label={t.moves} value={`${rMoves + p.lMoves} / ≤ ${2 * n}`} sub={`right ${rMoves}/${n} · left ${p.lMoves}`} />
       </div>
       <p aria-live="polite" style={{ margin: 0, minHeight: "3em", fontSize: 14.5, lineHeight: 1.5 }}>
-        <span style={{ color: "var(--muted)", fontFamily: "ui-monospace, Menlo, monospace" }}>{Math.min(i, last)}/{last} · </span>{t.msg(p, bestStr)}
+        <span style={{ color: "var(--muted)", fontFamily: "ui-monospace, Menlo, monospace" }}>{t.step} {Math.min(i, last)}/{last} · </span>{t.msg(p, bestStr)}
       </p>
       <ol aria-label={s} style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: "8px 4px" }}>
         {chars.map((c, k) => {
