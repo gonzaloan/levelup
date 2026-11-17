@@ -1,0 +1,118 @@
+{
+  "id": "probabilistic-structures",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Probabilistic data structures", "es": "Estructuras de datos probabilísticas" },
+  "aliases": ["Bloom filter", "HyperLogLog", "HLL", "Count-Min sketch", "cuckoo filter", "sketches", "cardinality estimation", "heavy hitters"],
+  "tldr": {
+    "en": "Trade a small, bounded error for huge memory savings: a Bloom filter answers \"seen it?\" with no false negatives, HyperLogLog counts distinct items, and Count-Min estimates frequencies, in kilobytes instead of gigabytes.",
+    "es": "Cambia un error pequeño y acotado por un ahorro enorme de memoria: un Bloom filter responde \"¿ya lo vi?\" sin falsos negativos, HyperLogLog cuenta elementos distintos y Count-Min estima frecuencias, en kilobytes en vez de gigabytes."
+  },
+  "analogy": {
+    "en": "A bouncer with a smudged guest list: if your name isn't on it, you're definitely not invited; if it seems to be, he double-checks your ID.",
+    "es": "Un portero con una lista de invitados medio borrosa: si tu nombre no está, seguro no estás invitado; si parece estar, igual revisa tu identificación."
+  },
+  "explain": {
+    "en": "Each structure answers one question approximately, in small fixed memory, and **merges** across shards and time windows.\n\n- **Bloom filter**, \"is x in the set?\": an array of m bits and k hash functions. Adding x sets k bits; a lookup checks them. Any 0 means **definitely absent**; all 1s means **probably present**. No false negatives, tunable false positives: ~9.6 bits per key gives 1%. LSM engines keep one per file to skip disk reads ([[storage-engines]]).\n- **HyperLogLog**, \"how many distinct?\": hash each item and keep, per register, the longest run of leading zeros seen; rare patterns imply many items. Standard error ≈ 1.04/√m for m registers; Redis uses 12 KB for 0.81%. Merging is a per-register max, so it loses nothing.\n- **Count-Min sketch**, \"how often?\": d rows of w counters; each item bumps one counter per row, and the estimate is the row minimum. It **never underestimates**; the error is at most ε·N with probability 1−δ. Pair it with a heap for top-k.\n\nUse them as a cheap first filter, and confirm against the real data when an error matters.",
+    "es": "Cada estructura responde una sola pregunta de forma aproximada, en poca memoria fija, y se **fusiona** entre shards y ventanas de tiempo.\n\n- **Bloom filter**, \"¿x está en el conjunto?\": un arreglo de m bits y k funciones hash. Agregar x enciende k bits; una consulta los revisa. Si alguno es 0, x **seguro no está**; si todos son 1, **probablemente está**. Sin falsos negativos y con falsos positivos ajustables: ~9.6 bits por clave dan 1%. Los motores LSM guardan uno por archivo para evitar lecturas a disco ([[storage-engines]]).\n- **HyperLogLog**, \"¿cuántos distintos?\": hashea cada elemento y guarda, por registro, la racha más larga de ceros iniciales que vio; los patrones raros implican muchos elementos. Error estándar ≈ 1.04/√m con m registros; Redis usa 12 KB para 0.81%. Fusionar es tomar el máximo por registro, así que no se pierde nada.\n- **Count-Min sketch**, \"¿cuántas veces?\": d filas de w contadores; cada elemento incrementa un contador por fila y la estimación es el mínimo entre filas. **Nunca subestima**; el error es como mucho ε·N con probabilidad 1−δ. Combínalo con un heap para el top-k.\n\nÚsalas como un primer filtro barato y confirma contra los datos reales cuando un error importa."
+  },
+  "keyPoints": [
+    {
+      "en": "**Bloom filter**: a negative is certain, a positive is \"maybe\"; ~9.6 bits per key gives 1% false positives.",
+      "es": "**Bloom filter**: un negativo es seguro y un positivo es \"quizás\"; ~9.6 bits por clave dan 1% de falsos positivos."
+    },
+    {
+      "en": "**HyperLogLog** counts distinct items in fixed memory: Redis uses 12 KB for 0.81% standard error.",
+      "es": "**HyperLogLog** cuenta elementos distintos en memoria fija: Redis usa 12 KB para 0.81% de error estándar."
+    },
+    {
+      "en": "**Count-Min sketch** estimates frequencies and never underestimates; pair it with a heap for top-k.",
+      "es": "**Count-Min sketch** estima frecuencias y nunca subestima; combínalo con un heap para el top-k."
+    },
+    {
+      "en": "All three merge across shards or time windows: OR the bits, max the registers, sum the counters.",
+      "es": "Las tres se fusionan entre shards o ventanas de tiempo: OR de bits, máximo de registros, suma de contadores."
+    },
+    {
+      "en": "Use them as a cheap first filter; confirm positives against the real store when errors matter.",
+      "es": "Úsalas como primer filtro barato; confirma los positivos contra el almacén real cuando el error importa."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  K[Lookup key] --> H[Hash k times]\n  H --> B[\"Read k bits<br/>in bit array\"]\n  B --> Z{\"Any bit 0?\"}\n  Z -->|yes| N[\"Definitely absent:<br/>skip disk read\"]\n  Z -->|no| M[Maybe present]\n  M --> D[(SSTable on disk)]\n  D --> F{\"Key found?\"}\n  F -->|yes| V[Return value]\n  F -->|no| P[\"False positive:<br/>one wasted read\"]",
+    "caption": {
+      "en": "A Bloom filter in front of an LSM file: a 0 bit proves absence for free; a false positive costs one wasted read.",
+      "es": "Un Bloom filter delante de un archivo LSM: un bit en 0 prueba la ausencia gratis; un falso positivo cuesta una lectura desperdiciada."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A Bloom filter for crawler URL dedup", "es": "Un Bloom filter para deduplicar URLs en un crawler" },
+    "source": "import hashlib, math\n\nclass BloomFilter:\n    def __init__(self, n: int, fp_rate: float):\n        # Optimal sizing for n items at the target false-positive rate\n        self.m = math.ceil(-n * math.log(fp_rate) / math.log(2) ** 2)\n        self.k = max(1, round(self.m / n * math.log(2)))\n        self.bits = bytearray((self.m + 7) // 8)\n\n    def _positions(self, item: str) -> list[int]:\n        d = hashlib.sha256(item.encode()).digest()\n        h1 = int.from_bytes(d[:8], \"big\")\n        h2 = int.from_bytes(d[8:16], \"big\") | 1\n        # Double hashing: k positions from two hashes\n        return [(h1 + i * h2) % self.m for i in range(self.k)]\n\n    def add(self, item: str) -> None:\n        for p in self._positions(item):\n            self.bits[p // 8] |= 1 << (p % 8)\n\n    def might_contain(self, item: str) -> bool:\n        # Any 0 bit: definitely absent. All 1s: probably present.\n        return all(self.bits[p // 8] >> (p % 8) & 1 for p in self._positions(item))\n\nseen = BloomFilter(n=1_000_000, fp_rate=0.01)  # ~1.2 MB, k = 7\nif not seen.might_contain(url):\n    seen.add(url)\n    crawl(url)  # ~1% of new URLs are wrongly skipped"
+  },
+  "example": {
+    "en": "Assume a web crawler must skip URLs it already fetched, out of 1B. An exact set at ~100 bytes per URL needs ~100 GB of RAM. A Bloom filter at 1% false positives needs ~9.6 bits per URL: ~1.2 GB. The price: ~1% of genuinely new URLs get skipped, acceptable for a crawl. The analytics team counts unique visitors per page per day with one HyperLogLog each: 12 KB per page instead of a set of every user id, merged weekly with `PFMERGE`.",
+    "es": "Supón un crawler que debe saltarse las URLs que ya descargó, de 1B en total. Un set exacto, a ~100 bytes por URL, necesita ~100 GB de RAM. Un Bloom filter con 1% de falsos positivos necesita ~9.6 bits por URL: ~1.2 GB. El precio: ~1% de las URLs realmente nuevas se saltan, aceptable para un crawl. El equipo de analytics cuenta visitantes únicos por página y por día con un HyperLogLog cada una: 12 KB por página en vez de un set con todos los ids, y los fusiona cada semana con `PFMERGE`."
+  },
+  "pros": [
+    { "en": "Orders of magnitude less memory: ~1.2 GB instead of ~100 GB for 1B URLs.", "es": "Órdenes de magnitud menos memoria: ~1.2 GB en vez de ~100 GB para 1B de URLs." },
+    { "en": "Constant-time updates and queries, a natural fit for streams.", "es": "Actualizaciones y consultas en tiempo constante, ideales para streams." },
+    { "en": "Mergeable: build per shard or per hour and combine without the raw data.", "es": "Fusionables: se construyen por shard o por hora y se combinan sin los datos crudos." }
+  ],
+  "cons": [
+    { "en": "Approximate: you must design for false positives or overcounts.", "es": "Aproximadas: tienes que diseñar pensando en falsos positivos o en conteos de más." },
+    { "en": "A plain Bloom filter can't delete (a cuckoo filter can) or list members; HyperLogLog can't name its items.", "es": "Un Bloom filter simple no puede borrar (un cuckoo filter sí) ni listar elementos; HyperLogLog no sabe cuáles vio." },
+    { "en": "Sized up front: past its planned capacity, a Bloom filter's false-positive rate climbs.", "es": "Se dimensionan de antemano: pasada su capacidad prevista, la tasa de falsos positivos de un Bloom filter sube." }
+  ],
+  "whenToUse": {
+    "en": "Huge sets or streams where an approximate answer is fine: skipping disk reads in LSM stores, crawl dedup, unique-user counts, heavy hitters and hot keys.",
+    "es": "Conjuntos o streams enormes donde una respuesta aproximada alcanza: evitar lecturas a disco en almacenes LSM, deduplicar un crawl, contar usuarios únicos, encontrar heavy hitters y keys calientes."
+  },
+  "whenNotToUse": {
+    "en": "When an error is unacceptable and you can't verify it (billing, access control), or when the data is small enough to count exactly in memory.",
+    "es": "Cuando un error es inaceptable y no puedes verificarlo (facturación, control de acceso), o cuando los datos son tan pocos que puedes contarlos exacto en memoria."
+  },
+  "numbers": [
+    { "en": "Bloom: 1% false positives → ~9.6 bits/key and 7 hashes; 0.1% → ~14.4 bits/key and 10 hashes.", "es": "Bloom: 1% de falsos positivos → ~9.6 bits/clave y 7 hashes; 0.1% → ~14.4 bits/clave y 10 hashes." },
+    { "en": "Bloom sizing: m = −n·ln p / (ln 2)² bits; optimal k = (m/n)·ln 2.", "es": "Dimensionar un Bloom: m = −n·ln p / (ln 2)² bits; k óptimo = (m/n)·ln 2." },
+    { "en": "HyperLogLog standard error ≈ 1.04/√m; the paper counts beyond 10⁹ items at ~2% with 1.5 KB.", "es": "Error estándar de HyperLogLog ≈ 1.04/√m; el paper cuenta más de 10⁹ elementos con ~2% usando 1.5 KB." },
+    { "en": "Redis HyperLogLog: up to 12 KB, 0.81% standard error, up to 2^64 items.", "es": "HyperLogLog de Redis: hasta 12 KB, 0.81% de error estándar, hasta 2^64 elementos." },
+    { "en": "Count-Min: width w = ⌈e/ε⌉, depth d = ⌈ln(1/δ)⌉; overcount ≤ ε·N with probability 1−δ.", "es": "Count-Min: ancho w = ⌈e/ε⌉, profundidad d = ⌈ln(1/δ)⌉; el exceso es ≤ ε·N con probabilidad 1−δ." }
+  ],
+  "pitfalls": [
+    { "en": "Undersizing a Bloom filter: false positives climb as it fills past its planned capacity.", "es": "Dimensionar de menos un Bloom filter: los falsos positivos suben a medida que se llena más allá de lo previsto." },
+    { "en": "Acting on a Bloom \"yes\" without checking the real store where a wrong yes matters.", "es": "Actuar ante un \"sí\" del Bloom filter sin revisar el almacén real cuando un sí equivocado importa." },
+    { "en": "Trusting Count-Min estimates for rare items: collisions dominate them; only heavy hitters are reliable.", "es": "Confiar en las estimaciones de Count-Min para elementos raros: las colisiones las dominan; solo los heavy hitters son confiables." },
+    { "en": "Intersecting HyperLogLogs (users in A and B) by inclusion–exclusion: the error explodes for small overlaps.", "es": "Intersectar HyperLogLogs (usuarios en A y en B) por inclusión–exclusión: el error se dispara cuando la intersección es pequeña." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Count unique viewers per video across 100 servers, in near real time.", "es": "Cuenta los espectadores únicos por video en 100 servidores, casi en tiempo real." },
+      "a": {
+        "en": "Exact sets per video would hold every viewer id: too much memory at scale. I'd keep one HyperLogLog per video per time bucket on each server, 12 KB at 0.81% error in Redis, and merge with a per-register max. Merging is lossless, so hourly sketches roll up into days and shards combine freely. If finance needs exact numbers, a batch job computes them later from the event log.",
+        "es": "Un set exacto por video guardaría cada id de espectador: demasiada memoria a escala. Tendría un HyperLogLog por video y por ventana de tiempo en cada servidor, 12 KB con 0.81% de error en Redis, y los fusionaría con el máximo por registro. Fusionar no pierde nada, así que los sketches por hora se agregan en días y los shards se combinan libremente. Si finanzas necesita números exactos, un batch los calcula después desde el log de eventos."
+      }
+    },
+    {
+      "q": { "en": "Find the top 100 hashtags in a live stream of billions of posts.", "es": "Encuentra los 100 hashtags principales en un stream en vivo de miles de millones de posts." },
+      "a": {
+        "en": "A Count-Min sketch for counts plus a min-heap of 100. For each hashtag I increment the sketch, read its estimate and push it into the heap if it beats the heap's minimum. Memory stays fixed however many distinct tags appear. Estimates only overcount, so heavy hitters are reliable while rare tags are noisy, which is fine for top-k. One sketch per time window makes it \"trending\".",
+        "es": "Un Count-Min sketch para los conteos más un min-heap de 100. Por cada hashtag incremento el sketch, leo su estimación y lo meto en el heap si supera al mínimo. La memoria queda fija sin importar cuántos tags distintos aparezcan. Las estimaciones solo cuentan de más, así que los heavy hitters son confiables y los tags raros tienen ruido, lo que no importa para un top-k. Un sketch por ventana de tiempo lo convierte en \"trending\"."
+      }
+    },
+    {
+      "q": { "en": "Why does an LSM store keep a Bloom filter per SSTable?", "es": "¿Por qué un almacén LSM guarda un Bloom filter por SSTable?" },
+      "a": {
+        "en": "A point lookup may have to check many SSTables, and most don't hold the key. An in-memory Bloom filter answers \"definitely not here\" for those, so the engine skips their disk reads. At ~10 bits per key, only ~1% of those files still cost a wasted read. It doesn't help range scans, because the filter only knows exact keys.",
+        "es": "Una búsqueda puntual puede tener que revisar muchos SSTables, y la mayoría no tiene la key. Un Bloom filter en memoria responde \"seguro no está aquí\" para esos, así que el motor se salta sus lecturas a disco. Con ~10 bits por key, solo ~1% de esos archivos todavía cuesta una lectura desperdiciada. No ayuda con los range scans, porque el filtro solo conoce keys exactas."
+      }
+    }
+  ],
+  "related": ["storage-engines", "case-web-crawler", "stream-processing", "heaps-top-k", "hash-maps"],
+  "sources": [
+    { "title": "Redis docs — Bloom filter", "url": "https://redis.io/docs/latest/develop/data-types/probabilistic/bloom-filter/" },
+    { "title": "Redis docs — HyperLogLog", "url": "https://redis.io/docs/latest/develop/data-types/probabilistic/hyperloglogs/" },
+    { "title": "Flajolet et al. — HyperLogLog (AofA 2007)", "url": "https://algo.inria.fr/flajolet/Publications/FlFuGaMe07.pdf" },
+    { "title": "Cormode & Muthukrishnan — The Count-Min Sketch (J. Algorithms 2005)", "url": "https://www.cs.ox.ac.uk/people/graham.cormode/pubs/html/CormodeMuthukrishnan04CMJalg.html" }
+  ]
+}

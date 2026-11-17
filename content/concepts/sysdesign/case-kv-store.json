@@ -1,0 +1,230 @@
+{
+  "id": "case-kv-store",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": {
+    "en": "Design: distributed key-value store",
+    "es": "Diseño: key-value store distribuido"
+  },
+  "aliases": [
+    "Dynamo",
+    "key-value store",
+    "KV store",
+    "Cassandra",
+    "quorum",
+    "N R W",
+    "hinted handoff",
+    "vector clocks"
+  ],
+  "tldr": {
+    "en": "Place keys on a consistent-hash ring, replicate each to N nodes, and wait for W write and R read acks; versions resolve conflicts, while gossip, hinted handoff and Merkle-tree repair ride out failures.",
+    "es": "Ubica las claves en un anillo de consistent hashing, replica cada una en N nodos y espera W confirmaciones de escritura y R de lectura; las versiones resuelven conflictos, y gossip, hinted handoff y la reparación con árboles de Merkle aguantan las fallas."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: `put(key, value)` and `get(key)`, values up to ~1 MB (assumption), optional TTL. **Non-functional**: always writable (a cart that rejects \"add\" loses sales), predictable p99.9 latency, scale out by adding nodes, survive node and datacenter loss. Dynamo's example SLA: 300 ms at p99.9 for 500 requests/s.\n\nQuestions I'd ask: is eventual consistency acceptable, or do some keys need linearizable reads? Read/write ratio and value size? One region or several?\n\n### High-level design\n\nAny node can coordinate a request. **Consistent hashing** with virtual nodes maps a key to a position; the next N distinct nodes clockwise form its **preference list**. Writes go to all N and the coordinator waits for **W** acks; reads wait for **R** replies. With **R + W > N**, read and write sets overlap. Dynamo's common setting is (N, R, W) = (3, 2, 2). Each node stores data in an LSM engine (commit log, memtable, SSTables).\n\n### The hard parts\n\n**Conflicts.** Two clients can write the same key through different replicas. Dynamo tags versions with **vector clocks**: if one descends from the other, keep the newer; if they are concurrent, return both and let the app merge them (a cart takes the union, so deleted items can resurface). Cassandra uses **last-write-wins** timestamps instead: simpler, but a skewed clock silently drops a write.\n\n**Failures.** **Gossip** spreads membership and failure suspicion. If a replica is down, a healthy node accepts its write with a **hint** and hands it back on recovery (a *sloppy quorum*). **Read repair** fixes stale replicas during reads, and **Merkle trees** per key range let replicas sync only the ranges that differ.",
+    "es": "### Requisitos\n\n**Funcionales**: `put(key, value)` y `get(key)`, valores de hasta ~1 MB (supuesto) y TTL opcional. **No funcionales**: siempre escribible (un carrito que rechaza \"agregar\" pierde ventas), latencia p99.9 predecible, escalar agregando nodos y sobrevivir a la pérdida de nodos y de datacenters. El SLA de ejemplo de Dynamo: 300 ms en el p99.9 para 500 peticiones/s.\n\nPreguntas que haría: ¿sirve la consistencia eventual o algunas claves necesitan lecturas linealizables? ¿Proporción de lecturas y escrituras, y tamaño de los valores? ¿Una región o varias?\n\n### Diseño de alto nivel\n\nCualquier nodo puede coordinar una petición. **Consistent hashing** con nodos virtuales ubica cada clave en el anillo; los N nodos distintos siguientes en sentido horario forman su **lista de preferencia**. Las escrituras van a los N y el coordinador espera **W** confirmaciones; las lecturas esperan **R** respuestas. Con **R + W > N**, los conjuntos de lectura y escritura se superponen. La configuración común de Dynamo es (N, R, W) = (3, 2, 2). Cada nodo guarda los datos en un motor LSM (commit log, memtable, SSTables).\n\n### Las partes difíciles\n\n**Conflictos.** Dos clientes pueden escribir la misma clave a través de réplicas distintas. Dynamo marca las versiones con **vector clocks**: si una desciende de la otra, se queda la más nueva; si son concurrentes, devuelve ambas y la aplicación las fusiona (un carrito toma la unión, así que los ítems borrados pueden reaparecer). Cassandra usa en cambio timestamps con **last-write-wins**: más simple, pero un reloj desfasado borra una escritura en silencio.\n\n**Fallas.** **Gossip** difunde la membresía y las sospechas de falla. Si una réplica está caída, un nodo sano acepta su escritura con una **pista** (hint) y se la devuelve cuando se recupera (un *sloppy quorum*). **Read repair** corrige réplicas desactualizadas durante las lecturas, y los **árboles de Merkle** por rango de claves permiten sincronizar solo los rangos que difieren."
+  },
+  "keyPoints": [
+    {
+      "en": "**Consistent hashing** with vnodes picks N replicas per key; any node can coordinate a request.",
+      "es": "**Consistent hashing** con vnodes elige N réplicas por clave; cualquier nodo puede coordinar una petición."
+    },
+    {
+      "en": "Write to N, wait for W acks, read R replies: **R + W > N** makes read and write sets overlap.",
+      "es": "Escribe en N, espera W confirmaciones y lee R respuestas: **R + W > N** hace que lecturas y escrituras se superpongan."
+    },
+    {
+      "en": "Concurrent writes need a rule: **vector clocks** keep both versions to merge; last-write-wins silently drops one.",
+      "es": "Las escrituras concurrentes necesitan una regla: los **vector clocks** conservan ambas versiones para fusionar; last-write-wins descarta una en silencio."
+    },
+    {
+      "en": "Gossip detects failures, **hinted handoff** keeps writes flowing, Merkle-tree repair resyncs replicas in the background.",
+      "es": "Gossip detecta fallas, **hinted handoff** mantiene las escrituras y la reparación con árboles de Merkle resincroniza réplicas en segundo plano."
+    },
+    {
+      "en": "Dynamo's common (N, R, W) is (3, 2, 2): it tolerates one replica down for reads and writes.",
+      "es": "La configuración común de Dynamo es (N, R, W) = (3, 2, 2): tolera una réplica caída para leer y escribir."
+    }
+  ],
+  "diagram": {
+    "code": "sequenceDiagram\n  participant Cl as Client\n  participant Co as Coordinator\n  participant A as Replica A\n  participant B as Replica B\n  participant D as Node D\n  Cl->>Co: put(key, value, context)\n  Co->>A: write with vector clock\n  Co->>B: write with vector clock\n  Note over Co,D: Replica C is down\n  Co->>D: write plus hint for C\n  A-->>Co: ack\n  B-->>Co: ack\n  Co-->>Cl: ok after W = 2 acks\n  D->>D: hand off to C when it recovers",
+    "caption": {
+      "en": "With N = 3 and W = 2 the write succeeds on two acks, and a stand-in node keeps C's copy until C returns.",
+      "es": "Con N = 3 y W = 2 la escritura se confirma con dos acks, y un nodo suplente guarda la copia de C hasta que C vuelva."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Quorum write and vector-clock reconcile",
+      "es": "Escritura con quorum y reconciliación con vector clocks"
+    },
+    "source": "from concurrent.futures import ThreadPoolExecutor, as_completed\n\nN, R, W = 3, 2, 2            # Dynamo's common setting: R + W > N\n\ndef descends(a: dict, b: dict) -> bool:\n    \"\"\"Vector clock a has seen every event that b has.\"\"\"\n    return all(a.get(node, 0) >= n for node, n in b.items())\n\ndef reconcile(versions: list[tuple[dict, bytes]]) -> list[tuple[dict, bytes]]:\n    # Drop versions that another version descends from; the rest are siblings\n    uniq = list({tuple(sorted(c.items())): (c, v) for c, v in versions}.values())\n    return [(c, v) for c, v in uniq\n            if not any(o != c and descends(o, c) for o, _ in uniq)]\n\ndef put(key, value, clock: dict, ring, pool: ThreadPoolExecutor) -> dict:\n    replicas = ring.preference_list(key, N)       # first N healthy nodes clockwise\n    clock = {**clock, ring.me: clock.get(ring.me, 0) + 1}\n    futures = [pool.submit(r.write, key, value, clock) for r in replicas]\n    acks = 0\n    for f in as_completed(futures, timeout=0.3):\n        acks += f.result() is True\n        if acks >= W:\n            return clock                          # stragglers finish in the background\n    raise TimeoutError(\"write quorum not reached\")\n\ndef get(key, ring, pool: ThreadPoolExecutor) -> list[tuple[dict, bytes]]:\n    futures = [pool.submit(r.read, key) for r in ring.preference_list(key, N)]\n    replies = [f.result() for _, f in zip(range(R), as_completed(futures, timeout=0.3))]\n    return reconcile([v for reply in replies for v in reply])  # >1 = siblings to merge"
+  },
+  "example": {
+    "en": "`cart:42` has version `{A:2}`. During a partition, the phone adds *book* through node A, giving `{A:3}`; the laptop adds *pen* through node B, giving `{A:2, B:1}`. Both writes reach W = 2 thanks to the sloppy quorum. Neither clock descends from the other, so the next read returns two siblings. The cart service merges them into {book, pen} and writes back `{A:3, B:1}`. Had the laptop *removed* a mug, the union would bring it back: Dynamo's documented trade-off.",
+    "es": "`cart:42` tiene la versión `{A:2}`. Durante una partición, el celular agrega *libro* a través del nodo A, lo que da `{A:3}`; la laptop agrega *lápiz* a través del nodo B, lo que da `{A:2, B:1}`. Ambas escrituras llegan a W = 2 gracias al sloppy quorum. Ningún reloj desciende del otro, así que la siguiente lectura devuelve dos versiones hermanas. El servicio de carrito las fusiona en {libro, lápiz} y escribe `{A:3, B:1}`. Si la laptop hubiera *quitado* una taza, la unión la traería de vuelta: el trade-off que documenta Dynamo."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Partitioning and replication",
+        "es": "Particionamiento y replicación"
+      },
+      "body": {
+        "en": "Each physical node owns many virtual nodes (tokens) on the ring, so load evens out and a new node takes small slices from every peer instead of one big range. Cassandra 4.0 lowered its default from 256 to 16 tokens per node, because many tokens slow repair and streaming. The preference list skips tokens owned by the same machine, and in multi-datacenter setups, by the same rack or zone, so N replicas really are N failure domains. Hot keys are not fixed by hashing: one celebrity key still lands on the same N nodes, so cache it or split it.",
+        "es": "Cada nodo físico tiene muchos nodos virtuales (tokens) en el anillo, así la carga se empareja y un nodo nuevo toma pedacitos de todos sus pares en lugar de un rango grande. Cassandra 4.0 bajó su valor por defecto de 256 a 16 tokens por nodo, porque muchos tokens vuelven lentos la reparación y el streaming. La lista de preferencia se salta tokens de la misma máquina y, con varios datacenters, del mismo rack o zona, para que N réplicas sean de verdad N dominios de falla. El hashing no arregla las claves calientes: una clave famosa sigue cayendo en los mismos N nodos, así que cachéala o divídela."
+      }
+    },
+    {
+      "title": {
+        "en": "Conflicts: vector clocks or last-write-wins",
+        "es": "Conflictos: vector clocks o last-write-wins"
+      },
+      "body": {
+        "en": "A vector clock is a list of (node, counter) pairs. The client sends back the context it read, so the coordinator can tell *newer* from *concurrent*. Siblings are rare in practice: over 24 h, 99.94% of Dynamo's shopping-cart reads saw exactly one version. Clocks grow with each coordinator, so Dynamo truncates at ~10 pairs, accepting rare false conflicts. Last-write-wins needs no client cooperation, but it turns concurrency into silent data loss and depends on synchronized clocks. Use it for overwrite-only data (profiles, sessions); use siblings or CRDTs for data that accumulates, like carts or counters.",
+        "es": "Un vector clock es una lista de pares (nodo, contador). El cliente devuelve el contexto que leyó, así el coordinador distingue *más nuevo* de *concurrente*. Las versiones hermanas son raras en la práctica: en 24 h, el 99.94% de las lecturas del carrito de Dynamo vio exactamente una versión. Los relojes crecen con cada coordinador, así que Dynamo los trunca en ~10 pares y acepta algún falso conflicto. Last-write-wins no necesita ayuda del cliente, pero convierte la concurrencia en pérdida silenciosa de datos y depende de relojes sincronizados. Úsalo para datos que solo se sobrescriben (perfiles, sesiones); usa versiones hermanas o CRDTs para datos que se acumulan, como carritos o contadores."
+      }
+    },
+    {
+      "title": {
+        "en": "Failure handling and repair",
+        "es": "Manejo de fallas y reparación"
+      },
+      "body": {
+        "en": "Gossip lets every node learn membership and suspicions within seconds, without a central coordinator. A sloppy quorum writes to the first N *healthy* nodes; the stand-in stores a hint and replays it when the owner returns. Hints are best effort: Cassandra keeps them for 3 h by default, so a longer outage needs anti-entropy repair. There, replicas exchange Merkle-tree roots per key range and descend only into branches whose hashes differ, streaming just the divergent keys. Deletes are tombstones; purge them only after repair has run, or a stale replica resurrects deleted data.",
+        "es": "Gossip hace que cada nodo conozca la membresía y las sospechas en segundos, sin un coordinador central. Un sloppy quorum escribe en los primeros N nodos *sanos*; el suplente guarda una pista y la reenvía cuando vuelve el dueño. Las pistas son best effort: Cassandra las guarda 3 h por defecto, así que una caída más larga necesita reparación anti-entropía. Ahí las réplicas intercambian las raíces de los árboles de Merkle por rango de claves y bajan solo por las ramas cuyos hashes difieren, transfiriendo únicamente las claves divergentes. Los borrados son tombstones; purgalos solo después de reparar, o una réplica atrasada resucita datos borrados."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Always writable: sloppy quorums and hinted handoff accept writes through node failures and partitions.",
+      "es": "Siempre escribible: los sloppy quorums y el hinted handoff aceptan escrituras pese a nodos caídos y particiones."
+    },
+    {
+      "en": "No leader and no single point of failure; any node coordinates, so scaling out means adding nodes.",
+      "es": "Sin líder ni punto único de falla; cualquier nodo coordina, así que escalar es agregar nodos."
+    },
+    {
+      "en": "(N, R, W) per use case lets each workload choose its latency, durability and consistency point.",
+      "es": "(N, R, W) por caso de uso permite que cada carga elija su punto de latencia, durabilidad y consistencia."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Key access only: no joins, no ad hoc queries, no multi-key transactions in the Dynamo model.",
+      "es": "Solo acceso por clave: sin joins, sin consultas ad hoc y sin transacciones multi-clave en el modelo Dynamo."
+    },
+    {
+      "en": "The app must merge siblings, or accept lost writes under last-write-wins.",
+      "es": "La aplicación debe fusionar versiones hermanas, o aceptar escrituras perdidas con last-write-wins."
+    },
+    {
+      "en": "Repair, tombstones and compaction are constant operational work.",
+      "es": "La reparación, los tombstones y la compactación son trabajo operativo constante."
+    }
+  ],
+  "whenToUse": {
+    "en": "Huge key-addressed workloads that must stay writable through failures: carts, sessions, user profiles, feature stores, idempotency tables.",
+    "es": "Cargas enormes con acceso por clave que deben seguir aceptando escrituras pese a fallas: carritos, sesiones, perfiles, feature stores, tablas de idempotencia."
+  },
+  "whenNotToUse": {
+    "en": "Multi-key transactions, ad hoc queries or strict linearizability (balances, inventory): use a relational or consensus-backed store.",
+    "es": "Transacciones multi-clave, consultas ad hoc o linealizabilidad estricta (saldos, inventario): usa una base relacional o una respaldada por consenso."
+  },
+  "numbers": [
+    {
+      "en": "Dynamo (2007): common (N, R, W) = (3, 2, 2); example SLA 300 ms at p99.9 for 500 requests/s.",
+      "es": "Dynamo (2007): (N, R, W) común = (3, 2, 2); SLA de ejemplo de 300 ms en el p99.9 para 500 peticiones/s."
+    },
+    {
+      "en": "Divergence is rare: 99.94% of shopping-cart reads saw exactly one version over 24 h.",
+      "es": "La divergencia es rara: el 99.94% de las lecturas del carrito vio exactamente una versión en 24 h."
+    },
+    {
+      "en": "Dynamo truncates vector clocks at ~10 (node, counter) pairs; Cassandra keeps hints for 3 h by default.",
+      "es": "Dynamo trunca los vector clocks en ~10 pares (nodo, contador); Cassandra guarda las pistas 3 h por defecto."
+    },
+    {
+      "en": "Sizing: assume 10B keys × 1 KB × 3 replicas = 30 TB; at ~1 TB per node (assumed), ~30 nodes plus headroom.",
+      "es": "Dimensionamiento: supón 10B de claves × 1 KB × 3 réplicas = 30 TB; con ~1 TB por nodo (supuesto), ~30 nodos más margen."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Believing R + W > N means linearizable: sloppy quorums and concurrent writers still return stale or sibling values.",
+      "es": "Creer que R + W > N es linealizable: los sloppy quorums y los escritores concurrentes igual devuelven valores viejos o versiones hermanas."
+    },
+    {
+      "en": "Last-write-wins with skewed clocks: a write stamped in the past silently disappears.",
+      "es": "Last-write-wins con relojes desfasados: una escritura con timestamp en el pasado desaparece en silencio."
+    },
+    {
+      "en": "Purging tombstones before repair runs: a replica that missed the delete brings the data back.",
+      "es": "Purgar tombstones antes de reparar: una réplica que no vio el borrado trae los datos de vuelta."
+    },
+    {
+      "en": "Expecting hashing to fix hot keys: one popular key still hits the same N replicas.",
+      "es": "Esperar que el hashing arregle las claves calientes: una clave popular sigue golpeando las mismas N réplicas."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Some keys need strongly consistent reads. What do you change?",
+        "es": "Algunas claves necesitan lecturas fuertemente consistentes. ¿Qué cambias?"
+      },
+      "a": {
+        "en": "Quorums alone won't do it: R + W > N gives overlap, not linearizability, under sloppy quorums and concurrent writers. For those keys I'd use a leader per partition backed by consensus, as DynamoDB does: Multi-Paxos per partition, a write acknowledged once a quorum persists the log, strong reads served by the leader. Or a compare-and-set through Paxos, like Cassandra's lightweight transactions, paying extra round trips only on those keys.",
+        "es": "Los quorums solos no alcanzan: R + W > N da superposición, no linealizabilidad, con sloppy quorums y escritores concurrentes. Para esas claves usaría un líder por partición respaldado por consenso, como DynamoDB: Multi-Paxos por partición, una escritura confirmada cuando un quorum persiste el log y lecturas fuertes servidas por el líder. O un compare-and-set vía Paxos, como las lightweight transactions de Cassandra, pagando round trips extra solo en esas claves."
+      }
+    },
+    {
+      "q": {
+        "en": "A node is down for six hours. Walk me through what happens.",
+        "es": "Un nodo está caído durante seis horas. Explícame qué pasa."
+      },
+      "a": {
+        "en": "Gossip marks it suspect within seconds. Writes for its ranges go to the next healthy node with a hint, so W is still met, and reads use the other replicas. Hints are kept for a window, 3 h by default in Cassandra, so after six hours they stop and the node falls behind. On return, hints replay and a Merkle-tree repair streams only the differing ranges. If it never returns, I replace it and stream its ranges from replicas.",
+        "es": "Gossip lo marca como sospechoso en segundos. Las escrituras de sus rangos van al siguiente nodo sano con una pista, así W se cumple, y las lecturas usan las otras réplicas. Las pistas se guardan durante una ventana, 3 h por defecto en Cassandra, así que pasadas seis horas se dejan de guardar y el nodo se atrasa. Al volver, se reenvían las pistas y una reparación con árboles de Merkle transfiere solo los rangos distintos. Si no vuelve, lo reemplazo y transfiero sus rangos desde las réplicas."
+      }
+    },
+    {
+      "q": {
+        "en": "Why vector clocks instead of timestamps?",
+        "es": "¿Por qué vector clocks en lugar de timestamps?"
+      },
+      "a": {
+        "en": "Timestamps impose an order on writes that weren't ordered. With two concurrent cart updates, last-write-wins keeps one and silently loses the other, and clock skew can even prefer the older one. Vector clocks detect concurrency and hand both versions to the app, which merges them. The cost: clients pass context back, apps write merge logic, and clocks grow. For overwrite-only data, timestamps are fine.",
+        "es": "Los timestamps imponen un orden a escrituras que no lo tenían. Con dos actualizaciones concurrentes del carrito, last-write-wins conserva una y pierde la otra en silencio, y un reloj desfasado puede incluso preferir la más vieja. Los vector clocks detectan la concurrencia y entregan ambas versiones a la aplicación, que las fusiona. El costo: los clientes devuelven el contexto, la aplicación escribe la lógica de fusión y los relojes crecen. Para datos que solo se sobrescriben, los timestamps sirven."
+      }
+    }
+  ],
+  "related": [
+    "consistent-hashing",
+    "replication",
+    "consistency-models",
+    "cap-pacelc",
+    "storage-engines",
+    "clocks-ordering"
+  ],
+  "sources": [
+    {
+      "title": "DeCandia et al. — Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)",
+      "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf"
+    },
+    {
+      "title": "Elhemali et al. — Amazon DynamoDB (USENIX ATC 2022)",
+      "url": "https://www.usenix.org/system/files/atc22-elhemali.pdf"
+    },
+    {
+      "title": "Apache Cassandra — Dynamo architecture",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html"
+    },
+    {
+      "title": "Apache Cassandra — Hints",
+      "url": "https://cassandra.apache.org/doc/latest/cassandra/managing/operating/hints.html"
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "concept": "probabilistic-structures",
+  "items": [
+    {
+      "id": "probabilistic-structures.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your signup form checks a Bloom filter of taken usernames (1% false positives) and rejects a name whenever the filter says \"present\". Users complain that free names get rejected. Best fix?",
+        "es": "Tu formulario de registro revisa un Bloom filter de usernames ocupados (1% de falsos positivos) y rechaza un nombre cada vez que el filtro dice \"presente\". Los usuarios se quejan de que se rechazan nombres libres. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "On \"maybe present\", confirm against the users table before rejecting", "es": "Ante un \"quizás presente\", confirmar contra la tabla de usuarios antes de rechazar" } },
+        { "text": { "en": "Replace it with a HyperLogLog, which has a lower error rate", "es": "Reemplazarlo por un HyperLogLog, que tiene menor tasa de error" },
+          "why": { "en": "HyperLogLog counts distinct items; it can't say whether one specific name exists.", "es": "HyperLogLog cuenta elementos distintos; no puede decir si un nombre específico existe." } },
+        { "text": { "en": "Double-check the \"absent\" answers in the database instead", "es": "Revisar en la base de datos las respuestas \"ausente\" en su lugar" },
+          "why": { "en": "\"Absent\" is always right: Bloom filters have no false negatives. The errors are on the positives.", "es": "\"Ausente\" siempre es correcto: los Bloom filters no tienen falsos negativos. Los errores están en los positivos." } },
+        { "text": { "en": "Double the hash functions from 7 to 14 on the same bit array", "es": "Duplicar las funciones hash de 7 a 14 sobre el mismo arreglo de bits" },
+          "why": { "en": "7 is already optimal for ~9.6 bits per key; more hashes set more bits and raise false positives.", "es": "7 ya es el óptimo para ~9.6 bits por clave; más hashes encienden más bits y suben los falsos positivos." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A Bloom filter is a fast first filter: \"absent\" is final, \"present\" means \"go check\". Most lookups for free names stop at the filter; only real hits and the ~1% false positives pay for a database read.",
+        "es": "Un Bloom filter es un primer filtro rápido: \"ausente\" es definitivo y \"presente\" significa \"ve a revisar\". La mayoría de las consultas por nombres libres terminan en el filtro; solo los aciertos reales y el ~1% de falsos positivos pagan una lectura a la base."
+      }
+    },
+    {
+      "id": "probabilistic-structures.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the Bloom filter lookup so it has **no false negatives** and the planned false-positive rate.",
+        "es": "Completa la consulta del Bloom filter para que **no tenga falsos negativos** y respete la tasa de falsos positivos prevista."
+      },
+      "lang": "python",
+      "code": "class BloomFilter:\n    def bit(self, p: int) -> int:\n        return self.bits[p // 8] >> (p % 8) & 1\n\n    def add(self, item: str) -> None:\n        for p in self._positions(item):  # k positions\n            self.bits[p // 8] |= 1 << (p % 8)\n\n    def might_contain(self, item: str) -> bool:\n        ____",
+      "options": [
+        { "text": "return all(self.bit(p) for p in self._positions(item))" },
+        { "text": "return any(self.bit(p) for p in self._positions(item))",
+          "why": { "en": "One set bit proves nothing: other keys set it too. Almost everything would look present.", "es": "Un bit encendido no prueba nada: otras claves también lo encienden. Casi todo parecería presente." } },
+        { "text": "return bool(self.bit(self._positions(item)[0]))",
+          "why": { "en": "Checks one of k bits: the false-positive rate becomes the fraction of bits set, far above 1%.", "es": "Revisa uno de k bits: la tasa de falsos positivos pasa a ser la fracción de bits encendidos, muy por encima de 1%." } },
+        { "text": "return not any(self.bit(p) for p in self._positions(item))",
+          "why": { "en": "Inverted: returns True only when all k bits are 0, i.e. for items that are definitely absent.", "es": "Invertido: devuelve True solo cuando los k bits están en 0, es decir, para elementos que seguro no están." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Adding an item sets all k of its bits, so a member always finds all k set: no false negatives. A non-member passes only if all k bits were set by other keys, which is the rare false positive.",
+        "es": "Agregar un elemento enciende sus k bits, así que un miembro siempre los encuentra encendidos: sin falsos negativos. Un no miembro pasa solo si otras claves encendieron sus k bits, que es el falso positivo poco frecuente."
+      }
+    },
+    {
+      "id": "probabilistic-structures.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A Count-Min sketch (non-negative counts) estimates hashtag `#launch` at **1,200**. What do you know about its true count?",
+        "es": "Un Count-Min sketch (conteos no negativos) estima el hashtag `#launch` en **1,200**. ¿Qué sabes de su conteo real?"
+      },
+      "options": [
+        { "text": { "en": "It is at most 1,200; collisions can only add", "es": "Es como mucho 1,200; las colisiones solo suman" } },
+        { "text": { "en": "It is at least 1,200; collisions can only lose increments", "es": "Es al menos 1,200; las colisiones solo pierden incrementos" },
+          "why": { "en": "Inverted. A shared counter holds x's count plus colliding items' counts, so it overcounts.", "es": "Al revés. Un contador compartido guarda el conteo de x más el de los elementos que colisionan, así que cuenta de más." } },
+        { "text": { "en": "It is 1,200 ± ε·N, equally likely above or below", "es": "Es 1,200 ± ε·N, igual de probable arriba o abajo" },
+          "why": { "en": "The error is one-sided: a Count-Min estimate never falls below the true count.", "es": "El error va en un solo sentido: una estimación de Count-Min nunca queda por debajo del conteo real." } },
+        { "text": { "en": "It is exactly 1,200, because the minimum removes collisions", "es": "Es exactamente 1,200, porque el mínimo elimina las colisiones" },
+          "why": { "en": "The minimum picks the least-collided row, which can still include other items' counts.", "es": "El mínimo elige la fila con menos colisiones, que todavía puede incluir conteos de otros elementos." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Each row adds x's increments to one counter it shares with colliding items, so every counter is ≥ the true count, and so is their minimum. The overcount is at most ε·N with probability 1−δ.",
+        "es": "Cada fila suma los incrementos de x a un contador que comparte con los elementos que colisionan, así que cada contador es ≥ al conteo real, y también su mínimo. El exceso es como mucho ε·N con probabilidad 1−δ."
+      }
+    }
+  ]
+}
