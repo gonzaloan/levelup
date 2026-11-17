@@ -1,22 +1,23 @@
-# levelup — AI Architect Field Guide
+# levelup — Staff Engineer & AI Architect Field Guide
 
-**Everything a Staff/Principal AI Architect is expected to know, explained simply.**
+**Everything a Staff/Principal Software Engineer and AI Architect is expected to know, explained simply.**
 A bilingual (ES/EN) study guide you can also keep open as a cheatsheet in an interview.
 
 Live: https://levelup.skillrealm.dev
 
 ## What's inside
 
-- **14 topics, ~210 concepts**, in study order: LLM fundamentals · prompting & context
-  engineering · RAG · agents · evals · fine-tuning · inference & cost · security & governance ·
-  AI architecture · ML foundations · MLOps · distributed systems · system-design cases (incl. feed
-  ranking, ads CTR, fraud, deep research, inference platform) · Staff/Principal leadership.
+- **16 topics, ~260 concepts**, in study order: coding interview patterns · distributed systems
+  and building blocks · classic system design (feed, chat, payments, KV store, ride hailing…) ·
+  LLM fundamentals · prompting & context engineering · RAG · agents · evals · fine-tuning ·
+  inference & cost · security & governance · AI architecture · AI system-design cases · ML
+  foundations · MLOps · Staff/Principal leadership and execution.
+- **Study path:** one big "next step", three phases, modules folded except the one you are in.
 - **Architecture map:** the reference architecture of a production AI system, layer by layer;
   every box opens its concept.
-- **Every concept on one page, same shape every time:** the one sentence you'd say in an interview,
-  how it works, a diagram, runnable-ish code, a real example with numbers, what you gain / what you
-  pay, when (not) to use it, numbers to remember, common pitfalls, interview questions with model
-  answers, related concepts and sources.
+- **Every concept on one page, essentials first:** the one sentence you'd say in an interview, a
+  diagram, 3–5 key points, and "check yourself" (its exercises, graded inline). One tap away: the
+  full explanation, code, a real example, trade-offs, numbers, pitfalls, interview Q&A, sources.
 - **Search everything** with `/` or `⌘K`: titles, acronyms (RAG, HNSW, LoRA, TTFT…), one-liners,
   questions. Accent-insensitive, works offline.
 - **Cheatsheet:** every concept as its one-liner plus key numbers. Filter by topic/level, print it.
