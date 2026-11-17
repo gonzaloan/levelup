@@ -1,0 +1,244 @@
+{
+  "id": "case-metrics-monitoring",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": {
+    "en": "Design: metrics and monitoring system",
+    "es": "Diseño: sistema de métricas y monitoreo"
+  },
+  "aliases": [
+    "Prometheus",
+    "time-series database",
+    "TSDB",
+    "monitoring system",
+    "alerting",
+    "Gorilla compression",
+    "high cardinality",
+    "Datadog"
+  ],
+  "tldr": {
+    "en": "Buffer samples through an ingest pipeline into a compressed time-series store sharded by series, downsample old data for long ranges, cap label cardinality, and evaluate alert rules on recent data, independently of what they watch.",
+    "es": "Pasa las muestras por un pipeline de ingesta con buffer hacia un almacén de series temporales comprimido y particionado por serie, reduce la resolución de los datos viejos, limita la cardinalidad de labels y evalúa alertas sobre datos recientes, sin depender de lo que vigilan."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: ingest counters, gauges and histograms with labels; query and graph them; alert on rules; keep a year or more of history. **Non-functional**: emitting metrics never slows the service; new data is queryable within seconds; alerts keep working while the system is degraded. Assume 10k hosts × 1,000 series = **10M active series**, sampled every 15 s ≈ **670k samples/s**.\n\n### Data model and API\n\nA **series** is a metric name plus a label set, `http_requests_total{service=\"cart\", code=\"500\"}`; a sample is `(timestamp, float64)`. Writes arrive as batches (pushed, or scraped from `/metrics` in the Prometheus style); reads are `query(expr, start, end, step)`.\n\n### Architecture\n\n1. Agents send batches to an ingest tier that enforces limits, backed by a Kafka buffer so a storage hiccup drops nothing.\n2. Writers shard by `hash(series)`; each keeps the last ~2 h in memory behind a write-ahead log, then flushes immutable compressed blocks.\n3. Blocks move to object storage; a compactor merges them and writes **5 m and 1 h** downsampled copies for long-range queries.\n4. A query tier fans out and merges. A rule engine evaluates alerts every ~1 min and hands firing ones to a notifier that dedups, groups and routes them.\n\n### The hard parts\n\n**Compression.** Facebook's Gorilla stores timestamps as delta-of-deltas and values as an XOR with the previous one: 16 bytes per point down to ~1.37 (12×). Prometheus reports 1–2 bytes per sample.\n\n**Cardinality.** Every unique label combination is a new series. One `user_id` label can turn 10 series into 10M and exhaust writer memory. Enforce series limits per tenant at ingest; per-user detail belongs in logs and traces.\n\n**Independent alerting.** Alerts can't depend on the outage they report: run the rule engine redundantly, and add a dead man's switch alert that pages when the pipeline goes quiet.",
+    "es": "### Requisitos\n\n**Funcionales**: ingerir counters, gauges e histogramas con labels; consultarlos y graficarlos; alertar con reglas; guardar un año o más de historial. **No funcionales**: emitir métricas nunca frena al servicio; los datos nuevos se pueden consultar en segundos; las alertas siguen funcionando aunque el sistema esté degradado. Supón 10k hosts × 1,000 series = **10M de series activas**, muestreadas cada 15 s ≈ **670k muestras/s**.\n\n### Modelo de datos y API\n\nUna **serie** es un nombre de métrica más un conjunto de labels, `http_requests_total{service=\"cart\", code=\"500\"}`; una muestra es `(timestamp, float64)`. Las escrituras llegan en lotes (enviadas, o leídas de `/metrics` al estilo Prometheus); las lecturas son `query(expr, start, end, step)`.\n\n### Arquitectura\n\n1. Los agentes mandan lotes a una capa de ingesta que aplica límites, respaldada por un buffer en Kafka para que un tropiezo del almacenamiento no pierda nada.\n2. Los writers se reparten por `hash(series)`; cada uno guarda las últimas ~2 h en memoria detrás de un write-ahead log y luego vuelca bloques comprimidos inmutables.\n3. Los bloques pasan a object storage; un compactor los fusiona y escribe copias con resolución reducida a **5 m y 1 h** para consultas de rangos largos.\n4. Una capa de consulta reparte y fusiona. Un motor de reglas evalúa las alertas cada ~1 min y entrega las que se disparan a un notificador que deduplica, agrupa y enruta.\n\n### Las partes difíciles\n\n**Compresión.** Gorilla, de Facebook, guarda los timestamps como delta de deltas y los valores como XOR con el anterior: de 16 bytes por punto a ~1.37 (12×). Prometheus reporta 1–2 bytes por muestra.\n\n**Cardinalidad.** Cada combinación única de labels es una serie nueva. Un solo label `user_id` puede convertir 10 series en 10M y agotar la memoria de los writers. Aplica límites de series por tenant en la ingesta; el detalle por usuario va en logs y trazas.\n\n**Alertas independientes.** Las alertas no pueden depender de la caída que reportan: corre el motor de reglas con redundancia y agrega una alerta dead man's switch que avisa cuando el pipeline se queda en silencio."
+  },
+  "keyPoints": [
+    {
+      "en": "A **series** is a metric name plus labels; scale (assumed) is 10M active series, ~670k samples/s.",
+      "es": "Una **serie** es un nombre de métrica más labels; la escala (supuesta) es 10M de series activas, ~670k muestras/s."
+    },
+    {
+      "en": "Buffer ingest in Kafka, shard writers by series hash, keep ~2 h in memory, flush compressed blocks.",
+      "es": "Pon la ingesta detrás de Kafka, reparte los writers por hash de serie, guarda ~2 h en memoria y vuelca bloques comprimidos."
+    },
+    {
+      "en": "**Gorilla** compression cuts 16 bytes per point to ~1.37 by storing only what changed.",
+      "es": "La compresión **Gorilla** baja de 16 bytes por punto a ~1.37 guardando solo lo que cambió."
+    },
+    {
+      "en": "Downsample to 5 m and 1 h for long ranges; shorter raw retention is what saves disk.",
+      "es": "Reduce la resolución a 5 m y 1 h para rangos largos; lo que ahorra disco es retener menos tiempo los datos crudos."
+    },
+    {
+      "en": "Cap **label cardinality** at ingest, and make alerting survive the outage it should report.",
+      "es": "Limita la **cardinalidad de labels** en la ingesta y haz que las alertas sobrevivan a la caída que deben reportar."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  A[\"Hosts and services<br/>agents, exporters\"] -->|\"push batches<br/>or scrape\"| I[\"Ingest gateway<br/>cardinality limits\"]\n  I --> K[(\"Kafka buffer\")]\n  K --> W[\"TSDB writers<br/>shard by series hash\"]\n  W --> H[\"In-memory head<br/>~2 h + WAL\"]\n  H -->|\"flush compressed blocks\"| O[(\"Object storage\")]\n  O --> C[\"Compactor<br/>5m and 1h downsample\"]\n  C --> O\n  Q[\"Query tier<br/>fan-out + merge\"] --> H\n  Q --> O\n  R[\"Rule engine<br/>every ~1 min\"] --> Q\n  R -->|firing| N[\"Notifier<br/>dedup, group, route\"]\n  N --> P[\"Pager, chat\"]",
+    "caption": {
+      "en": "Samples flow through a buffer into sharded in-memory heads, then compressed blocks; queries and alert rules read both tiers.",
+      "es": "Las muestras pasan por un buffer hacia heads en memoria particionados y luego a bloques comprimidos; las consultas y las reglas de alerta leen ambos niveles."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Why time series compress: delta-of-delta and XOR",
+      "es": "Por qué se comprimen las series: delta de deltas y XOR"
+    },
+    "source": "import struct\n\ndef f64_bits(x: float) -> int:\n    return struct.unpack(\">Q\", struct.pack(\">d\", x))[0]\n\ndef gorilla_fields(points: list[tuple[int, float]]):\n    \"\"\"Gorilla's idea: store how each point differs from the previous one.\n    On real metrics these are mostly 0, and Gorilla encodes a 0 in a single bit.\"\"\"\n    t0, v0 = points[0]\n    out = [(\"header\", t0, v0)]                    # first point stored in full\n    prev_t, prev_delta, prev_v = t0, 0, v0\n    for t, v in points[1:]:\n        delta = t - prev_t\n        dod = delta - prev_delta                  # steady 15 s scrapes -> 0\n        xor = f64_bits(v) ^ f64_bits(prev_v)      # unchanged value -> 0\n        out.append((dod, hex(xor)))\n        prev_t, prev_delta, prev_v = t, delta, v\n    return out\n\n# 15 s scrapes, the last one 1 s late; a gauge that barely moves\nfor row in gorilla_fields([(1000, 42.0), (1015, 42.0), (1030, 42.0), (1046, 43.0)]):\n    print(row)\n# ('header', 1000, 42.0)\n# (15, '0x0')             first delta: stored once\n# (0, '0x0')              2 bits for the whole point\n# (1, '0x800000000000')   small dod + one short run of meaningful XOR bits"
+  },
+  "example": {
+    "en": "At 02:10 the cart service's error ratio climbs. Its agent sends `http_requests_total{service=\"cart\",code=\"500\"}` every 15 s; samples pass through Kafka to the writer that owns that series. A rule \"error ratio > 2% `for: 5m`\" is evaluated every minute and goes from pending to firing at 02:15. The notifier groups 40 per-pod alerts into one page for the cart team and inhibits the downstream checkout-latency alert. The on-call's 90-day graph reads ~2k hourly points per series instead of ~520k raw ones.",
+    "es": "A las 02:10 sube la tasa de errores del servicio de carrito. Su agente envía `http_requests_total{service=\"cart\",code=\"500\"}` cada 15 s; las muestras pasan por Kafka hasta el writer dueño de esa serie. Una regla \"tasa de errores > 2% `for: 5m`\" se evalúa cada minuto y pasa de pendiente a disparada a las 02:15. El notificador agrupa 40 alertas por pod en un solo aviso para el equipo de carrito e inhibe la alerta de latencia de checkout que depende de él. La gráfica de 90 días de la persona de on-call lee ~2k puntos horarios por serie en lugar de ~520k crudos."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Write path: buffer, shard, compress",
+        "es": "Camino de escritura: buffer, particionar, comprimir"
+      },
+      "body": {
+        "en": "Pull (Prometheus scrapes `/metrics`) gives up/down detection for free and lets the server set the pace; push suits short-lived jobs and devices behind NAT. Either way, land batches in Kafka so a slow or restarting writer never blocks producers and can replay. Writers own series by hash, append to a write-ahead log and build compressed per-series chunks in memory. Every ~2 h they flush an immutable block with an inverted index from label pairs to series ids, so `{service=\"cart\"}` finds its series without a scan. For redundancy, two writers consume the same partition, or you rely on Kafka replay.",
+        "es": "Pull (Prometheus lee `/metrics`) detecta gratis si un objetivo está caído y deja que el servidor marque el ritmo; push sirve para jobs de vida corta y dispositivos detrás de NAT. En ambos casos, deja los lotes en Kafka para que un writer lento o reiniciándose nunca frene a los productores y pueda reprocesar. Los writers son dueños de series por hash, escriben en un write-ahead log y arman en memoria chunks comprimidos por serie. Cada ~2 h vuelcan un bloque inmutable con un índice invertido de pares de labels a ids de series, así `{service=\"cart\"}` encuentra sus series sin escanear. Para tener redundancia, dos writers consumen la misma partición, o te apoyas en el reprocesamiento de Kafka."
+      }
+    },
+    {
+      "title": {
+        "en": "Cardinality: the real cost driver",
+        "es": "Cardinalidad: el verdadero motor del costo"
+      },
+      "body": {
+        "en": "Memory and index size scale with active series, not with samples. A `code` label with a handful of values is fine; `user_id`, `request_id` or raw URL paths are unbounded, and 10 series × 1M users is 10M new series from one label. Defend at ingest: per-tenant and per-metric limits on **new** series (existing ones keep flowing, so dashboards survive), a metric of rejected series naming the offending label, and a CI lint for label names. Prometheus's docs note that cutting series saves more than lengthening the scrape interval. Put per-user detail in logs and traces, where high cardinality is cheap.",
+        "es": "La memoria y el tamaño del índice crecen con las series activas, no con las muestras. Un label `code` con pocos valores está bien; `user_id`, `request_id` o rutas de URL crudas no tienen límite, y 10 series × 1M de usuarios son 10M de series nuevas por un solo label. Defiéndete en la ingesta: límites por tenant y por métrica sobre series **nuevas** (las existentes siguen fluyendo, así sobreviven los dashboards), una métrica de series rechazadas que nombre el label culpable y un lint en CI para los nombres de labels. La documentación de Prometheus señala que reducir series ahorra más que alargar el intervalo de scrape. Pon el detalle por usuario en logs y trazas, donde la alta cardinalidad es barata."
+      }
+    },
+    {
+      "title": {
+        "en": "Retention and downsampling",
+        "es": "Retención y reducción de resolución"
+      },
+      "body": {
+        "en": "A Thanos-style compactor writes 5 m resolution for blocks older than 40 h and 1 h for blocks older than 10 days. Its purpose is query speed: a 90-day graph reads ~2k hourly points per series instead of ~520k raw ones. Keep min and max per step, not just the average, or short spikes vanish. Downsampling alone doesn't save disk; Thanos warns that keeping every resolution grows storage ~3×. Savings come from retention per resolution, for example raw for 15 days, 5 m for 90 days and 1 h for 2 years (assumed).",
+        "es": "Un compactor al estilo Thanos escribe resolución de 5 m para bloques de más de 40 h y de 1 h para bloques de más de 10 días. Su objetivo es la velocidad de consulta: una gráfica de 90 días lee ~2k puntos horarios por serie en lugar de ~520k crudos. Guarda el mínimo y el máximo por paso, no solo el promedio, o los picos cortos desaparecen. Reducir la resolución por sí solo no ahorra disco; Thanos advierte que conservar todas las resoluciones hace crecer el almacenamiento ~3×. El ahorro viene de la retención por resolución, por ejemplo crudos por 15 días, 5 m por 90 días y 1 h por 2 años (supuesto)."
+      }
+    },
+    {
+      "title": {
+        "en": "Alerting that survives outages",
+        "es": "Alertas que sobreviven a las caídas"
+      },
+      "body": {
+        "en": "Rules run every ~1 min against recent in-memory data, the fast path. `for: 5m` keeps an alert pending until the condition has held that long, which cuts flapping. Run two rule-engine replicas; the notifier (Alertmanager-style) dedups their copies, groups related alerts into one page, inhibits downstream noise and honours silences. Alert on user-facing symptoms and SLO burn, not on every cause ([[slos]]). Then monitor the monitor: an always-firing dead man's switch alert goes to an external service, which pages when it stops arriving.",
+        "es": "Las reglas corren cada ~1 min sobre datos recientes en memoria, el camino rápido. `for: 5m` mantiene una alerta pendiente hasta que la condición se sostiene ese tiempo, lo que reduce el flapping. Corre dos réplicas del motor de reglas; el notificador (al estilo Alertmanager) deduplica sus copias, agrupa alertas relacionadas en un solo aviso, inhibe el ruido derivado y respeta los silencios. Alerta sobre síntomas que ven los usuarios y el consumo del SLO, no sobre cada causa ([[slos]]). Luego monitorea al monitor: una alerta dead man's switch, siempre disparada, va a un servicio externo que avisa cuando deja de llegar."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Recent data in memory makes dashboards and alert rules fast.",
+      "es": "Tener los datos recientes en memoria hace rápidos los dashboards y las reglas de alerta."
+    },
+    {
+      "en": "Compression (~1.37 B per point) plus per-resolution retention keeps a year of data affordable.",
+      "es": "La compresión (~1.37 B por punto) más la retención por resolución hacen accesible guardar un año de datos."
+    },
+    {
+      "en": "The Kafka buffer absorbs storage hiccups without dropping samples or slowing services.",
+      "es": "El buffer en Kafka absorbe los tropiezos del almacenamiento sin perder muestras ni frenar a los servicios."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Cardinality is unbounded by default; one bad label can take the cluster down.",
+      "es": "La cardinalidad no tiene límite por defecto; un solo label malo puede tumbar el clúster."
+    },
+    {
+      "en": "Downsampled points hide short spikes unless you keep min and max per step.",
+      "es": "Los puntos con resolución reducida esconden los picos cortos, salvo que guardes mínimo y máximo por paso."
+    },
+    {
+      "en": "Many moving parts (Kafka, writers, compactor, object storage) behind what users see as graphs.",
+      "es": "Muchas piezas móviles (Kafka, writers, compactor, object storage) detrás de lo que los usuarios ven como gráficas."
+    }
+  ],
+  "whenToUse": {
+    "en": "Fleet-wide numeric telemetry: service health, SLOs, capacity planning, per-minute business KPIs, anything you alert on.",
+    "es": "Telemetría numérica de toda la flota: salud de servicios, SLOs, planificación de capacidad, KPIs de negocio por minuto, todo lo que dispare alertas."
+  },
+  "whenNotToUse": {
+    "en": "Per-request or per-user detail (use logs or traces), exact billing counts (use a transactional store), or a small fleet where one Prometheus server or a SaaS is enough.",
+    "es": "Detalle por request o por usuario (usa logs o trazas), conteos exactos para facturar (usa un almacén transaccional) o una flota chica donde alcanza un servidor Prometheus o un SaaS."
+  },
+  "numbers": [
+    {
+      "en": "Ingest (assumed): 10k hosts × 1,000 series ÷ 15 s ≈ 670k samples/s.",
+      "es": "Ingesta (supuesta): 10k hosts × 1,000 series ÷ 15 s ≈ 670k muestras/s."
+    },
+    {
+      "en": "Storage: 670k/s × 86,400 s × ~1.37 B ≈ 79 GB/day raw, ~29 TB/year before retention and downsampling.",
+      "es": "Almacenamiento: 670k/s × 86,400 s × ~1.37 B ≈ 79 GB/día en crudo, ~29 TB/año antes de retención y reducción de resolución."
+    },
+    {
+      "en": "Gorilla (VLDB 2015): 16 B to ~1.37 B per point (12×); ~96% of timestamps compress to a single bit.",
+      "es": "Gorilla (VLDB 2015): de 16 B a ~1.37 B por punto (12×); ~96% de los timestamps se comprimen a un solo bit."
+    },
+    {
+      "en": "Prometheus defaults: 2 h blocks, 15-day local retention, 1 m scrape and rule-evaluation intervals (checked Nov 2026).",
+      "es": "Valores por defecto de Prometheus: bloques de 2 h, retención local de 15 días e intervalos de scrape y de evaluación de reglas de 1 m (revisado en nov 2026)."
+    },
+    {
+      "en": "Thanos: 5 m resolution for blocks older than 40 h, 1 h for blocks older than 10 days.",
+      "es": "Thanos: resolución de 5 m para bloques de más de 40 h y de 1 h para bloques de más de 10 días."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Labels with unbounded values (`user_id`, `request_id`, URL paths): series explode and writers run out of memory.",
+      "es": "Labels con valores sin límite (`user_id`, `request_id`, rutas de URL): las series explotan y los writers se quedan sin memoria."
+    },
+    {
+      "en": "Alerting through the pipeline it watches, with no dead man's switch: the outage silences its own alarm.",
+      "es": "Alertar a través del mismo pipeline que vigilas, sin dead man's switch: la caída silencia su propia alarma."
+    },
+    {
+      "en": "Expecting downsampling to save disk: it adds blocks; savings come from shorter raw retention.",
+      "es": "Esperar que reducir la resolución ahorre disco: agrega bloques; el ahorro viene de retener menos los datos crudos."
+    },
+    {
+      "en": "Paging on every cause (CPU, one pod down) instead of user-facing symptoms: alert fatigue.",
+      "es": "Avisar por cada causa (CPU, un pod caído) en lugar de síntomas que ven los usuarios: fatiga de alertas."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "How do you stop one team from blowing up cardinality?",
+        "es": "¿Cómo evitas que un equipo haga explotar la cardinalidad?"
+      },
+      "a": {
+        "en": "At ingest, not in storage. I track active series per tenant and per metric (an approximate count is fine) and reject new series past a quota, while samples for existing series keep flowing, so their dashboards still work. I publish a rejected-series metric naming the offending label so the team can fix it fast, lint label names in CI, and steer per-request ids to traces, where high cardinality is cheap.",
+        "es": "En la ingesta, no en el almacenamiento. Llevo la cuenta de series activas por tenant y por métrica (un conteo aproximado alcanza) y rechazo series nuevas pasado un cupo, mientras las muestras de series existentes siguen fluyendo, así sus dashboards funcionan. Publico una métrica de series rechazadas que nombra el label culpable para que el equipo lo arregle rápido, valido nombres de labels en CI y mando los ids por request a las trazas, donde la alta cardinalidad es barata."
+      }
+    },
+    {
+      "q": {
+        "en": "The metrics cluster is down. How do you know your services are healthy?",
+        "es": "El clúster de métricas está caído. ¿Cómo sabes si tus servicios están sanos?"
+      },
+      "a": {
+        "en": "That's why alerting is partly independent. The rule engine runs as redundant replicas near ingest, the notifier dedups across them, and a dead man's switch, an always-firing alert sent to an external service, pages when it stops arriving. I'd also run a few black-box probes of critical endpoints from another provider. The metrics system itself is watched by a separate, much smaller one.",
+        "es": "Por eso las alertas son en parte independientes. El motor de reglas corre en réplicas redundantes cerca de la ingesta, el notificador deduplica entre ellas, y un dead man's switch, una alerta siempre disparada que va a un servicio externo, avisa cuando deja de llegar. También correría algunas pruebas de caja negra sobre endpoints críticos desde otro proveedor. Al sistema de métricas lo vigila otro, separado y mucho más chico."
+      }
+    },
+    {
+      "q": {
+        "en": "Why not store metrics in a regular SQL database?",
+        "es": "¿Por qué no guardar las métricas en una base SQL común?"
+      },
+      "a": {
+        "en": "Volume and access pattern. ~670k samples/s is ~58B rows a day; a row store spends tens of bytes per row plus indexes, while a TSDB stores ~1–2 bytes per sample because it compresses each series' timestamps and values together. Queries read one series over a time range, so time-ordered per-series chunks fit far better than rows. Kafka stays the buffer, not the query engine.",
+        "es": "Por volumen y patrón de acceso. ~670k muestras/s son ~58B de filas al día; un almacén por filas gasta decenas de bytes por fila más índices, mientras que una TSDB guarda ~1–2 bytes por muestra porque comprime juntos los timestamps y valores de cada serie. Las consultas leen una serie en un rango de tiempo, así que los chunks por serie ordenados por tiempo encajan mucho mejor que las filas. Kafka sigue siendo el buffer, no el motor de consultas."
+      }
+    }
+  ],
+  "related": [
+    "observability",
+    "slos",
+    "stream-processing",
+    "storage-engines",
+    "queues-streams",
+    "sharding"
+  ],
+  "sources": [
+    {
+      "title": "Pelkonen et al. — Gorilla: A Fast, Scalable, In-Memory Time Series Database (VLDB 2015)",
+      "url": "https://www.vldb.org/pvldb/vol8/p1816-teller.pdf"
+    },
+    {
+      "title": "Prometheus — Storage",
+      "url": "https://prometheus.io/docs/prometheus/latest/storage/"
+    },
+    {
+      "title": "Prometheus — Metric and label naming",
+      "url": "https://prometheus.io/docs/practices/naming/"
+    },
+    {
+      "title": "Thanos — Compactor and downsampling",
+      "url": "https://thanos.io/tip/components/compact.md/"
+    }
+  ]
+}

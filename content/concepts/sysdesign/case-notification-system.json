@@ -1,0 +1,137 @@
+{
+  "id": "case-notification-system",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": { "en": "Design: notification system", "es": "Diseño: sistema de notificaciones" },
+  "aliases": ["push notifications", "notification service", "email and SMS sender", "APNs", "FCM", "multi-channel messaging", "OTP delivery"],
+  "tldr": {
+    "en": "Services emit events; the notification service dedups, checks preferences and caps, renders per channel, and queues sends by priority to channel workers that call APNs, FCM, email and SMS providers with retries.",
+    "es": "Los servicios emiten eventos; el servicio de notificaciones deduplica, revisa preferencias y límites, arma el mensaje por canal y encola los envíos por prioridad hacia workers de cada canal que llaman a APNs, FCM y proveedores de email y SMS con reintentos."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: send push (iOS, Android), email, SMS and in-app messages; transactional (OTP, receipts, alerts) and marketing (digests, campaigns); per-user preferences by category and channel; scheduling and quiet hours; delivery status. **Non-functional**: OTPs and security alerts in seconds; never the same notification twice; never against an opt-out; survive provider outages; a campaign to millions must not delay an OTP.\n\nScale (assumed): 100M users × 10 notifications/day ≈ 1B/day ≈ 12k/s average; campaigns spike far higher.\n\nQuestions I'd ask:\n\n1. Which categories are critical (OTP, fraud) and which are bulk (marketing)?\n2. Who owns templates and localization: producers or the platform?\n3. For each category, what's worse: a duplicate or a miss?\n\n### API and data model\n\n`POST /notify {event_id, user_id, category, template, data}`; `event_id` is the producer's [[idempotency]] key. Tables: `preferences(user_id, category, channel, enabled)`, `devices(user_id, token, platform, last_seen)`, `deliveries(event_id, user_id, channel, status, attempts)`.\n\n### Architecture\n\nIngest API → priority queues (critical, transactional, bulk) ([[queues-streams]]) → orchestrator: dedup on `(event_id, user_id, channel)`, preferences and opt-outs, frequency caps, quiet hours, template render → per-channel queues → channel workers that call APNs, FCM, an email provider and an SMS provider → status events (sent, bounced, token invalid) feed the delivery log and the in-app inbox.\n\n### The hard parts\n\n1. **No duplicates, no misses**: idempotency keys and per-category delivery semantics.\n2. **Isolation and provider limits**: priorities, rate limits, retries and failover.",
+    "es": "### Requisitos\n\n**Funcionales**: enviar push (iOS, Android), email, SMS y mensajes in-app; transaccionales (OTP, recibos, alertas) y de marketing (resúmenes, campañas); preferencias por usuario según categoría y canal; programación y horario de silencio; estado de entrega. **No funcionales**: OTPs y alertas de seguridad en segundos; nunca la misma notificación dos veces; nunca contra una baja voluntaria; sobrevivir a caídas de proveedores; una campaña a millones no debe retrasar un OTP.\n\nEscala (supuesta): 100M de usuarios × 10 notificaciones/día ≈ mil millones/día ≈ 12k/s en promedio; las campañas generan picos mucho mayores.\n\nPreguntas que haría:\n\n1. ¿Qué categorías son críticas (OTP, fraude) y cuáles masivas (marketing)?\n2. ¿Quién es dueño de las plantillas y la localización: los productores o la plataforma?\n3. Para cada categoría, ¿qué es peor: un duplicado o una notificación perdida?\n\n### API y modelo de datos\n\n`POST /notify {event_id, user_id, category, template, data}`; `event_id` es la clave de [[idempotency]] del productor. Tablas: `preferences(user_id, category, channel, enabled)`, `devices(user_id, token, platform, last_seen)`, `deliveries(event_id, user_id, channel, status, attempts)`.\n\n### Arquitectura\n\nAPI de ingesta → colas por prioridad (crítica, transaccional, masiva) ([[queues-streams]]) → orquestador: deduplicación por `(event_id, user_id, channel)`, preferencias y bajas, límites de frecuencia, horario de silencio y armado de la plantilla → colas por canal → workers de cada canal que llaman a APNs, FCM, un proveedor de email y uno de SMS → los eventos de estado (enviado, rebotado, token inválido) alimentan el log de entregas y la bandeja in-app.\n\n### Las partes difíciles\n\n1. **Sin duplicados ni pérdidas**: claves de idempotencia y semántica de entrega por categoría.\n2. **Aislamiento y límites de proveedores**: prioridades, rate limits, reintentos y failover."
+  },
+  "keyPoints": [
+    {
+      "en": "Separate queues and workers per priority and channel, so a bulk campaign never delays an OTP.",
+      "es": "Colas y workers separados por prioridad y canal, para que una campaña masiva nunca retrase un OTP."
+    },
+    {
+      "en": "Dedup on an **idempotency key** (event, user, channel) before every provider call.",
+      "es": "Deduplica con una **clave de idempotencia** (evento, usuario, canal) antes de cada llamada a un proveedor."
+    },
+    {
+      "en": "Check preferences, opt-outs, quiet hours and caps centrally, at send time, not in each producer.",
+      "es": "Revisa preferencias, bajas, horario de silencio y límites en un solo lugar, al enviar, no en cada productor."
+    },
+    {
+      "en": "Retry 429s and 5xx with backoff and jitter; stop on permanent errors like APNs 410 Unregistered.",
+      "es": "Reintenta los 429 y 5xx con backoff y jitter; detente ante errores permanentes como el 410 Unregistered de APNs."
+    },
+    {
+      "en": "Exactly-once to a person doesn't exist: per category, decide whether a duplicate or a miss is worse.",
+      "es": "El exactly-once hacia una persona no existe: decide por categoría qué es peor, un duplicado o una pérdida."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  P[Producer services] -->|\"event_id, user, template\"| I[Ingest API]\n  I --> Q[\"Priority queues<br/>critical, bulk\"]\n  Q --> D{\"Dedup key<br/>already claimed?\"}\n  D -->|yes| X[Drop duplicate]\n  D -->|no| F[\"Preferences, caps,<br/>quiet hours, render\"]\n  PR[(Preferences and devices)] -.-> F\n  F --> C[Per-channel queues]\n  C --> PW[\"Push workers<br/>APNs, FCM\"]\n  C --> EW[Email workers]\n  C --> SW[SMS workers]\n  PW --> S[\"Status events<br/>and inbox\"]\n  EW --> S\n  SW --> S",
+    "caption": {
+      "en": "Dedup and policy run once, centrally; queues split by priority and channel so one slow path can't block the others.",
+      "es": "La deduplicación y las reglas corren una sola vez, en un lugar central; las colas se separan por prioridad y canal para que un camino lento no bloquee a los demás."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Idempotent channel worker with permanent vs retryable errors", "es": "Worker de canal idempotente con errores permanentes y reintentables" },
+    "source": "import random\nimport redis\n\nr = redis.Redis()\nTTL = 7 * 86400                  # longer than any producer or worker retry window\nPERMANENT = {\"BadDeviceToken\", \"Unregistered\"}   # APNs reasons: never retry\nMAX_ATTEMPTS = 5\n\ndef deliver(n: dict, provider, queue) -> str:\n    key = f\"notif:{n['event_id']}:{n['user_id']}:{n['channel']}\"\n    attempt = n.get(\"attempt\", 0)\n    # Claim first. A crash after the claim leaves \"sending\", so redeliveries\n    # are dropped (at-most-once); for OTPs a reaper resends stale claims.\n    if attempt == 0 and not r.set(key, \"sending\", nx=True, ex=TTL):\n        return \"duplicate\"              # also stops duplicate producer events\n    if not preferences.allows(n[\"user_id\"], n[\"category\"], n[\"channel\"]):\n        r.set(key, \"suppressed\", ex=TTL)   # checked at send time, not schedule time\n        return \"suppressed\"\n    res = provider.send(n[\"address\"], render(n), idempotency_key=key)  # if supported\n    if res.ok:\n        r.set(key, \"sent\", ex=TTL)\n        return \"sent\"\n    if res.reason in PERMANENT:\n        devices.disable(n[\"user_id\"], n[\"address\"])   # e.g. APNs 410 Unregistered\n        r.set(key, \"failed\", ex=TTL)\n        return \"failed\"\n    if attempt + 1 >= MAX_ATTEMPTS:\n        queue.dead_letter(n)\n        return \"dead_letter\"\n    # 429 / 5xx: re-enqueue with exponential backoff and full jitter\n    delay = random.uniform(0, min(300, 5 * 2 ** attempt))\n    queue.enqueue(dict(n, attempt=attempt + 1), delay_s=delay)\n    return \"retrying\""
+  },
+  "example": {
+    "en": "A bank's payment service emits `payment_received` for user u_42, times out waiting for the ack and emits it again. Both copies carry `event_id=evt_981`. The orchestrator claims `evt_981:u_42:push` with `SET NX` (7-day TTL): the first copy passes, the second is dropped. Preferences say push yes, SMS no; it's 23:10, inside the user's quiet hours, but the category is transactional, so it goes now through the transactional queue. APNs returns 410 Unregistered for an old iPad token: the worker deletes that token, and the iPhone gets the push.",
+    "es": "El servicio de pagos de un banco emite `payment_received` para el usuario u_42, se le vence el tiempo esperando la confirmación y lo emite otra vez. Ambas copias llevan `event_id=evt_981`. El orquestador reclama `evt_981:u_42:push` con `SET NX` (TTL de 7 días): la primera copia pasa y la segunda se descarta. Las preferencias dicen push sí, SMS no; son las 23:10, dentro del horario de silencio del usuario, pero la categoría es transaccional, así que sale ya por la cola transaccional. APNs devuelve 410 Unregistered para el token de un iPad viejo: el worker borra ese token y el iPhone recibe el push."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "Dedup and delivery semantics", "es": "Deduplicación y semántica de entrega" },
+      "body": {
+        "en": "Queues deliver at-least-once and producers retry, so duplicates are normal input. Claim `(event_id, user_id, channel)` with `SET NX` and a TTL longer than any retry window, then send. The unavoidable window is a crash after the provider accepted the message but before the status write. Choose per category: for OTPs and fraud alerts a duplicate beats a miss, so a reaper resends stale claims (at-least-once); for marketing a miss beats a duplicate, so stale claims are dropped (at-most-once). Pass the key to providers that accept idempotency keys. Never key dedup on an ID generated per attempt.",
+        "es": "Las colas entregan at-least-once y los productores reintentan, así que los duplicados son una entrada normal. Reclama `(event_id, user_id, channel)` con `SET NX` y un TTL más largo que cualquier ventana de reintento, y después envía. La ventana inevitable es una caída después de que el proveedor aceptó el mensaje y antes de escribir el estado. Elige por categoría: en OTPs y alertas de fraude un duplicado es mejor que una pérdida, así que un proceso reenvía los reclamos colgados (at-least-once); en marketing una pérdida es mejor que un duplicado, así que se descartan (at-most-once). Pasa la clave a los proveedores que aceptan claves de idempotencia. Nunca dedupliques con un ID generado en cada intento."
+      }
+    },
+    {
+      "title": { "en": "Priorities, rate limits and provider failures", "es": "Prioridades, rate limits y fallas de proveedores" },
+      "body": {
+        "en": "Bulkheads: separate queues and worker pools per priority and per channel, so a 20M-user campaign or a slow SMS provider can't stall OTP pushes. Rate-limit in three places ([[rate-limiting]]): per provider account (stay under quotas), per user (frequency caps on marketing) and per producer (a buggy service can't flood users). Retry 429s and 5xx with exponential backoff and jitter ([[retries-backoff]]), then dead-letter. Keep a second SMS and email provider and fail critical traffic over when a circuit breaker opens. A scheduler releases campaigns in batches by time zone, and preferences are re-checked at send time.",
+        "es": "Bulkheads: colas y pools de workers separados por prioridad y por canal, para que una campaña a 20M de usuarios o un proveedor de SMS lento no frenen los push de OTP. Aplica rate limits en tres lugares ([[rate-limiting]]): por cuenta de proveedor (para no pasar las cuotas), por usuario (límites de frecuencia en marketing) y por productor (un servicio con bugs no puede inundar a los usuarios). Reintenta los 429 y 5xx con backoff exponencial y jitter ([[retries-backoff]]) y luego manda a la dead-letter queue. Ten un segundo proveedor de SMS y de email, y desvía el tráfico crítico cuando se abre un circuit breaker. Un scheduler libera las campañas en lotes por zona horaria, y las preferencias se vuelven a revisar al enviar."
+      }
+    },
+    {
+      "title": { "en": "Channel specifics", "es": "Particularidades de cada canal" },
+      "body": {
+        "en": "**APNs**: HTTP/2, JSON payload up to 4 KB (5 KB for VoIP); best-effort and may reorder; holds an undeliverable push up to 30 days per `apns-expiration`; 410 `Unregistered` means delete the token. **FCM**: TTL 0–28 days; only 4 collapse keys stored per device; Android keeps up to 100 pending non-collapsible messages, then discards them all. **Email**: since February 2024, Gmail requires bulk senders (5,000+ messages/day) to use SPF, DKIM and DMARC, offer one-click unsubscribe and keep spam rates under 0.3%. **SMS** costs money per message: a fallback for critical messages, not the default. The in-app inbox is the source of truth.",
+        "es": "**APNs**: HTTP/2, payload JSON de hasta 4 KB (5 KB para VoIP); es best-effort y puede reordenar; guarda un push no entregado hasta 30 días según `apns-expiration`; un 410 `Unregistered` significa borrar el token. **FCM**: TTL de 0 a 28 días; solo guarda 4 collapse keys por dispositivo; Android retiene hasta 100 mensajes no colapsables pendientes y luego los descarta todos. **Email**: desde febrero de 2024, Gmail exige a quienes envían en volumen (5,000+ mensajes/día) usar SPF, DKIM y DMARC, ofrecer baja con un clic y mantener la tasa de spam bajo 0.3%. **SMS** cuesta dinero por mensaje: es el respaldo para lo crítico, no el canal por defecto. La bandeja in-app es la fuente de verdad."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "One place enforces preferences, opt-outs and caps: producers can't spam users by accident.", "es": "Un solo lugar aplica preferencias, bajas y límites: los productores no pueden hacer spam por accidente." },
+    { "en": "Priority and channel queues isolate failures: an SMS outage doesn't stall push.", "es": "Las colas por prioridad y canal aíslan las fallas: una caída de SMS no frena los push." },
+    { "en": "Idempotency keys make producer and worker retries safe.", "es": "Las claves de idempotencia hacen seguros los reintentos de productores y workers." }
+  ],
+  "cons": [
+    { "en": "Another hop and queue between the event and the user's phone, compared with calling the provider inline.", "es": "Un salto y una cola más entre el evento y el teléfono del usuario, comparado con llamar al proveedor directamente." },
+    { "en": "Exactly-once to a person is impossible; you choose duplicates or misses per category.", "es": "El exactly-once hacia una persona es imposible; eliges duplicados o pérdidas por categoría." },
+    { "en": "Provider quirks (token churn, collapsing, quotas, deliverability rules) need constant care.", "es": "Las particularidades de cada proveedor (tokens que cambian, colapso, cuotas, reglas de entregabilidad) exigen atención constante." }
+  ],
+  "whenToUse": {
+    "en": "Several producer teams or channels, user-facing preferences, or volumes where provider quotas, retries and deliverability start to matter.",
+    "es": "Varios equipos productores o canales, preferencias visibles para el usuario, o volúmenes donde las cuotas de los proveedores, los reintentos y la entregabilidad empiezan a importar."
+  },
+  "whenNotToUse": {
+    "en": "One app sending a few transactional emails: call the provider's API directly with its retries. A platform is overhead until there are many producers or channels.",
+    "es": "Una app que envía unos pocos emails transaccionales: llama directo a la API del proveedor con sus reintentos. Una plataforma es sobrecarga hasta que hay muchos productores o canales."
+  },
+  "numbers": [
+    { "en": "Volume: 100M users × 10 notifications/day (assumed) = 1B/day ≈ 12k/s average; campaigns spike far above.", "es": "Volumen: 100M de usuarios × 10 notificaciones/día (supuesto) = mil millones/día ≈ 12k/s en promedio; las campañas generan picos muy superiores." },
+    { "en": "Dedup keys: 1B/day × ~100 B ≈ 100 GB per day of TTL; a 7-day TTL ≈ 700 GB.", "es": "Claves de deduplicación: mil millones/día × ~100 B ≈ 100 GB por cada día de TTL; un TTL de 7 días ≈ 700 GB." },
+    { "en": "APNs: payload ≤ 4 KB (VoIP 5 KB); stores an undeliverable push up to 30 days.", "es": "APNs: payload ≤ 4 KB (VoIP 5 KB); guarda un push no entregado hasta 30 días." },
+    { "en": "FCM: TTL 0–28 days; 4 collapse keys per device; Android discards all after 100 pending non-collapsible messages.", "es": "FCM: TTL de 0 a 28 días; 4 collapse keys por dispositivo; Android descarta todo tras 100 mensajes no colapsables pendientes." },
+    { "en": "Gmail bulk senders (5,000+/day, since Feb 2024): SPF, DKIM, DMARC, one-click unsubscribe, spam rate under 0.3%.", "es": "Envíos masivos a Gmail (5,000+/día, desde feb. 2024): SPF, DKIM, DMARC, baja con un clic y tasa de spam bajo 0.3%." }
+  ],
+  "pitfalls": [
+    { "en": "One shared queue for OTPs and campaigns: a 20M-user blast puts login codes minutes behind.", "es": "Una sola cola para OTPs y campañas: un envío a 20M de usuarios deja los códigos de login minutos atrás." },
+    { "en": "Retrying every error: resending to unregistered tokens or invalid numbers burns quota and sender reputation.", "es": "Reintentar cualquier error: reenviar a tokens dados de baja o números inválidos quema cuota y reputación como remitente." },
+    { "en": "Checking preferences in each producer: one team forgets, and you message users who opted out.", "es": "Revisar las preferencias en cada productor: un equipo lo olvida y le escribes a usuarios que se dieron de baja." },
+    { "en": "Dedup keyed on a message ID generated per attempt: every retry looks new.", "es": "Deduplicar con un ID de mensaje generado en cada intento: cada reintento parece nuevo." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you make sure a user never gets the same notification twice?", "es": "¿Cómo te aseguras de que un usuario nunca reciba la misma notificación dos veces?" },
+      "a": {
+        "en": "I can't guarantee it end to end, so I shrink the window and pick the failure per category. Producers send a stable `event_id`; before sending, the worker claims `(event_id, user, channel)` with `SET NX` and a TTL longer than any retry. That removes producer and queue duplicates. The remaining window is a crash between the provider accepting and my status write: for OTPs I resend, for marketing I drop.",
+        "es": "No puedo garantizarlo de punta a punta, así que achico la ventana y elijo la falla por categoría. Los productores envían un `event_id` estable; antes de enviar, el worker reclama `(event_id, user, channel)` con `SET NX` y un TTL más largo que cualquier reintento. Eso elimina los duplicados de productores y colas. La ventana restante es una caída entre que el proveedor acepta y yo escribo el estado: en OTPs reenvío, en marketing descarto."
+      }
+    },
+    {
+      "q": { "en": "A campaign to 50M users must go out at 9 a.m. local time without hurting OTPs. How?", "es": "Una campaña a 50M de usuarios debe salir a las 9 a. m. hora local sin afectar los OTPs. ¿Cómo?" },
+      "a": {
+        "en": "I isolate it and pace it. The scheduler expands the audience in batches per time zone into a bulk queue with its own workers, so OTPs never wait behind it. Bulk workers are rate-limited below provider quotas, leaving headroom for critical traffic. Preferences, unsubscribes and caps are checked at send time, not when the campaign was built, because users opt out in between. I watch send rate, provider errors and unsubscribes live, with a kill switch.",
+        "es": "La aíslo y le doy ritmo. El scheduler expande la audiencia en lotes por zona horaria hacia una cola masiva con sus propios workers, así los OTPs nunca esperan detrás. Los workers masivos tienen un rate limit por debajo de las cuotas de los proveedores, dejando margen para el tráfico crítico. Las preferencias, bajas y límites se revisan al enviar, no al armar la campaña, porque la gente se da de baja entre medio. Vigilo en vivo la tasa de envío, los errores y las bajas, con un botón de apagado."
+      }
+    },
+    {
+      "q": { "en": "Your SMS provider starts returning 5xx. What happens?", "es": "Tu proveedor de SMS empieza a devolver 5xx. ¿Qué pasa?" },
+      "a": {
+        "en": "Workers retry with exponential backoff and jitter, so we don't hammer a struggling provider. When the error rate crosses a threshold, a circuit breaker opens and critical traffic such as OTPs fails over to the secondary provider; bulk SMS waits in its queue, or falls back to push or email when the category allows. Messages that exhaust retries go to a dead-letter queue for replay. I alert on queue age and OTP delivery latency, because that's what users feel.",
+        "es": "Los workers reintentan con backoff exponencial y jitter, para no castigar a un proveedor que ya está con problemas. Cuando la tasa de errores pasa un umbral, se abre un circuit breaker y el tráfico crítico, como los OTPs, pasa al proveedor secundario; el SMS masivo espera en su cola o cae a push o email si la categoría lo permite. Lo que agota los reintentos va a una dead-letter queue para reprocesarlo. Alerto sobre la antigüedad de la cola y la latencia de entrega de OTPs, porque eso es lo que siente el usuario."
+      }
+    }
+  ],
+  "related": ["queues-streams", "idempotency", "retries-backoff", "rate-limiting", "case-chat-system", "event-driven"],
+  "sources": [
+    { "title": "Apple — Sending notification requests to APNs", "url": "https://developer.apple.com/documentation/usernotifications/sending-notification-requests-to-apns" },
+    { "title": "Firebase — Non-collapsible and collapsible messages", "url": "https://firebase.google.com/docs/cloud-messaging/customize-messages/collapsible-message-types" },
+    { "title": "Firebase — Set the lifespan of a message", "url": "https://firebase.google.com/docs/cloud-messaging/customize-messages/setting-message-lifespan" },
+    { "title": "Google — Email sender guidelines (Gmail)", "url": "https://support.google.com/a/answer/81126" }
+  ]
+}

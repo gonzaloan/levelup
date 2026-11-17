@@ -1,0 +1,226 @@
+{
+  "id": "case-ride-hailing",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": {
+    "en": "Design: ride hailing (Uber, Lyft)",
+    "es": "Diseño: ride hailing (Uber, Lyft)"
+  },
+  "aliases": [
+    "Uber design",
+    "Lyft design",
+    "ride sharing",
+    "dispatch system",
+    "driver matching",
+    "nearby drivers",
+    "surge pricing",
+    "H3"
+  ],
+  "tldr": {
+    "en": "Drivers stream GPS every few seconds into an in-memory index of H3 cells; a request searches nearby cells, ranks drivers by road ETA, claims one atomically, and a trip state machine runs to payment.",
+    "es": "Los conductores envían su GPS cada pocos segundos a un índice en memoria de celdas H3; una solicitud busca en las celdas cercanas, ordena por ETA en ruta, reserva un conductor de forma atómica y una máquina de estados lleva el viaje hasta el pago."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: a rider requests a ride and sees price and ETA; nearby drivers get the offer; both see live location; the trip ends in payment. **Non-functional**: match within seconds, never give one driver two trips, locations fresh within seconds, a city's spike or outage stays in that city. Assume 1M online drivers at peak, each sending GPS every 4 s: **~250k writes/s**.\n\nQuestions I'd ask: one city or global? Shared rides? How fresh must locations be? Who owns pricing?\n\n### High-level design\n\n**Location service**: driver apps keep a persistent connection to gateways. Each update moves the driver in an **in-memory geo index** (driver → H3 cell, cell → drivers), sharded by region, keeping only the latest position. The raw stream also goes to a log for ETA models and analytics.\n\n**Dispatch**: take the rider's cell plus neighbor rings, filter fresh available drivers, rank by **road ETA**, not straight-line distance, and offer to the best one with a ~15 s timeout (assumption). Acceptance is a **conditional write**: AVAILABLE → ON_TRIP only if still available, so two dispatchers can't book one driver.\n\n**Trip service**: a durable **state machine**, REQUESTED → DRIVER_ASSIGNED → ARRIVED → IN_PROGRESS → COMPLETED (or CANCELLED). Each transition emits an event for notifications, ETA updates and billing.\n\n### The hard parts\n\n**Write-heavy, short-lived data.** A position is stale within seconds, so it lives in memory, not in a database; a lost shard refills from the next round of pings. Airports and stadiums create hot shards: split them finer.\n\n**Surge.** Every minute or so, compare open requests with available drivers per cell and set a multiplier, smoothed across neighbors and over time so prices don't flicker.",
+    "es": "### Requisitos\n\n**Funcionales**: un pasajero pide un viaje y ve precio y ETA; los conductores cercanos reciben la oferta; ambos ven la ubicación en vivo; el viaje termina en un pago. **No funcionales**: asignar en segundos, nunca darle dos viajes a un conductor, ubicaciones frescas en segundos y que el pico o la caída de una ciudad quede en esa ciudad. Supón 1M de conductores conectados en el pico, cada uno enviando su GPS cada 4 s: **~250k escrituras/s**.\n\nPreguntas que haría: ¿una ciudad o global? ¿Viajes compartidos? ¿Qué tan frescas deben ser las ubicaciones? ¿Quién define los precios?\n\n### Diseño de alto nivel\n\n**Servicio de ubicación**: las apps de conductores mantienen una conexión persistente con los gateways. Cada actualización mueve al conductor en un **índice geográfico en memoria** (conductor → celda H3, celda → conductores), particionado por región, que guarda solo la última posición. El stream crudo también va a un log para los modelos de ETA y la analítica.\n\n**Despacho**: toma la celda del pasajero más los anillos vecinos, filtra conductores disponibles con datos frescos, los ordena por **ETA en ruta**, no por distancia en línea recta, y le ofrece el viaje al mejor con un timeout de ~15 s (supuesto). Aceptar es una **escritura condicional**: AVAILABLE → ON_TRIP solo si sigue disponible, así dos despachadores no pueden reservar al mismo conductor.\n\n**Servicio de viajes**: una **máquina de estados** durable, REQUESTED → DRIVER_ASSIGNED → ARRIVED → IN_PROGRESS → COMPLETED (o CANCELLED). Cada transición emite un evento para notificaciones, ETAs y cobro.\n\n### Las partes difíciles\n\n**Datos con muchas escrituras y vida corta.** Una posición queda vieja en segundos, así que vive en memoria y no en una base de datos; un shard perdido se rellena con la siguiente ronda de pings. Aeropuertos y estadios crean shards calientes: divídelos más fino.\n\n**Tarifa dinámica (surge).** Cada minuto o algo así, compara solicitudes abiertas con conductores disponibles por celda y fija un multiplicador, suavizado entre celdas vecinas y en el tiempo para que los precios no parpadeen."
+  },
+  "keyPoints": [
+    {
+      "en": "Assume 1M online drivers × one ping per 4 s ≈ **250k writes/s**: keep only the latest position, in memory.",
+      "es": "Supón 1M de conductores × un ping cada 4 s ≈ **250k escrituras/s**: guarda solo la última posición, en memoria."
+    },
+    {
+      "en": "Index drivers by **H3 cell**; a request searches its cell plus neighbor rings, then ranks by road ETA.",
+      "es": "Indexa a los conductores por **celda H3**; una solicitud busca en su celda y los anillos vecinos, y ordena por ETA en ruta."
+    },
+    {
+      "en": "Offer one driver at a time; acceptance is a **conditional write**, so a driver never gets two trips.",
+      "es": "Ofrece a un conductor a la vez; aceptar es una **escritura condicional**, así un conductor nunca recibe dos viajes."
+    },
+    {
+      "en": "A durable **trip state machine** emits an event per transition for notifications, ETA and billing.",
+      "es": "Una **máquina de estados** durable del viaje emite un evento por transición para notificaciones, ETA y cobro."
+    },
+    {
+      "en": "Surge compares demand with supply per cell, smoothed across neighbors and over time.",
+      "es": "El surge compara demanda con oferta por celda, suavizado entre celdas vecinas y en el tiempo."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  D[Driver app] -->|GPS every 4 s| G[Location gateway]\n  G --> L[(\"In-memory geo index<br/>H3 cell to drivers\")]\n  G --> K[Location stream]\n  R[Rider app] -->|request ride| M[Dispatch service]\n  M -->|cell + neighbor rings| L\n  M -->|rank by road ETA| E[ETA service]\n  M -->|offer with timeout| D\n  D -->|accept| A{\"Driver still<br/>available?\"}\n  A -->|yes, atomic claim| T[(Trip state machine)]\n  A -.->|no, next driver| M\n  T -->|events| N[Notifications + billing]\n  K --> S[Surge per cell]\n  S -.->|multiplier| M",
+    "caption": {
+      "en": "Locations flow into an in-memory index; dispatch reads it, offers one driver at a time, and only an atomic claim creates the trip.",
+      "es": "Las ubicaciones llegan a un índice en memoria; el despacho lo lee, ofrece a un conductor a la vez y solo una reserva atómica crea el viaje."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "H3 cell index and an atomic driver claim",
+      "es": "Índice por celda H3 y reserva atómica del conductor"
+    },
+    "source": "import h3, redis\n\nr = redis.Redis()          # one Redis per region shard\nRES = 9                    # ~0.105 km² hexagons (H3 resolution table)\n\ndef update_location(driver: str, lat: float, lng: float) -> None:\n    cell = h3.latlng_to_cell(lat, lng, RES)\n    old = r.hget(\"driver:cell\", driver)\n    pipe = r.pipeline()\n    if old and old.decode() != cell:\n        pipe.srem(f\"cell:{old.decode()}\", driver)    # moved: leave the old cell\n    pipe.sadd(f\"cell:{cell}\", driver)\n    pipe.hset(\"driver:cell\", driver, cell)\n    pipe.set(f\"fresh:{driver}\", 1, ex=15)          # stale after ~3 missed pings\n    pipe.execute()\n\ndef nearby(lat: float, lng: float, k: int = 2) -> list[str]:\n    cells = h3.grid_disk(h3.latlng_to_cell(lat, lng, RES), k)  # 19 cells for k=2\n    ids = {d.decode() for c in cells for d in r.smembers(f\"cell:{c}\")}\n    return [d for d in ids if r.exists(f\"fresh:{d}\")]\n\n# Compare-and-set in one Lua call: only one dispatcher can win a driver\nCLAIM = r.register_script(\"\"\"\nif redis.call('GET', KEYS[1]) == 'AVAILABLE' then\n  redis.call('SET', KEYS[1], 'ON_TRIP:' .. ARGV[1])\n  return 1\nend\nreturn 0\"\"\")\n\ndef claim(driver: str, trip_id: str) -> bool:\n    return CLAIM(keys=[f\"state:{driver}\"], args=[trip_id]) == 1"
+  },
+  "example": {
+    "en": "A rider at a café requests a ride. Dispatch takes her res-9 cell plus two neighbor rings (19 cells, ~2 km²) and finds 12 drivers with fresh pings. The ETA service ranks them by road: driver 3 is 2 minutes away; driver 5 is closer in a straight line but across a river, 9 minutes. Driver 3 gets the offer, declines, and driver 8 accepts. The claim flips driver 8 from AVAILABLE to ON_TRIP, the trip moves to DRIVER_ASSIGNED, and both apps get the event.",
+    "es": "Una pasajera en un café pide un viaje. El despacho toma su celda de resolución 9 más dos anillos vecinos (19 celdas, ~2 km²) y encuentra 12 conductores con pings frescos. El servicio de ETA los ordena por ruta: el conductor 3 está a 2 minutos; el 5 está más cerca en línea recta, pero cruzando un río, a 9 minutos. El conductor 3 recibe la oferta y la rechaza, y el 8 acepta. La reserva cambia al 8 de AVAILABLE a ON_TRIP, el viaje pasa a DRIVER_ASSIGNED y ambas apps reciben el evento."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Location ingestion and the geo index",
+        "es": "Ingesta de ubicaciones e índice geográfico"
+      },
+      "body": {
+        "en": "Pings arrive over persistent connections (WebSocket or gRPC streams) to stateless gateways, which update the index shard that owns the region. The index holds driver → cell and cell → drivers, plus a TTL so silent drivers drop out. Uber built H3 because hexagons have one distance to every neighbor and reduce error as people move; geohash cells are rectangles, so diagonal neighbors sit farther away. Either way, search neighbor cells, not just the rider's. Redis GEO is an alternative: a sorted set of 52-bit geohashes queried with GEOSEARCH.",
+        "es": "Los pings llegan por conexiones persistentes (WebSocket o streams gRPC) a gateways sin estado, que actualizan el shard del índice dueño de la región. El índice guarda conductor → celda y celda → conductores, más un TTL para que los conductores en silencio salgan. Uber creó H3 porque los hexágonos tienen una sola distancia a cada vecino y reducen el error cuando la gente se mueve; las celdas de geohash son rectángulos, así que los vecinos en diagonal quedan más lejos. En ambos casos busca en las celdas vecinas, no solo en la del pasajero. Redis GEO es una alternativa: un sorted set de geohashes de 52 bits consultado con GEOSEARCH."
+      }
+    },
+    {
+      "title": {
+        "en": "Matching without double-booking",
+        "es": "Asignar sin doble reserva"
+      },
+      "body": {
+        "en": "Rank candidates by road ETA from a routing service, adjusted for direction of travel and acceptance likelihood. Offer to one driver at a time by marking them OFFERED with a lease that expires on timeout, so no one else offers them meanwhile. Acceptance is a compare-and-set on the driver's state; the losing dispatcher moves to its next candidate. Make accept idempotent on (driver, trip), so a double tap or a retried request doesn't fail or double-assign. At high load, matching a batch of riders and drivers every few seconds can beat greedy nearest-first.",
+        "es": "Ordena a los candidatos por ETA en ruta desde un servicio de rutas, ajustado por sentido de circulación y probabilidad de aceptación. Ofrece a un conductor a la vez marcándolo como OFFERED con un lease que vence con el timeout, así nadie más se lo ofrece mientras tanto. Aceptar es un compare-and-set sobre el estado del conductor; el despachador que pierde pasa a su siguiente candidato. Haz que aceptar sea idempotente por (conductor, viaje), así un doble toque o un reintento no falla ni asigna dos veces. Con mucha carga, asignar un lote de pasajeros y conductores cada pocos segundos puede superar a elegir siempre el más cercano."
+      }
+    },
+    {
+      "title": {
+        "en": "Trip state machine and surge",
+        "es": "Máquina de estados del viaje y surge"
+      },
+      "body": {
+        "en": "The trip service owns every transition and validates it server-side with a version check, so a stale client can't move COMPLETED back to IN_PROGRESS. Each transition is an event (outbox pattern), consumed by notifications, ETA, billing and the payment system when the trip completes. Surge runs on the streams: per cell (say res 8, ~0.74 km²) every minute or so, demand versus available supply maps to a multiplier, smoothed with neighbors and the previous value. The quoted price is locked into the trip, so the rider pays what they accepted.",
+        "es": "El servicio de viajes es dueño de cada transición y la valida en el servidor con un chequeo de versión, así un cliente atrasado no puede volver de COMPLETED a IN_PROGRESS. Cada transición es un evento (patrón outbox) que consumen notificaciones, ETA, cobro y el sistema de pagos cuando el viaje termina. El surge corre sobre los streams: por celda (por ejemplo, resolución 8, ~0.74 km²) cada minuto o algo así, la demanda frente a la oferta disponible da un multiplicador, suavizado con las vecinas y con el valor anterior. El precio cotizado queda fijo en el viaje, así el pasajero paga lo que aceptó."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "A cell-keyed in-memory index turns \"drivers near me\" into a handful of set lookups.",
+      "es": "Un índice en memoria por celda convierte \"conductores cerca de mí\" en unas pocas consultas a sets."
+    },
+    {
+      "en": "An atomic claim on driver state makes double-booking impossible, whatever the race.",
+      "es": "Una reserva atómica sobre el estado del conductor hace imposible la doble reserva, sea cual sea la carrera."
+    },
+    {
+      "en": "Region sharding isolates cities: one city's spike or outage stays local.",
+      "es": "Particionar por región aísla las ciudades: el pico o la caída de una ciudad queda en ella."
+    }
+  ],
+  "cons": [
+    {
+      "en": "The index is volatile: losing a shard blanks a region until the next pings arrive.",
+      "es": "El índice es volátil: perder un shard deja en blanco una región hasta que llegan los siguientes pings."
+    },
+    {
+      "en": "Hot spots like airports and stadiums overload one shard or cell.",
+      "es": "Los puntos calientes, como aeropuertos y estadios, sobrecargan un shard o una celda."
+    },
+    {
+      "en": "Sequential offers add the timeout per decline; batched matching is better but more complex.",
+      "es": "Las ofertas secuenciales suman el timeout por cada rechazo; asignar por lotes es mejor pero más complejo."
+    }
+  ],
+  "whenToUse": {
+    "en": "Two-sided real-time marketplaces with moving supply: ride hailing, delivery couriers, field-service dispatch.",
+    "es": "Marketplaces de dos lados en tiempo real con oferta en movimiento: ride hailing, repartidores, despacho de técnicos en terreno."
+  },
+  "whenNotToUse": {
+    "en": "Static locations (store finders, real estate): a database spatial index like PostGIS is enough, with no streaming index.",
+    "es": "Ubicaciones fijas (buscadores de tiendas, inmuebles): basta un índice espacial en la base de datos, como PostGIS, sin índice en streaming."
+  },
+  "numbers": [
+    {
+      "en": "Assume 1M online drivers × 1 ping / 4 s ≈ 250k location writes/s at peak.",
+      "es": "Supón 1M de conductores conectados × 1 ping cada 4 s ≈ 250k escrituras de ubicación/s en el pico."
+    },
+    {
+      "en": "H3 average cell: res 8 ≈ 0.74 km² (edge ~530 m); res 9 ≈ 0.105 km² (edge ~200 m).",
+      "es": "Celda H3 promedio: resolución 8 ≈ 0.74 km² (lado ~530 m); resolución 9 ≈ 0.105 km² (lado ~200 m)."
+    },
+    {
+      "en": "A hex disk of radius k covers 1 + 3k(k+1) cells: 7 for k = 1, 19 for k = 2.",
+      "es": "Un disco hexagonal de radio k cubre 1 + 3k(k+1) celdas: 7 para k = 1 y 19 para k = 2."
+    },
+    {
+      "en": "Rule of thumb: one Redis instance handles ~100k simple ops/s, so shard the geo index by region.",
+      "es": "Regla práctica: una instancia de Redis maneja ~100k operaciones simples/s, así que particiona el índice por región."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Searching only the rider's own cell: a driver 50 m away across the edge is invisible.",
+      "es": "Buscar solo en la celda del pasajero: un conductor a 50 m al otro lado del borde queda invisible."
+    },
+    {
+      "en": "Ranking by straight-line distance: rivers and one-way streets make the nearest driver the slowest.",
+      "es": "Ordenar por distancia en línea recta: los ríos y las calles de un sentido hacen que el más cercano sea el más lento."
+    },
+    {
+      "en": "Writing every GPS ping to the primary database: 250k writes/s of data stale in seconds.",
+      "es": "Escribir cada ping de GPS en la base principal: 250k escrituras/s de datos que quedan viejos en segundos."
+    },
+    {
+      "en": "Trusting the client's trip state: validate every transition on the server with a version check.",
+      "es": "Confiar en el estado del viaje que manda el cliente: valida cada transición en el servidor con un chequeo de versión."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Why not store driver locations in PostgreSQL with PostGIS?",
+        "es": "¿Por qué no guardar las ubicaciones en PostgreSQL con PostGIS?"
+      },
+      "a": {
+        "en": "PostGIS is great for static points, but this data is write-heavy and short-lived: ~250k updates/s, each obsolete 4 s later, and every one would rewrite an index entry and the WAL. I keep only the latest position in memory, keyed by H3 cell and sharded by region, and send the raw stream to a log for history and ETA training. Losing a shard costs seconds, because drivers resend. PostGIS still fits trip history and geofences.",
+        "es": "PostGIS es excelente para puntos fijos, pero estos datos tienen muchas escrituras y vida corta: ~250k actualizaciones/s, cada una obsoleta 4 s después, y cada una reescribiría una entrada de índice y el WAL. Guardo solo la última posición en memoria, por celda H3 y particionada por región, y mando el stream crudo a un log para el historial y el entrenamiento de ETAs. Perder un shard cuesta segundos, porque los conductores reenvían. PostGIS sigue sirviendo para el historial de viajes y las geocercas."
+      }
+    },
+    {
+      "q": {
+        "en": "How do you guarantee a driver never gets two trips?",
+        "es": "¿Cómo garantizas que un conductor nunca reciba dos viajes?"
+      },
+      "a": {
+        "en": "The driver's state is the single source of truth, and acceptance is a compare-and-set: AVAILABLE → ON_TRIP only if still AVAILABLE. The losing dispatcher just offers its next candidate. To avoid wasted offers, I also mark a driver OFFERED with a ~15 s lease, so only one offer is live at a time. The accept call is idempotent on (driver, trip), so a retried tap neither fails nor assigns twice.",
+        "es": "El estado del conductor es la única fuente de verdad, y aceptar es un compare-and-set: AVAILABLE → ON_TRIP solo si sigue AVAILABLE. El despachador que pierde simplemente ofrece a su siguiente candidato. Para no desperdiciar ofertas, además marco al conductor como OFFERED con un lease de ~15 s, así hay una sola oferta viva a la vez. La llamada de aceptar es idempotente por (conductor, viaje), así un toque reintentado ni falla ni asigna dos veces."
+      }
+    },
+    {
+      "q": {
+        "en": "How would you compute surge pricing?",
+        "es": "¿Cómo calcularías la tarifa dinámica?"
+      },
+      "a": {
+        "en": "Per H3 cell, say resolution 8, every minute or so: open requests and app opens versus available drivers, computed from the request and location streams. A pricing model maps that ratio to a multiplier, smoothed with neighboring cells and the previous value, so prices don't jump at a cell edge or flicker. The quote is locked into the trip for a short window, so the rider pays what they accepted.",
+        "es": "Por celda H3, por ejemplo de resolución 8, cada minuto o algo así: solicitudes abiertas y aperturas de la app frente a conductores disponibles, calculado desde los streams de solicitudes y ubicaciones. Un modelo de precios convierte esa proporción en un multiplicador, suavizado con las celdas vecinas y el valor anterior, para que los precios no salten en un borde de celda ni parpadeen. La cotización queda fija en el viaje por un rato corto, así el pasajero paga lo que aceptó."
+      }
+    }
+  ],
+  "related": [
+    "geospatial-indexing",
+    "realtime-delivery",
+    "stream-processing",
+    "distributed-locks",
+    "sharding",
+    "case-payment-system"
+  ],
+  "sources": [
+    {
+      "title": "Uber Engineering — H3: Uber's Hexagonal Hierarchical Spatial Index (2018)",
+      "url": "https://www.uber.com/blog/h3/"
+    },
+    {
+      "title": "H3 — Tables of cell statistics across resolutions",
+      "url": "https://h3geo.org/docs/core-library/restable"
+    },
+    {
+      "title": "Redis — GEOSEARCH",
+      "url": "https://redis.io/docs/latest/commands/geosearch/"
+    }
+  ]
+}

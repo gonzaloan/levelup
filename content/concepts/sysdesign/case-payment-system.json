@@ -1,0 +1,234 @@
+{
+  "id": "case-payment-system",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": {
+    "en": "Design: payment system",
+    "es": "Diseño: sistema de pagos"
+  },
+  "aliases": [
+    "payments design",
+    "checkout payments",
+    "ledger",
+    "double-entry bookkeeping",
+    "idempotency key",
+    "PSP integration",
+    "reconciliation",
+    "Stripe-like"
+  ],
+  "tldr": {
+    "en": "Record the payment intent, call the PSP with an idempotency key, and post the outcome as balanced double-entry ledger entries; webhooks and daily reconciliation against PSP reports catch whatever the synchronous path missed.",
+    "es": "Registra la intención de pago, llama al PSP con una clave de idempotencia y asienta el resultado como entradas balanceadas de un ledger de partida doble; los webhooks y la conciliación diaria con los reportes del PSP atrapan lo que el camino síncrono no vio."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: charge a customer's card through a payment service provider (PSP) such as Stripe or Adyen, support refunds and payouts to sellers, report balances. **Non-functional**: never charge twice or lose a charge, every cent auditable, card numbers never touch our servers. Assume 10M payments/day ≈ ~115/s average, ~10× at peak.\n\nQuestions I'd ask: marketplace with payouts? Which currencies and payment methods? Do we keep cards on file? What does finance need for settlement and reporting?\n\n### High-level design\n\nThe browser enters card details in **PSP-hosted fields** and we receive a token, which keeps PCI scope small. `POST /payments` carries an `Idempotency-Key`; the payment service stores a **payment** row (PENDING) *before* any external call, then calls the PSP with the same key. The outcome moves a state machine (PENDING → SUCCEEDED or FAILED) and is posted to the **ledger**: append-only, **double-entry**, where each transaction's entries sum to zero. Balances are sums of entries; mistakes are fixed with new reversing entries, never edits. Amounts are integers in minor units (cents). PSP **webhooks** settle anything still pending.\n\n### The hard parts\n\n**Exactly-once is an illusion.** Networks deliver at least once; you get *effectively once* from idempotency at every hop. The client key dedups our API, the same key dedups the PSP call, processed event IDs dedup webhooks, and state changes are conditional (PENDING → SUCCEEDED happens once). A timeout means *unknown*, not failed: retry with the same key or ask the PSP; never start a fresh attempt.\n\n**Reconciliation.** Daily, match every ledger entry against the PSP settlement report and the bank statement. Mismatches, such as a charge with no ledger entry, an amount that differs or a payment stuck in PENDING, go to a queue for automatic fixes or finance review.",
+    "es": "### Requisitos\n\n**Funcionales**: cobrar la tarjeta de un cliente a través de un proveedor de pagos (PSP) como Stripe o Adyen, soportar reembolsos y pagos a vendedores, y reportar saldos. **No funcionales**: nunca cobrar dos veces ni perder un cobro, cada centavo auditable y los números de tarjeta nunca pasan por nuestros servidores. Supón 10M de pagos/día ≈ ~115/s en promedio, ~10× en el pico.\n\nPreguntas que haría: ¿marketplace con pagos a vendedores? ¿Qué monedas y medios de pago? ¿Guardamos tarjetas? ¿Qué necesita finanzas para liquidación y reportes?\n\n### Diseño de alto nivel\n\nEl navegador captura la tarjeta en **campos alojados por el PSP** y nosotros recibimos un token, lo que mantiene chico el alcance de PCI. `POST /payments` lleva un `Idempotency-Key`; el servicio de pagos guarda una fila de **pago** (PENDING) *antes* de cualquier llamada externa y luego llama al PSP con la misma clave. El resultado mueve una máquina de estados (PENDING → SUCCEEDED o FAILED) y se asienta en el **ledger**: solo de agregado, de **partida doble**, donde las entradas de cada transacción suman cero. Los saldos son sumas de entradas; los errores se corrigen con entradas de reverso nuevas, nunca editando. Los montos son enteros en unidades menores (centavos). Los **webhooks** del PSP resuelven lo que siga pendiente.\n\n### Las partes difíciles\n\n**Exactly-once es una ilusión.** Las redes entregan al menos una vez; logras un *efectivamente una vez* con idempotencia en cada salto. La clave del cliente deduplica nuestra API, la misma clave deduplica la llamada al PSP, los IDs de evento procesados deduplican los webhooks, y los cambios de estado son condicionales (PENDING → SUCCEEDED ocurre una vez). Un timeout significa *desconocido*, no fallido: reintenta con la misma clave o consulta al PSP; nunca inicies un intento nuevo.\n\n**Conciliación.** Cada día, cruza cada entrada del ledger con el reporte de liquidación del PSP y el extracto bancario. Las diferencias, como un cobro sin entrada en el ledger, un monto distinto o un pago atascado en PENDING, van a una cola para corrección automática o revisión de finanzas."
+  },
+  "keyPoints": [
+    {
+      "en": "Card data goes straight to the PSP through **hosted fields**; you store only tokens, keeping PCI scope small.",
+      "es": "Los datos de tarjeta van directo al PSP mediante **campos alojados**; tú guardas solo tokens y el alcance de PCI queda chico."
+    },
+    {
+      "en": "Persist the payment before calling the PSP, and reuse one **idempotency key** for every retry.",
+      "es": "Guarda el pago antes de llamar al PSP y reutiliza una sola **clave de idempotencia** en cada reintento."
+    },
+    {
+      "en": "The ledger is append-only **double-entry**: each transaction sums to zero; fix mistakes with reversing entries.",
+      "es": "El ledger es de **partida doble** y solo de agregado: cada transacción suma cero; los errores se corrigen con entradas de reverso."
+    },
+    {
+      "en": "A timeout is *unknown*, not failed: retry with the same key or ask the PSP before deciding.",
+      "es": "Un timeout es *desconocido*, no fallido: reintenta con la misma clave o consulta al PSP antes de decidir."
+    },
+    {
+      "en": "Daily **reconciliation** against PSP and bank reports catches what webhooks and retries missed.",
+      "es": "La **conciliación** diaria con los reportes del PSP y del banco atrapa lo que los webhooks y los reintentos no vieron."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  B[\"Browser<br/>PSP hosted fields\"] -->|card details| PSP[PSP API]\n  B -->|\"token + Idempotency-Key\"| A[Payments API]\n  A --> I[(\"Payments table<br/>state machine\")]\n  A -->|same key| PSP\n  PSP -->|result| A\n  A --> L[(\"Double-entry ledger<br/>append-only\")]\n  PSP -.->|webhook, at least once| W[Webhook handler]\n  W -->|dedup by event ID| I\n  W --> L\n  S[PSP settlement report] --> R[Daily reconciliation]\n  L --> R\n  R -->|mismatches| Q[Finance review queue]",
+    "caption": {
+      "en": "Card data goes straight to the PSP; every hop dedups by key or event ID, and reconciliation checks the ledger against the PSP's records.",
+      "es": "Los datos de tarjeta van directo al PSP; cada salto deduplica por clave o ID de evento, y la conciliación contrasta el ledger con los registros del PSP."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Idempotent charge and a balanced ledger posting",
+      "es": "Cobro idempotente y un asiento balanceado en el ledger"
+    },
+    "source": "# Amounts are integers in minor units (cents); UNIQUE(idem_key) on payments.\ndef create_payment(db, psp, key: str, order_id: str, amount: int, token: str) -> dict:\n    with db.tx():\n        found = db.one(\"SELECT id, state FROM payments WHERE idem_key = %s\", key)\n        if found:\n            return found                      # client retry: same answer, no new charge\n        pay = db.one(\"INSERT INTO payments (idem_key, order_id, amount, state) \"\n                     \"VALUES (%s, %s, %s, 'PENDING') RETURNING id, state\", key, order_id, amount)\n    try:\n        res = psp.charge(amount, token, idempotency_key=key)   # same key on every retry\n    except TimeoutError:\n        return pay                            # unknown, not failed: webhook or poll settles it\n    return settle(db, pay[\"id\"], res)\n\ndef settle(db, pay_id: int, res) -> dict:\n    with db.tx():\n        state = \"SUCCEEDED\" if res.ok else \"FAILED\"\n        n = db.run(\"UPDATE payments SET state = %s WHERE id = %s AND state = 'PENDING'\",\n                   state, pay_id)\n        if n == 1 and res.ok:                 # first writer wins: API reply or webhook\n            commission = res.amount // 10     # assumed 10% marketplace take\n            post(db, pay_id, [                # debits +, credits -\n                (\"psp_receivable\", res.amount - res.fee),\n                (\"psp_fee_expense\", res.fee),\n                (\"seller_payable\", -(res.amount - commission)),\n                (\"platform_revenue\", -commission),\n            ])\n    return db.one(\"SELECT id, state FROM payments WHERE id = %s\", pay_id)\n\ndef post(db, pay_id: int, entries: list[tuple[str, int]]) -> None:\n    assert sum(amount for _, amount in entries) == 0, \"unbalanced journal entry\"\n    for account, amount in entries:\n        db.run(\"INSERT INTO ledger_entries (payment_id, account, amount) \"\n               \"VALUES (%s, %s, %s)\", pay_id, account, amount)"
+  },
+  "example": {
+    "en": "A $100 order on a marketplace that takes 10%, with an assumed PSP fee of $3.20. The customer double-clicks *Pay*: both requests carry key `chk_8812`, and the second gets the same PENDING payment back. The PSP call times out, so the payment stays PENDING. Two minutes later the success webhook flips it to SUCCEEDED and posts four entries: PSP receivable +$96.80, fee expense +$3.20, seller payable −$90.00, revenue −$10.00, which sum to zero. The webhook arrives again; its event ID is already processed, so it's ignored. Next morning, reconciliation matches $96.80 in the PSP settlement report.",
+    "es": "Un pedido de $100 en un marketplace que se queda con el 10%, con una comisión supuesta del PSP de $3.20. El cliente hace doble clic en *Pagar*: ambas peticiones llevan la clave `chk_8812` y la segunda recibe el mismo pago PENDING. La llamada al PSP da timeout, así que el pago sigue PENDING. Dos minutos después, el webhook de éxito lo pasa a SUCCEEDED y asienta cuatro entradas: cuenta por cobrar al PSP +$96.80, gasto por comisión +$3.20, deuda con el vendedor −$90.00 e ingreso −$10.00, que suman cero. El webhook llega otra vez; su ID de evento ya se procesó, así que se ignora. A la mañana siguiente, la conciliación encuentra los $96.80 en el reporte de liquidación del PSP."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Idempotency end to end",
+        "es": "Idempotencia de punta a punta"
+      },
+      "body": {
+        "en": "The client generates one key per checkout attempt (a UUID) and reuses it on every retry. The server stores it with a UNIQUE constraint and a hash of the request, and replays the stored result; same key with different parameters is an error, as in Stripe's API. The same key goes to the PSP: Stripe saves the first response for a key, including 500 errors, and may prune keys after 24 h, so your own table keeps them longer. Webhooks can repeat and arrive out of order: store processed event IDs and never infer order from timestamps.",
+        "es": "El cliente genera una clave por intento de checkout (un UUID) y la reutiliza en cada reintento. El servidor la guarda con una restricción UNIQUE y un hash de la petición, y devuelve el resultado guardado; la misma clave con parámetros distintos es un error, como en la API de Stripe. La misma clave va al PSP: Stripe guarda la primera respuesta de cada clave, incluidos los errores 500, y puede borrar las claves pasadas 24 h, así que tu propia tabla las conserva más tiempo. Los webhooks pueden repetirse y llegar desordenados: guarda los IDs de evento procesados y nunca deduzcas el orden por los timestamps."
+      }
+    },
+    {
+      "title": {
+        "en": "The double-entry ledger",
+        "es": "El ledger de partida doble"
+      },
+      "body": {
+        "en": "Accounts model where money sits: PSP receivable, seller payable, fee expense, platform revenue. A journal entry moves money between at least two accounts and must sum to zero, so a bug can't create or destroy money silently. Entries are append-only: Square's Books service fixes mistakes by writing a new correcting entry, never by editing. Balances are derived sums, cached per account with a version for fast reads. Store amounts as integers in minor units with a currency: Stripe takes 1099 for $10.99 and 500 for ¥500, since JPY has no decimals.",
+        "es": "Las cuentas modelan dónde está el dinero: por cobrar al PSP, deuda con vendedores, gasto por comisiones, ingresos de la plataforma. Un asiento mueve dinero entre al menos dos cuentas y debe sumar cero, así un bug no puede crear ni destruir dinero en silencio. Las entradas solo se agregan: el servicio Books de Square corrige errores escribiendo una entrada nueva que compensa, nunca editando. Los saldos son sumas derivadas, cacheadas por cuenta con una versión para leer rápido. Guarda los montos como enteros en unidades menores junto con la moneda: Stripe recibe 1099 para $10.99 y 500 para ¥500, porque el yen no tiene decimales."
+      }
+    },
+    {
+      "title": {
+        "en": "Reconciliation and the unknown state",
+        "es": "Conciliación y el estado desconocido"
+      },
+      "body": {
+        "en": "Run a three-way match daily: ledger versus PSP settlement report versus bank statement. Each mismatch type has a playbook: charged at the PSP but missing here (a lost webhook) is posted from PSP data; recorded here but unknown to the PSP is voided; amounts that differ point to fees or FX; PENDING older than a threshold triggers a status query. Hold seller payouts until their payments reconcile. Track the unreconciled amount as a metric with an alert; it is the system's real correctness SLO.",
+        "es": "Haz un cruce de tres vías cada día: ledger contra reporte de liquidación del PSP contra extracto bancario. Cada tipo de diferencia tiene su playbook: cobrado en el PSP pero ausente aquí (un webhook perdido) se asienta con los datos del PSP; registrado aquí pero desconocido para el PSP se anula; los montos distintos apuntan a comisiones o tipo de cambio; un PENDING más viejo que un umbral dispara una consulta de estado. Retén los pagos a vendedores hasta que sus cobros concilien. Mide el monto sin conciliar como métrica con alerta: es el verdadero SLO de corrección del sistema."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Idempotency at every hop makes retries safe, so the system can retry aggressively.",
+      "es": "La idempotencia en cada salto hace seguros los reintentos, así el sistema puede reintentar sin miedo."
+    },
+    {
+      "en": "An append-only double-entry ledger makes every cent traceable and unbalanced bugs visible.",
+      "es": "Un ledger de partida doble solo de agregado hace trazable cada centavo y visibles los bugs que desbalancean."
+    },
+    {
+      "en": "Hosted fields keep card data, and most PCI controls, out of your systems.",
+      "es": "Los campos alojados dejan fuera de tus sistemas los datos de tarjeta y la mayoría de los controles de PCI."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Asynchronous outcomes (3-D Secure, webhooks) force a state machine and a pending UX.",
+      "es": "Los resultados asíncronos (3-D Secure, webhooks) obligan a tener una máquina de estados y una UX de pendiente."
+    },
+    {
+      "en": "Reconciliation is permanent operational work with finance in the loop.",
+      "es": "La conciliación es trabajo operativo permanente con finanzas en el circuito."
+    },
+    {
+      "en": "Ledger writes need strong consistency per account, which caps throughput on hot accounts.",
+      "es": "Las escrituras al ledger necesitan consistencia fuerte por cuenta, lo que limita el throughput de las cuentas calientes."
+    }
+  ],
+  "whenToUse": {
+    "en": "Any product that moves money: checkout, marketplaces with payouts, subscriptions, wallets.",
+    "es": "Cualquier producto que mueva dinero: checkout, marketplaces con pagos a vendedores, suscripciones, billeteras."
+  },
+  "whenNotToUse": {
+    "en": "A simple single-merchant store: use the PSP's hosted checkout and dashboard. Build your own ledger when you hold funds, split payments or need audit-grade reporting.",
+    "es": "Una tienda simple de un solo comercio: usa el checkout alojado y el panel del PSP. Construye tu propio ledger cuando custodias fondos, divides pagos o necesitas reportes de nivel auditoría."
+  },
+  "numbers": [
+    {
+      "en": "Assume 10M payments/day ≈ ~115/s average; plan ~10× for peak sales events.",
+      "es": "Supón 10M de pagos/día ≈ ~115/s en promedio; planifica ~10× para eventos de ventas pico."
+    },
+    {
+      "en": "Stripe API v1 (Nov 2026): idempotency keys up to 255 chars, prunable after ≥ 24 h.",
+      "es": "API v1 de Stripe (nov. 2026): claves de idempotencia de hasta 255 caracteres, que pueden borrarse pasadas ≥ 24 h."
+    },
+    {
+      "en": "Stripe retries webhooks for up to 3 days in live mode, with no ordering guarantee.",
+      "es": "Stripe reintenta los webhooks hasta por 3 días en modo live, sin garantía de orden."
+    },
+    {
+      "en": "Handling raw card numbers can mean 300+ PCI DSS security controls (Stripe's guide).",
+      "es": "Manejar números de tarjeta sin tokenizar puede implicar más de 300 controles de seguridad de PCI DSS (guía de Stripe)."
+    },
+    {
+      "en": "Ledger volume: 10M payments × ~4 entries ≈ 40M rows/day, ~15B/year (assumption).",
+      "es": "Volumen del ledger: 10M de pagos × ~4 entradas ≈ 40M de filas/día, ~15 mil millones/año (supuesto)."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Floats for money: 0.1 + 0.2 ≠ 0.3. Use integer minor units plus a currency code.",
+      "es": "Floats para dinero: 0.1 + 0.2 ≠ 0.3. Usa enteros en unidades menores más un código de moneda."
+    },
+    {
+      "en": "A new idempotency key per retry: every retry becomes a new charge.",
+      "es": "Una clave de idempotencia nueva por reintento: cada reintento se vuelve un cobro nuevo."
+    },
+    {
+      "en": "Treating a PSP timeout as a failure and letting the customer pay again.",
+      "es": "Tratar un timeout del PSP como falla y dejar que el cliente pague otra vez."
+    },
+    {
+      "en": "Updating balances in place with no entries: no audit trail, and no way to find the bug.",
+      "es": "Actualizar saldos en el lugar sin entradas: sin rastro de auditoría y sin forma de encontrar el bug."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "How do you guarantee a customer is never charged twice?",
+        "es": "¿Cómo garantizas que a un cliente nunca se le cobre dos veces?"
+      },
+      "a": {
+        "en": "I can't get exactly-once delivery, so I make every effect idempotent. The client sends one key per checkout attempt; my API stores it under a unique constraint and replays the stored result. I pass the same key to the PSP, so its retries collapse too. Webhooks dedup on event ID, and the PENDING → SUCCEEDED transition is conditional, so it happens once. Reconciliation then catches anything that slipped through.",
+        "es": "No puedo lograr una entrega exactamente una vez, así que hago idempotente cada efecto. El cliente manda una clave por intento de checkout; mi API la guarda con una restricción única y devuelve el resultado guardado. Paso la misma clave al PSP, así sus reintentos también colapsan. Los webhooks se deduplican por ID de evento, y la transición PENDING → SUCCEEDED es condicional, así ocurre una sola vez. Después, la conciliación atrapa lo que se haya escapado."
+      }
+    },
+    {
+      "q": {
+        "en": "Why a double-entry ledger instead of a balance column?",
+        "es": "¿Por qué un ledger de partida doble en lugar de una columna de saldo?"
+      },
+      "a": {
+        "en": "A balance column tells you the number, not why. In double-entry, every movement is two or more entries that sum to zero, so a bug can't create or lose money unnoticed: unbalanced postings are rejected. Balances are derived from entries, which gives a full audit trail, and corrections are new reversing entries. It also maps line by line to PSP and bank reports, which makes reconciliation possible.",
+        "es": "Una columna de saldo te dice el número, no el porqué. En partida doble, cada movimiento son dos o más entradas que suman cero, así un bug no puede crear ni perder dinero sin que se note: los asientos desbalanceados se rechazan. Los saldos se derivan de las entradas, lo que da un rastro de auditoría completo, y las correcciones son entradas de reverso nuevas. Además se corresponde línea a línea con los reportes del PSP y del banco, lo que hace posible la conciliación."
+      }
+    },
+    {
+      "q": {
+        "en": "The PSP is down for 20 minutes. What happens?",
+        "es": "El PSP está caído durante 20 minutos. ¿Qué pasa?"
+      },
+      "a": {
+        "en": "Calls fail fast behind a circuit breaker, and affected payments stay PENDING, not FAILED. If I have a second PSP, I route *new* payments there, but never re-route one whose first attempt might have succeeded until its status is known. Where the business allows, I accept the order and charge when the PSP recovers. Afterwards, reconciliation confirms every PENDING payment ended in exactly one final state.",
+        "es": "Las llamadas fallan rápido detrás de un circuit breaker, y los pagos afectados quedan PENDING, no FAILED. Si tengo un segundo PSP, mando ahí los pagos *nuevos*, pero nunca redirijo uno cuyo primer intento pudo haber funcionado hasta conocer su estado. Donde el negocio lo permite, acepto el pedido y cobro cuando el PSP se recupera. Después, la conciliación confirma que cada pago PENDING terminó en exactamente un estado final."
+      }
+    }
+  ],
+  "related": [
+    "idempotency",
+    "sagas-outbox",
+    "retries-backoff",
+    "consistency-models",
+    "event-driven",
+    "case-ticket-booking"
+  ],
+  "sources": [
+    {
+      "title": "Stripe API — Idempotent requests",
+      "url": "https://docs.stripe.com/api/idempotent_requests"
+    },
+    {
+      "title": "Stripe Docs — Receive Stripe events in your webhook endpoint",
+      "url": "https://docs.stripe.com/webhooks"
+    },
+    {
+      "title": "Square Engineering — Books, an immutable double-entry accounting database service (2019)",
+      "url": "https://developer.squareup.com/blog/books-an-immutable-double-entry-accounting-database-service/"
+    },
+    {
+      "title": "Stripe Docs — Integration security guide (PCI)",
+      "url": "https://docs.stripe.com/security/guide"
+    }
+  ]
+}

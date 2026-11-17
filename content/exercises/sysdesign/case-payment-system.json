@@ -1,0 +1,154 @@
+{
+  "concept": "case-payment-system",
+  "items": [
+    {
+      "id": "case-payment-system.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "The PSP charge call times out after 30 s. A teammate proposes marking the payment FAILED and showing *\"Payment failed, try again\"*. What should the system do?",
+        "es": "La llamada de cobro al PSP da timeout a los 30 s. Un compañero propone marcar el pago como FAILED y mostrar *\"El pago falló, intenta de nuevo\"*. ¿Qué debería hacer el sistema?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Keep it PENDING; retry with the same key or query the PSP",
+            "es": "Dejarlo PENDING; reintentar con la misma clave o consultar al PSP"
+          }
+        },
+        {
+          "text": {
+            "en": "Mark it FAILED and let the customer pay with a new key",
+            "es": "Marcarlo FAILED y dejar que el cliente pague con una clave nueva"
+          },
+          "why": {
+            "en": "If the first charge succeeded, the new key creates a second charge.",
+            "es": "Si el primer cobro funcionó, la clave nueva crea un segundo cobro."
+          }
+        },
+        {
+          "text": {
+            "en": "Refund the amount right away, just to be safe",
+            "es": "Reembolsar el monto de inmediato, por si acaso"
+          },
+          "why": {
+            "en": "You'd refund a charge that may not exist, and still not know the payment's real state.",
+            "es": "Reembolsarías un cobro que quizá no existe, y seguirías sin saber el estado real del pago."
+          }
+        },
+        {
+          "text": {
+            "en": "Retry with a fresh key so the PSP doesn't replay the timeout",
+            "es": "Reintentar con una clave nueva para que el PSP no repita el timeout"
+          },
+          "why": {
+            "en": "A timeout stores nothing to replay; a fresh key is a brand-new charge.",
+            "es": "Un timeout no deja nada que repetir; una clave nueva es un cobro completamente nuevo."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A timeout means the outcome is unknown. Retrying with the same idempotency key, or asking the PSP, resolves it without risking a second charge; a webhook may settle it too.",
+        "es": "Un timeout significa que el resultado es desconocido. Reintentar con la misma clave de idempotencia, o consultar al PSP, lo resuelve sin riesgo de un segundo cobro; también puede resolverlo un webhook."
+      }
+    },
+    {
+      "id": "case-payment-system.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Both the synchronous PSP reply and the webhook call `settle`. Complete the update so the ledger is posted **exactly once**.",
+        "es": "Tanto la respuesta síncrona del PSP como el webhook llaman a `settle`. Completa la actualización para que el ledger se asiente **exactamente una vez**."
+      },
+      "lang": "python",
+      "code": "def settle(db, pay_id, res):\n    with db.tx():\n        state = \"SUCCEEDED\" if res.ok else \"FAILED\"\n        ____\n        if n == 1 and res.ok:          # only the first caller posts\n            post_ledger(db, pay_id, res)",
+      "options": [
+        {
+          "text": "n = db.run(\"UPDATE payments SET state=%s WHERE id=%s AND state='PENDING'\", state, pay_id)"
+        },
+        {
+          "text": "n = db.run(\"UPDATE payments SET state=%s WHERE id=%s\", state, pay_id)",
+          "why": {
+            "en": "Both callers update one row and both see n == 1, so the ledger is posted twice.",
+            "es": "Ambos llamadores actualizan una fila y ambos ven n == 1, así que el ledger se asienta dos veces."
+          }
+        },
+        {
+          "text": "n = 1 if db.one(\"SELECT state FROM payments WHERE id=%s\", pay_id)[\"state\"] == \"PENDING\" else 0",
+          "why": {
+            "en": "Check-then-act: both transactions can read PENDING before either writes.",
+            "es": "Verificar y luego actuar: ambas transacciones pueden leer PENDING antes de que alguna escriba."
+          }
+        },
+        {
+          "text": "n = db.run(\"INSERT INTO payments (id, state) VALUES (%s, %s) ON CONFLICT DO NOTHING\", pay_id, state)",
+          "why": {
+            "en": "The row already exists, so n is always 0 and nothing is ever posted.",
+            "es": "La fila ya existe, así que n siempre es 0 y nunca se asienta nada."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A conditional update is an atomic compare-and-set: only one transaction can move the row out of PENDING, and its row count tells it that it won. The loser does nothing, so duplicate callers are harmless.",
+        "es": "Una actualización condicional es un compare-and-set atómico: solo una transacción puede sacar la fila de PENDING, y la cantidad de filas le dice que ganó. La que pierde no hace nada, así los llamadores duplicados no hacen daño."
+      }
+    },
+    {
+      "id": "case-payment-system.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about \"exactly-once\" payments are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los pagos \"exactamente una vez\" son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Messages between services are delivered at least once in practice",
+            "es": "En la práctica, los mensajes entre servicios se entregan al menos una vez"
+          }
+        },
+        {
+          "text": {
+            "en": "Idempotency keys turn duplicate deliveries into a single effect",
+            "es": "Las claves de idempotencia convierten entregas duplicadas en un solo efecto"
+          }
+        },
+        {
+          "text": {
+            "en": "A queue with exactly-once semantics guarantees the PSP charges only once",
+            "es": "Una cola con semántica exactly-once garantiza que el PSP cobre una sola vez"
+          },
+          "why": {
+            "en": "Queue guarantees end at the queue; the PSP call is an external side effect that needs its own key.",
+            "es": "Las garantías de la cola terminan en la cola; la llamada al PSP es un efecto externo que necesita su propia clave."
+          }
+        },
+        {
+          "text": {
+            "en": "Webhook handlers must dedup by event ID",
+            "es": "Los handlers de webhooks deben deduplicar por ID de evento"
+          }
+        },
+        {
+          "text": {
+            "en": "A UNIQUE constraint is unnecessary when clients send a key",
+            "es": "Una restricción UNIQUE sobra cuando los clientes mandan una clave"
+          },
+          "why": {
+            "en": "Two concurrent requests with the same key can both pass a lookup; only the constraint stops the second insert.",
+            "es": "Dos peticiones concurrentes con la misma clave pueden pasar ambas la búsqueda; solo la restricción frena el segundo insert."
+          }
+        }
+      ],
+      "answers": [
+        0,
+        1,
+        3
+      ],
+      "explain": {
+        "en": "Effectively once = at-least-once delivery + idempotent effects at every hop: API key with a unique constraint, the same key to the PSP, event-ID dedup on webhooks, and conditional state transitions.",
+        "es": "Efectivamente una vez = entrega al menos una vez + efectos idempotentes en cada salto: clave en la API con restricción única, la misma clave al PSP, deduplicación por ID de evento en los webhooks y transiciones de estado condicionales."
+      }
+    }
+  ]
+}

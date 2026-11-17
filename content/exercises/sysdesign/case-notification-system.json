@@ -1,0 +1,83 @@
+{
+  "concept": "case-notification-system",
+  "items": [
+    {
+      "id": "case-notification-system.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "During a marketing campaign to 30M users, login OTP texts arrive 8 minutes late. Every notification goes through one shared queue and one worker pool. What's the right fix?",
+        "es": "Durante una campaña de marketing a 30M de usuarios, los SMS con OTP de login llegan 8 minutos tarde. Todas las notificaciones pasan por una sola cola y un solo pool de workers. ¿Cuál es la solución correcta?"
+      },
+      "options": [
+        {
+          "text": { "en": "Split queues and worker pools by priority so OTPs bypass bulk traffic", "es": "Separar colas y pools de workers por prioridad para que los OTPs no esperen al tráfico masivo" },
+          "why": { "en": "Bulkheads: critical traffic gets its own lane and capacity, whatever the campaign does.", "es": "Bulkheads: el tráfico crítico tiene su propio carril y capacidad, haga lo que haga la campaña." }
+        },
+        {
+          "text": { "en": "Add workers to the shared pool until the backlog clears", "es": "Sumar workers al pool compartido hasta que se vacíe el atraso" },
+          "why": { "en": "FIFO still puts OTPs behind millions of campaign messages, and provider quotas cap throughput anyway.", "es": "En FIFO los OTPs siguen detrás de millones de mensajes de campaña, y las cuotas del proveedor limitan el throughput de todos modos." }
+        },
+        {
+          "text": { "en": "Rate-limit how often each user can request an OTP", "es": "Limitar cuántas veces cada usuario puede pedir un OTP" },
+          "why": { "en": "OTP volume isn't the problem; they are waiting behind the campaign in the queue.", "es": "El volumen de OTPs no es el problema; están esperando detrás de la campaña en la cola." }
+        },
+        {
+          "text": { "en": "Send OTPs by email instead of SMS during campaigns", "es": "Enviar los OTPs por email en vez de SMS durante las campañas" },
+          "why": { "en": "A different channel through the same shared queue waits just as long.", "es": "Otro canal por la misma cola compartida espera lo mismo." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A shared FIFO queue makes every message wait behind everything enqueued earlier. Separate queues and worker pools per priority (and per channel) isolate critical traffic, while bulk workers are rate-limited below provider quotas to leave headroom.",
+        "es": "Una cola FIFO compartida hace que cada mensaje espere detrás de todo lo encolado antes. Colas y pools de workers separados por prioridad (y por canal) aíslan el tráfico crítico, mientras los workers masivos tienen un rate limit por debajo de las cuotas del proveedor para dejar margen."
+      }
+    },
+    {
+      "id": "case-notification-system.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size the dedup store: **1B notifications/day**, one key per notification of **~100 bytes** including overhead, kept for a **7-day TTL** (all assumed). How much memory, in **GB**?",
+        "es": "Dimensiona el almacén de deduplicación: **mil millones de notificaciones/día**, una clave por notificación de **~100 bytes** con overhead incluido, guardada con un **TTL de 7 días** (todo supuesto). ¿Cuánta memoria, en **GB**?"
+      },
+      "answer": 700,
+      "tolerance": 0.15,
+      "unit": "GB",
+      "explain": {
+        "en": "1B × 100 B = 100 GB per day of TTL; × 7 days ≈ 700 GB. The TTL only needs to outlive the longest producer and worker retry window, so shortening it is the cheapest lever, not a bigger cluster.",
+        "es": "Mil millones × 100 B = 100 GB por cada día de TTL; × 7 días ≈ 700 GB. El TTL solo tiene que durar más que la ventana de reintento más larga de productores y workers, así que acortarlo es la palanca más barata, no un clúster más grande."
+      }
+    },
+    {
+      "id": "case-notification-system.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about a notification system are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre un sistema de notificaciones son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": { "en": "Dedup plus retries guarantee exactly-once delivery to the user's phone", "es": "La deduplicación más los reintentos garantizan una entrega exactly-once al teléfono del usuario" },
+          "why": { "en": "A crash after the provider accepts but before the status write leaves a window; you choose duplicates or misses.", "es": "Una caída después de que el proveedor acepta y antes de escribir el estado deja una ventana; eliges entre duplicados o pérdidas." }
+        },
+        {
+          "text": { "en": "APNs 410 Unregistered means stop sending to that device token", "es": "Un 410 Unregistered de APNs significa dejar de enviar a ese token" }
+        },
+        {
+          "text": { "en": "Campaign preferences must be re-checked at send time, not only at scheduling", "es": "Las preferencias de una campaña se deben revisar al enviar, no solo al programarla" }
+        },
+        {
+          "text": { "en": "Exponential backoff is the right response to every provider error", "es": "El backoff exponencial es la respuesta correcta para cualquier error del proveedor" },
+          "why": { "en": "Permanent errors (invalid token or number) never succeed; retrying burns quota and reputation.", "es": "Los errores permanentes (token o número inválido) nunca van a funcionar; reintentar quema cuota y reputación." }
+        },
+        {
+          "text": { "en": "FCM may replace an undelivered collapsible message with a newer one", "es": "FCM puede reemplazar un mensaje colapsable no entregado por uno más nuevo" }
+        }
+      ],
+      "answers": [1, 2, 4],
+      "explain": {
+        "en": "Push providers are best-effort, so the in-app inbox stays the source of truth. Classify errors: retry transient ones with backoff, stop on permanent ones. Users opt out between scheduling and sending, so policy is checked at the last moment.",
+        "es": "Los proveedores de push son best-effort, así que la bandeja in-app sigue siendo la fuente de verdad. Clasifica los errores: reintenta los transitorios con backoff y detente ante los permanentes. La gente se da de baja entre la programación y el envío, así que las reglas se revisan en el último momento."
+      }
+    }
+  ]
+}

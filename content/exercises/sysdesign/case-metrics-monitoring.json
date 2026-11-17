@@ -1,0 +1,128 @@
+{
+  "concept": "case-metrics-monitoring",
+  "items": [
+    {
+      "id": "case-metrics-monitoring.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Overnight, TSDB writer memory **triples** while samples/s grows only **5%**. Yesterday a team added a `request_id` label to its latency metric. What do you do first?",
+        "es": "De la noche a la mañana, la memoria de los writers de la TSDB se **triplica** mientras las muestras/s crecen solo **5%**. Ayer un equipo agregó un label `request_id` a su métrica de latencia. ¿Qué haces primero?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Drop the label at ingest and enforce a new-series limit per tenant",
+            "es": "Descartar el label en la ingesta y aplicar un límite de series nuevas por tenant"
+          }
+        },
+        {
+          "text": {
+            "en": "Scale the writers out 3× to absorb the new load",
+            "es": "Escalar 3× los writers para absorber la carga nueva"
+          },
+          "why": {
+            "en": "Treats the symptom: series keep growing with every request, so memory runs out again.",
+            "es": "Trata el síntoma: las series siguen creciendo con cada request, así que la memoria se vuelve a agotar."
+          }
+        },
+        {
+          "text": {
+            "en": "Raise that team's scrape interval from 15 s to 60 s",
+            "es": "Subir el intervalo de scrape de ese equipo de 15 s a 60 s"
+          },
+          "why": {
+            "en": "Fewer samples per series, but the same exploding number of series in memory.",
+            "es": "Menos muestras por serie, pero la misma cantidad explosiva de series en memoria."
+          }
+        },
+        {
+          "text": {
+            "en": "Turn on 5 m downsampling for that metric's blocks",
+            "es": "Activar la reducción a 5 m para los bloques de esa métrica"
+          },
+          "why": {
+            "en": "Downsampling touches old blocks; the in-memory head still holds every new series.",
+            "es": "La reducción de resolución actúa sobre bloques viejos; el head en memoria sigue teniendo cada serie nueva."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Memory tracks active series, not samples. A per-request label creates a new series per request, so the fix is to stop new series at ingest and move per-request detail to traces.",
+        "es": "La memoria sigue a las series activas, no a las muestras. Un label por request crea una serie nueva por request, así que la solución es frenar las series nuevas en la ingesta y mover el detalle por request a las trazas."
+      }
+    },
+    {
+      "id": "case-metrics-monitoring.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size raw storage: **10M active series**, one sample every **15 s**, **~1.37 bytes per sample** after Gorilla-style compression. Gigabytes per day (decimal)?",
+        "es": "Dimensiona el almacenamiento crudo: **10M de series activas**, una muestra cada **15 s** y **~1.37 bytes por muestra** tras una compresión al estilo Gorilla. ¿Gigabytes por día (decimales)?"
+      },
+      "answer": 79,
+      "tolerance": 0.15,
+      "unit": "GB/day",
+      "explain": {
+        "en": "10M ÷ 15 ≈ 667k samples/s. × 86,400 s ≈ 57.6B samples/day. × 1.37 B ≈ 79 GB/day, ~29 TB/year. Uncompressed at 16 B per point it would be ~920 GB/day, which is why TSDBs compress per series.",
+        "es": "10M ÷ 15 ≈ 667k muestras/s. × 86,400 s ≈ 57.6B muestras/día. × 1.37 B ≈ 79 GB/día, ~29 TB/año. Sin comprimir, a 16 B por punto, serían ~920 GB/día; por eso las TSDB comprimen por serie."
+      }
+    },
+    {
+      "id": "case-metrics-monitoring.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about downsampling and alerting are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la reducción de resolución y las alertas son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Downsampling mainly speeds up long-range queries",
+            "es": "Reducir la resolución sirve sobre todo para acelerar consultas de rangos largos"
+          }
+        },
+        {
+          "text": {
+            "en": "Downsampling old blocks shrinks total storage by itself",
+            "es": "Reducir la resolución de bloques viejos achica por sí solo el almacenamiento total"
+          },
+          "why": {
+            "en": "It adds blocks; keeping every resolution can grow storage ~3×. Retention per resolution saves space.",
+            "es": "Agrega bloques; conservar todas las resoluciones puede hacer crecer el almacenamiento ~3×. Lo que ahorra es la retención por resolución."
+          }
+        },
+        {
+          "text": {
+            "en": "A `for: 5m` clause keeps an alert pending until the condition holds 5 minutes",
+            "es": "Una cláusula `for: 5m` mantiene la alerta pendiente hasta que la condición se sostiene 5 minutos"
+          }
+        },
+        {
+          "text": {
+            "en": "Alerts evaluated inside the failing pipeline will always still fire",
+            "es": "Las alertas evaluadas dentro del pipeline que falla siempre se seguirán disparando"
+          },
+          "why": {
+            "en": "If the pipeline stops, its rules see no data and stay silent: that's what a dead man's switch catches.",
+            "es": "Si el pipeline se detiene, sus reglas no ven datos y callan: eso es lo que detecta un dead man's switch."
+          }
+        },
+        {
+          "text": {
+            "en": "Averages alone can hide a short spike after downsampling",
+            "es": "Los promedios por sí solos pueden esconder un pico corto tras reducir la resolución"
+          }
+        }
+      ],
+      "answers": [
+        0,
+        2,
+        4
+      ],
+      "explain": {
+        "en": "Downsampling trades resolution for query speed; disk savings come from retention. Alerting needs debounce (`for`) to avoid flapping and an external heartbeat to catch its own silence.",
+        "es": "Reducir la resolución cambia detalle por velocidad de consulta; el ahorro de disco viene de la retención. Las alertas necesitan una espera (`for`) para evitar el flapping y un latido externo para detectar su propio silencio."
+      }
+    }
+  ]
+}

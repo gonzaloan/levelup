@@ -1,0 +1,122 @@
+{
+  "concept": "case-ride-hailing",
+  "items": [
+    {
+      "id": "case-ride-hailing.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Two riders 200 m apart request at the same moment. Both dispatcher instances pick driver 7, who sees two offers and accepts both. What fixes this?",
+        "es": "Dos pasajeros a 200 m uno del otro piden un viaje al mismo tiempo. Las dos instancias del despachador eligen al conductor 7, que ve dos ofertas y acepta ambas. ¿Qué lo soluciona?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Make acceptance a conditional write on driver state",
+            "es": "Hacer que aceptar sea una escritura condicional sobre el estado del conductor"
+          }
+        },
+        {
+          "text": {
+            "en": "Send location pings every second instead of every 4 s",
+            "es": "Enviar pings de ubicación cada segundo en lugar de cada 4 s"
+          },
+          "why": {
+            "en": "Fresher positions don't stop two dispatchers from choosing the same driver at once.",
+            "es": "Posiciones más frescas no impiden que dos despachadores elijan al mismo conductor a la vez."
+          }
+        },
+        {
+          "text": {
+            "en": "Lock the rider's H3 cell while dispatching",
+            "es": "Bloquear la celda H3 del pasajero mientras se despacha"
+          },
+          "why": {
+            "en": "Serializes a whole area, and drivers near an edge appear in searches from several cells anyway.",
+            "es": "Serializa toda una zona, y los conductores cerca de un borde aparecen igual en búsquedas desde varias celdas."
+          }
+        },
+        {
+          "text": {
+            "en": "Retry the second rider's request after a short delay",
+            "es": "Reintentar la solicitud del segundo pasajero tras una breve espera"
+          },
+          "why": {
+            "en": "By then driver 7 has already accepted both; the race needs prevention, not a later retry.",
+            "es": "Para entonces el conductor 7 ya aceptó ambas; la carrera se previene, no se arregla reintentando después."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The driver's state is the single source of truth. A compare-and-set (AVAILABLE → ON_TRIP only if still AVAILABLE) lets exactly one claim win; the loser moves to its next candidate.",
+        "es": "El estado del conductor es la única fuente de verdad. Un compare-and-set (AVAILABLE → ON_TRIP solo si sigue AVAILABLE) deja ganar exactamente una reserva; el que pierde pasa a su siguiente candidato."
+      }
+    },
+    {
+      "id": "case-ride-hailing.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size the geo index: **5M registered drivers**, **20%** online at peak, one ping every **4 s**, and each ping costs **3** index operations. How many index operations per second at peak?",
+        "es": "Dimensiona el índice geográfico: **5M de conductores registrados**, **20%** conectados en el pico, un ping cada **4 s**, y cada ping cuesta **3** operaciones en el índice. ¿Cuántas operaciones por segundo hay en el pico?"
+      },
+      "answer": 750000,
+      "tolerance": 0.15,
+      "unit": "ops/s",
+      "explain": {
+        "en": "5M × 20% = 1M online ÷ 4 s = 250k pings/s × 3 = 750k ops/s. At the ~100k simple ops/s rule of thumb per Redis instance, that is at least 8 shards before headroom, which is why the index is sharded by region.",
+        "es": "5M × 20% = 1M conectados ÷ 4 s = 250k pings/s × 3 = 750k operaciones/s. Con la regla práctica de ~100k operaciones simples/s por instancia de Redis, son al menos 8 shards antes del margen; por eso el índice se particiona por región."
+      }
+    },
+    {
+      "id": "case-ride-hailing.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Riders standing near cell edges get matched with distant drivers, while closer drivers sit idle. Most likely cause?",
+        "es": "Los pasajeros parados cerca del borde de una celda reciben conductores lejanos, mientras otros más cercanos están ociosos. ¿Causa más probable?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "The search covers only the rider's cell, not its neighbor rings",
+            "es": "La búsqueda cubre solo la celda del pasajero, no sus anillos vecinos"
+          }
+        },
+        {
+          "text": {
+            "en": "Resolution-9 cells are too small for city traffic",
+            "es": "Las celdas de resolución 9 son demasiado chicas para el tráfico urbano"
+          },
+          "why": {
+            "en": "Cell size changes how many cells to search, not the edge blindness; any size misses drivers across the border.",
+            "es": "El tamaño de celda cambia cuántas celdas buscar, no la ceguera en los bordes; cualquier tamaño pierde conductores al otro lado."
+          }
+        },
+        {
+          "text": {
+            "en": "Pings every 4 s leave positions too stale",
+            "es": "Los pings cada 4 s dejan posiciones demasiado viejas"
+          },
+          "why": {
+            "en": "A few seconds of drift is random noise, not a systematic bias at cell edges.",
+            "es": "Unos segundos de desfase son ruido aleatorio, no un sesgo sistemático en los bordes."
+          }
+        },
+        {
+          "text": {
+            "en": "Ranking by road ETA instead of straight-line distance",
+            "es": "Ordenar por ETA en ruta en lugar de distancia en línea recta"
+          },
+          "why": {
+            "en": "Road ETA is the right ranking; it can't rank drivers the search never returned.",
+            "es": "El ETA en ruta es el orden correcto; no puede ordenar conductores que la búsqueda nunca devolvió."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Any grid splits space at arbitrary borders, so a nearest-driver query must cover the cell plus its neighbor rings (19 cells for k = 2), then rank the candidates by road ETA.",
+        "es": "Cualquier grilla corta el espacio en bordes arbitrarios, así que una búsqueda del conductor más cercano debe cubrir la celda más sus anillos vecinos (19 celdas para k = 2) y luego ordenar por ETA en ruta."
+      }
+    }
+  ]
+}
