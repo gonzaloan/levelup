@@ -170,3 +170,10 @@ test("a 'which concept is this?' item never shows the concept's name", async ({ 
   }
   throw new Error("no 'which concept' item in the session");
 });
+
+test("knowledge map has one linked dot per concept", async ({ page }) => {
+  await page.goto("/en/graph/");
+  const total = DOMAINS.reduce((n, d) => n + d.concepts.length, 0);
+  await expect(page.locator("a.gn")).toHaveCount(total);
+  await expect(page.locator("a.gn").first()).toHaveAttribute("href", /\/en\/c\/[a-z0-9-]+\/$/);
+});

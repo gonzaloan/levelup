@@ -68,6 +68,12 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
         </section>
       )}
 
+      <Link href={`/${locale}/graph/`} className="graph-promo">
+        <span><strong>{locale === "es" ? "Mapa del conocimiento" : "Knowledge map"}</strong>
+          <small>{locale === "es" ? "Todos los conceptos como un territorio: temas y puentes entre ideas." : "Every concept as a territory: topics and the bridges between ideas."}</small></span>
+        <Icon name="right" size={18} />
+      </Link>
+
       {TRACKS.map((tr, ti) => {
         const ids = new Set(TRACKS.flatMap((x) => x.domains));
         const list = domains.filter((d) => tr.domains.includes(d.id) || (ti === TRACKS.length - 1 && !ids.has(d.id)));
