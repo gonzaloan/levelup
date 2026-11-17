@@ -16,6 +16,9 @@ export const LABS: Record<string, ComponentType<LabProps>> = {
   "quorum": dynamic(() => import("./quorum")),
   "gpu-memory": dynamic(() => import("./gpu-memory")),
   "sampling": dynamic(() => import("./sampling")),
+  "cache-sim": dynamic(() => import("./cache-sim")),
+  "queueing": dynamic(() => import("./queueing")),
+  "bloom": dynamic(() => import("./bloom")),
 };
 
 export function LabView({ id, locale }: { id: string; locale: Locale }) {

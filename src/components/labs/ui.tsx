@@ -119,3 +119,20 @@ export function LabGrid({ controls, children }: { controls: ReactNode; children:
 
 /** The takeaway under a lab: one or two sentences, the thing to remember in an interview. */
 export const Insight = ({ children }: { children: ReactNode }) => <p className="lab-insight">{children}</p>;
+
+/* ------------------------------------------------------------------ charts */
+export type PlotLabel = { x: number; y: number; text: ReactNode; anchor?: "start" | "middle" | "end"; dy?: number; color?: string };
+const SHIFT = { start: "0%", middle: "-50%", end: "-100%" } as const;
+/** An SVG chart with its labels in HTML on top: the drawing scales with the viewBox, the text stays
+ *  ~11 px at any width (SVG text in a 400-unit viewBox shrinks to ~7 px on a phone). Label x/y are
+ *  viewBox units, `dy` nudges in px. No max-height: a letterboxed SVG would misplace the labels. */
+export function Plot({ w, h, label, labels, children }: { w: number; h: number; label: string; labels: PlotLabel[]; children: ReactNode }) {
+  return (
+    <div style={{ position: "relative" }}>
+      <svg className="lab-svg" viewBox={`0 0 ${w} ${h}`} role="img" aria-label={label} style={{ display: "block", maxHeight: "none" }}>{children}</svg>
+      {labels.map((l, i) => (
+        <span key={i} aria-hidden style={{ position: "absolute", left: `${(l.x / w) * 100}%`, top: `${(l.y / h) * 100}%`, transform: `translate(${SHIFT[l.anchor ?? "start"]}, calc(-50% + ${l.dy ?? 0}px))`, font: "11.5px ui-monospace, Menlo, monospace", color: l.color ?? "var(--text-2)", whiteSpace: "nowrap", pointerEvents: "none" }}>{l.text}</span>
+      ))}
+    </div>
+  );
+}
