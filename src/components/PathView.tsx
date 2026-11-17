@@ -6,6 +6,7 @@ import type { Locale } from "@/lib/types";
 import { useStudyState } from "./practice/usePractice";
 import { statusOf } from "./Mastered";
 import { Icon } from "./Icon";
+import { Ill } from "./Ill";
 
 export interface PathConcept { id: string; t: string; h: number }
 export interface PathModuleView { id: string; t: string; concepts: PathConcept[] }
@@ -33,7 +34,7 @@ export function PathView({ phases, locale }: { phases: PathPhaseView[]; locale: 
         {next ? (
           <>
             <span className="hub-label">{started ? (es ? `Tu siguiente paso · ${done}/${all.length}` : `Your next step · ${done}/${all.length}`) : (es ? "Empieza aquí" : "Start here")}</span>
-            <strong className="ns-title">{next.t}</strong>
+            <strong className="ns-title"><Ill id={next.id} size={44} className="ns-ill" />{next.t}</strong>
             <span className="hub-sub">{next.phase.t} · {next.module.t}</span>
             <div className="ns-actions">
               <Link className="btn btn-primary" href={`/${locale}/c/${next.id}/`}><Icon name="book" size={16} /> {started ? (es ? "Continuar" : "Continue") : (es ? "Empezar" : "Start")}</Link>
@@ -92,6 +93,7 @@ export function PathView({ phases, locale }: { phases: PathPhaseView[]; locale: 
                         <Link href={`/${locale}/c/${c.id}/`}>
                           <span className="ml-n">{n}</span>
                           <span className={`dot st-${st}`} aria-hidden="true" />
+                          <Ill id={c.id} size={20} />
                           <span className="ml-t">{c.t}</span>
                           {c.id === next?.id && <span className="ml-next">{es ? "siguiente" : "next"}</span>}
                         </Link>

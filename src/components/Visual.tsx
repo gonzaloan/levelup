@@ -15,6 +15,12 @@ export function Illustration({ id, size, className }: { id: string; size: number
   return svg ? <InlineSvg svg={svg} size={size} className={`ill${className ? ` ${className}` : ""}`} /> : null;
 }
 
+/** A Fluent Emoji by name (labs use their own art). */
+export function Emoji({ name, size, className }: { name: string; size: number; className?: string }) {
+  const svg = svgOf(`fe:${name}`);
+  return svg ? <InlineSvg svg={svg} size={size} className={`ill${className ? ` ${className}` : ""}`} /> : null;
+}
+
 /** "Stack" (tools) and "In the real world" (companies) the concept mentions, as logo chips. */
 export function StackRow({ concept, locale }: { concept: Concept; locale: Locale }) {
   const { tech, companies } = stackOf(concept);

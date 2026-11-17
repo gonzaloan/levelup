@@ -1,4 +1,5 @@
 "use client";
+import { Ill } from "./Ill";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Locale, SearchDoc } from "@/lib/types";
@@ -94,7 +95,7 @@ export function SearchPalette({ locale, domains, labels }: {
                   className={i === active ? "active" : ""} onMouseMove={() => setActive(i)}
                   onMouseDown={(e) => { e.preventDefault(); go(r.id); }}>
                   <div className="pr-top">
-                    <span className="pr-title">{r.t}</span>
+                    <span className="pr-title"><Ill id={r.id} size={18} />{r.t}</span>
                     {d && <span className="chip" style={{ ["--h" as string]: d.hue }}>{d.title}</span>}
                   </div>
                   <div className="pr-sub">{r.s}</div>

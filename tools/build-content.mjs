@@ -41,6 +41,8 @@ if (fs.existsSync(labsFile)) {
     if (!l.title?.en || !l.title?.es || !l.blurb?.en || !l.blurb?.es) errors.push(`labs: "${l.id}" needs title and blurb in en and es`);
     for (const c of l.concepts ?? []) if (!known.has(c)) errors.push(`labs: "${l.id}" names unknown concept "${c}"`);
     if (!fs.existsSync(path.join(ROOT, "src", "components", "labs", `${l.id}.tsx`))) errors.push(`labs: "${l.id}" has no src/components/labs/${l.id}.tsx`);
+    const fe = JSON.parse(fs.readFileSync(path.join(ROOT, "node_modules", "@iconify-json", "fluent-emoji-flat", "icons.json"), "utf8"));
+    if (!l.art || !(fe.icons[l.art] || fe.aliases?.[l.art])) errors.push(`labs: "${l.id}" art "${l.art}" is not a Fluent Emoji Flat icon`);
   }
   const reg = fs.readFileSync(path.join(ROOT, "src", "components", "labs", "registry.tsx"), "utf8");
   for (const id of ids) if (!reg.includes(`"${id}": dynamic(`)) errors.push(`labs: "${id}" is missing from registry.tsx`);
@@ -163,6 +165,23 @@ fs.mkdirSync(pubDiagrams, { recursive: true });
 for (const id of graphs.keys()) for (const mode of ["dark", "light"]) {
   const src = path.join(DIAGRAMS, `${id}.${mode}.svg`);
   if (fs.existsSync(src)) fs.writeFileSync(path.join(pubDiagrams, `${id}.${mode}.svg`), fs.readFileSync(src, "utf8").replace(/^<!--[^>]*-->\n/, ""));
+}
+
+// Concept illustrations as small standalone SVG files, for client components (path, practice,
+// search) that cannot inline them at build time. Loaded lazily, cached by the browser.
+{
+  const illFile = path.join(ROOT, "content", "illustrations.json");
+  const pubIll = path.join(ROOT, "public", "ill");
+  if (fs.existsSync(illFile)) {
+    fs.mkdirSync(pubIll, { recursive: true });
+    const fe = JSON.parse(fs.readFileSync(path.join(ROOT, "node_modules", "@iconify-json", "fluent-emoji-flat", "icons.json"), "utf8"));
+    for (const [id, name] of Object.entries(JSON.parse(fs.readFileSync(illFile, "utf8")))) {
+      const icon = fe.icons[name] ?? fe.icons[fe.aliases?.[name]?.parent];
+      if (!icon) continue;
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${icon.width ?? fe.width ?? 32} ${icon.height ?? fe.height ?? 32}">${icon.body}</svg>`;
+      fs.writeFileSync(path.join(pubIll, `${id}.svg`), svg);
+    }
+  }
 }
 
 const L = (v, lang) => (v && typeof v === "object" && "en" in v ? v[lang] : v);

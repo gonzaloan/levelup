@@ -85,7 +85,7 @@ export function checkItemsFor(id: string, locale: Locale): PItem[] {
 }
 
 /* Interactive labs (content/labs.json): each lab names the concepts it helps you feel. */
-export interface Lab { id: string; icon: string; title: I18n; blurb: I18n; concepts: string[] }
+export interface Lab { id: string; art: string; icon: string; title: I18n; blurb: I18n; concepts: string[] }
 export const getLabs = (): Lab[] => JSON.parse(fs.readFileSync(path.join(CONTENT, "labs.json"), "utf8"));
 export const getLab = (id: string) => getLabs().find((l) => l.id === id);
 export const labsFor = (conceptId: string) => getLabs().filter((l) => l.concepts.includes(conceptId));

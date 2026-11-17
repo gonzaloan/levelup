@@ -14,7 +14,7 @@ import { MasteredDot, MasteredToggle } from "@/components/Mastered";
 import { Toc } from "@/components/Toc";
 import { KeyNav } from "@/components/KeyNav";
 import { QuickCheck } from "@/components/practice/QuickCheck";
-import { Illustration, StackRow } from "@/components/Visual";
+import { Emoji, Illustration, StackRow } from "@/components/Visual";
 
 type P = { params: Promise<{ locale: Locale; id: string }> };
 export const dynamicParams = false;
@@ -143,7 +143,7 @@ export default async function ConceptPage({ params }: P) {
           <section className="lab-promo" aria-label="Labs">
             {labs.map((l) => (
               <Link key={l.id} href={`/${locale}/labs/${l.id}/`} className="lab-promo-card">
-                <span className="lc-icon"><Icon name={l.icon} size={20} /></span>
+                <Emoji name={l.art} size={34} />
                 <span><small>{L("tryLab")}</small><strong>{t(l.title, locale)}</strong><span>{t(l.blurb, locale)}</span></span>
                 <Icon name="right" size={18} />
               </Link>

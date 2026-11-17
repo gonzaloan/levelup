@@ -6,6 +6,7 @@ import { LOCALES, t } from "@/lib/i18n";
 import { domainIndex, getConcept, getLab, getLabs } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
+import { Emoji } from "@/components/Visual";
 import { LabView } from "@/components/labs/registry";
 
 type P = { params: Promise<{ locale: Locale; id: string }> };
@@ -28,7 +29,7 @@ export default async function LabPage({ params }: P) {
     <main className="page lab-page">
       <p className="crumbs-line"><Link href={`/${locale}/labs/`}><Icon name="left" size={14} /> Labs</Link></p>
       <header className="lab-head">
-        <span className="lc-icon"><Icon name={lab.icon} size={24} /></span>
+        <Emoji name={lab.art} size={52} className="head-ill" />
         <div>
           <h1>{t(lab.title, locale)}</h1>
           <p className="page-sub">{t(lab.blurb, locale)}</p>

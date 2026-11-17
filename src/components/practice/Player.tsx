@@ -12,6 +12,7 @@ import { usePracticeData, useStudyState } from "./usePractice";
 import { ChoiceView, MatchView, MultiView, NumericView, OrderView, type ViewProps } from "./ItemViews";
 import { DiagramView } from "./DiagramView";
 import { Icon } from "../Icon";
+import { Ill } from "../Ill";
 
 interface Outcome { item: PItem; score: number; correct: boolean; xp: number }
 const MOCK_MS = 15 * 60_000;
@@ -126,7 +127,8 @@ export function Player({ locale, mode, id }: { locale: Locale; mode: Mode; id?: 
       </div>
       <article className={`p-card${current ? (current.correct ? " is-ok" : current.score > 0 ? " is-partial" : " is-bad") : ""}`}>
         <div className="p-meta">
-          <span className="chip">{meta?.t}</span>
+          {/* "Which concept is this?" items: the concept's name and picture would give the answer away. */}
+          {!item!.id.endsWith(".def") && <span className="chip"><Ill id={item!.c} size={16} />{meta?.t}</span>}
           <span className="p-type">{typeLabel(item!.type, locale)}</span>
         </div>
         <div className="p-prompt" dangerouslySetInnerHTML={{ __html: inlineMd(item!.prompt) }} />

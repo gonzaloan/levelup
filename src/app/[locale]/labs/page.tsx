@@ -4,6 +4,7 @@ import type { Locale } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { getConcept, getLabs } from "@/lib/content";
 import { Icon } from "@/components/Icon";
+import { Emoji } from "@/components/Visual";
 
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
@@ -26,7 +27,7 @@ export default async function LabsPage({ params }: P) {
       <div className="lab-cards">
         {labs.map((l) => (
           <Link key={l.id} href={`/${locale}/labs/${l.id}/`} className="lab-card">
-            <span className="lc-icon"><Icon name={l.icon} size={22} /></span>
+            <span className="lc-art"><Emoji name={l.art} size={40} /><span className="lc-icon"><Icon name={l.icon} size={18} /></span></span>
             <strong>{t(l.title, locale)}</strong>
             <span className="lc-blurb">{t(l.blurb, locale)}</span>
             <span className="lc-concepts">{l.concepts.slice(0, 3).map((c) => t(getConcept(c)?.title, locale)).filter(Boolean).join(" · ")}</span>

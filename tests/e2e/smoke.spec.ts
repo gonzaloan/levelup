@@ -155,3 +155,18 @@ test("a concept links to its lab", async ({ page }) => {
   await page.locator(".lab-promo-card").first().click();
   await expect(page).toHaveURL(/\/en\/labs\/[a-z-]+\/$/);
 });
+
+test("a 'which concept is this?' item never shows the concept's name", async ({ page }) => {
+  await page.goto("/en/practice/play/?mode=concept&id=reranking");
+  for (let i = 0; i < 10; i++) {
+    await expect(page.locator(".p-prompt")).toBeVisible();
+    if ((await page.locator(".p-prompt").innerText()).startsWith("Which concept is this?")) {
+      await expect(page.locator(".p-meta .chip")).toHaveCount(0);
+      return;
+    }
+    const before = await page.locator(".p-count").textContent();
+    await page.locator(".p-actions .link-btn").click();
+    await expect(page.locator(".p-count")).not.toHaveText(before ?? "");
+  }
+  throw new Error("no 'which concept' item in the session");
+});
