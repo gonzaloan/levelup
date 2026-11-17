@@ -1,0 +1,97 @@
+{
+  "concept": "case-typeahead",
+  "items": [
+    {
+      "id": "case-typeahead.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your autocomplete p99 is **900 ms for one-letter prefixes** and 20 ms for long ones. For each request, the service walks the trie subtree under the prefix and sorts every match by count. What do you change?",
+        "es": "El p99 de tu autocompletado es **900 ms para prefijos de una letra** y 20 ms para los largos. En cada petición, el servicio recorre el subárbol del trie bajo el prefijo y ordena todas las coincidencias por conteo. ¿Qué cambias?"
+      },
+      "options": [
+        {
+          "text": { "en": "Precompute and store the top-K list at every trie node", "es": "Precalcular y guardar la lista top-K en cada nodo del trie" },
+          "why": { "en": "The lookup becomes O(prefix length) whatever the subtree size; the sorting moves offline.", "es": "La búsqueda pasa a ser O(largo del prefijo) sin importar el tamaño del subárbol; el ordenamiento pasa a offline." }
+        },
+        {
+          "text": { "en": "Add replicas behind the load balancer", "es": "Agregar réplicas detrás del balanceador" },
+          "why": { "en": "Replicas add throughput, but each request still walks millions of nodes.", "es": "Las réplicas suman throughput, pero cada petición sigue recorriendo millones de nodos." }
+        },
+        {
+          "text": { "en": "Only suggest after the user types 3 characters", "es": "Sugerir solo después de que el usuario escribe 3 caracteres" },
+          "why": { "en": "Hides the symptom and drops suggestions on the most common, most useful prefixes.", "es": "Esconde el síntoma y quita las sugerencias en los prefijos más comunes y útiles." }
+        },
+        {
+          "text": { "en": "Cache only the results for long prefixes", "es": "Cachear solo los resultados de los prefijos largos" },
+          "why": { "en": "Backwards: long prefixes are already fast and rarely repeated; short ones are the hot, slow ones.", "es": "Es al revés: los prefijos largos ya son rápidos y se repiten poco; los cortos son los calientes y lentos." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Query-time work grows with the subtree, and short prefixes have the biggest subtrees. Precompute the top-K completions per prefix in the offline build so every keystroke costs one walk of at most ~20 characters plus reading a list of 10.",
+        "es": "El trabajo al consultar crece con el subárbol, y los prefijos cortos tienen los subárboles más grandes. Precalcula el top-K de completados por prefijo en el build offline para que cada tecla cueste un recorrido de como máximo ~20 caracteres más leer una lista de 10."
+      }
+    },
+    {
+      "id": "case-typeahead.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the offline build so each prefix keeps only its **K best** completions in a bounded min-heap.",
+        "es": "Completa el build offline para que cada prefijo conserve solo sus **K mejores** completados en un min-heap acotado."
+      },
+      "lang": "python",
+      "code": "for query, score in scores.items():\n    for i in range(1, min(len(query), MAX_PREFIX) + 1):\n        h = heaps[query[:i]]\n        if len(h) < K:\n            heapq.heappush(h, (score, query))\n        elif ____:\n            heapq.heapreplace(h, (score, query))",
+      "options": [
+        { "text": "score > h[0][0]" },
+        {
+          "text": "score > h[-1][0]",
+          "why": { "en": "The last element of a heap list isn't the minimum; only `h[0]` is guaranteed to be the weakest kept.", "es": "El último elemento de la lista de un heap no es el mínimo; solo `h[0]` es con seguridad el más débil." }
+        },
+        {
+          "text": "score < h[0][0]",
+          "why": { "en": "That swaps in worse queries, so the heap drifts toward the K weakest.", "es": "Eso mete búsquedas peores, así que el heap se queda con las K más débiles." }
+        },
+        {
+          "text": "len(h) > K",
+          "why": { "en": "Never true: the heap never grows past K, so no better query ever gets in.", "es": "Nunca es verdadero: el heap nunca supera K, así que ninguna búsqueda mejor entra." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A min-heap of size K keeps the best K seen so far: its root `h[0]` is the weakest survivor, so a new item replaces it only when it scores higher. That costs O(log K) per item, instead of sorting every completion of every prefix.",
+        "es": "Un min-heap de tamaño K conserva los K mejores vistos hasta ahora: su raíz `h[0]` es el sobreviviente más débil, así que un ítem nuevo lo reemplaza solo si tiene mejor puntaje. Cuesta O(log K) por ítem, en vez de ordenar todos los completados de cada prefijo."
+      }
+    },
+    {
+      "id": "case-typeahead.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "To save requests, the client answers `cat` by filtering its cached top-10 list for `ca` to entries that start with `cat`. What's the problem?",
+        "es": "Para ahorrar peticiones, el cliente responde `cat` filtrando su lista top 10 en cache de `ca` y dejando las entradas que empiezan con `cat`. ¿Cuál es el problema?"
+      },
+      "options": [
+        {
+          "text": { "en": "The top 10 for `ca` omits most good completions of `cat`", "es": "El top 10 de `ca` omite la mayoría de los buenos completados de `cat`" },
+          "why": { "en": "A top-K list is truncated: popular `car…` queries crowd out `cat…` ones, so filtering returns too few.", "es": "Una lista top-K está truncada: las búsquedas populares de `car…` desplazan a las de `cat…`, así que filtrar devuelve muy pocas." }
+        },
+        {
+          "text": { "en": "None: a prefix's list contains its extensions' best results", "es": "Ninguno: la lista de un prefijo contiene los mejores resultados de sus extensiones" },
+          "why": { "en": "Only if the list were complete; a top 10 keeps 10 of possibly millions.", "es": "Solo si la lista estuviera completa; un top 10 guarda 10 de posiblemente millones." }
+        },
+        {
+          "text": { "en": "Only staleness: the cached `ca` list may be a few minutes old", "es": "Solo la antigüedad: la lista de `ca` en cache puede tener unos minutos" },
+          "why": { "en": "Staleness is minor; the list is missing completions no matter how fresh it is.", "es": "La antigüedad es menor; a la lista le faltan completados por fresca que sea." }
+        },
+        {
+          "text": { "en": "It breaks the CDN cache key for the `cat` prefix", "es": "Rompe la clave de la CDN para el prefijo `cat`" },
+          "why": { "en": "Nothing reaches the CDN; the issue is wrong results, not caching.", "es": "No llega nada a la CDN; el problema son resultados incorrectos, no la cache." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Top-K per prefix is not composable: the best completions of a longer prefix are often ranked below the cut of the shorter one. Client caches help only for the exact prefix already fetched, such as backspacing to a previous one.",
+        "es": "El top-K por prefijo no se compone: los mejores completados de un prefijo más largo muchas veces quedan bajo el corte del más corto. Las caches del cliente sirven solo para el prefijo exacto ya pedido, como al borrar y volver a uno anterior."
+      }
+    }
+  ]
+}

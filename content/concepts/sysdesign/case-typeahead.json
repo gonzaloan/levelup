@@ -1,0 +1,135 @@
+{
+  "id": "case-typeahead",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": { "en": "Design: search autocomplete (typeahead)", "es": "Diseño: autocompletado de búsqueda (typeahead)" },
+  "aliases": ["autocomplete", "typeahead", "search suggestions", "query completion", "prefix search", "top-K suggestions", "search-as-you-type"],
+  "tldr": {
+    "en": "Precompute the top-K completions per prefix offline from query logs, serve them from an in-memory index behind browser and CDN caches, and answer each keystroke well under 100 ms; merge a trending layer for freshness.",
+    "es": "Precalcula offline, desde los logs de búsqueda, el top-K de completados por prefijo, sírvelos desde un índice en memoria detrás de las caches del navegador y la CDN, y responde cada tecla muy por debajo de 100 ms; suma una capa de tendencias para la frescura."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: as the user types, show the top ~10 completions for the prefix, ranked by popularity and freshness (optionally locale and personal history); never suggest blocked terms. **Non-functional**: keystroke to rendered suggestions under ~100 ms, the limit where a UI feels instantaneous (Nielsen); availability over freshness; suggestions may trail trends by minutes.\n\nScale (assumed): 100M DAU × 10 searches × ~6 requests per search after debouncing ≈ 6B requests/day ≈ 70k QPS average, ~140k at peak.\n\nQuestions I'd ask:\n\n1. Global or personalized suggestions? Personal ones break shared caching.\n2. How fast must a trending query appear: minutes or a day?\n3. Which languages and scripts? Normalization changes per language.\n\n### Data model\n\nOffline, a batch job aggregates query logs into `(query, score)` with time decay, then keeps the **top 10 completions for every prefix** up to ~20 characters. Serve it from memory as a trie with a top-K list at each node ([[tries]], [[heaps-top-k]]), or as a flat `prefix → list` map: simpler code, more memory.\n\n### Architecture\n\n**Client**: debounce keystrokes, cancel stale requests, cache responses per prefix. **Edge**: non-personalized responses are identical for everyone, so a CDN caches popular prefixes with a short TTL ([[cdn]]). **Suggest service**: each replica holds the whole index in RAM and swaps in a new snapshot after each build. **Freshness**: a streaming job counts recent queries and publishes a small trending list, merged at query time ([[stream-processing]]).\n\n### The hard parts\n\n1. **Top-K per prefix** in memory, with an O(prefix length) lookup.\n2. **Freshness vs precompute**: batch builds for quality, a streaming layer for trends.",
+    "es": "### Requisitos\n\n**Funcionales**: mientras el usuario escribe, mostrar los ~10 mejores completados para el prefijo, ordenados por popularidad y frescura (opcionalmente por idioma e historial personal); nunca sugerir términos bloqueados. **No funcionales**: de la tecla a las sugerencias en pantalla en menos de ~100 ms, el límite en el que una interfaz se siente instantánea (Nielsen); disponibilidad antes que frescura; las sugerencias pueden ir minutos detrás de las tendencias.\n\nEscala (supuesta): 100M de DAU × 10 búsquedas × ~6 peticiones por búsqueda después del debounce ≈ 6 mil millones de peticiones/día ≈ 70k QPS en promedio, ~140k en el pico.\n\nPreguntas que haría:\n\n1. ¿Sugerencias globales o personalizadas? Las personales rompen la cache compartida.\n2. ¿Qué tan rápido debe aparecer una búsqueda en tendencia: minutos o un día?\n3. ¿Qué idiomas y alfabetos? La normalización cambia según el idioma.\n\n### Modelo de datos\n\nOffline, un job batch agrega los logs de búsqueda en `(query, score)` con decaimiento temporal y luego guarda el **top 10 de completados para cada prefijo** de hasta ~20 caracteres. Se sirve desde memoria como un trie con una lista top-K en cada nodo ([[tries]], [[heaps-top-k]]), o como un mapa plano `prefix → list`: código más simple, más memoria.\n\n### Arquitectura\n\n**Cliente**: aplica debounce a las teclas, cancela peticiones viejas y cachea respuestas por prefijo. **Edge**: las respuestas no personalizadas son idénticas para todos, así que una CDN cachea los prefijos populares con un TTL corto ([[cdn]]). **Servicio de sugerencias**: cada réplica tiene el índice completo en RAM y carga un snapshot nuevo después de cada build. **Frescura**: un job de streaming cuenta las búsquedas recientes y publica una lista pequeña de tendencias que se mezcla al consultar ([[stream-processing]]).\n\n### Las partes difíciles\n\n1. **Top-K por prefijo** en memoria, con una búsqueda O(largo del prefijo).\n2. **Frescura vs precálculo**: builds batch para la calidad y una capa de streaming para las tendencias."
+  },
+  "keyPoints": [
+    {
+      "en": "Budget: keystroke to suggestions under ~100 ms, where a UI still feels instantaneous.",
+      "es": "Presupuesto: de la tecla a las sugerencias en menos de ~100 ms, donde la interfaz todavía se siente instantánea."
+    },
+    {
+      "en": "Precompute offline: aggregate query logs, then store the **top 10 completions** for every prefix.",
+      "es": "Precalcula offline: agrega los logs de búsqueda y guarda el **top 10 de completados** para cada prefijo."
+    },
+    {
+      "en": "Serve from RAM: a trie with top-K per node, or a flat prefix → list map.",
+      "es": "Sirve desde RAM: un trie con top-K en cada nodo, o un mapa plano prefijo → lista."
+    },
+    {
+      "en": "Short prefixes are shared by everyone, so browser, CDN and server caches absorb most traffic.",
+      "es": "Los prefijos cortos los comparten todos, así que las caches del navegador, la CDN y el servidor absorben la mayor parte del tráfico."
+    },
+    {
+      "en": "A small streaming layer adds trending queries, merged with the batch index at query time.",
+      "es": "Una capa pequeña de streaming suma las búsquedas en tendencia, mezcladas con el índice batch al consultar."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  L[(Query logs)] --> B[\"Batch job<br/>count with decay\"]\n  B --> T[\"Build index<br/>top 10 per prefix\"]\n  K[Live query stream] --> S[\"Trending counts<br/>short windows\"]\n  U[Keystroke] --> C{\"Browser or<br/>CDN cache hit?\"}\n  C -->|hit| R[Render suggestions]\n  C -->|miss| A[\"Suggest service<br/>index in RAM\"]\n  T -->|snapshot swap| A\n  S --> A\n  A --> M[\"Merge, blocklist,<br/>keep top 10\"]\n  M --> R",
+    "caption": {
+      "en": "The expensive work (counting and top-K) happens offline; each keystroke is a cache hit or one in-memory lookup.",
+      "es": "El trabajo caro (contar y sacar el top-K) ocurre offline; cada tecla es un hit de cache o una sola búsqueda en memoria."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Build top-K per prefix offline, look it up online", "es": "Construir el top-K por prefijo offline y consultarlo online" },
+    "source": "import heapq\nfrom collections import defaultdict\n\nK, MAX_PREFIX = 10, 20\n\ndef build_index(scores: dict[str, float]) -> dict[str, list[str]]:\n    \"\"\"Offline (a batch job in production): prefix -> top-K completions.\n    A trie stores the same top-K list at each node and shares prefix memory.\"\"\"\n    heaps: dict[str, list[tuple[float, str]]] = defaultdict(list)\n    for query, score in scores.items():              # score = decayed count\n        for i in range(1, min(len(query), MAX_PREFIX) + 1):\n            h = heaps[query[:i]]\n            if len(h) < K:                           # bounded min-heap of size K\n                heapq.heappush(h, (score, query))\n            elif score > h[0][0]:                    # beats the weakest kept\n                heapq.heapreplace(h, (score, query))\n    return {p: [q for _, q in sorted(h, reverse=True)] for p, h in heaps.items()}\n\ndef suggest(index, prefix: str, trending: list[str], blocked: set[str]) -> list[str]:\n    p = prefix.lower()\n    # Online: one dict lookup, O(prefix length); no subtree walk per keystroke\n    batch = [q for q in index.get(p[:MAX_PREFIX], []) if q.startswith(p)]\n    hot = [q for q in trending if q.startswith(p)][:3]   # streaming layer\n    out: list[str] = []\n    for q in hot + batch:                             # dedupe, filter, cap at K\n        if q not in out and q not in blocked:\n            out.append(q)\n    return out[:K]"
+  },
+  "example": {
+    "en": "Facebook's typeahead (2010): when you focus the search box, the browser preloads your friends, pages and groups, so many queries resolve locally. The rest go to a stateless aggregator that queries leaf services in parallel, a global leaf (pages and apps, the same for everyone) and a graph leaf (your social neighborhood), and merges their prefix matches. A memcached query cache fronts the global service. The engineers' rule: spending more than 100 ms to retrieve a result makes typeahead \"stutter\".",
+    "es": "El typeahead de Facebook (2010): cuando enfocas la caja de búsqueda, el navegador precarga tus amigos, páginas y grupos, así muchas consultas se resuelven localmente. El resto va a un agregador sin estado que consulta en paralelo servicios hoja, uno global (páginas y apps, igual para todos) y uno del grafo (tu vecindario social), y mezcla sus coincidencias de prefijo. Una cache de consultas en memcached va delante del servicio global. La regla de sus ingenieros: tardar más de 100 ms en traer un resultado hace que el typeahead \"tartamudee\"."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "Trie vs prefix map, and memory", "es": "Trie vs mapa de prefijos, y memoria" },
+      "body": {
+        "en": "Walking a trie subtree and sorting at query time is fine for `zebr` and hopeless for `a`, which has millions of completions. So precompute: each trie node keeps its top-K list, and a lookup walks at most ~20 characters, then reads the list. A flat `prefix → top-K` hash map gives the same O(prefix length) lookup with less code and more memory, since prefixes aren't shared. Sizing (assumed): ~100M prefixes × 10 IDs × 4 B ≈ 4 GB plus keys, so the index fits in RAM: replicate it, don't shard it. Off the shelf, Elasticsearch's completion suggester keeps in-memory structures that are fast to query but costly to build.",
+        "es": "Recorrer el subárbol de un trie y ordenar al consultar funciona para `zebr` y es inviable para `a`, que tiene millones de completados. Por eso se precalcula: cada nodo del trie guarda su lista top-K, y una consulta recorre como máximo ~20 caracteres y lee la lista. Un hash map plano `prefix → top-K` da la misma búsqueda O(largo del prefijo) con menos código y más memoria, porque los prefijos no se comparten. Dimensionamiento (supuesto): ~100M de prefijos × 10 IDs × 4 B ≈ 4 GB más las claves, así que el índice cabe en RAM: replícalo, no lo particiones. Ya hecho, el completion suggester de Elasticsearch usa estructuras en memoria rápidas de consultar pero costosas de construir."
+      }
+    },
+    {
+      "title": { "en": "Ranking and freshness", "es": "Ranking y frescura" },
+      "body": {
+        "en": "Score = decayed count (yesterday weighs less than today) plus locale and quality signals; drop queries seen from too few distinct users, so nobody can plant a suggestion. Rebuild the batch index daily or hourly, validate it (size, blocked terms, top prefixes), then swap snapshots. For trends, a streaming job counts queries in short windows, flags the ones rising fast against their baseline, and publishes a small trending list merged ahead of batch results; a count-min sketch keeps those counts in fixed memory ([[probabilistic-structures]]). Apply the blocklist at build time and again at serve time, so a takedown is instant.",
+        "es": "Puntaje = conteo con decaimiento (ayer pesa menos que hoy) más señales de idioma y calidad; descarta las búsquedas hechas por muy pocos usuarios distintos, para que nadie pueda plantar una sugerencia. Reconstruye el índice batch cada día o cada hora, valídalo (tamaño, términos bloqueados, prefijos principales) y luego cambia el snapshot. Para las tendencias, un job de streaming cuenta búsquedas en ventanas cortas, marca las que suben rápido frente a su línea base y publica una lista pequeña que se mezcla antes de los resultados batch; un count-min sketch guarda esos conteos en memoria fija ([[probabilistic-structures]]). Aplica la lista de bloqueo al construir y otra vez al servir, así una baja es inmediata."
+      }
+    },
+    {
+      "title": { "en": "Latency budget and caching", "es": "Presupuesto de latencia y cache" },
+      "body": {
+        "en": "Of ~100 ms, the in-memory lookup takes microseconds; network round trips and rendering take the rest, so serve from regions or edge locations near users. The client debounces typing to cut requests, cancels in-flight requests when a new key arrives, and caches responses per prefix. Non-personalized responses are identical for every user, so `Cache-Control: max-age` lets browsers and the CDN absorb repeats. Personalization (recent searches) comes from a separate per-user list merged on the client, so it never enters the shared cache key.",
+        "es": "De los ~100 ms, la búsqueda en memoria toma microsegundos; los viajes de red y el renderizado se llevan el resto, así que sirve desde regiones o puntos de edge cerca de los usuarios. El cliente aplica debounce para reducir peticiones, cancela las que están en vuelo cuando llega una tecla nueva y cachea las respuestas por prefijo. Las respuestas no personalizadas son idénticas para todos, así que `Cache-Control: max-age` deja que el navegador y la CDN absorban las repeticiones. La personalización (búsquedas recientes) viene de una lista aparte por usuario que se mezcla en el cliente, así nunca entra en la clave de la cache compartida."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "Query time is one memory lookup, O(prefix length), whatever the corpus size.", "es": "Consultar es una sola búsqueda en memoria, O(largo del prefijo), sin importar el tamaño del corpus." },
+    { "en": "Non-personalized responses are identical for everyone, so caches absorb most traffic.", "es": "Las respuestas no personalizadas son idénticas para todos, así que las caches absorben la mayor parte del tráfico." },
+    { "en": "Offline builds are testable and reversible: validate a snapshot, then swap it in.", "es": "Los builds offline se pueden probar y revertir: validas un snapshot y luego lo activas." }
+  ],
+  "cons": [
+    { "en": "Batch indexes lag: without a streaming layer, a breaking-news query is missing until the next build.", "es": "Los índices batch se atrasan: sin una capa de streaming, una búsqueda de última hora falta hasta el siguiente build." },
+    { "en": "Top-K per prefix multiplies memory by the number of prefixes per query.", "es": "El top-K por prefijo multiplica la memoria por la cantidad de prefijos de cada búsqueda." },
+    { "en": "Personalization fights shared caching; it needs its own per-user layer.", "es": "La personalización choca con la cache compartida; necesita su propia capa por usuario." }
+  ],
+  "whenToUse": {
+    "en": "Completion over a large vocabulary ranked by popularity: search boxes, product, place and people pickers, command palettes.",
+    "es": "Completado sobre un vocabulario grande ordenado por popularidad: cajas de búsqueda, selectores de productos, lugares y personas, paletas de comandos."
+  },
+  "whenNotToUse": {
+    "en": "Small lists (a few thousand items): ship them to the client and filter locally. Typo-tolerant or semantic matching needs a search engine, not prefix lookup.",
+    "es": "Listas chicas (unos pocos miles de ítems): mándalas al cliente y filtra localmente. La tolerancia a errores de tipeo o la búsqueda semántica necesitan un motor de búsqueda, no una búsqueda por prefijo."
+  },
+  "numbers": [
+    { "en": "Traffic: 100M DAU × 10 searches × ~6 requests (assumed) = 6B/day ≈ 70k QPS, ~140k at peak.", "es": "Tráfico: 100M de DAU × 10 búsquedas × ~6 peticiones (supuesto) = 6 mil millones/día ≈ 70k QPS, ~140k en el pico." },
+    { "en": "Budget: ~100 ms keystroke-to-render feels instantaneous (Nielsen, 1993); the network uses most of it.", "es": "Presupuesto: ~100 ms de la tecla a la pantalla se sienten instantáneos (Nielsen, 1993); la red se lleva la mayor parte." },
+    { "en": "Memory: ~100M prefixes × top 10 × 4-byte IDs ≈ 4 GB plus keys (assumed): replicate, don't shard.", "es": "Memoria: ~100M de prefijos × top 10 × IDs de 4 bytes ≈ 4 GB más las claves (supuesto): replica, no particiones." },
+    { "en": "Facebook (2010): more than 100 ms to retrieve a result makes typeahead \"stutter\".", "es": "Facebook (2010): tardar más de 100 ms en traer un resultado hace que el typeahead \"tartamudee\"." }
+  ],
+  "pitfalls": [
+    { "en": "Walking the subtree at query time: fine for `zebr`, hopeless for `a`. Precompute top-K per node.", "es": "Recorrer el subárbol al consultar: funciona para `zebr`, es inviable para `a`. Precalcula el top-K por nodo." },
+    { "en": "No request cancellation: a slow response for `ne` lands after `new` and overwrites newer suggestions.", "es": "No cancelar peticiones: una respuesta lenta para `ne` llega después de `new` y pisa sugerencias más nuevas." },
+    { "en": "Blocklist only at build time: an offensive suggestion stays live until the next build.", "es": "Aplicar la lista de bloqueo solo al construir: una sugerencia ofensiva sigue visible hasta el siguiente build." },
+    { "en": "Putting the user ID in the CDN cache key: every request misses and the edge cache is useless.", "es": "Poner el ID de usuario en la clave de la CDN: cada petición es un miss y la cache del edge no sirve." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you make a trending query show up within minutes?", "es": "¿Cómo haces que una búsqueda en tendencia aparezca en minutos?" },
+      "a": {
+        "en": "I don't rebuild the main index faster; I add a small streaming layer. A stream job counts queries in 5-minute windows, compares each with its baseline, and keeps the fast risers using a count-min sketch plus a heap. Every minute it publishes a small trending list per locale, and the suggest service merges matching entries ahead of batch results. I require many distinct users before anything trends and apply the blocklist, so a bot can't plant suggestions.",
+        "es": "No reconstruyo el índice principal más rápido; agrego una capa pequeña de streaming. Un job de streaming cuenta búsquedas en ventanas de 5 minutos, compara cada una con su línea base y se queda con las que suben rápido usando un count-min sketch y un heap. Cada minuto publica una lista corta de tendencias por idioma, y el servicio de sugerencias mezcla las que coinciden antes de los resultados batch. Exijo muchos usuarios distintos antes de que algo sea tendencia y aplico la lista de bloqueo, así un bot no puede plantar sugerencias."
+      }
+    },
+    {
+      "q": { "en": "Why not just run `LIKE 'prefix%'` on the database?", "es": "¿Por qué no correr simplemente `LIKE 'prefix%'` en la base de datos?" },
+      "a": {
+        "en": "A B-tree index makes the prefix match cheap, but not the ranking: I need the top 10 by popularity, so every keystroke would read and sort all matches, millions for `a`, at ~70k QPS. Precomputing top-K per prefix moves that work offline and leaves an O(prefix length) lookup in RAM. For a few thousand rows at low QPS, the database query is fine.",
+        "es": "Un índice B-tree abarata la coincidencia por prefijo, pero no el ranking: necesito el top 10 por popularidad, así que cada tecla leería y ordenaría todas las coincidencias, millones para `a`, a ~70k QPS. Precalcular el top-K por prefijo lleva ese trabajo a offline y deja una búsqueda O(largo del prefijo) en RAM. Para unos pocos miles de filas con pocas QPS, la consulta a la base está bien."
+      }
+    },
+    {
+      "q": { "en": "How do you add personalization without killing the cache?", "es": "¿Cómo agregas personalización sin matar la cache?" },
+      "a": {
+        "en": "I keep the global suggestions cacheable and add a per-user layer beside them. The client fetches the user's recent and frequent searches once per session, or in a parallel call, and merges them above global results locally. The CDN cache key never includes the user, so hit rates stay high. If ranking must be personal, I re-rank the cached global top 10 with a few user features, not a per-user index.",
+        "es": "Mantengo cacheables las sugerencias globales y agrego una capa por usuario al lado. El cliente trae las búsquedas recientes y frecuentes del usuario una vez por sesión, o en una llamada en paralelo, y las mezcla localmente por encima de las globales. La clave de la CDN nunca incluye al usuario, así el hit rate se mantiene alto. Si el ranking debe ser personal, reordeno el top 10 global cacheado con unas pocas features del usuario, no con un índice por usuario."
+      }
+    }
+  ],
+  "related": ["tries", "heaps-top-k", "caching", "cdn", "probabilistic-structures", "stream-processing"],
+  "sources": [
+    { "title": "Meta Engineering — The life of a typeahead query (2010)", "url": "https://engineering.fb.com/2010/05/17/web/the-life-of-a-typeahead-query/" },
+    { "title": "Nielsen Norman Group — Response times: the 3 important limits", "url": "https://www.nngroup.com/articles/response-times-3-important-limits/" },
+    { "title": "Elastic — Elasticsearch suggesters (completion suggester)", "url": "https://www.elastic.co/docs/reference/elasticsearch/rest-apis/search-suggesters" }
+  ]
+}
