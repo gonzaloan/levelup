@@ -1,0 +1,88 @@
+{
+  "concept": "case-chat-system",
+  "items": [
+    {
+      "id": "case-chat-system.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Users say messages in group chats sometimes appear in a different order on different phones. Each of your 40 chat servers stamps messages with its own receive time, and clients sort by that timestamp. What do you change?",
+        "es": "Los usuarios dicen que los mensajes en chats grupales a veces aparecen en distinto orden en distintos teléfonos. Cada uno de tus 40 servidores de chat marca los mensajes con su propia hora de recepción y los clientes ordenan por esa marca. ¿Qué cambias?"
+      },
+      "options": [
+        {
+          "text": { "en": "Give each conversation one owner that assigns a sequence number", "es": "Darle a cada conversación un dueño que asigne un número de secuencia" },
+          "why": { "en": "One writer per conversation gives every member the same order and lets clients detect gaps.", "es": "Un solo escritor por conversación da a todos el mismo orden y permite detectar huecos." }
+        },
+        {
+          "text": { "en": "Tighten NTP sync across all 40 servers", "es": "Ajustar más la sincronización NTP de los 40 servidores" },
+          "why": { "en": "Skew shrinks but never reaches zero; two messages milliseconds apart can still swap.", "es": "La desviación baja pero nunca llega a cero; dos mensajes con milisegundos de diferencia pueden seguir invirtiéndose." }
+        },
+        {
+          "text": { "en": "Sort by the sender's device timestamp instead", "es": "Ordenar por la hora del dispositivo del remitente" },
+          "why": { "en": "Phone clocks are wrong or user-controlled; that makes the order worse, not better.", "es": "Los relojes de los teléfonos fallan o los controla el usuario; eso empeora el orden." }
+        },
+        {
+          "text": { "en": "Use one global sequence shared by every conversation", "es": "Usar una secuencia global compartida por todas las conversaciones" },
+          "why": { "en": "Correct but a global bottleneck; users only perceive order within a conversation.", "es": "Es correcto, pero es un cuello de botella global; los usuarios solo perciben el orden dentro de una conversación." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Wall clocks on different machines can't order events reliably. Route each `conv_id` to a single owner (consistent hashing) that assigns a gap-free `seq` before persisting; clients render by `seq`. Order is per conversation, so conversations still shard freely.",
+        "es": "Los relojes de máquinas distintas no pueden ordenar eventos de forma confiable. Enruta cada `conv_id` a un único dueño (consistent hashing) que asigne un `seq` sin huecos antes de persistir; los clientes muestran por `seq`. El orden es por conversación, así que las conversaciones se siguen particionando libremente."
+      }
+    },
+    {
+      "id": "case-chat-system.a2",
+      "type": "order",
+      "prompt": {
+        "en": "Put the server-side path of one sent message in order.",
+        "es": "Ordena el camino en el servidor de un mensaje enviado."
+      },
+      "steps": [
+        { "en": "Client sends the message with a `client_msg_id`", "es": "El cliente envía el mensaje con un `client_msg_id`" },
+        { "en": "Conversation owner checks whether that `client_msg_id` was already stored", "es": "El dueño de la conversación verifica si ese `client_msg_id` ya se guardó" },
+        { "en": "Owner assigns the next sequence number for the conversation", "es": "El dueño asigna el siguiente número de secuencia de la conversación" },
+        { "en": "Message is persisted to the message store", "es": "El mensaje se persiste en el almacén de mensajes" },
+        { "en": "Message is routed to online members' gateways or queued for push", "es": "El mensaje se enruta a los gateways de los miembros en línea o se encola para push" },
+        { "en": "Recipient device reports it has received messages up to that sequence", "es": "El dispositivo receptor informa que recibió los mensajes hasta esa secuencia" }
+      ],
+      "explain": {
+        "en": "Dedup comes before the sequence so a retry never burns a new `seq`. Persist before delivering: if the server crashes after delivery but before the write, a message someone already read would vanish. The delivered receipt closes the loop.",
+        "es": "La deduplicación va antes de la secuencia para que un reintento nunca gaste un `seq` nuevo. Persiste antes de entregar: si el servidor cae después de entregar y antes de escribir, desaparecería un mensaje que alguien ya leyó. La confirmación de entrega cierra el ciclo."
+      }
+    },
+    {
+      "id": "case-chat-system.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about message delivery in a chat system are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la entrega de mensajes en un sistema de chat son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": { "en": "A WebSocket over TCP guarantees the recipient app processed the message", "es": "Un WebSocket sobre TCP garantiza que la app receptora procesó el mensaje" },
+          "why": { "en": "The connection can drop with data in flight; only an application-level ack proves processing.", "es": "La conexión puede caerse con datos en tránsito; solo una confirmación a nivel de aplicación prueba el procesamiento." }
+        },
+        {
+          "text": { "en": "Retries plus dedup on `client_msg_id` make sends effectively exactly-once", "es": "Los reintentos más la deduplicación por `client_msg_id` hacen los envíos efectivamente exactly-once" }
+        },
+        {
+          "text": { "en": "Read receipts can be one `last_read_seq` per member per conversation", "es": "Las confirmaciones de lectura pueden ser un `last_read_seq` por miembro y conversación" }
+        },
+        {
+          "text": { "en": "APNs push notifications arrive in order and exactly once", "es": "Los push de APNs llegan en orden y exactamente una vez" },
+          "why": { "en": "APNs is best-effort and may reorder; pushes are hints, the message log is the truth.", "es": "APNs es best-effort y puede reordenar; los push son avisos, la verdad es el log de mensajes." }
+        },
+        {
+          "text": { "en": "Clients detect missed messages by gaps in the sequence", "es": "Los clientes detectan mensajes perdidos por huecos en la secuencia" }
+        }
+      ],
+      "answers": [1, 2, 4],
+      "explain": {
+        "en": "Transport delivery isn't application delivery. Reliable chat comes from the application protocol: client IDs for dedup, server sequences for order and gap detection, sync from the last sequence on reconnect, and a single read pointer per member.",
+        "es": "La entrega del transporte no es la entrega de la aplicación. Un chat confiable sale del protocolo de aplicación: IDs del cliente para deduplicar, secuencias del servidor para el orden y la detección de huecos, sincronización desde la última secuencia al reconectar y un único puntero de lectura por miembro."
+      }
+    }
+  ]
+}

@@ -1,0 +1,178 @@
+{
+  "id": "tries",
+  "domain": "coding",
+  "level": "core",
+  "title": {
+    "en": "Tries (Prefix Trees)",
+    "es": "Tries (árboles de prefijos)"
+  },
+  "aliases": [
+    "trie",
+    "prefix tree",
+    "digital tree",
+    "autocomplete",
+    "startsWith",
+    "word search II",
+    "radix tree"
+  ],
+  "tldr": {
+    "en": "A tree where each edge is a character and each path from the root spells a prefix, so insert, lookup and \"any word starting with...?\" cost O(key length), however many words are stored.",
+    "es": "Un árbol donde cada arista es un carácter y cada camino desde la raíz forma un prefijo, así que insertar, buscar y \"¿hay palabras que empiecen con...?\" cuestan O(largo de la clave), sin importar cuántas palabras haya."
+  },
+  "explain": {
+    "en": "A trie stores strings by sharing prefixes. Each node holds `children` (char → node) and an `end` flag that marks where a whole word stops.\n\n- **insert(word)**: walk from the root, creating missing children, then set `end`.\n- **search(word)**: walk; fail on a missing child; succeed only if the last node has `end`.\n- **startsWith(prefix)**: the same walk, but reaching the last node is enough.\n\nEach operation costs O(L) for a key of length L, independent of how many keys are stored. A hash set also does exact lookup in O(L) (hashing reads every character), but a trie answers prefix queries too, and a DFS over sorted children lists keys alphabetically.\n\n**Signals:** prefix queries, autocomplete, \"words that start with\", spell check, or matching many words at once against a grid or stream: build the trie once and walk it as you explore. The cost is memory, one node per distinct prefix; **radix trees** merge single-child chains to save it.",
+    "es": "Un trie guarda strings compartiendo prefijos. Cada nodo tiene `children` (carácter → nodo) y un flag `end` que marca dónde termina una palabra completa.\n\n- **insert(word)**: camina desde la raíz creando los hijos que faltan y luego marca `end`.\n- **search(word)**: camina; falla si falta un hijo; tiene éxito solo si el último nodo tiene `end`.\n- **startsWith(prefix)**: el mismo recorrido, pero basta con llegar al último nodo.\n\nCada operación cuesta O(L) para una clave de largo L, sin importar cuántas claves haya. Un hash set también busca coincidencias exactas en O(L) (el hash lee cada carácter), pero un trie además responde consultas por prefijo, y un DFS sobre hijos ordenados lista las claves alfabéticamente.\n\n**Señales:** consultas por prefijo, autocompletado, \"palabras que empiezan con\", corrector ortográfico, o buscar muchas palabras a la vez en una grilla o un stream: construye el trie una vez y recórrelo mientras exploras. El costo es memoria, un nodo por prefijo distinto; los **radix trees** fusionan cadenas de un solo hijo para ahorrarla."
+  },
+  "keyPoints": [
+    {
+      "en": "Each node maps characters to children; an **end** flag marks where a whole word stops.",
+      "es": "Cada nodo mapea caracteres a hijos; un flag **end** marca dónde termina una palabra completa."
+    },
+    {
+      "en": "Insert, search and startsWith walk one node per character: O(L), whatever the key count.",
+      "es": "Insert, search y startsWith avanzan un nodo por carácter: O(L), sin importar cuántas claves haya."
+    },
+    {
+      "en": "`search` needs the end flag; `startsWith` only needs the path to exist.",
+      "es": "`search` necesita el flag end; a `startsWith` le basta con que exista el camino."
+    },
+    {
+      "en": "Beats a hash set for prefix queries, autocomplete, sorted keys and multi-word search.",
+      "es": "Le gana a un hash set en consultas por prefijo, autocompletado, claves ordenadas y búsqueda de muchas palabras."
+    },
+    {
+      "en": "Costs memory: one node per distinct prefix. **Radix trees** compress single-child chains.",
+      "es": "Cuesta memoria: un nodo por prefijo distinto. Los **radix trees** comprimen cadenas de un solo hijo."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  R((root)) -->|c| C[\"c\"]\n  C -->|a| CA[\"ca\"]\n  CA -->|r| CAR[\"car (end)\"]\n  CA -->|t| CAT[\"cat (end)\"]\n  CAR -->|t| CART[\"cart (end)\"]\n  R -->|d| D[\"d\"]\n  D -->|o| DO[\"do\"]\n  DO -->|g| DOG[\"dog (end)\"]",
+    "caption": {
+      "en": "\"car\", \"cart\", \"cat\" and \"dog\" share prefixes. `startsWith(\"ca\")` reaches node ca; `search(\"ca\")` fails because ca has no end flag.",
+      "es": "\"car\", \"cart\", \"cat\" y \"dog\" comparten prefijos. `startsWith(\"ca\")` llega al nodo ca; `search(\"ca\")` falla porque ca no tiene el flag end."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Trie with insert, search and startsWith",
+      "es": "Trie con insert, search y startsWith"
+    },
+    "source": "class Node:\n    def __init__(self):\n        self.children = {}               # char -> Node\n        self.end = False                 # a whole word stops here\n\nclass Trie:\n    def __init__(self):\n        self.root = Node()\n\n    def insert(self, word: str) -> None:\n        node = self.root\n        for ch in word:\n            if ch not in node.children:\n                node.children[ch] = Node()\n            node = node.children[ch]\n        node.end = True\n\n    def _walk(self, s: str):             # node at the end of s, or None\n        node = self.root\n        for ch in s:\n            if (node := node.children.get(ch)) is None:\n                return None\n        return node\n\n    def search(self, word: str) -> bool:\n        node = self._walk(word)\n        return node is not None and node.end   # a prefix alone is not a word\n\n    def starts_with(self, prefix: str) -> bool:\n        return self._walk(prefix) is not None"
+  },
+  "example": {
+    "en": "**Word search II.** Find which of 10,000 words appear in a 12×12 letter grid as paths of adjacent cells. Searching each word separately repeats the grid DFS 10,000 times. Instead, insert every word into one trie and run one DFS from each cell, stepping down the trie as you step across the grid. Stop the moment the path is not a prefix of any word, and clear `end` on a found word so it is reported once.",
+    "es": "**Word search II.** Encuentra cuáles de 10 000 palabras aparecen en una grilla de letras de 12×12 como caminos de celdas adyacentes. Buscar cada palabra por separado repite el DFS de la grilla 10 000 veces. En cambio, inserta todas las palabras en un solo trie y corre un DFS desde cada celda, bajando por el trie a medida que avanzas por la grilla. Corta apenas el camino no sea prefijo de ninguna palabra, y limpia `end` en cada palabra encontrada para reportarla una sola vez."
+  },
+  "pros": [
+    {
+      "en": "Prefix queries in O(prefix length), with no scan over all keys.",
+      "es": "Consultas por prefijo en O(largo del prefijo), sin recorrer todas las claves."
+    },
+    {
+      "en": "Common prefixes are stored once; a sorted DFS yields keys alphabetically.",
+      "es": "Los prefijos comunes se guardan una vez; un DFS ordenado entrega las claves alfabéticamente."
+    },
+    {
+      "en": "Prunes multi-word search: stop when the path is no word's prefix.",
+      "es": "Poda la búsqueda de muchas palabras: corta cuando el camino no es prefijo de ninguna."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Memory heavy: one object per node, and in Python a dict per node.",
+      "es": "Consume mucha memoria: un objeto por nodo y, en Python, un dict por nodo."
+    },
+    {
+      "en": "For exact lookups alone, a hash set is simpler and usually faster.",
+      "es": "Para búsquedas exactas solamente, un hash set es más simple y suele ser más rápido."
+    },
+    {
+      "en": "Pointer chasing is cache-unfriendly compared with a sorted array and binary search.",
+      "es": "Saltar entre punteros es poco amigable con la caché comparado con un arreglo ordenado y búsqueda binaria."
+    }
+  ],
+  "whenToUse": {
+    "en": "Prefix-based queries: autocomplete, \"starts with\", spell check, longest common prefix, or searching many words at once (grid word search, matching a dictionary against a stream).",
+    "es": "Consultas basadas en prefijos: autocompletado, \"empieza con\", corrector ortográfico, prefijo común más largo, o buscar muchas palabras a la vez (palabras en una grilla, un diccionario contra un stream)."
+  },
+  "whenNotToUse": {
+    "en": "Only exact membership is needed (hash set), the key set is small and static (sorted list plus [[binary-search]] for the prefix range), or memory is tight.",
+    "es": "Solo necesitas pertenencia exacta (hash set), el conjunto de claves es pequeño y estático (lista ordenada más [[binary-search]] para el rango del prefijo) o la memoria es escasa."
+  },
+  "numbers": [
+    {
+      "en": "insert, search, startsWith: O(L) for a key of length L, independent of the number of keys.",
+      "es": "insert, search, startsWith: O(L) para una clave de largo L, sin depender de la cantidad de claves."
+    },
+    {
+      "en": "Space: O(total characters) in the worst case, one node per distinct prefix.",
+      "es": "Espacio: O(total de caracteres) en el peor caso, un nodo por prefijo distinto."
+    },
+    {
+      "en": "Array children: O(1) child lookup, but one slot per alphabet letter in every node (26 for a–z).",
+      "es": "Hijos en arreglo: acceso O(1) al hijo, pero un espacio por letra del alfabeto en cada nodo (26 para a–z)."
+    },
+    {
+      "en": "Autocomplete: O(L) to reach the prefix node, plus the part of its subtree you visit.",
+      "es": "Autocompletado: O(L) para llegar al nodo del prefijo, más la parte de su subárbol que visites."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "`search` returns true for a mere prefix because the `end` check is missing.",
+      "es": "`search` devuelve true para un simple prefijo porque falta revisar `end`."
+    },
+    {
+      "en": "Grid word search: not marking the cell before recursing (letters reused) or not restoring it after.",
+      "es": "Búsqueda en grilla: no marcar la celda antes de recursar (se reutilizan letras) o no restaurarla después."
+    },
+    {
+      "en": "Reporting a found word twice: clear its `end` flag once it is found.",
+      "es": "Reportar dos veces una palabra encontrada: limpia su flag `end` apenas la encuentres."
+    },
+    {
+      "en": "26-slot arrays on mixed-case or Unicode input: index errors or wasted memory; use a dict.",
+      "es": "Arreglos de 26 posiciones con mayúsculas o Unicode: errores de índice o memoria desperdiciada; usa un dict."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "When is a trie better than a hash set?",
+        "es": "¿Cuándo un trie es mejor que un hash set?"
+      },
+      "a": {
+        "en": "When the queries are about prefixes, not whole keys. A hash set answers \"is cart present?\" in O(L), like a trie, with less memory. But \"which words start with ca?\" forces it to scan every key, while the trie walks two nodes and enumerates that subtree. The same holds for searching many words at once: the trie lets me abandon a path as soon as it is nobody's prefix.",
+        "es": "Cuando las consultas son sobre prefijos y no sobre claves completas. Un hash set responde \"¿está cart?\" en O(L), igual que un trie, y con menos memoria. Pero \"¿qué palabras empiezan con ca?\" lo obliga a revisar todas las claves, mientras que el trie avanza dos nodos y enumera ese subárbol. Lo mismo pasa al buscar muchas palabras a la vez: el trie me deja abandonar un camino apenas no es prefijo de nada."
+      }
+    },
+    {
+      "q": {
+        "en": "How would you return the top 3 autocomplete suggestions?",
+        "es": "¿Cómo devolverías las 3 mejores sugerencias de autocompletado?"
+      },
+      "a": {
+        "en": "Walk to the prefix node, then collect words from its subtree. For alphabetical results, DFS the children in sorted order and stop at 3. For most-popular results, I store at each node the top 3 words of its subtree, updated on insert, so a query is O(L). That trades memory and slower writes for fast reads, the usual choice for typeahead, where reads dominate.",
+        "es": "Camino hasta el nodo del prefijo y luego junto palabras de su subárbol. Para resultados alfabéticos, hago DFS sobre los hijos ordenados y corto en 3. Para los más populares, guardo en cada nodo las 3 mejores palabras de su subárbol, actualizadas al insertar, así una consulta es O(L). Eso cambia memoria y escrituras más lentas por lecturas rápidas, la elección habitual en typeahead, donde dominan las lecturas."
+      }
+    }
+  ],
+  "related": [
+    "hash-maps",
+    "backtracking",
+    "graph-traversal",
+    "binary-search",
+    "case-typeahead"
+  ],
+  "sources": [
+    {
+      "title": "Wikipedia — Trie",
+      "url": "https://en.wikipedia.org/wiki/Trie"
+    },
+    {
+      "title": "Sedgewick & Wayne, Algorithms 4th ed. — 5.2 Tries",
+      "url": "https://algs4.cs.princeton.edu/52trie/"
+    }
+  ]
+}

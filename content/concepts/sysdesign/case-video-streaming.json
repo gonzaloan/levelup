@@ -1,0 +1,234 @@
+{
+  "id": "case-video-streaming",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": {
+    "en": "Design: video streaming platform",
+    "es": "Diseño: plataforma de streaming de video"
+  },
+  "aliases": [
+    "YouTube design",
+    "Netflix design",
+    "video on demand",
+    "VOD",
+    "HLS",
+    "MPEG-DASH",
+    "adaptive bitrate",
+    "transcoding pipeline"
+  ],
+  "tldr": {
+    "en": "Upload the original once in resumable parts, transcode it in parallel chunks into a bitrate ladder of short segments, and serve them from a CDN; the player picks a quality per segment.",
+    "es": "Sube el original una sola vez en partes reanudables, transcodifícalo en chunks paralelos a una escalera de bitrates en segmentos cortos y sírvelos desde una CDN; el player elige la calidad en cada segmento."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: upload, process and watch videos on any device; resume where you left off. **Non-functional**: playback starts fast and rarely rebuffers, uploads survive flaky networks, and egress cost stays under control. Assume 500k uploads/day and 100M views/day, ~5 minutes each.\n\nQuestions I'd ask: on-demand only, or live too? Which devices and codecs? Global audience? DRM?\n\n### High-level design\n\n**Upload**: the client gets pre-signed URLs and sends the file in parts (S3 multipart: up to 10,000 parts), so a dropped connection resumes. The original lands in object storage and an event starts processing.\n\n**Transcode**: split at keyframes, transcode chunks in parallel into each rung of a **bitrate ladder** (Apple's example: 145 kbps at 234p up to 7.8 Mbps at 1080p), then package ~6 s segments for **HLS** (RFC 8216) and **DASH**, plus thumbnails and captions. Each task is idempotent; a failed chunk retries alone.\n\n**Serve**: a metadata DB holds titles, renditions and state; the playback API returns a manifest URL; segments are immutable files served by a **CDN**.\n\n### The hard parts\n\n**Adaptive bitrate.** The manifest lists the variants; the player fetches one segment at a time and switches rung at segment boundaries using measured throughput and buffer level. Netflix's buffer-based ABR cut rebuffers 10–20% versus its throughput-based default (SIGCOMM 2014).\n\n**Egress cost.** 100M views × 5 min × ~3 Mbps (assumed average) ≈ 11 PB/day, ~1 Tbps on average. CDN hit rate and bits per view (codec, per-title ladders) are the levers; Netflix even places its own Open Connect caches inside ISPs.",
+    "es": "### Requisitos\n\n**Funcionales**: subir, procesar y ver videos en cualquier dispositivo; retomar donde quedaste. **No funcionales**: la reproducción arranca rápido y casi nunca hace rebuffering, las subidas sobreviven a redes inestables y el costo de egress queda bajo control. Supón 500k subidas/día y 100M de reproducciones/día, de ~5 minutos cada una.\n\nPreguntas que haría: ¿solo bajo demanda o también en vivo? ¿Qué dispositivos y codecs? ¿Audiencia global? ¿DRM?\n\n### Diseño de alto nivel\n\n**Subida**: el cliente obtiene URLs prefirmadas y envía el archivo en partes (multipart de S3: hasta 10,000 partes), así una conexión caída se reanuda. El original queda en object storage y un evento arranca el procesamiento.\n\n**Transcodificación**: corta en keyframes, transcodifica los chunks en paralelo a cada peldaño de una **escalera de bitrates** (el ejemplo de Apple: de 145 kbps en 234p a 7.8 Mbps en 1080p) y empaqueta segmentos de ~6 s para **HLS** (RFC 8216) y **DASH**, más miniaturas y subtítulos. Cada tarea es idempotente; un chunk que falla se reintenta solo.\n\n**Entrega**: una base de metadatos guarda títulos, renditions y estado; la API de reproducción devuelve la URL del manifiesto; los segmentos son archivos inmutables servidos por una **CDN**.\n\n### Las partes difíciles\n\n**Bitrate adaptativo.** El manifiesto lista las variantes; el player baja un segmento a la vez y cambia de peldaño en los bordes de segmento según el throughput medido y el nivel del buffer. El ABR basado en buffer de Netflix redujo los rebuffers 10–20% frente a su algoritmo por defecto basado en throughput (SIGCOMM 2014).\n\n**Costo de egress.** 100M de reproducciones × 5 min × ~3 Mbps (promedio supuesto) ≈ 11 PB/día, ~1 Tbps en promedio. El hit rate de la CDN y los bits por reproducción (codec, escaleras por título) son las palancas; Netflix incluso pone sus propias caches de Open Connect dentro de los ISPs."
+  },
+  "keyPoints": [
+    {
+      "en": "Upload in resumable parts to object storage via pre-signed URLs; an event starts processing.",
+      "es": "Sube en partes reanudables a object storage con URLs prefirmadas; un evento arranca el procesamiento."
+    },
+    {
+      "en": "Transcode keyframe-aligned chunks in parallel into a **bitrate ladder**, packaged as ~6 s HLS/DASH segments.",
+      "es": "Transcodifica en paralelo chunks alineados a keyframes en una **escalera de bitrates**, empaquetada en segmentos HLS/DASH de ~6 s."
+    },
+    {
+      "en": "The player picks a rung **per segment** from throughput and buffer level: that is adaptive bitrate.",
+      "es": "El player elige un peldaño **en cada segmento** según throughput y nivel de buffer: eso es bitrate adaptativo."
+    },
+    {
+      "en": "Segments are immutable static files, so a **CDN** serves nearly every byte; egress (~1 Tbps here) is the bill.",
+      "es": "Los segmentos son archivos estáticos inmutables, así una **CDN** sirve casi todos los bytes; el egress (~1 Tbps aquí) es la factura."
+    },
+    {
+      "en": "Tier storage: hot renditions near viewers, originals in a cold tier, fewer rungs for rarely watched videos.",
+      "es": "Separa el almacenamiento por niveles: renditions populares cerca del público, originales en un nivel frío y menos peldaños para videos poco vistos."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  U[Uploader app] -->|multipart upload| O[(Original in object store)]\n  O -->|upload event| Q[Transcode queue]\n  Q --> T[\"Chunk workers<br/>234p to 1080p ladder\"]\n  T --> P[\"Packager<br/>HLS + DASH segments\"]\n  P --> S[(Segment store)]\n  P --> M[(Video metadata DB)]\n  V[Viewer player] -->|play| A[Playback API]\n  A --> M\n  A -.->|manifest URL| V\n  S --> C[CDN edge]\n  C -->|6 s segments| V",
+    "caption": {
+      "en": "Bytes flow one way through the pipeline; viewers fetch small static segments from the CDN and switch quality between them.",
+      "es": "Los bytes recorren el pipeline en un solo sentido; los viewers bajan segmentos estáticos chicos desde la CDN y cambian de calidad entre uno y otro."
+    }
+  },
+  "code": {
+    "lang": "text",
+    "title": {
+      "en": "HLS manifests: the ladder and one rendition",
+      "es": "Manifiestos HLS: la escalera y una rendition"
+    },
+    "source": "#EXTM3U\n# master.m3u8: one variant per rung; BANDWIDTH = peak bits/s incl. audio\n#EXT-X-INDEPENDENT-SEGMENTS\n#EXT-X-STREAM-INF:BANDWIDTH=400000,RESOLUTION=640x360\n360p/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=2200000,RESOLUTION=960x540\n540p/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=4900000,RESOLUTION=1280x720\n720p/index.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=8600000,RESOLUTION=1920x1080\n1080p/index.m3u8\n\n#EXTM3U\n# 720p/index.m3u8: one rendition, ~6 s fMP4 segments\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:6\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:6.006,\nseg_00001.m4s\n#EXTINF:6.006,\nseg_00002.m4s\n#EXT-X-ENDLIST"
+  },
+  "example": {
+    "en": "A creator uploads a 10-minute 4K file (~3 GB, assumed) on hotel Wi-Fi. The app sends 100 MB parts; part 17 fails and only that part is retried. Processing splits the video into ~60 chunks of 10 s and transcodes them in parallel, so it takes about as long as the slowest chunk, not the whole film. A viewer on a train starts at 360p for a fast start, climbs to 1080p as the buffer fills, and drops to 540p in a tunnel without stalling.",
+    "es": "Una creadora sube un archivo 4K de 10 minutos (~3 GB, supuesto) desde el Wi-Fi de un hotel. La app envía partes de 100 MB; la parte 17 falla y se reintenta solo esa. El procesamiento corta el video en ~60 chunks de 10 s y los transcodifica en paralelo, así tarda lo que el chunk más lento y no lo que la película completa. Un viewer en el tren arranca en 360p para empezar rápido, sube a 1080p mientras se llena el buffer y baja a 540p en un túnel sin congelarse."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Upload and transcoding pipeline",
+        "es": "Pipeline de subida y transcodificación"
+      },
+      "body": {
+        "en": "Clients upload straight to object storage with pre-signed multipart URLs, never through your API servers; AWS suggests multipart from ~100 MB, with parts of 5 MiB–5 GiB. Completion emits an event that starts a DAG: validate → split at keyframes → transcode each (chunk, rung) → package segments and manifests → thumbnails and captions → publish. Key each task by (video, rung, chunk) so retries overwrite instead of duplicating. Per-title ladders (Netflix's approach) give simple content like animation fewer bits for the same quality. Mark the video *ready* only when every required rung exists.",
+        "es": "Los clientes suben directo a object storage con URLs multipart prefirmadas, nunca pasando por tus servidores de API; AWS sugiere multipart desde ~100 MB, con partes de 5 MiB a 5 GiB. Al terminar se emite un evento que arranca un DAG: validar → cortar en keyframes → transcodificar cada (chunk, peldaño) → empaquetar segmentos y manifiestos → miniaturas y subtítulos → publicar. Identifica cada tarea por (video, peldaño, chunk) para que un reintento sobrescriba en lugar de duplicar. Las escaleras por título (el enfoque de Netflix) le dan menos bits al contenido simple, como la animación, con la misma calidad. Marca el video como *listo* solo cuando existen todos los peldaños requeridos."
+      }
+    },
+    {
+      "title": {
+        "en": "Segments and adaptive bitrate",
+        "es": "Segmentos y bitrate adaptativo"
+      },
+      "body": {
+        "en": "Apple's HLS spec recommends ~6 s segments and a keyframe every 2 s, with keyframes aligned across rungs so the player can switch at any segment boundary. Shorter segments switch faster but add requests and per-segment overhead. Throughput-based ABR picks the rung the measured bandwidth can sustain; buffer-based ABR picks from buffer occupancy and avoids reacting to noisy estimates. Start low for a fast first frame, then climb. Live is harder: clients stay at least three target durations behind the live edge (RFC 8216), ~18 s with 6 s segments, unless you use low-latency HLS.",
+        "es": "La especificación HLS de Apple recomienda segmentos de ~6 s y un keyframe cada 2 s, con keyframes alineados entre peldaños para que el player cambie en cualquier borde de segmento. Los segmentos más cortos cambian más rápido, pero suman peticiones y overhead por segmento. El ABR por throughput elige el peldaño que el ancho de banda medido puede sostener; el ABR por buffer elige según la ocupación del buffer y no reacciona a estimaciones ruidosas. Arranca bajo para mostrar rápido el primer frame y luego sube. El vivo es más difícil: los clientes quedan al menos tres target durations detrás del borde en vivo (RFC 8216), ~18 s con segmentos de 6 s, salvo que uses HLS de baja latencia."
+      }
+    },
+    {
+      "title": {
+        "en": "CDN, storage tiers and cost",
+        "es": "CDN, niveles de almacenamiento y costo"
+      },
+      "body": {
+        "en": "Segments never change, so cache them with long TTLs. Put an origin shield between edges and storage, so a new viral video's segments leave storage once instead of once per edge location. Netflix's Open Connect gives qualifying ISPs cache appliances at no charge, serving popular titles from inside their networks. Storage multiplies with every rung and format: Apple's 9-rung example ladder sums ~25.6 Mbps, ~190 MB per minute of video. Keep originals in a cold tier, re-transcode on demand, and give rarely watched videos fewer rungs.",
+        "es": "Los segmentos nunca cambian, así que cachéalos con TTLs largos. Pon un origin shield entre los edges y el almacenamiento, así los segmentos de un video viral nuevo salen del almacenamiento una vez y no una por cada ubicación de edge. Open Connect de Netflix entrega sin costo appliances de cache a los ISPs que califican, y sirve los títulos populares desde dentro de sus redes. El almacenamiento se multiplica con cada peldaño y formato: la escalera de ejemplo de Apple, de 9 peldaños, suma ~25.6 Mbps, ~190 MB por minuto de video. Guarda los originales en un nivel frío, re-transcodifica bajo demanda y dale menos peldaños a los videos poco vistos."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Segments are plain HTTP files: any CDN caches them, with no streaming servers to scale.",
+      "es": "Los segmentos son archivos HTTP comunes: cualquier CDN los cachea, sin servidores de streaming que escalar."
+    },
+    {
+      "en": "Chunked parallel transcoding makes processing time track chunk length, not video length.",
+      "es": "Transcodificar chunks en paralelo hace que el tiempo de procesamiento dependa del chunk, no del largo del video."
+    },
+    {
+      "en": "ABR keeps playback going on bad networks by trading quality for continuity.",
+      "es": "El ABR mantiene la reproducción en redes malas cambiando calidad por continuidad."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Storage multiplies: every rung and format is another copy of the video.",
+      "es": "El almacenamiento se multiplica: cada peldaño y formato es otra copia del video."
+    },
+    {
+      "en": "Segment length adds delay: live viewers trail the edge by several segments.",
+      "es": "El largo del segmento agrega demora: en vivo, el público queda varios segmentos detrás del borde."
+    },
+    {
+      "en": "Egress dominates cost; CDN hit rate and contracts decide the bill.",
+      "es": "El egress domina el costo; el hit rate y los contratos de CDN deciden la factura."
+    }
+  ],
+  "whenToUse": {
+    "en": "On-demand video for a large audience on variable networks: user uploads, courses, film and TV catalogs, product video.",
+    "es": "Video bajo demanda para mucho público en redes variables: subidas de usuarios, cursos, catálogos de cine y series, video de producto."
+  },
+  "whenNotToUse": {
+    "en": "Two-way real-time video (calls, cloud gaming): segment-based delivery adds seconds, so use WebRTC. A small catalog: buy a managed video service.",
+    "es": "Video en tiempo real de ida y vuelta (llamadas, cloud gaming): la entrega por segmentos agrega segundos, así que usa WebRTC. Un catálogo chico: compra un servicio de video administrado."
+  },
+  "numbers": [
+    {
+      "en": "Egress: assume 100M views/day × 5 min × ~3 Mbps → ~11 PB/day, ~1 Tbps average.",
+      "es": "Egress: supón 100M de reproducciones/día × 5 min × ~3 Mbps → ~11 PB/día, ~1 Tbps en promedio."
+    },
+    {
+      "en": "Apple's example H.264 ladder: 145 kbps (416×234) to 7,800 kbps (1080p); 9 rungs sum ~25.6 Mbps.",
+      "es": "Escalera H.264 de ejemplo de Apple: de 145 kbps (416×234) a 7,800 kbps (1080p); 9 peldaños suman ~25.6 Mbps."
+    },
+    {
+      "en": "Apple HLS spec: ~6 s target segment duration, a keyframe every 2 s.",
+      "es": "Especificación HLS de Apple: segmentos de ~6 s y un keyframe cada 2 s."
+    },
+    {
+      "en": "S3 multipart (Nov 2026): up to 10,000 parts of 5 MiB–5 GiB; objects up to 48.8 TiB.",
+      "es": "Multipart de S3 (nov. 2026): hasta 10,000 partes de 5 MiB a 5 GiB; objetos de hasta 48.8 TiB."
+    },
+    {
+      "en": "Buffer-based ABR cut Netflix rebuffers 10–20% vs its default algorithm (SIGCOMM 2014).",
+      "es": "El ABR basado en buffer redujo 10–20% los rebuffers de Netflix frente a su algoritmo por defecto (SIGCOMM 2014)."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Transcoding a whole file on one machine: a 2-hour film blocks a worker for hours. Split at keyframes.",
+      "es": "Transcodificar el archivo entero en una máquina: una película de 2 horas bloquea un worker por horas. Corta en keyframes."
+    },
+    {
+      "en": "Keyframes not aligned across rungs: the player can't switch cleanly at segment boundaries.",
+      "es": "Keyframes no alineados entre peldaños: el player no puede cambiar limpio en los bordes de segmento."
+    },
+    {
+      "en": "Starting playback at the top rung: slow first frame and an early rebuffer. Start low, then climb.",
+      "es": "Arrancar la reproducción en el peldaño más alto: primer frame lento y un rebuffer temprano. Arranca bajo y luego sube."
+    },
+    {
+      "en": "No origin shield: a viral video's first misses from every edge stampede the origin.",
+      "es": "Sin origin shield: los primeros misses de un video viral desde cada edge saturan el origen."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "A video goes viral. What breaks first, and how do you protect it?",
+        "es": "Un video se vuelve viral. ¿Qué se rompe primero y cómo lo proteges?"
+      },
+      "a": {
+        "en": "Not the CDN for hot segments: after the first requests they're cached at every edge. The risk is the miss storm, hundreds of edge locations fetching the same new segments from origin at once. I add an origin shield so each segment leaves storage once, and coalesce concurrent misses. Metadata reads get a short-TTL cache, and view counts go through a stream aggregator instead of one row update per view.",
+        "es": "No la CDN para los segmentos calientes: después de las primeras peticiones quedan en cache en cada edge. El riesgo es la tormenta de misses: cientos de ubicaciones de edge pidiendo al mismo tiempo los mismos segmentos nuevos al origen. Agrego un origin shield para que cada segmento salga del almacenamiento una vez y unifico los misses concurrentes. Las lecturas de metadatos van a una cache con TTL corto, y las vistas se cuentan con un agregador de streams en lugar de una actualización de fila por vista."
+      }
+    },
+    {
+      "q": {
+        "en": "How would you cut the egress bill?",
+        "es": "¿Cómo bajarías la factura de egress?"
+      },
+      "a": {
+        "en": "First, fewer bits per view: newer codecs like HEVC or AV1 for devices that support them, and per-title ladders so simple content needs less bitrate for the same quality. Second, a higher hit rate: origin shield and long TTLs, since segments are immutable. Third, cheaper delivery: committed CDN volume or, at Netflix scale, caches inside ISPs like Open Connect. I'd track cost per hour watched.",
+        "es": "Primero, menos bits por reproducción: codecs más nuevos como HEVC o AV1 para los dispositivos que los soportan, y escaleras por título para que el contenido simple use menos bitrate con la misma calidad. Segundo, más hit rate: origin shield y TTLs largos, porque los segmentos son inmutables. Tercero, una entrega más barata: volumen comprometido con la CDN o, a escala de Netflix, caches dentro de los ISPs como Open Connect. Mediría el costo por hora vista."
+      }
+    },
+    {
+      "q": {
+        "en": "What changes for live streaming?",
+        "es": "¿Qué cambia para el streaming en vivo?"
+      },
+      "a": {
+        "en": "The pipeline becomes real time: ingest the feed, transcode it into the ladder with fixed keyframe intervals, and publish segments as they finish, so the playlist grows without an end tag. Latency becomes the trade-off: players stay three target durations behind the edge, ~18 s with 6 s segments. Low-latency HLS, with partial segments, cuts that to a few seconds. Transcoders need hot standbys, because a crash is visible to everyone.",
+        "es": "El pipeline pasa a tiempo real: ingiere la señal, la transcodifica a la escalera con un intervalo fijo de keyframes y publica cada segmento al terminarlo, así la playlist crece sin etiqueta de fin. La latencia se vuelve el trade-off: los players quedan tres target durations detrás del borde, ~18 s con segmentos de 6 s. HLS de baja latencia, con segmentos parciales, lo baja a pocos segundos. Los transcodificadores necesitan respaldos en caliente, porque una caída la ve todo el mundo."
+      }
+    }
+  ],
+  "related": [
+    "cdn",
+    "object-storage",
+    "queues-streams",
+    "event-driven",
+    "case-file-sync",
+    "caching"
+  ],
+  "sources": [
+    {
+      "title": "RFC 8216 — HTTP Live Streaming (2017)",
+      "url": "https://www.rfc-editor.org/rfc/rfc8216"
+    },
+    {
+      "title": "Apple — HLS authoring specification for Apple devices",
+      "url": "https://developer.apple.com/documentation/http-live-streaming/hls-authoring-specification-for-apple-devices"
+    },
+    {
+      "title": "Netflix — Open Connect",
+      "url": "https://openconnect.netflix.com/en/"
+    },
+    {
+      "title": "AWS — Amazon S3 multipart upload limits",
+      "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/qfacts.html"
+    }
+  ]
+}

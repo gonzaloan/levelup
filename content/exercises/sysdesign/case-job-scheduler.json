@@ -1,0 +1,128 @@
+{
+  "concept": "case-job-scheduler",
+  "items": [
+    {
+      "id": "case-job-scheduler.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A monthly job **charges each subscription**. After a worker fleet restart, some customers were charged twice. Workers mark a run DONE only after the charge succeeds. What's the right fix?",
+        "es": "Un job mensual **cobra cada suscripción**. Tras reiniciar la flota de workers, a algunos clientes se les cobró dos veces. Los workers marcan la corrida DONE solo después de que el cobro funciona. ¿Cuál es la corrección correcta?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Pass the run_id as the idempotency key on the charge call",
+            "es": "Pasar el run_id como clave de idempotencia en la llamada de cobro"
+          }
+        },
+        {
+          "text": {
+            "en": "Mark the run DONE before calling the payment provider",
+            "es": "Marcar la corrida DONE antes de llamar al proveedor de pagos"
+          },
+          "why": {
+            "en": "That's at-most-once: a crash after the mark and before the charge loses revenue silently.",
+            "es": "Eso es at-most-once: una caída entre la marca y el cobro pierde ingresos en silencio."
+          }
+        },
+        {
+          "text": {
+            "en": "Switch to a FIFO queue so each run is delivered exactly once",
+            "es": "Cambiar a una queue FIFO para que cada corrida se entregue una sola vez"
+          },
+          "why": {
+            "en": "FIFO orders delivery; a run whose lease expires mid-charge is still redelivered.",
+            "es": "FIFO ordena la entrega; una corrida cuyo lease vence a mitad del cobro igual se vuelve a entregar."
+          }
+        },
+        {
+          "text": {
+            "en": "Raise the lease to 2 hours so takeovers almost never happen",
+            "es": "Subir el lease a 2 horas para que casi nunca haya tomas"
+          },
+          "why": {
+            "en": "Fewer duplicates, never zero, and every crashed run now waits 2 hours to recover.",
+            "es": "Menos duplicados, nunca cero, y cada corrida caída ahora espera 2 horas para recuperarse."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A worker can charge and die before marking DONE, so redelivery is inevitable with at-least-once. Make the effect idempotent: the same run_id makes the provider return the first result instead of charging again.",
+        "es": "Un worker puede cobrar y morir antes de marcar DONE, así que con at-least-once la reentrega es inevitable. Haz idempotente el efecto: el mismo run_id hace que el proveedor devuelva el primer resultado en vez de cobrar otra vez."
+      }
+    },
+    {
+      "id": "case-job-scheduler.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size the top-of-hour spike: **100M runs/day** spread evenly over 24 hours, but **20%** of each hour's runs fire in its **first minute**. Runs per second during that minute?",
+        "es": "Dimensiona el pico del inicio de hora: **100M de corridas/día** repartidas en 24 horas, pero **20%** de las corridas de cada hora se disparan en su **primer minuto**. ¿Corridas por segundo durante ese minuto?"
+      },
+      "answer": 13900,
+      "tolerance": 0.15,
+      "unit": "runs/s",
+      "explain": {
+        "en": "Per hour: 100M ÷ 24 ≈ 4.17M. 20% of that is ~833k in one minute: 833k ÷ 60 ≈ 13.9k/s, about 12× the 1.2k/s daily average. Size workers and downstreams for the spike, or spread it with hashed jitter.",
+        "es": "Por hora: 100M ÷ 24 ≈ 4.17M. El 20% son ~833k en un minuto: 833k ÷ 60 ≈ 13.9k/s, unas 12× el promedio diario de 1.2k/s. Dimensiona workers y servicios de abajo para el pico, o repártelo con jitter por hash."
+      }
+    },
+    {
+      "id": "case-job-scheduler.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about leases in a job scheduler are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los leases en un scheduler de jobs son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": {
+            "en": "An expired lease proves the old worker has stopped",
+            "es": "Un lease vencido prueba que el worker anterior se detuvo"
+          },
+          "why": {
+            "en": "It may be paused (GC, slow I/O) and wake up to write: that's why fencing exists.",
+            "es": "Puede estar pausado (GC, I/O lento) y despertar para escribir: por eso existe el fencing."
+          }
+        },
+        {
+          "text": {
+            "en": "Heartbeats extend a lease while the worker is healthy",
+            "es": "Los heartbeats extienden un lease mientras el worker está sano"
+          }
+        },
+        {
+          "text": {
+            "en": "A fencing token lets downstream reject a stale lease holder's writes",
+            "es": "Un fencing token permite que el servicio de abajo rechace las escrituras de un dueño viejo"
+          }
+        },
+        {
+          "text": {
+            "en": "Longer leases are strictly safer than shorter ones",
+            "es": "Los leases más largos son estrictamente más seguros que los cortos"
+          },
+          "why": {
+            "en": "They trade false takeovers for slow recovery: a crashed run waits the full lease.",
+            "es": "Cambian tomas falsas por recuperación lenta: una corrida caída espera el lease completo."
+          }
+        },
+        {
+          "text": {
+            "en": "`SKIP LOCKED` lets schedulers claim different due jobs without waiting",
+            "es": "`SKIP LOCKED` permite que los schedulers tomen distintos jobs vencidos sin esperar"
+          }
+        }
+      ],
+      "answers": [
+        1,
+        2,
+        4
+      ],
+      "explain": {
+        "en": "A lease is a time-bounded claim, not proof of anything. Pair it with heartbeats for liveness and fencing for safety, and use `SKIP LOCKED` so claimers don't queue behind each other.",
+        "es": "Un lease es un reclamo con tiempo límite, no una prueba de nada. Combínalo con heartbeats para la vitalidad y fencing para la seguridad, y usa `SKIP LOCKED` para que quienes reclaman no hagan fila entre sí."
+      }
+    }
+  ]
+}

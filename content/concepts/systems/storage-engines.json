@@ -1,0 +1,107 @@
+{
+  "id": "storage-engines",
+  "domain": "systems",
+  "level": "staff",
+  "title": { "en": "Storage engines: LSM-tree vs B-tree", "es": "Motores de almacenamiento: LSM-tree vs B-tree" },
+  "aliases": ["LSM tree", "B-tree", "RocksDB", "InnoDB", "write amplification", "read amplification", "space amplification", "leveled compaction", "size-tiered compaction", "memtable", "SSTable", "WAL"],
+  "tldr": {
+    "en": "B-trees update pages in place for cheap reads; LSM-trees append and compact later for cheap writes. Choose by the amplification your workload can afford: write, read or space.",
+    "es": "Los B-trees actualizan páginas en su lugar para lecturas baratas; los LSM-trees agregan al final y compactan después para escrituras baratas. Elige según la amplificación que tu carga puede pagar: de escritura, de lectura o de espacio."
+  },
+  "explain": {
+    "en": "Both engines first append each write to a **WAL** for durability; they differ in where the data goes next (indexing basics: [[indexes]]).\n\n- **B-tree** (InnoDB, WiredTiger, Postgres indexes): data lives in fixed-size pages updated **in place**. A point read walks ~3–4 levels, mostly cached. Changing a 100-byte row dirties a whole 8–16 KB page, and half-full pages waste space.\n- **LSM-tree** (RocksDB, Cassandra, ScyllaDB, Bigtable): writes land in an in-memory **memtable**, flushed as immutable sorted **SSTables**. **Compaction** later merges files, keeps the newest version and drops tombstones.\n\nJudge them by three **amplifications**: **write** (bytes written to disk ÷ bytes the app wrote), **read** (disk reads per query) and **space** (disk size ÷ live data).\n\n**Leveled** compaction (RocksDB's default) keeps one sorted run per level, each ~10× larger: low read and space amp (~1.1×), but write amp is often above 10. **Size-tiered** (universal) merges similar-size files: lower write amp, more runs to read, and up to 2× disk during a full compaction.\n\nCompaction is debt: when it falls behind, reads slow down and the engine **stalls writes**.",
+    "es": "Ambos motores primero agregan cada escritura a un **WAL** para tener durabilidad; la diferencia está en adónde van los datos después (lo básico de índices: [[indexes]]).\n\n- **B-tree** (InnoDB, WiredTiger, índices de Postgres): los datos viven en páginas de tamaño fijo que se actualizan **en su lugar**. Una lectura puntual recorre ~3–4 niveles, casi siempre en caché. Cambiar una fila de 100 bytes ensucia una página entera de 8–16 KB, y las páginas medio vacías desperdician espacio.\n- **LSM-tree** (RocksDB, Cassandra, ScyllaDB, Bigtable): las escrituras caen en una **memtable** en memoria, que se vuelca como **SSTables** ordenados e inmutables. Después, la **compactación** fusiona archivos, conserva la versión más nueva y descarta los tombstones.\n\nSe comparan con tres **amplificaciones**: de **escritura** (bytes escritos a disco ÷ bytes que escribió la app), de **lectura** (lecturas a disco por consulta) y de **espacio** (tamaño en disco ÷ datos vivos).\n\nLa compactación **leveled** (la default de RocksDB) mantiene un solo run ordenado por nivel, cada uno ~10× más grande: poca amplificación de lectura y de espacio (~1.1×), pero la de escritura suele pasar de 10. La **size-tiered** (universal) fusiona archivos de tamaño parecido: menos amplificación de escritura, más runs que leer y hasta 2× de disco durante una compactación completa.\n\nLa compactación es una deuda: cuando se atrasa, las lecturas se vuelven lentas y el motor **frena las escrituras**."
+  },
+  "keyPoints": [
+    {
+      "en": "**B-trees** update fixed pages in place: cheap point and range reads, but small changes rewrite whole pages.",
+      "es": "Los **B-trees** actualizan páginas fijas en su lugar: lecturas puntuales y por rango baratas, pero un cambio pequeño reescribe páginas enteras."
+    },
+    {
+      "en": "**LSM-trees** buffer writes in a memtable, flush immutable SSTables and merge them later by compaction.",
+      "es": "Los **LSM-trees** acumulan escrituras en una memtable, vuelcan SSTables inmutables y luego los fusionan con la compactación."
+    },
+    {
+      "en": "Compare engines by **write, read and space amplification**; no design minimizes all three.",
+      "es": "Compara motores por **amplificación de escritura, lectura y espacio**; ningún diseño minimiza las tres."
+    },
+    {
+      "en": "**Leveled** compaction keeps reads and space low (~1.1×); **size-tiered** cuts write amp but can need 2× disk.",
+      "es": "La compactación **leveled** mantiene bajos lectura y espacio (~1.1×); la **size-tiered** baja la de escritura pero puede necesitar 2× de disco."
+    },
+    {
+      "en": "When compaction falls behind, reads slow and writes stall: alert on the compaction backlog.",
+      "es": "Cuando la compactación se atrasa, las lecturas se vuelven lentas y las escrituras se frenan: alerta sobre el backlog de compactación."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  W[Write] --> WAL[(WAL append)]\n  W --> M[\"Memtable<br/>sorted, in RAM\"]\n  M -->|flush when full| L0[L0 SSTables]\n  L0 -->|compaction| L1[L1 sorted run]\n  L1 -->|\"compaction, 10x per level\"| LN[\"Last level<br/>~90% of data\"]\n  R[Point read] --> M\n  M -->|miss| BF{\"Bloom filter<br/>per SSTable\"}\n  BF -->|maybe present| RD[\"Read block,<br/>newest first\"]\n  BF -->|definitely absent| SK[Skip file]",
+    "caption": {
+      "en": "Writes are cheap sequential appends; compaction rewrites data level by level, and Bloom filters keep point reads from touching every file.",
+      "es": "Escribir es un append secuencial barato; la compactación reescribe los datos nivel por nivel, y los Bloom filters evitan que una lectura puntual toque todos los archivos."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A toy LSM: memtable, flush, newest-first reads, compaction", "es": "Un LSM de juguete: memtable, flush, lecturas del más nuevo y compactación" },
+    "source": "import bisect\n\nTOMBSTONE = object()  # a delete is a write of this marker\n\nclass TinyLSM:  # toy: no WAL, no Bloom filters, one flat list of runs\n    def __init__(self, memtable_limit: int = 4):\n        self.memtable, self.runs, self.limit = {}, [], memtable_limit  # runs: oldest first\n\n    def put(self, key, value):\n        self.memtable[key] = value  # real engines append to a WAL first\n        if len(self.memtable) >= self.limit:\n            self.runs.append(sorted(self.memtable.items()))  # flush: one sequential write\n            self.memtable = {}\n\n    def delete(self, key):\n        self.put(key, TOMBSTONE)\n\n    def get(self, key):\n        if key in self.memtable:\n            v = self.memtable[key]\n            return None if v is TOMBSTONE else v\n        for run in reversed(self.runs):  # newest first; each probe is read amplification\n            i = bisect.bisect_left(run, (key,))\n            if i < len(run) and run[i][0] == key:\n                v = run[i][1]\n                return None if v is TOMBSTONE else v\n        return None\n\n    def compact(self):\n        merged = {}\n        for run in self.runs:  # oldest first, so newer values overwrite older ones\n            merged.update(run)\n        # Dropping tombstones is safe only because every run is merged\n        self.runs = [sorted((k, v) for k, v in merged.items() if v is not TOMBSTONE)]"
+  },
+  "example": {
+    "en": "Facebook moved its main MySQL user database (UDB) from compressed InnoDB to MyRocks, a RocksDB-based engine, and reported ~50% less storage. InnoDB's fixed compressed page sizes and half-full leaf pages wasted space; LSM files are dense and compress well. The flip side: assume a store taking 50 MB/s of user writes under leveled compaction with write amp ~20. The SSDs absorb ~1 GB/s of writes, and that, not the app's 50 MB/s, sets the disk budget and wear.",
+    "es": "Facebook migró su base de datos principal de usuarios en MySQL (UDB) de InnoDB comprimido a MyRocks, un motor basado en RocksDB, y reportó ~50% menos almacenamiento. Los tamaños fijos de página comprimida y las hojas medio vacías de InnoDB desperdiciaban espacio; los archivos LSM son densos y comprimen bien. La otra cara: supón un almacén que recibe 50 MB/s de escrituras con compactación leveled y amplificación de escritura ~20. Los SSD absorben ~1 GB/s de escrituras, y eso, no los 50 MB/s de la app, define el presupuesto de disco y el desgaste."
+  },
+  "pros": [
+    { "en": "LSM: sequential writes and dense, compressible files: high ingest, less storage.", "es": "LSM: escrituras secuenciales y archivos densos y comprimibles: mucha ingesta y menos almacenamiento." },
+    { "en": "B-tree: one place per key, so point and range reads are predictable and cheap.", "es": "B-tree: un solo lugar por key, así que las lecturas puntuales y por rango son predecibles y baratas." },
+    { "en": "Tunable: compaction style and level sizes trade write, read and space amp per workload.", "es": "Ajustable: el estilo de compactación y el tamaño de los niveles intercambian amplificación de escritura, lectura y espacio según la carga." }
+  ],
+  "cons": [
+    { "en": "LSM: compaction competes with queries for disk and causes latency spikes.", "es": "LSM: la compactación compite con las consultas por el disco y causa picos de latencia." },
+    { "en": "LSM: misses and range scans may touch several runs; deletes leave tombstones until compaction.", "es": "LSM: los misses y los range scans pueden tocar varios runs; los borrados dejan tombstones hasta la compactación." },
+    { "en": "B-tree: small random writes rewrite whole pages, and fragmentation wastes space.", "es": "B-tree: las escrituras pequeñas y aleatorias reescriben páginas enteras, y la fragmentación desperdicia espacio." }
+  ],
+  "whenToUse": {
+    "en": "LSM for write-heavy, append-mostly data (events, logs, time series, messages) or when storage cost dominates. B-tree for read-heavy OLTP with range scans and steady latency.",
+    "es": "LSM para datos con mucha escritura y casi solo inserciones (eventos, logs, series de tiempo, mensajes) o cuando domina el costo de almacenamiento. B-tree para OLTP con muchas lecturas, range scans y latencia estable."
+  },
+  "whenNotToUse": {
+    "en": "Skip an LSM for a small, read-mostly dataset that fits in RAM; skip a B-tree for sustained random-write ingest beyond what your disks absorb.",
+    "es": "Evita un LSM para un dataset pequeño, de casi solo lecturas, que cabe en RAM; evita un B-tree para una ingesta sostenida de escrituras aleatorias que tus discos no absorben."
+  },
+  "numbers": [
+    { "en": "RocksDB tuning guide, 500 GB with 10× levels: write amp ~33, space amp ~1.14.", "es": "Guía de tuning de RocksDB, 500 GB con niveles de 10×: amplificación de escritura ~33 y de espacio ~1.14." },
+    { "en": "Leveled compaction keeps ~90% of data in the last level, so space amp stays near 1.1×.", "es": "La compactación leveled deja ~90% de los datos en el último nivel, por eso la amplificación de espacio queda cerca de 1.1×." },
+    { "en": "Universal (size-tiered) compaction can temporarily double disk usage during a full compaction.", "es": "La compactación universal (size-tiered) puede duplicar temporalmente el uso de disco durante una compactación completa." },
+    { "en": "B-tree pages: 8 KB in Postgres, 16 KB in InnoDB, written whole even for a 100-byte change.", "es": "Páginas de B-tree: 8 KB en Postgres y 16 KB en InnoDB, que se escriben enteras aunque cambien 100 bytes." },
+    { "en": "Facebook UDB on MyRocks: ~50% less storage than compressed InnoDB (2016).", "es": "UDB de Facebook en MyRocks: ~50% menos almacenamiento que InnoDB comprimido (2016)." }
+  ],
+  "pitfalls": [
+    { "en": "Benchmarking an LSM on a fresh database: no compaction debt yet, so write numbers look far too good.", "es": "Medir un LSM sobre una base recién creada: todavía no hay deuda de compactación y las escrituras se ven demasiado bien." },
+    { "en": "Filling disks past ~50% with size-tiered compaction: a full compaction needs room for a second copy.", "es": "Llenar los discos más allá de ~50% con compactación size-tiered: una compactación completa necesita espacio para una segunda copia." },
+    { "en": "Ignoring compaction backlog: L0 files pile up until RocksDB slows writes, then stops them.", "es": "Ignorar el backlog de compactación: los archivos de L0 se acumulan hasta que RocksDB frena las escrituras y luego las detiene." },
+    { "en": "Picking an LSM for a read-heavy, range-scan workload: you pay read amplification for ingest you don't need.", "es": "Elegir un LSM para una carga de muchas lecturas y range scans: pagas amplificación de lectura por una ingesta que no necesitas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "A KV store must absorb 500k small writes/s. LSM or B-tree, and how do you tune it?", "es": "Un almacén KV debe absorber 500k escrituras pequeñas por segundo. ¿LSM o B-tree, y cómo lo ajustas?" },
+      "a": {
+        "en": "LSM: it turns random writes into sequential flushes, so the same disks sustain far more ingest. Then I tune by amplification. If reads are rare or mostly recent, size-tiered keeps write amp low; if point reads matter, leveled plus Bloom filters keeps read and space amp low, at write amp often above 10. I size disks for that write rate plus compaction headroom, and alert on pending compaction bytes before stalls hit.",
+        "es": "LSM: convierte escrituras aleatorias en volcados secuenciales, así que los mismos discos sostienen mucha más ingesta. Después ajusto por amplificación. Si las lecturas son pocas o casi siempre recientes, size-tiered mantiene baja la de escritura; si importan las lecturas puntuales, leveled con Bloom filters mantiene bajas la de lectura y la de espacio, con una de escritura que suele pasar de 10. Dimensiono los discos para ese ritmo de escritura más el margen de compactación, y pongo alertas sobre los pending compaction bytes antes de que lleguen los stalls."
+      }
+    },
+    {
+      "q": { "en": "Your Cassandra cluster's read p99 spikes every afternoon. What do you check?", "es": "El p99 de lectura de tu cluster de Cassandra se dispara todas las tardes. ¿Qué revisas?" },
+      "a": {
+        "en": "Compaction first. Afternoon peaks often mean writes outrun compaction: SSTables per read climb, so each read touches more files, and compaction I/O competes with queries. I'd check pending compactions, SSTables per read and tombstone warnings. Fixes: throttle or reschedule heavy compactions, move read-heavy tables to leveled compaction, fix delete patterns that leave tombstones, and add disk bandwidth if the backlog never drains.",
+        "es": "Primero la compactación. Los picos de la tarde suelen significar que las escrituras le ganan a la compactación: suben los SSTables por lectura, cada lectura toca más archivos y el I/O de compactación compite con las consultas. Revisaría las compactaciones pendientes, los SSTables por lectura y las alertas de tombstones. Soluciones: limitar o reprogramar las compactaciones pesadas, pasar las tablas de muchas lecturas a leveled, corregir los patrones de borrado que dejan tombstones y sumar ancho de banda de disco si el backlog nunca baja."
+      }
+    }
+  ],
+  "related": ["indexes", "probabilistic-structures", "case-kv-store", "sql-vs-nosql", "case-metrics-monitoring", "replication"],
+  "sources": [
+    { "title": "O'Neil et al. — The Log-Structured Merge-Tree (Acta Informatica, 1996)", "url": "https://www.cs.umb.edu/~poneil/lsmtree.pdf" },
+    { "title": "RocksDB wiki — RocksDB Tuning Guide", "url": "https://github.com/facebook/rocksdb/wiki/RocksDB-Tuning-Guide" },
+    { "title": "RocksDB wiki — Universal Compaction", "url": "https://github.com/facebook/rocksdb/wiki/Universal-Compaction" },
+    { "title": "Meta Engineering — MyRocks: A space- and write-optimized MySQL database (2016)", "url": "https://engineering.fb.com/2016/08/31/core-data/myrocks-a-space-and-write-optimized-mysql-database/" }
+  ]
+}

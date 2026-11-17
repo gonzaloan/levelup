@@ -1,0 +1,74 @@
+{
+  "concept": "storage-engines",
+  "items": [
+    {
+      "id": "storage-engines.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A RocksDB-backed service runs a bulk backfill. Write latency climbs, then writes stop for seconds at a time. Metrics show the L0 file count and pending compaction bytes rising. What is happening?",
+        "es": "Un servicio sobre RocksDB corre un backfill masivo. La latencia de escritura sube y luego las escrituras se detienen por varios segundos. Las métricas muestran que suben los archivos de L0 y los pending compaction bytes. ¿Qué está pasando?"
+      },
+      "options": [
+        { "text": { "en": "Compaction can't keep up, so RocksDB slows and then stops writes to catch up", "es": "La compactación no da abasto, así que RocksDB frena y luego detiene las escrituras para ponerse al día" } },
+        { "text": { "en": "The WAL is full and must be rotated before writes can resume", "es": "El WAL se llenó y hay que rotarlo antes de que vuelvan las escrituras" },
+          "why": { "en": "The signals are L0 files and pending compaction bytes, which point at compaction debt, not the log.", "es": "Las señales son los archivos de L0 y los pending compaction bytes, que apuntan a deuda de compactación, no al log." } },
+        { "text": { "en": "The Bloom filters are saturated, so every write checks every file", "es": "Los Bloom filters están saturados, así que cada escritura revisa todos los archivos" },
+          "why": { "en": "Bloom filters serve point reads; writes go to the memtable and never consult them.", "es": "Los Bloom filters sirven a las lecturas puntuales; las escrituras van a la memtable y nunca los consultan." } },
+        { "text": { "en": "B-tree pages are splitting faster than they can be flushed", "es": "Las páginas del B-tree se dividen más rápido de lo que se pueden volcar" },
+          "why": { "en": "RocksDB is an LSM: there are no in-place pages to split.", "es": "RocksDB es un LSM: no hay páginas en su lugar que dividir." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "LSM writes are cheap only because compaction pays later. When flushes add L0 files faster than compaction merges them, reads touch more files and the engine applies backpressure: write stalls. Throttle the backfill or give compaction more threads and disk bandwidth.",
+        "es": "Las escrituras en un LSM son baratas solo porque la compactación paga después. Cuando los flushes agregan archivos a L0 más rápido de lo que la compactación los fusiona, las lecturas tocan más archivos y el motor aplica backpressure: write stalls. Limita el backfill o dale a la compactación más threads y ancho de banda de disco."
+      }
+    },
+    {
+      "id": "storage-engines.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the toy LSM lookup so it returns the **latest** value for a key.",
+        "es": "Completa la búsqueda del LSM de juguete para que devuelva el valor **más reciente** de una key."
+      },
+      "lang": "python",
+      "code": "TOMBSTONE = object()\n\nclass TinyLSM:\n    # self.runs: immutable sorted lists of (key, value), oldest first\n    def get(self, key):\n        if key in self.memtable:\n            v = self.memtable[key]\n            return None if v is TOMBSTONE else v\n        ____\n            i = bisect.bisect_left(run, (key,))\n            if i < len(run) and run[i][0] == key:\n                v = run[i][1]\n                return None if v is TOMBSTONE else v\n        return None",
+      "options": [
+        { "text": "for run in reversed(self.runs):" },
+        { "text": "for run in self.runs:",
+          "why": { "en": "Oldest first: you return a value that a newer run already overwrote or deleted.", "es": "Del más viejo al más nuevo: devuelves un valor que un run más nuevo ya sobrescribió o borró." } },
+        { "text": "for run in sorted(self.runs):",
+          "why": { "en": "Sorts runs by their contents, not by age, so \"newest wins\" breaks.", "es": "Ordena los runs por su contenido, no por antigüedad, y se rompe la regla de que gana el más nuevo." } },
+        { "text": "for run in self.runs[-1:]:",
+          "why": { "en": "Checks only the newest run: keys flushed earlier become invisible until compaction.", "es": "Revisa solo el run más nuevo: las keys volcadas antes quedan invisibles hasta la compactación." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "In an LSM a key can live in several files; the newest version wins, including a tombstone. So reads go memtable first, then runs from newest to oldest. Every extra run probed is read amplification, which compaction and Bloom filters keep down.",
+        "es": "En un LSM una key puede estar en varios archivos y gana la versión más nueva, incluido un tombstone. Por eso se lee primero la memtable y luego los runs del más nuevo al más viejo. Cada run extra que se revisa es amplificación de lectura, y la compactación y los Bloom filters la mantienen baja."
+      }
+    },
+    {
+      "id": "storage-engines.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about LSM and B-tree storage engines are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre los motores LSM y B-tree son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Leveled compaction trades higher write amp for lower read and space amp", "es": "La compactación leveled cambia más amplificación de escritura por menos de lectura y de espacio" } },
+        { "text": { "en": "An LSM delete writes a tombstone; space returns only after compaction", "es": "Un borrado en un LSM escribe un tombstone; el espacio vuelve solo después de la compactación" } },
+        { "text": { "en": "LSM-trees have no write amplification because they only append", "es": "Los LSM-trees no tienen amplificación de escritura porque solo agregan al final" },
+          "why": { "en": "Compaction rewrites each byte many times: RocksDB's 500 GB example estimates ~33×.", "es": "La compactación reescribe cada byte muchas veces: el ejemplo de 500 GB de RocksDB estima ~33×." } },
+        { "text": { "en": "B-trees need no WAL because pages are updated in place", "es": "Los B-trees no necesitan WAL porque las páginas se actualizan en su lugar" },
+          "why": { "en": "In-place updates are exactly why a WAL is needed: a crash mid-write could leave a page half-updated.", "es": "Las actualizaciones en su lugar son justo la razón del WAL: un crash a mitad de escritura puede dejar una página a medio actualizar." } },
+        { "text": { "en": "Size-tiered compaction needs less free disk than leveled", "es": "La compactación size-tiered necesita menos disco libre que la leveled" },
+          "why": { "en": "Size-tiered can temporarily double disk usage during a full compaction.", "es": "La size-tiered puede duplicar temporalmente el uso de disco durante una compactación completa." } }
+      ],
+      "answers": [0, 1],
+      "explain": {
+        "en": "Every engine pays somewhere. B-trees pay at write time with page rewrites; LSMs pay later with compaction rewrites, multi-file reads and temporary space. Pick which amplification your workload can afford.",
+        "es": "Todo motor paga en algún lado. Los B-trees pagan al escribir, reescribiendo páginas; los LSM pagan después, con reescrituras de compactación, lecturas en varios archivos y espacio temporal. Elige qué amplificación puede pagar tu carga."
+      }
+    }
+  ]
+}

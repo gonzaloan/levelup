@@ -1,0 +1,128 @@
+{
+  "concept": "case-file-sync",
+  "items": [
+    {
+      "id": "case-file-sync.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your sync client uses fixed **4 MB** blocks with SHA-256. Users complain that adding a 10 KB header to the **start** of a 500 MB file re-uploads almost all of it. Best fix?",
+        "es": "Tu cliente de sync usa bloques fijos de **4 MB** con SHA-256. Los usuarios se quejan de que agregar un encabezado de 10 KB al **inicio** de un archivo de 500 MB vuelve a subir casi todo. ¿Mejor corrección?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Use content-defined chunking so boundaries follow the content",
+            "es": "Usar content-defined chunking para que los límites sigan al contenido"
+          }
+        },
+        {
+          "text": {
+            "en": "Shrink blocks to 64 KB so fewer bytes change",
+            "es": "Achicar los bloques a 64 KB para que cambien menos bytes"
+          },
+          "why": {
+            "en": "Every fixed boundary still shifts by 10 KB, so every block still changes; you just pay more metadata.",
+            "es": "Cada límite fijo se sigue corriendo 10 KB, así que todos los bloques cambian igual; solo pagas más metadatos."
+          }
+        },
+        {
+          "text": {
+            "en": "Switch from SHA-256 to a faster hash such as MD5",
+            "es": "Cambiar SHA-256 por un hash más rápido como MD5"
+          },
+          "why": {
+            "en": "Hash speed isn't the problem: the block contents really changed, whatever the hash function.",
+            "es": "La velocidad del hash no es el problema: el contenido de los bloques cambió de verdad, sea cual sea la función."
+          }
+        },
+        {
+          "text": {
+            "en": "Compress the whole file before chunking it",
+            "es": "Comprimir todo el archivo antes de dividirlo"
+          },
+          "why": {
+            "en": "A small change early in the stream alters the compressed bytes after it: dedup gets worse.",
+            "es": "Un cambio pequeño al inicio altera los bytes comprimidos que siguen: la deduplicación empeora."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Fixed-size chunking dedups in-place edits and appends, but an insert shifts every later boundary. Content-defined chunking picks boundaries from a rolling hash of the bytes, so they move with the content and unchanged regions keep their hashes.",
+        "es": "El chunking de tamaño fijo deduplica ediciones en el lugar y agregados al final, pero una inserción corre todos los límites siguientes. El content-defined chunking elige los límites con un rolling hash de los bytes, así se mueven con el contenido y las zonas sin cambios conservan su hash."
+      }
+    },
+    {
+      "id": "case-file-sync.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size daily block uploads: **50M DAU**, **10 file changes** per user per day, and **~200 KB** of genuinely new data per change after dedup. Terabytes per day (decimal)?",
+        "es": "Dimensiona la subida diaria de bloques: **50M DAU**, **10 cambios de archivos** por usuario al día y **~200 KB** de datos realmente nuevos por cambio tras deduplicar. ¿Terabytes por día (decimales)?"
+      },
+      "answer": 100,
+      "tolerance": 0.15,
+      "unit": "TB/day",
+      "explain": {
+        "en": "50M × 10 = 500M changes/day. 500M × 200 KB = 100,000,000,000 KB = 10^17 bytes ≈ 100 TB/day. Without block dedup each change would ship the whole file, which is why the commit asks for missing blocks first.",
+        "es": "50M × 10 = 500M cambios/día. 500M × 200 KB = 100,000,000,000 KB = 10^17 bytes ≈ 100 TB/día. Sin deduplicar bloques, cada cambio enviaría el archivo completo; por eso el commit pide primero los bloques faltantes."
+      }
+    },
+    {
+      "id": "case-file-sync.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about this file-sync design are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre este diseño de sincronización de archivos son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Metadata and blocks live in different stores because their access patterns differ",
+            "es": "Los metadatos y los bloques viven en almacenes distintos porque sus patrones de acceso difieren"
+          }
+        },
+        {
+          "text": {
+            "en": "Last-writer-wins by timestamp is safe for binary files",
+            "es": "Last-writer-wins por timestamp es seguro para archivos binarios"
+          },
+          "why": {
+            "en": "The earlier device's edit vanishes silently; keep both as a conflicted copy instead.",
+            "es": "La edición del dispositivo anterior desaparece en silencio; conserva ambas como copia en conflicto."
+          }
+        },
+        {
+          "text": {
+            "en": "A version check on commit detects concurrent edits to the same file",
+            "es": "Un chequeo de versión en el commit detecta ediciones concurrentes del mismo archivo"
+          }
+        },
+        {
+          "text": {
+            "en": "Notifications should carry the changed blocks to save a round trip",
+            "es": "Las notificaciones deberían llevar los bloques cambiados para ahorrar un viaje"
+          },
+          "why": {
+            "en": "That makes the notifier heavy and stateful; a content-free ping plus `list(cursor)` is cheaper and loss-tolerant.",
+            "es": "Eso vuelve pesado y con estado al servicio de notificaciones; un aviso sin contenido más `list(cursor)` es más barato y tolera pérdidas."
+          }
+        },
+        {
+          "text": {
+            "en": "The server may skip an upload only after checking the user can access that block",
+            "es": "El servidor puede saltarse una subida solo después de verificar que la persona accede a ese bloque"
+          }
+        }
+      ],
+      "answers": [
+        0,
+        2,
+        4
+      ],
+      "explain": {
+        "en": "Split by shape (small transactional metadata, big immutable blocks), detect conflicts with compare-and-set on the version, keep notifications content-free, and never let a hash alone grant access to data.",
+        "es": "Separa según la forma (metadatos pequeños y transaccionales, bloques grandes e inmutables), detecta conflictos con compare-and-set sobre la versión, mantén las notificaciones sin contenido y nunca dejes que un hash por sí solo dé acceso a los datos."
+      }
+    }
+  ]
+}

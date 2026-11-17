@@ -1,0 +1,226 @@
+{
+  "id": "case-file-sync",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": {
+    "en": "Design: file sync (Dropbox)",
+    "es": "Diseño: sincronización de archivos (Dropbox)"
+  },
+  "aliases": [
+    "Dropbox",
+    "Google Drive",
+    "cloud file storage",
+    "file synchronization",
+    "chunking",
+    "deduplication",
+    "block storage",
+    "conflicted copy"
+  ],
+  "tldr": {
+    "en": "Split files into content-hashed blocks, upload only the blocks the server lacks to object storage, commit the file as a list of hashes in a metadata DB with a version check, and notify other devices to pull changes since their cursor.",
+    "es": "Divide los archivos en bloques identificados por hash, sube a object storage solo los bloques que le faltan al servidor, confirma el archivo como una lista de hashes en una base de metadatos con chequeo de versión y avisa a los demás dispositivos para que bajen los cambios desde su cursor."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: upload, download and sync files across a user's devices; shared folders; version history; offline edits. **Non-functional**: never lose or corrupt a file; small edits sync in seconds; big files don't re-upload in full. Assume 50M daily users making ~10 file changes each.\n\n### Data model\n\n- **Blocks**: files split into **4 MB blocks** (Dropbox's size), each named by its SHA-256 hash and stored once in [[object-storage]].\n- **Metadata DB**: `files(namespace_id, path, version, blocklist[], size)` plus a per-namespace **journal** with an increasing cursor. Metadata is small and transactional; blocks are big and immutable.\n\n### Sync flow\n\n1. The client sees a change, rechunks the file and hashes the blocks.\n2. It calls `commit(path, blocklist, base_version)`; the server replies with the hashes it **needs**.\n3. The client uploads only those blocks and commits again; the server appends a journal entry.\n4. Other devices hold a long-poll to a notification service, hear \"namespace changed\", call `list(cursor)` and fetch missing blocks.\n\nDropbox described essentially this flow in 2014.\n\n### The hard parts\n\n**Dedup and deltas.** Hash-named blocks dedup across versions, files and users: appending to a 120 MB file re-uploads only the new tail. Fixed-size blocks break on inserts, because every later boundary shifts; **content-defined chunking** (boundaries chosen by a rolling hash) keeps unchanged blocks aligned.\n\n**Conflicts.** Every commit carries its `base_version`; if the server's version moved, two devices edited concurrently. Binary files can't be merged, so keep both: Dropbox saves the second as a *conflicted copy*.",
+    "es": "### Requisitos\n\n**Funcionales**: subir, bajar y sincronizar archivos entre los dispositivos de una persona; carpetas compartidas; historial de versiones; ediciones offline. **No funcionales**: nunca perder ni corromper un archivo; las ediciones pequeñas se sincronizan en segundos; los archivos grandes no se vuelven a subir completos. Supón 50M de usuarios diarios con ~10 cambios de archivos cada uno.\n\n### Modelo de datos\n\n- **Bloques**: los archivos se dividen en **bloques de 4 MB** (el tamaño de Dropbox), cada uno nombrado por su hash SHA-256 y guardado una sola vez en [[object-storage]].\n- **Base de metadatos**: `files(namespace_id, path, version, blocklist[], size)` más un **journal** por namespace con un cursor creciente. Los metadatos son pequeños y transaccionales; los bloques son grandes e inmutables.\n\n### Flujo de sincronización\n\n1. El cliente detecta un cambio, vuelve a dividir el archivo y calcula el hash de los bloques.\n2. Llama a `commit(path, blocklist, base_version)`; el servidor responde con los hashes que **necesita**.\n3. El cliente sube solo esos bloques y vuelve a confirmar; el servidor agrega una entrada al journal.\n4. Los demás dispositivos mantienen un long-poll con un servicio de notificaciones, reciben \"el namespace cambió\", llaman a `list(cursor)` y bajan los bloques que les faltan.\n\nDropbox describió prácticamente este flujo en 2014.\n\n### Las partes difíciles\n\n**Deduplicación y deltas.** Los bloques nombrados por hash se deduplican entre versiones, archivos y usuarios: agregar datos al final de un archivo de 120 MB solo sube la cola nueva. Los bloques de tamaño fijo fallan con las inserciones, porque se corren todos los límites siguientes; el **content-defined chunking** (límites elegidos por un rolling hash) mantiene alineados los bloques sin cambios.\n\n**Conflictos.** Cada commit lleva su `base_version`; si la versión del servidor avanzó, dos dispositivos editaron a la vez. Los archivos binarios no se pueden fusionar, así que se conservan ambos: Dropbox guarda el segundo como *copia en conflicto*."
+  },
+  "keyPoints": [
+    {
+      "en": "Split files into **4 MB blocks** named by SHA-256; identical blocks are stored and uploaded once.",
+      "es": "Divide los archivos en **bloques de 4 MB** nombrados por SHA-256; los bloques idénticos se guardan y suben una sola vez."
+    },
+    {
+      "en": "A **metadata DB** holds paths, versions and blocklists; immutable blocks live in object storage.",
+      "es": "Una **base de metadatos** guarda rutas, versiones y listas de bloques; los bloques inmutables viven en object storage."
+    },
+    {
+      "en": "Commit with a base version: the server names the hashes it needs, then records a journal entry.",
+      "es": "Confirma con una versión base: el servidor indica los hashes que necesita y luego registra una entrada en el journal."
+    },
+    {
+      "en": "Idle devices long-poll a notification service, then pull changes since their **cursor**.",
+      "es": "Los dispositivos inactivos hacen long-poll a un servicio de notificaciones y luego bajan los cambios desde su **cursor**."
+    },
+    {
+      "en": "Concurrent edits to one file can't be merged: keep both, as a **conflicted copy**.",
+      "es": "Las ediciones concurrentes de un archivo no se pueden fusionar: conserva ambas, como **copia en conflicto**."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  F[\"Local file change\"] --> CH[\"Chunk into 4 MB blocks,<br/>SHA-256 each\"]\n  CH -->|\"commit blocklist,<br/>base_version\"| M[\"Metadata service\"]\n  M --> DB[(\"Metadata DB<br/>files + journal\")]\n  M -->|\"need blocks h2, h5\"| CH\n  CH -->|\"upload missing blocks\"| BS[\"Block service\"]\n  BS --> OS[(\"Object storage<br/>key = hash\")]\n  M -->|\"namespace changed\"| N[\"Notification service\"]\n  N -->|\"long-poll wakes\"| D2[\"Other device\"]\n  D2 -->|\"list since cursor\"| M\n  D2 -->|\"fetch missing blocks\"| BS",
+    "caption": {
+      "en": "Metadata and bytes travel separately: the commit names the blocks, only missing blocks are uploaded, and other devices pull from their cursor.",
+      "es": "Los metadatos y los bytes viajan por separado: el commit nombra los bloques, solo se suben los que faltan y los demás dispositivos bajan desde su cursor."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Client sync: hash blocks, upload only what's missing",
+      "es": "Sync del cliente: hashear bloques y subir solo lo que falta"
+    },
+    "source": "import hashlib\n\nBLOCK = 4 * 1024 * 1024   # 4 MB, Dropbox's block size\n\ndef blocklist(path: str) -> list[str]:\n    hashes = []\n    with open(path, \"rb\") as f:\n        while chunk := f.read(BLOCK):\n            hashes.append(hashlib.sha256(chunk).hexdigest())  # content = identity\n    return hashes\n\ndef upload(ns: str, path: str, base_version: int) -> int:\n    hashes = blocklist(path)\n    while True:\n        r = meta.commit(ns, path, hashes, base_version=base_version)\n        if r.status == \"need_blocks\":            # send only blocks the server lacks\n            for h in r.missing:\n                block_server.put(h, read_block(path, hashes.index(h)))\n        elif r.status == \"conflict\":             # someone committed since base_version\n            return save_conflicted_copy(ns, path, hashes)   # binary can't merge: keep both\n        else:\n            return r.version                     # journal entry written; others get notified\n\ndef pull(ns: str, cursor: str) -> str:\n    changes, cursor = meta.list(ns, cursor)      # only journal entries after our cursor\n    for c in changes:\n        for h in c.blocks:\n            if not local_blocks.has(h):          # dedup on the way down, too\n                local_blocks.put(h, block_server.get(h))\n        write_atomically(c.path, [local_blocks.get(h) for h in c.blocks])\n    return cursor"
+  },
+  "example": {
+    "en": "Lena appends a day of data (2 MB) to a 120 MB CSV on her laptop. The client rechunks it: the first 30 blocks hash exactly as before, plus one new block. The commit answers \"need 1 block\"; she uploads 2 MB instead of 122 MB, and the server appends journal entry 9,812 for her namespace. Her phone's long-poll wakes; it lists changes after cursor 9,811 and downloads that single block. Meanwhile her desktop edited the same CSV offline. On reconnect its commit fails the version check, and it saves a conflicted copy next to the original.",
+    "es": "Lena agrega un día de datos (2 MB) a un CSV de 120 MB en su laptop. El cliente lo vuelve a dividir: los primeros 30 bloques tienen el mismo hash que antes, más un bloque nuevo. El commit responde \"necesito 1 bloque\"; sube 2 MB en vez de 122 MB y el servidor agrega la entrada 9,812 al journal de su namespace. El long-poll de su teléfono se despierta; lista los cambios después del cursor 9,811 y baja ese único bloque. Mientras tanto, su computadora de escritorio editó el mismo CSV sin conexión. Al reconectarse, su commit falla el chequeo de versión y guarda una copia en conflicto junto al original."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Chunking and dedup",
+        "es": "Chunking y deduplicación"
+      },
+      "body": {
+        "en": "Naming a block by its SHA-256 makes it immutable and self-verifying: the client re-hashes on download to detect corruption, and a re-upload of the same block is a harmless no-op. Fixed 4 MB blocks are simple and handle in-place edits and appends well, but an insert near the start shifts every boundary and re-uploads everything after it. **Content-defined chunking** cuts where a rolling hash of the bytes hits a pattern, so boundaries move with the content and only nearby blocks change, at some CPU cost. Cross-user dedup saves storage, but the server must check the user may access a block before answering \"already have it\".",
+        "es": "Nombrar un bloque por su SHA-256 lo vuelve inmutable y autoverificable: el cliente recalcula el hash al bajarlo para detectar corrupción, y volver a subir el mismo bloque no hace nada. Los bloques fijos de 4 MB son simples y manejan bien las ediciones en el lugar y los agregados al final, pero una inserción cerca del inicio corre todos los límites y vuelve a subir todo lo que sigue. El **content-defined chunking** corta donde un rolling hash de los bytes coincide con un patrón, así los límites se mueven con el contenido y solo cambian los bloques cercanos, a cambio de algo de CPU. La deduplicación entre usuarios ahorra almacenamiento, pero el servidor debe verificar que la persona puede acceder a un bloque antes de responder \"ya lo tengo\"."
+      }
+    },
+    {
+      "title": {
+        "en": "Metadata vs block storage",
+        "es": "Metadatos vs almacenamiento de bloques"
+      },
+      "body": {
+        "en": "The two stores have opposite shapes. Metadata is small, hot and needs transactions: a commit must atomically check `base_version`, write the new blocklist and append to the journal. Shard it by `namespace_id` (a user's root or a shared folder), so one commit touches one shard and the journal gives a per-namespace order. Blocks are huge, immutable and write-once, a perfect fit for object storage; Dropbox built its own, Magic Pocket, which held multiple exabytes by 2016. Garbage-collect blocks that no version references only after a grace period, because an in-flight commit may be about to reference them.",
+        "es": "Los dos almacenes tienen formas opuestas. Los metadatos son pequeños, muy consultados y necesitan transacciones: un commit debe verificar `base_version`, escribir la nueva lista de bloques y agregar al journal de forma atómica. Particiónalos por `namespace_id` (la raíz de un usuario o una carpeta compartida), así un commit toca un solo shard y el journal da un orden por namespace. Los bloques son enormes, inmutables y se escriben una vez, ideales para object storage; Dropbox construyó el suyo, Magic Pocket, que guardaba varios exabytes en 2016. Elimina los bloques que ninguna versión referencia solo después de un período de gracia, porque un commit en curso podría estar por referenciarlos."
+      }
+    },
+    {
+      "title": {
+        "en": "Conflicts and notifications",
+        "es": "Conflictos y notificaciones"
+      },
+      "body": {
+        "en": "A commit is a compare-and-set on the file's version. When it fails, the client keeps its local file as a conflicted copy; Dropbox creates one when two people edit at once, when someone edits offline, or when an autosaving app keeps a file open. Notifications carry no data: the notifier completes the long-poll with \"namespace changed\", and the client calls `list(cursor)`. That keeps the notifier cheap and stateless, and a dropped notification is harmless because the next list catches up. Cursors also make a device returning after a week offline just another list call.",
+        "es": "Un commit es un compare-and-set sobre la versión del archivo. Cuando falla, el cliente conserva su archivo local como copia en conflicto; Dropbox crea una cuando dos personas editan a la vez, cuando alguien edita offline o cuando una app con autoguardado deja un archivo abierto. Las notificaciones no llevan datos: el servicio completa el long-poll con \"el namespace cambió\" y el cliente llama a `list(cursor)`. Eso mantiene el servicio de notificaciones barato y sin estado, y perder una notificación no importa porque el siguiente list se pone al día. Los cursores también hacen que un dispositivo que vuelve tras una semana offline sea solo otra llamada a list."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Bandwidth and storage scale with changed blocks, not with file size.",
+      "es": "El ancho de banda y el almacenamiento crecen con los bloques que cambian, no con el tamaño del archivo."
+    },
+    {
+      "en": "Immutable, hash-named blocks make uploads idempotent and integrity checks free.",
+      "es": "Los bloques inmutables nombrados por hash hacen idempotentes las subidas y gratis los chequeos de integridad."
+    },
+    {
+      "en": "A cursor-based journal lets any device catch up after days offline with one list call.",
+      "es": "Un journal con cursores permite que cualquier dispositivo se ponga al día tras días offline con una sola llamada a list."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Fixed-size blocks re-upload everything after an insert near the start; content-defined chunking costs CPU.",
+      "es": "Los bloques de tamaño fijo vuelven a subir todo tras una inserción cerca del inicio; el content-defined chunking cuesta CPU."
+    },
+    {
+      "en": "Conflicted copies push merging onto users.",
+      "es": "Las copias en conflicto le dejan la fusión a los usuarios."
+    },
+    {
+      "en": "Garbage-collecting blocks shared across versions and users is tricky and must stay conservative.",
+      "es": "Eliminar bloques compartidos entre versiones y usuarios es delicado y debe ser conservador."
+    }
+  ],
+  "whenToUse": {
+    "en": "Syncing user files across devices and collaborators: desktop sync clients, backup tools, shared drives, distribution of large build or game assets.",
+    "es": "Sincronizar archivos de usuarios entre dispositivos y colaboradores: clientes de sync de escritorio, herramientas de backup, unidades compartidas, distribución de artefactos grandes de build o de juegos."
+  },
+  "whenNotToUse": {
+    "en": "Real-time co-editing of one document (use OT or CRDTs, [[case-collaborative-editing]]), or plain upload-and-serve media, where object storage plus a CDN is enough.",
+    "es": "Coedición en tiempo real de un documento (usa OT o CRDTs, [[case-collaborative-editing]]), o medios que solo se suben y se sirven, donde alcanza con object storage más una CDN."
+  },
+  "numbers": [
+    {
+      "en": "Commits (assumed): 50M DAU × 10 changes/day = 500M/day ≈ 5.8k/s average, ~12k/s at a 2× peak.",
+      "es": "Commits (supuestos): 50M DAU × 10 cambios/día = 500M/día ≈ 5.8k/s en promedio, ~12k/s con un pico de 2×."
+    },
+    {
+      "en": "Upload (assumed ~200 KB of new data per change after dedup): 500M × 200 KB ≈ 100 TB/day into block storage.",
+      "es": "Subida (supuesto ~200 KB de datos nuevos por cambio tras deduplicar): 500M × 200 KB ≈ 100 TB/día hacia el almacenamiento de bloques."
+    },
+    {
+      "en": "Dropbox: 4 MB blocks hashed with SHA-256 (2014); Magic Pocket stored multiple exabytes (2016).",
+      "es": "Dropbox: bloques de 4 MB con hash SHA-256 (2014); Magic Pocket guardaba varios exabytes (2016)."
+    },
+    {
+      "en": "Notifications (assumed ~100k idle long-polls per server): 50M connected devices need ~500 servers.",
+      "es": "Notificaciones (supuesto ~100k long-polls inactivos por servidor): 50M de dispositivos conectados necesitan ~500 servidores."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Storing file bytes in the metadata DB: it bloats, backups crawl, and every listing slows down.",
+      "es": "Guardar los bytes de los archivos en la base de metadatos: se infla, los backups se arrastran y cada listado se vuelve lento."
+    },
+    {
+      "en": "Answering \"already have that block\" without checking the user's access: a known hash leaks another account's data.",
+      "es": "Responder \"ya tengo ese bloque\" sin verificar el acceso del usuario: un hash conocido filtra datos de otra cuenta."
+    },
+    {
+      "en": "Last-writer-wins on concurrent edits: one device's work disappears without a trace.",
+      "es": "Last-writer-wins ante ediciones concurrentes: el trabajo de un dispositivo desaparece sin dejar rastro."
+    },
+    {
+      "en": "Deleting a block as soon as one version drops it: older versions and in-flight commits still need it.",
+      "es": "Borrar un bloque apenas una versión deja de usarlo: las versiones anteriores y los commits en curso todavía lo necesitan."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Why split files into blocks at all?",
+        "es": "¿Para qué dividir los archivos en bloques?"
+      },
+      "a": {
+        "en": "Three wins. Bandwidth: an edit re-uploads only changed blocks, so appending 2 MB to a 120 MB file sends 2 MB. Dedup: blocks are named by SHA-256, so identical content across versions, files or users is stored once. Resumability: a dropped upload restarts at the last missing block, not at byte zero. The cost is a blocklist per file in metadata and garbage collection for blocks no version references.",
+        "es": "Tres ventajas. Ancho de banda: una edición sube solo los bloques que cambiaron, así que agregar 2 MB a un archivo de 120 MB envía 2 MB. Deduplicación: los bloques se nombran por SHA-256, así que el contenido idéntico entre versiones, archivos o usuarios se guarda una vez. Reanudación: una subida cortada sigue desde el último bloque faltante, no desde el byte cero. El costo es una lista de bloques por archivo en los metadatos y recolectar los bloques que ninguna versión referencia."
+      }
+    },
+    {
+      "q": {
+        "en": "Two devices edit the same file offline. What happens when both reconnect?",
+        "es": "Dos dispositivos editan el mismo archivo sin conexión. ¿Qué pasa cuando ambos se reconectan?"
+      },
+      "a": {
+        "en": "Both commit with the version they started from. The first wins and bumps the version; the second fails the compare-and-set. For binary files I don't attempt a merge: I keep both and save the second as a conflicted copy, which is what Dropbox does, then tell the user. Text formats could merge three-way, but a silent auto-merge of someone's file is a worse surprise than a visible copy.",
+        "es": "Ambos confirman con la versión desde la que empezaron. El primero gana y sube la versión; el segundo falla el compare-and-set. Con archivos binarios no intento fusionar: conservo ambos y guardo el segundo como copia en conflicto, que es lo que hace Dropbox, y se lo informo a la persona. Los formatos de texto podrían fusionarse a tres vías, pero una fusión automática silenciosa del archivo de alguien es peor sorpresa que una copia visible."
+      }
+    },
+    {
+      "q": {
+        "en": "How do other devices hear about a change fast without hammering the metadata DB?",
+        "es": "¿Cómo se enteran rápido los demás dispositivos de un cambio sin saturar la base de metadatos?"
+      },
+      "a": {
+        "en": "Each idle client holds a long-poll to a notification service, sharded by namespace. After a commit, the metadata service publishes \"namespace changed\", and the notifier completes those long-polls with no payload. Clients then call list with their cursor and get only new journal entries. A content-free notification is cheap, idempotent and safe to drop: worst case, the client's next periodic list catches up.",
+        "es": "Cada cliente inactivo mantiene un long-poll con un servicio de notificaciones particionado por namespace. Tras un commit, el servicio de metadatos publica \"el namespace cambió\" y el servicio de notificaciones completa esos long-polls sin payload. Luego los clientes llaman a list con su cursor y reciben solo las entradas nuevas del journal. Una notificación sin contenido es barata, idempotente y se puede perder sin problema: en el peor caso, el siguiente list periódico se pone al día."
+      }
+    }
+  ],
+  "related": [
+    "object-storage",
+    "realtime-delivery",
+    "sharding",
+    "consistency-models",
+    "case-collaborative-editing",
+    "cdn"
+  ],
+  "sources": [
+    {
+      "title": "Dropbox Tech — Streaming File Synchronization (2014)",
+      "url": "https://dropbox.tech/infrastructure/streaming-file-synchronization"
+    },
+    {
+      "title": "Dropbox Tech — Inside the Magic Pocket (2016)",
+      "url": "https://dropbox.tech/infrastructure/inside-the-magic-pocket"
+    },
+    {
+      "title": "Dropbox Help — What's a conflicted copy?",
+      "url": "https://help.dropbox.com/organize/conflicted-copy"
+    }
+  ]
+}

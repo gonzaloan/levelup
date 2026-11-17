@@ -1,0 +1,137 @@
+{
+  "id": "case-chat-system",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": { "en": "Design: chat system", "es": "Diseño: sistema de chat" },
+  "aliases": ["chat app design", "instant messaging", "WhatsApp design", "Slack design", "WebSocket gateway", "group chat", "read receipts", "message ordering"],
+  "tldr": {
+    "en": "Clients keep a WebSocket to a gateway; the chat service gives each message a per-conversation sequence, stores it, then delivers to online recipients or via push; clients dedup and resync from their last-seen sequence.",
+    "es": "Los clientes mantienen un WebSocket con un gateway; el servicio de chat le da a cada mensaje una secuencia por conversación, lo guarda y lo entrega a quienes están en línea o por push; los clientes deduplican y se resincronizan desde su última secuencia vista."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: 1:1 and group chats (assume up to ~1,000 members), real-time send and receive, history on every device, delivered and read receipts, presence, and a push when offline. **Non-functional**: delivery under ~500 ms when both users are online (assumed); no lost messages; the same order for every member of a conversation; retries never duplicate.\n\nScale (assumed): 100M DAU × 50 messages/day ≈ 58k msg/s average; ~1 TB of messages per day; ~30M concurrent connections.\n\nQuestions I'd ask:\n\n1. Max group size? 1,000 members and 1M-member channels need different fan-out.\n2. End-to-end encrypted? Then the server stores ciphertext and can't search or moderate.\n3. How long is history kept, and on how many devices per user?\n\n### API and data model\n\nOver a WebSocket ([[realtime-delivery]]): `send {conv_id, client_msg_id, body}` → `ack {client_msg_id, seq}`; the server pushes `msg {conv_id, seq, …}`; on reconnect the client calls `sync {conv_id, after_seq}`. `messages` is partitioned by `(conv_id, time_bucket)` and clustered by `seq`, so reading history is one partition scan; `members(conv_id, user_id, last_read_seq)` holds receipts.\n\n### Architecture\n\n**Gateways** hold WebSocket connections and nothing else of value; a session registry maps `user → gateway`. The **chat service** owns each conversation through [[consistent-hashing]] on `conv_id`: it dedups on `client_msg_id`, assigns the next `seq`, persists, acks, then routes to recipients' gateways. Offline members get a push from the notification service ([[case-notification-system]]); the message itself is fetched on reconnect.\n\n### The hard parts\n\n1. **Order and delivery**: a per-conversation sequence, at-least-once delivery, dedup on both ends.\n2. **Group fan-out and connections**: subscription-based fan-out for big channels, and reconnect storms.",
+    "es": "### Requisitos\n\n**Funcionales**: chats 1:1 y grupales (supón hasta ~1,000 miembros), envío y recepción en tiempo real, historial en todos los dispositivos, confirmaciones de entrega y lectura, presencia y un push cuando no hay conexión. **No funcionales**: entrega en menos de ~500 ms cuando ambos están en línea (supuesto); ningún mensaje perdido; el mismo orden para todos los miembros de una conversación; los reintentos nunca duplican.\n\nEscala (supuesta): 100M de DAU × 50 mensajes/día ≈ 58k mensajes/s en promedio; ~1 TB de mensajes por día; ~30M de conexiones simultáneas.\n\nPreguntas que haría:\n\n1. ¿Tamaño máximo de grupo? 1,000 miembros y canales de 1M necesitan fan-outs distintos.\n2. ¿Cifrado de extremo a extremo? Entonces el servidor guarda texto cifrado y no puede buscar ni moderar.\n3. ¿Cuánto tiempo se guarda el historial y en cuántos dispositivos por usuario?\n\n### API y modelo de datos\n\nSobre un WebSocket ([[realtime-delivery]]): `send {conv_id, client_msg_id, body}` → `ack {client_msg_id, seq}`; el servidor empuja `msg {conv_id, seq, …}`; al reconectar, el cliente llama a `sync {conv_id, after_seq}`. `messages` se particiona por `(conv_id, time_bucket)` y se ordena por `seq`, así leer el historial es recorrer una partición; `members(conv_id, user_id, last_read_seq)` guarda las confirmaciones.\n\n### Arquitectura\n\nLos **gateways** mantienen las conexiones WebSocket y nada más de valor; un registro de sesiones mapea `user → gateway`. El **servicio de chat** es dueño de cada conversación mediante [[consistent-hashing]] sobre `conv_id`: deduplica por `client_msg_id`, asigna el siguiente `seq`, persiste, confirma y luego enruta a los gateways de los destinatarios. Los miembros sin conexión reciben un push del servicio de notificaciones ([[case-notification-system]]); el mensaje en sí se descarga al reconectar.\n\n### Las partes difíciles\n\n1. **Orden y entrega**: secuencia por conversación, entrega at-least-once y deduplicación en ambos extremos.\n2. **Fan-out grupal y conexiones**: fan-out por suscripciones para canales grandes, y tormentas de reconexión."
+  },
+  "keyPoints": [
+    {
+      "en": "Clients hold a **WebSocket** to a gateway; a session registry maps each user to their gateway.",
+      "es": "Los clientes mantienen un **WebSocket** con un gateway; un registro de sesiones mapea a cada usuario con su gateway."
+    },
+    {
+      "en": "Order per conversation, not globally: the conversation's owner stamps a **sequence number** before storing.",
+      "es": "El orden es por conversación, no global: el dueño de la conversación asigna un **número de secuencia** antes de guardar."
+    },
+    {
+      "en": "Delivery is at-least-once; dedup on `client_msg_id` makes retried sends look exactly-once.",
+      "es": "La entrega es at-least-once; deduplicar por `client_msg_id` hace que los reenvíos parezcan exactly-once."
+    },
+    {
+      "en": "Messages are partitioned by conversation and time bucket; clients sync everything after their last sequence.",
+      "es": "Los mensajes se particionan por conversación y bloque de tiempo; los clientes sincronizan todo lo posterior a su última secuencia."
+    },
+    {
+      "en": "Offline members get a push via APNs or FCM; the message itself is fetched on reconnect.",
+      "es": "Los miembros sin conexión reciben un push por APNs o FCM; el mensaje en sí se descarga al reconectar."
+    }
+  ],
+  "diagram": {
+    "code": "sequenceDiagram\n  participant A as Alice app\n  participant G as Gateway\n  participant C as Chat service\n  participant D as Message store\n  participant B as Bob app\n  participant N as Push service\n  A->>G: send conv, client_msg_id\n  G->>C: forward\n  C->>C: dedup, assign seq 42\n  C->>D: persist conv, bucket, seq 42\n  C-->>A: ack seq 42\n  alt Bob online\n    C->>B: msg seq 42 via his gateway\n    B-->>C: delivered up to 42\n  else Bob offline\n    C->>N: push via APNs or FCM\n    B->>C: on reconnect, sync after seq 41\n  end",
+    "caption": {
+      "en": "Persist before delivering, ack with the sequence, and treat push as a hint: the log is the source of truth.",
+      "es": "Persiste antes de entregar, confirma con la secuencia y trata el push como un aviso: el log es la fuente de verdad."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Idempotent send with per-conversation sequence, and client gap detection", "es": "Envío idempotente con secuencia por conversación, y detección de huecos en el cliente" },
+    "source": "async def handle_send(user_id: str, frame: dict, db, router, notify) -> dict:\n    \"\"\"Runs on the single owner of frame['conv_id'] (consistent hashing),\n    so sequence numbers per conversation are assigned one at a time.\"\"\"\n    conv, cmid = frame[\"conv_id\"], frame[\"client_msg_id\"]\n    if not await db.is_member(conv, user_id):\n        return {\"type\": \"error\", \"client_msg_id\": cmid, \"code\": \"forbidden\"}\n    # A retry of a message we already stored: same seq back, nothing new\n    seq = await db.seq_for_client_id(conv, cmid)\n    if seq is not None:\n        return {\"type\": \"ack\", \"client_msg_id\": cmid, \"seq\": seq}\n    seq = await db.next_seq(conv)                      # gap-free per conversation\n    await db.insert_message(conv, seq, user_id, cmid, frame[\"body\"])  # persist first\n    # Small groups: route per member. Big channels fan out via gateway subscriptions.\n    for member in await db.members(conv):\n        if member == user_id:\n            continue\n        gateway = await router.gateway_of(member)      # None when offline\n        if gateway:\n            await gateway.push(member, {\"type\": \"msg\", \"conv_id\": conv, \"seq\": seq})\n        else:\n            await notify.enqueue(member, conv, seq)    # push via APNs / FCM\n    return {\"type\": \"ack\", \"client_msg_id\": cmid, \"seq\": seq}\n\ndef on_message(last_seq: dict, msg: dict, sync):\n    \"\"\"Client: drop duplicates, detect gaps, resync from the last contiguous seq.\"\"\"\n    last = last_seq.get(msg[\"conv_id\"], 0)\n    if msg[\"seq\"] <= last:\n        return                                         # duplicate delivery\n    if msg[\"seq\"] > last + 1:\n        sync(msg[\"conv_id\"], after_seq=last)           # missed some: fetch them\n        return\n    last_seq[msg[\"conv_id\"]] = msg[\"seq\"]\n    render(msg)"
+  },
+  "example": {
+    "en": "Discord stores messages with the primary key `((channel_id, bucket), message_id)`: Snowflake, time-sortable IDs, with buckets of ~10 days so partitions stay under 100 MB. In May 2022 it moved that data from 177 Cassandra nodes to 72 ScyllaDB nodes; p99 history reads fell from 40–125 ms to 15 ms, and inserts held a steady 5 ms p99. Rust data services in front, routed by channel ID with consistent hashing, query the database once when many users request the same row at the same time.",
+    "es": "Discord guarda los mensajes con la primary key `((channel_id, bucket), message_id)`: IDs Snowflake, ordenables por tiempo, con buckets de ~10 días para que las particiones queden bajo 100 MB. En mayo de 2022 movió esos datos de 177 nodos de Cassandra a 72 nodos de ScyllaDB; el p99 de lectura de historial bajó de 40–125 ms a 15 ms, y las inserciones se mantuvieron en 5 ms p99. Unos servicios de datos en Rust, enrutados por ID de canal con consistent hashing, consultan la base una sola vez cuando muchos usuarios piden la misma fila a la vez."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "Ordering and delivery guarantees", "es": "Orden y garantías de entrega" },
+      "body": {
+        "en": "Nobody needs a global order, only a per-conversation one. **Single owner**: route each `conv_id` to one chat-service instance by consistent hashing; it assigns a gap-free `seq`, and gaps tell clients they missed something. Slack maps channels to its channel servers this way. **Time-sortable IDs** (Snowflake, as Discord uses): no owner to fail over, but only approximate order and no gap detection. Delivery is at-least-once: the client retries with the same `client_msg_id`, the server dedups on `(conv_id, client_msg_id)` and returns the original `seq`, and receivers drop sequences they already have. Read receipts are one `last_read_seq` per member, not a flag per message.",
+        "es": "Nadie necesita un orden global, solo uno por conversación. **Dueño único**: enruta cada `conv_id` a una instancia del servicio de chat con consistent hashing; esa instancia asigna un `seq` sin huecos, y un hueco le avisa al cliente que se perdió algo. Slack asigna canales a sus channel servers de esta forma. **IDs ordenables por tiempo** (Snowflake, como usa Discord): no hay dueño que conmutar ante fallas, pero el orden es aproximado y no se detectan huecos. La entrega es at-least-once: el cliente reintenta con el mismo `client_msg_id`, el servidor deduplica por `(conv_id, client_msg_id)` y devuelve el `seq` original, y los receptores descartan secuencias que ya tienen. Las confirmaciones de lectura son un `last_read_seq` por miembro, no una marca por mensaje."
+      }
+    },
+    {
+      "title": { "en": "Group fan-out and presence", "es": "Fan-out grupal y presencia" },
+      "body": {
+        "en": "Small groups: look up each member's gateway and push. Big channels: each gateway subscribes once per channel on behalf of its connected members, so the chat service sends one message per gateway, not per member, and the gateway fans out locally. Slack's gateway servers hold user WebSocket subscriptions and run in several regions, close to users. Presence is the hidden cost: broadcasting every online and offline change to every group member can outweigh message traffic. Use heartbeats with TTL keys, and send presence only for contacts on screen.",
+        "es": "Grupos chicos: busca el gateway de cada miembro y empuja. Canales grandes: cada gateway se suscribe una vez por canal en nombre de sus miembros conectados, así el servicio de chat manda un mensaje por gateway, no por miembro, y el gateway reparte localmente. Los gateway servers de Slack guardan las suscripciones WebSocket de los usuarios y corren en varias regiones, cerca de ellos. La presencia es el costo oculto: transmitir cada cambio de en línea a desconectado a cada miembro de un grupo puede superar el tráfico de mensajes. Usa heartbeats con keys con TTL y envía presencia solo de los contactos en pantalla."
+      }
+    },
+    {
+      "title": { "en": "Connections and reconnect storms", "es": "Conexiones y tormentas de reconexión" },
+      "body": {
+        "en": "Assume ~30M concurrent connections; at ~100k per gateway (assumed), that is ~300 gateways. Load balancers drop idle TCP connections, so clients send WebSocket ping/pong heartbeats (RFC 6455). A gateway deploy or crash disconnects all its users at once: drain gradually, make clients reconnect with jittered backoff ([[retries-backoff]]), and keep reconnects cheap: the client sends its last `seq` per active conversation and fetches only what is newer. Never replay full history on reconnect.",
+        "es": "Supón ~30M de conexiones simultáneas; a ~100k por gateway (supuesto), son ~300 gateways. Los balanceadores cortan conexiones TCP inactivas, así que los clientes envían heartbeats ping/pong de WebSocket (RFC 6455). Un deploy o una caída de un gateway desconecta a todos sus usuarios a la vez: drénalo de a poco, haz que los clientes reconecten con backoff y jitter ([[retries-backoff]]) y mantén barata la reconexión: el cliente envía su último `seq` por conversación activa y descarga solo lo nuevo. Nunca reenvíes el historial completo al reconectar."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "Per-conversation order needs no global coordination, so conversations shard cleanly.", "es": "El orden por conversación no necesita coordinación global, así que las conversaciones se particionan limpiamente." },
+    { "en": "Client message IDs plus sync-from-sequence make retries, reconnects and multiple devices routine.", "es": "Los IDs de mensaje del cliente más la sincronización por secuencia vuelven rutinarios los reintentos, las reconexiones y los múltiples dispositivos." },
+    { "en": "Gateways hold only connections, so they can be drained and replaced without losing messages.", "es": "Los gateways solo mantienen conexiones, así que se pueden drenar y reemplazar sin perder mensajes." }
+  ],
+  "cons": [
+    { "en": "Millions of long-lived connections turn deploys and failovers into reconnect storms.", "es": "Millones de conexiones de larga vida convierten los deploys y las conmutaciones en tormentas de reconexión." },
+    { "en": "A single owner per conversation becomes a hot spot for very large channels.", "es": "Un dueño único por conversación se vuelve un punto caliente en canales muy grandes." },
+    { "en": "Push providers are best-effort: APNs may reorder, so the app must resync when it opens.", "es": "Los proveedores de push son best-effort: APNs puede reordenar, así que la app debe resincronizar al abrirse." }
+  ],
+  "whenToUse": {
+    "en": "Real-time conversations where order within a thread matters and users switch devices: messaging, support chat, game lobbies, comments in collaboration tools.",
+    "es": "Conversaciones en tiempo real donde importa el orden dentro de un hilo y los usuarios cambian de dispositivo: mensajería, chat de soporte, lobbies de juegos, comentarios en herramientas colaborativas."
+  },
+  "whenNotToUse": {
+    "en": "One-way broadcast with no replies (live scores, tickers): use pub/sub or server-sent events. At very low volume, polling an API is simpler than running gateways.",
+    "es": "Difusión en un solo sentido sin respuestas (marcadores en vivo, tickers): usa pub/sub o server-sent events. Con muy poco volumen, hacer polling a una API es más simple que operar gateways."
+  },
+  "numbers": [
+    { "en": "Traffic: 100M DAU × 50 messages/day (assumed) = 5B/day ≈ 58k msg/s average, ~120k at a 2× peak.", "es": "Tráfico: 100M de DAU × 50 mensajes/día (supuesto) = 5 mil millones/día ≈ 58k mensajes/s en promedio, ~120k en un pico de 2×." },
+    { "en": "Storage: 5B × ~200 B ≈ 1 TB/day, ~365 TB/year before replication.", "es": "Almacenamiento: 5 mil millones × ~200 B ≈ 1 TB/día, ~365 TB/año antes de replicar." },
+    { "en": "Connections: ~30M concurrent ÷ ~100k per gateway (both assumed) ≈ 300 gateways.", "es": "Conexiones: ~30M simultáneas ÷ ~100k por gateway (ambos supuestos) ≈ 300 gateways." },
+    { "en": "Discord (2023): 177 Cassandra → 72 ScyllaDB nodes; p99 history reads 40–125 ms → 15 ms.", "es": "Discord (2023): de 177 nodos de Cassandra a 72 de ScyllaDB; p99 de lectura de historial de 40–125 ms a 15 ms." },
+    { "en": "Discord (2017): ~10-day buckets per channel keep each partition under 100 MB.", "es": "Discord (2017): buckets de ~10 días por canal mantienen cada partición bajo 100 MB." }
+  ],
+  "pitfalls": [
+    { "en": "Ordering by each server's receive time: clock skew reorders messages. Use a per-conversation sequence.", "es": "Ordenar por la hora de recepción de cada servidor: la desviación de relojes reordena mensajes. Usa una secuencia por conversación." },
+    { "en": "Treating the WebSocket as reliable: in-flight messages vanish on disconnect. Ack, persist and resync from the last sequence.", "es": "Tratar el WebSocket como confiable: los mensajes en tránsito desaparecen al desconectarse. Confirma, persiste y resincroniza desde la última secuencia." },
+    { "en": "Broadcasting every presence change to every group member: presence traffic dwarfs messages.", "es": "Transmitir cada cambio de presencia a cada miembro del grupo: el tráfico de presencia supera al de mensajes." },
+    { "en": "A read flag per member per message: a 1,000-member group writes 1,000 rows per message. Keep one `last_read_seq` per member.", "es": "Una marca de lectura por miembro y mensaje: un grupo de 1,000 escribe 1,000 filas por mensaje. Guarda un `last_read_seq` por miembro." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you guarantee message order in a group chat?", "es": "¿Cómo garantizas el orden de los mensajes en un chat grupal?" },
+      "a": {
+        "en": "I only promise order within a conversation; that's what users see. Each `conv_id` is owned by one chat-service instance via consistent hashing, and the owner assigns a gap-free sequence before persisting. Clients render by `seq`, so every member sees the same order whatever the arrival order, and a gap triggers a sync. The trade-off: a hot owner for a huge channel, and on failover the new owner must read the last `seq` from storage before accepting writes.",
+        "es": "Solo prometo orden dentro de una conversación; eso es lo que ven los usuarios. Cada `conv_id` tiene un dueño en el servicio de chat por consistent hashing, y ese dueño asigna una secuencia sin huecos antes de persistir. Los clientes muestran por `seq`, así todos ven el mismo orden sin importar el orden de llegada, y un hueco dispara una sincronización. El trade-off: un dueño caliente en un canal enorme, y al conmutar, el nuevo dueño debe leer el último `seq` del almacenamiento antes de aceptar escrituras."
+      }
+    },
+    {
+      "q": { "en": "A phone was offline for 3 days. What happens when it reconnects?", "es": "Un teléfono estuvo sin conexión 3 días. ¿Qué pasa cuando reconecta?" },
+      "a": {
+        "en": "It opens a WebSocket, authenticates and sends its last seen `seq` per conversation, or one per-user inbox cursor. The server answers with the conversations that have newer messages and their unread counts; the client fetches recent messages for what's on screen and pages older history lazily. The pushes sent meanwhile were only hints: APNs is best-effort and may reorder, so the app never treats them as the message log.",
+        "es": "Abre un WebSocket, se autentica y envía su último `seq` visto por conversación, o un cursor de bandeja por usuario. El servidor responde con las conversaciones que tienen mensajes nuevos y sus contadores de no leídos; el cliente descarga los mensajes recientes de lo que está en pantalla y pagina el historial más viejo bajo demanda. Los push enviados mientras tanto eran solo avisos: APNs es best-effort y puede reordenar, así que la app nunca los trata como el log de mensajes."
+      }
+    },
+    {
+      "q": { "en": "How do you scale a channel with 1M members?", "es": "¿Cómo escalas un canal con 1M de miembros?" },
+      "a": {
+        "en": "Per-member fan-out breaks: each message would mean 1M routing lookups and sends. I fan out to gateways instead: each gateway subscribes once to the channel for its online members, so a message costs one send per gateway with listeners, and the gateway delivers locally. Offline members get no push; they read history on open. I'd also rate-limit posting, drop per-member read receipts and make presence lazy.",
+        "es": "El fan-out por miembro se rompe: cada mensaje serían 1M de búsquedas de ruta y envíos. En cambio, hago fan-out a gateways: cada gateway se suscribe una vez al canal por sus miembros en línea, así un mensaje cuesta un envío por gateway con oyentes, y el gateway entrega localmente. Los miembros sin conexión no reciben push; leen el historial al abrir. También limitaría la tasa de publicación, quitaría las confirmaciones de lectura por miembro y haría la presencia bajo demanda."
+      }
+    }
+  ],
+  "related": ["realtime-delivery", "case-notification-system", "consistent-hashing", "idempotency", "clocks-ordering", "sharding"],
+  "sources": [
+    { "title": "RFC 6455 — The WebSocket Protocol", "url": "https://www.rfc-editor.org/rfc/rfc6455" },
+    { "title": "Discord — How Discord stores billions of messages (2017)", "url": "https://discord.com/blog/how-discord-stores-billions-of-messages" },
+    { "title": "Discord — How Discord stores trillions of messages (2023)", "url": "https://discord.com/blog/how-discord-stores-trillions-of-messages" },
+    { "title": "Slack Engineering — Real-time messaging (2023)", "url": "https://slack.engineering/real-time-messaging/" }
+  ]
+}
