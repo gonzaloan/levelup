@@ -1,7 +1,8 @@
 // Server-only: reads the content-as-data at build time. Never import from a client component.
 import fs from "node:fs";
 import path from "node:path";
-import type { Concept, Domain, I18n } from "./types";
+import type { Concept, Domain, I18n, Locale } from "./types";
+import type { PItem } from "./practice/types";
 
 const ROOT = process.cwd();
 const CONTENT = path.join(ROOT, "content");
@@ -70,4 +71,15 @@ export interface PathPhase { id: string; title: I18n; goal: I18n; modules: PathM
 export function getPath(): PathPhase[] {
   const p = JSON.parse(fs.readFileSync(path.join(CONTENT, "path.json"), "utf8")) as { phases: PathPhase[] };
   return p.phases.map((ph) => ({ ...ph, modules: ph.modules.map((m) => ({ ...m, concepts: m.concepts.filter((id) => load().concepts.has(id)) })) }));
+}
+
+/* Authored practice items of one concept, already localized by the content build. They are passed to
+ * the page's inline "check yourself" (a few hundred bytes), so the full practice index stays lazy. */
+const practiceCache = new Map<Locale, PItem[]>();
+export function checkItemsFor(id: string, locale: Locale): PItem[] {
+  if (!practiceCache.has(locale)) {
+    const f = path.join(ROOT, "src", "generated", `practice-${locale}.json`);
+    practiceCache.set(locale, fs.existsSync(f) ? (JSON.parse(fs.readFileSync(f, "utf8")).items as PItem[]) : []);
+  }
+  return practiceCache.get(locale)!.filter((i) => i.c === id && !i.auto && i.type !== "recall");
 }

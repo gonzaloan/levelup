@@ -17,15 +17,34 @@ test("home lists every topic and search opens a concept", async ({ page }) => {
 
 test("concept page has every section and a rendered diagram", async ({ page }) => {
   await page.goto("/en/c/reranking/");
-  for (const id of ["tldr", "how", "diagram", "code", "example", "tradeoffs", "pitfalls", "interview", "related"]) {
+  for (const id of ["tldr", "how", "diagram", "check", "code", "example", "tradeoffs", "pitfalls", "interview", "related"]) {
     await expect(page.locator(`#${id}`)).toBeVisible();
   }
+  // The long sections start folded: the page shows the essentials first.
+  await expect(page.locator(".pitfalls")).toBeHidden();
   // Exactly one variant of the diagram is visible: the one matching the active theme.
   const theme = await page.evaluate(() => document.documentElement.dataset.theme);
   await expect(page.locator(`.dg-${theme} svg`)).toBeVisible();
   await expect(page.locator(`.dg-${theme === "dark" ? "light" : "dark"} svg`)).toBeHidden();
+  await page.locator("#interview > summary").click();
   await page.locator(".qa summary").first().click();
   await expect(page.locator(".qa-a").first()).toBeVisible();
+});
+
+test("check yourself grades on the concept page and marks it read", async ({ page }) => {
+  await page.goto("/en/c/reranking/");
+  const check = page.locator("#check .qc");
+  await expect(check.locator(".p-prompt")).toBeVisible();
+  await check.locator(".p-opt").first().click();
+  await check.getByRole("button", { name: "Check" }).click();
+  await expect(check.locator(".p-feedback")).toBeVisible();
+  const read = await page.evaluate(() => JSON.parse(localStorage.getItem("fg.study.v1") ?? "{}").read ?? {});
+  expect(read.reranking).toBeTruthy();
+});
+
+test("a link to a folded section opens it", async ({ page }) => {
+  await page.goto("/en/c/reranking/#pitfalls");
+  await expect(page.locator(".pitfalls")).toBeVisible();
 });
 
 test("theme toggle switches the diagram variant", async ({ page }) => {

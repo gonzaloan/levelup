@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
 import { LOCALES, m, t } from "@/lib/i18n";
-import { allConcepts, conceptsOf, domainIndex, getConcept, getDomain, neighbors } from "@/lib/content";
+import { allConcepts, checkItemsFor, conceptsOf, domainIndex, getConcept, getDomain, neighbors } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
 import { Markdown } from "@/components/Markdown";
@@ -13,6 +13,7 @@ import { DomainChip, LevelBadge } from "@/components/Bits";
 import { MasteredDot, MasteredToggle } from "@/components/Mastered";
 import { Toc } from "@/components/Toc";
 import { KeyNav } from "@/components/KeyNav";
+import { QuickCheck } from "@/components/practice/QuickCheck";
 
 type P = { params: Promise<{ locale: Locale; id: string }> };
 export const dynamicParams = false;
@@ -39,18 +40,21 @@ export default async function ConceptPage({ params }: P) {
   const siblings = conceptsOf(d.id);
   const related = c.related.map(getConcept).filter((x): x is NonNullable<typeof x> => !!x);
   const hue = hueFor(domainIndex(d.id));
+  const checks = checkItemsFor(id, locale);
 
+  // Essentials first (one idea, one picture, how it works, a check); the rest is folded, one tap away.
   const toc = [
     { id: "tldr", label: L("tldr") },
-    { id: "how", label: L("howItWorks") },
     c.diagram && { id: "diagram", label: L("diagram") },
+    { id: "how", label: L("howItWorks") },
+    checks.length && { id: "check", label: L("checkTitle") },
     c.code && { id: "code", label: L("code") },
     { id: "example", label: L("example") },
-    c.deepDive?.length && { id: "deep", label: L("deepDive") },
     { id: "tradeoffs", label: L("tradeoffs") },
     c.numbers?.length && { id: "numbers", label: L("numbers") },
     { id: "pitfalls", label: L("pitfalls") },
     { id: "interview", label: L("interview") },
+    c.deepDive?.length && { id: "deep", label: L("deepDive") },
     { id: "related", label: L("related") },
   ].filter(Boolean) as { id: string; label: string }[];
 
@@ -95,94 +99,105 @@ export default async function ConceptPage({ params }: P) {
           {c.analogy && <p className="analogy"><span>{L("analogy")}:</span> {t(c.analogy, locale)}</p>}
         </section>
 
+        {c.diagram && (
+          <section id="diagram" className="diagram-top">
+            <Diagram id={c.id} caption={t(c.diagram.caption, locale)} zoomLabel={locale === "es" ? "Ampliar" : "Expand"} closeLabel={locale === "es" ? "Cerrar" : "Close"} />
+          </section>
+        )}
+
         <section id="how">
           <h2>{L("howItWorks")}</h2>
           <Markdown src={t(c.explain, locale)} locale={locale} />
         </section>
 
-        {c.diagram && (
-          <section id="diagram">
-            <h2>{L("diagram")}</h2>
-            <Diagram id={c.id} caption={t(c.diagram.caption, locale)} zoomLabel={locale === "es" ? "Ampliar" : "Expand"} closeLabel={locale === "es" ? "Cerrar" : "Close"} />
+        {checks.length > 0 && (
+          <section id="check" className="check">
+            <h2>{L("checkTitle")}</h2>
+            <p className="hint">{L("checkHint")}</p>
+            <QuickCheck items={checks} conceptId={c.id} locale={locale} />
           </section>
         )}
 
-        {c.code && (
-          <section id="code">
-            <h2>{L("code")}</h2>
-            <CodeBlock code={c.code.source} lang={c.code.lang} title={t(c.code.title, locale)} copyLabel={L("copy")} copiedLabel={L("copied")} />
-          </section>
-        )}
+        <section className="deeper" aria-label={L("goDeeper")}>
+          <h2>{L("goDeeper")}</h2>
+          <p className="hint">{L("goDeeperHint")}</p>
 
-        <section id="example">
-          <h2>{L("example")}</h2>
-          <div className="example-box"><Markdown src={t(c.example, locale)} locale={locale} /></div>
-        </section>
+          {c.code && (
+            <details id="code" className="fold">
+              <summary>{L("code")} <small>{t(c.code.title, locale)}</small></summary>
+              <CodeBlock code={c.code.source} lang={c.code.lang} title={t(c.code.title, locale)} copyLabel={L("copy")} copiedLabel={L("copied")} />
+            </details>
+          )}
 
-        {c.deepDive && c.deepDive.length > 0 && (
-          <section id="deep">
-            <h2>{L("deepDive")}</h2>
-            <div className="deep-grid">
-              {c.deepDive.map((x, i) => (
-                <div key={i} className="deep-item">
-                  <h3>{t(x.title, locale)}</h3>
-                  <Markdown src={t(x.body, locale)} locale={locale} />
-                </div>
+          <details id="example" className="fold">
+            <summary>{L("example")}</summary>
+            <div className="example-box"><Markdown src={t(c.example, locale)} locale={locale} /></div>
+          </details>
+
+          <details id="tradeoffs" className="fold">
+            <summary>{L("tradeoffs")} <small>+{c.pros.length} · −{c.cons.length}</small></summary>
+            <div className="two-col">
+              <div className="tcard pro">
+                <h3><span className="sign">+</span> {L("pros")}</h3>
+                <ul>{c.pros.map((x, i) => <li key={i}><Markdown inline src={t(x, locale)} locale={locale} /></li>)}</ul>
+              </div>
+              <div className="tcard con">
+                <h3><span className="sign">−</span> {L("cons")}</h3>
+                <ul>{c.cons.map((x, i) => <li key={i}><Markdown inline src={t(x, locale)} locale={locale} /></li>)}</ul>
+              </div>
+            </div>
+            <div className="two-col when">
+              <div className="tcard"><h3>{L("whenToUse")}</h3><p><Markdown inline src={t(c.whenToUse, locale)} locale={locale} /></p></div>
+              <div className="tcard"><h3>{L("whenNotToUse")}</h3><p><Markdown inline src={t(c.whenNotToUse, locale)} locale={locale} /></p></div>
+            </div>
+          </details>
+
+          {c.numbers && c.numbers.length > 0 && (
+            <details id="numbers" className="fold">
+              <summary>{L("numbers")} <small>{c.numbers.length}</small></summary>
+              <ul className="numbers">{c.numbers.map((x, i) => <li key={i}><Markdown inline src={t(x, locale)} locale={locale} /></li>)}</ul>
+            </details>
+          )}
+
+          <details id="pitfalls" className="fold">
+            <summary>{L("pitfalls")} <small>{c.pitfalls.length}</small></summary>
+            <ul className="pitfalls">{c.pitfalls.map((x, i) => <li key={i}><Markdown inline src={t(x, locale)} locale={locale} /></li>)}</ul>
+          </details>
+
+          <details id="interview" className="fold">
+            <summary>{L("interview")} <small>{c.interview.length}</small></summary>
+            <p className="hint">{L("interviewHint")}</p>
+            <div className="qa-list">
+              {c.interview.map((x, i) => (
+                <details key={i} className="qa">
+                  <summary><span className="qa-q">{t(x.q, locale)}</span><span className="qa-reveal">{L("showAnswer")}</span></summary>
+                  <Markdown src={t(x.a, locale)} locale={locale} className="qa-a" />
+                </details>
               ))}
             </div>
-          </section>
-        )}
+          </details>
 
-        <section id="tradeoffs">
-          <h2>{L("tradeoffs")}</h2>
-          <div className="two-col">
-            <div className="tcard pro">
-              <h3><span className="sign">+</span> {L("pros")}</h3>
-              <ul>{c.pros.map((x, i) => <li key={i}><Markdown inline src={t(x, locale)} locale={locale} /></li>)}</ul>
-            </div>
-            <div className="tcard con">
-              <h3><span className="sign">−</span> {L("cons")}</h3>
-              <ul>{c.cons.map((x, i) => <li key={i}><Markdown inline src={t(x, locale)} locale={locale} /></li>)}</ul>
-            </div>
-          </div>
-          <div className="two-col when">
-            <div className="tcard"><h3>{L("whenToUse")}</h3><p><Markdown inline src={t(c.whenToUse, locale)} locale={locale} /></p></div>
-            <div className="tcard"><h3>{L("whenNotToUse")}</h3><p><Markdown inline src={t(c.whenNotToUse, locale)} locale={locale} /></p></div>
-          </div>
-        </section>
-
-        {c.numbers && c.numbers.length > 0 && (
-          <section id="numbers">
-            <h2>{L("numbers")}</h2>
-            <ul className="numbers">{c.numbers.map((x, i) => <li key={i}><Markdown inline src={t(x, locale)} locale={locale} /></li>)}</ul>
-          </section>
-        )}
-
-        <section id="pitfalls">
-          <h2>{L("pitfalls")}</h2>
-          <ul className="pitfalls">{c.pitfalls.map((x, i) => <li key={i}><Markdown inline src={t(x, locale)} locale={locale} /></li>)}</ul>
-        </section>
-
-        <section id="interview">
-          <h2>{L("interview")}</h2>
-          <p className="hint">{L("interviewHint")}</p>
-          <div className="qa-list">
-            {c.interview.map((x, i) => (
-              <details key={i} className="qa">
-                <summary><span className="qa-q">{t(x.q, locale)}</span><span className="qa-reveal">{L("showAnswer")}</span></summary>
-                <Markdown src={t(x.a, locale)} locale={locale} className="qa-a" />
-              </details>
-            ))}
-          </div>
+          {c.deepDive && c.deepDive.length > 0 && (
+            <details id="deep" className="fold">
+              <summary>{L("deepDive")} <small>{c.deepDive.length}</small></summary>
+              <div className="deep-grid">
+                {c.deepDive.map((x, i) => (
+                  <div key={i} className="deep-item">
+                    <h3>{t(x.title, locale)}</h3>
+                    <Markdown src={t(x.body, locale)} locale={locale} />
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
         </section>
 
         <section id="related">
           <h2>{L("related")}</h2>
-          <div className="related-grid">
+          <div className="related-chips">
             {related.map((r) => (
-              <Link key={r.id} href={`/${locale}/c/${r.id}/`} className="related-card" style={{ ["--h" as string]: hueFor(domainIndex(r.domain)) }}>
-                <strong>{t(r.title, locale)}</strong>
-                <span>{t(r.tldr, locale)}</span>
+              <Link key={r.id} href={`/${locale}/c/${r.id}/`} className="related-chip" title={t(r.tldr, locale)} style={{ ["--h" as string]: hueFor(domainIndex(r.domain)) }}>
+                {t(r.title, locale)}
               </Link>
             ))}
           </div>
