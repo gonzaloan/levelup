@@ -13,6 +13,10 @@ Live: https://levelup.skillrealm.dev
   inference & cost · security & governance · AI architecture · AI system-design cases · ML
   foundations · MLOps · Staff/Principal leadership and execution.
 - **Study path:** one big "next step", three phases, modules folded except the one you are in.
+- **Labs you can touch:** back-of-the-envelope calculator, latency ladder, Big-O growth, sliding
+  window stepper, consistent hashing ring, rate limiters, quorums (N/R/W), GPU memory (weights + KV
+  cache) and a sampling playground. Each concept links its lab.
+- **Visual:** a color illustration per concept and the logos of the tools and companies it mentions.
 - **Architecture map:** the reference architecture of a production AI system, layer by layer;
   every box opens its concept.
 - **Every concept on one page, essentials first:** the one sentence you'd say in an interview, a

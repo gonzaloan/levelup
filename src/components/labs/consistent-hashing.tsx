@@ -36,10 +36,8 @@ function owner({ tok, own }: Ring, x: number): number {
 
 const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
-// A stable hue per node (150° steps visit 12 distinct slots) on the theme's --dc lightness and
-// chroma. --dc resolves its hue at :root, so the hue is swapped with relative color syntax; where
-// that is unsupported, fill/stroke fall back to the muted color their <g> passes down.
-const tint = (k: number, prop: "fill" | "stroke" | "background"): CSSProperties => ({ [prop]: `oklch(from var(--dc) l c ${(200 + k * 150) % 360})` });
+// Each node gets its own hue at the theme's lightness and chroma (--dc-l, --dc-c).
+const tint = (k: number, prop: "fill" | "stroke" | "background"): CSSProperties => ({ [prop]: `oklch(var(--dc-l) var(--dc-c) ${(200 + k * 150) % 360})` });
 function point(x: number, r: number): [number, number] {
   const a = (x / SPACE) * 2 * Math.PI - Math.PI / 2;
   return [C + r * Math.cos(a), C + r * Math.sin(a)];
