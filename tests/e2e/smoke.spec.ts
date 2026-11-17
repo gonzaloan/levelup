@@ -137,3 +137,21 @@ test("arrow keys move between concepts in a topic", async ({ page }) => {
   await expect(page).toHaveURL(new RegExp(`/en/c/${rag[1]}/$`));
   await expect(page.locator("h1")).toHaveText(title(rag[1]));
 });
+
+const LABS: { id: string }[] = JSON.parse(fs.readFileSync("content/labs.json", "utf8"));
+
+test("labs index lists every lab and a lab reacts to its controls", async ({ page }) => {
+  await page.goto("/en/labs/");
+  await expect(page.locator(".lab-card")).toHaveCount(LABS.length);
+  await page.goto("/en/labs/capacity/");
+  const writeQps = page.locator(".lab-stat").first().locator(".st-value");
+  const before = await writeQps.textContent();
+  await page.getByRole("button", { name: "Chat" }).click();
+  await expect(writeQps).not.toHaveText(before ?? "");
+});
+
+test("a concept links to its lab", async ({ page }) => {
+  await page.goto("/en/c/back-of-envelope/");
+  await page.locator(".lab-promo-card").first().click();
+  await expect(page).toHaveURL(/\/en\/labs\/[a-z-]+\/$/);
+});

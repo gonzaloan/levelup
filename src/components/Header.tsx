@@ -20,6 +20,7 @@ export function Header({ locale }: { locale: Locale }) {
         <nav className="main-nav" aria-label="main">
           <Link href={`/${locale}/path/`}><Icon name="compass" size={17} /><span>{L("navPath")}</span></Link>
           <Link href={`/${locale}/practice/`}><Icon name="cards" size={17} /><span>{L("navPractice")}</span></Link>
+          <Link href={`/${locale}/labs/`}><Icon name="sliders" size={17} /><span>{L("navLabs")}</span></Link>
           <Link href={`/${locale}/`}><Icon name="book" size={17} /><span>{L("navDomains")}</span></Link>
           <Link href={`/${locale}/map/`}><Icon name="map" size={17} /><span>{L("navMap")}</span></Link>
           <Link href={`/${locale}/interview/`}><Icon name="mic" size={17} /><span>{L("navInterview")}</span></Link>

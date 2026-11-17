@@ -9,6 +9,7 @@ import { SearchButton } from "@/components/SearchButton";
 import { ProgressMeter } from "@/components/Mastered";
 import { ContinueCard } from "@/components/Continue";
 import { getPath } from "@/lib/content";
+import { Illustration } from "@/components/Visual";
 
 // Asked again and again in Staff SWE and AI architect loops: a mix, not only AI.
 const HOT = ["case-news-feed", "consistent-hashing", "rate-limiting", "case-chat-system", "sliding-window", "caching", "case-payment-system", "behavioral-star", "llm-reference-architecture", "rag", "agents-vs-workflows", "prompt-injection", "kv-cache", "design-framework"];
@@ -62,7 +63,7 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
         <section className="hot">
           <h2 className="section-label">{locale === "es" ? "Lo más preguntado en entrevistas" : "Most asked in interviews"}</h2>
           <div className="hot-list">
-            {hot.map((c) => <Link key={c.id} href={`/${locale}/c/${c.id}/`} className="hot-pill">{t(c.title, locale)}</Link>)}
+            {hot.map((c) => <Link key={c.id} href={`/${locale}/c/${c.id}/`} className="hot-pill"><Illustration id={c.id} size={18} />{t(c.title, locale)}</Link>)}
           </div>
         </section>
       )}

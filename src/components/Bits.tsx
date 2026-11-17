@@ -4,6 +4,7 @@ import { m, t } from "@/lib/i18n";
 import { hueFor } from "@/lib/hue";
 import { domainIndex, getDomain } from "@/lib/content";
 import { MasteredDot } from "./Mastered";
+import { Illustration } from "./Visual";
 
 export function LevelBadge({ level, locale }: { level: Level; locale: Locale }) {
   return <span className={`lvl lvl-${level}`}>{m(`level_${level}`, locale)}</span>;
@@ -23,6 +24,7 @@ export function ConceptCard({ c, locale, n, showDomain }: { c: Concept; locale: 
   return (
     <Link href={`/${locale}/c/${c.id}/`} className="concept-card" style={{ ["--h" as string]: hueFor(domainIndex(c.domain)) }}>
       <div className="cc-top">
+        <Illustration id={c.id} size={34} className="cc-ill" />
         {n != null && <span className="cc-n">{String(n).padStart(2, "0")}</span>}
         <span className="cc-title">{t(c.title, locale)}</span>
         <MasteredDot id={c.id} />

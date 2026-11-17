@@ -29,6 +29,52 @@ for (const c of concepts.values()) {
   }
 }
 
+// Labs: every lab names real concepts and has exactly one component (src/components/labs/<id>.tsx).
+const labsFile = path.join(ROOT, "content", "labs.json");
+if (fs.existsSync(labsFile)) {
+  const labs = JSON.parse(fs.readFileSync(labsFile, "utf8"));
+  const ids = new Set();
+  const known = new Set(domains.flatMap((d) => d.concepts));
+  for (const l of labs) {
+    if (ids.has(l.id)) errors.push(`labs: duplicate id "${l.id}"`);
+    ids.add(l.id);
+    if (!l.title?.en || !l.title?.es || !l.blurb?.en || !l.blurb?.es) errors.push(`labs: "${l.id}" needs title and blurb in en and es`);
+    for (const c of l.concepts ?? []) if (!known.has(c)) errors.push(`labs: "${l.id}" names unknown concept "${c}"`);
+    if (!fs.existsSync(path.join(ROOT, "src", "components", "labs", `${l.id}.tsx`))) errors.push(`labs: "${l.id}" has no src/components/labs/${l.id}.tsx`);
+  }
+  const reg = fs.readFileSync(path.join(ROOT, "src", "components", "labs", "registry.tsx"), "utf8");
+  for (const id of ids) if (!reg.includes(`"${id}": dynamic(`)) errors.push(`labs: "${id}" is missing from registry.tsx`);
+}
+
+// Visuals: illustrations (Fluent Emoji Flat) per concept and the logo catalog must name real icons.
+{
+  const iconsOf = (pkg) => { const j = JSON.parse(fs.readFileSync(path.join(ROOT, "node_modules", pkg, "icons.json"), "utf8")); return new Set([...Object.keys(j.icons), ...Object.keys(j.aliases ?? {})]); };
+  const known = new Set(domains.flatMap((d) => d.concepts));
+  const illFile = path.join(ROOT, "content", "illustrations.json");
+  if (fs.existsSync(illFile)) {
+    const fe = iconsOf("@iconify-json/fluent-emoji-flat");
+    const ill = JSON.parse(fs.readFileSync(illFile, "utf8"));
+    for (const [id, name] of Object.entries(ill)) {
+      if (!known.has(id)) errors.push(`illustrations: "${id}" is not a concept id`);
+      if (!fe.has(name)) errors.push(`illustrations: "${id}" → "${name}" is not a Fluent Emoji Flat icon`);
+    }
+    const missing = [...known].filter((id) => !ill[id]);
+    if (missing.length) warnings.push(`illustrations: ${missing.length} concepts without an illustration (${missing.slice(0, 5).join(", ")}…)`);
+  }
+  const techFile = path.join(ROOT, "content", "tech.json");
+  if (fs.existsSync(techFile)) {
+    const logos = iconsOf("@iconify-json/logos");
+    const seen = new Set();
+    for (const x of JSON.parse(fs.readFileSync(techFile, "utf8"))) {
+      if (seen.has(x.id)) errors.push(`tech: duplicate id "${x.id}"`);
+      seen.add(x.id);
+      if (!["tech", "company"].includes(x.kind)) errors.push(`tech: "${x.id}" kind must be tech or company`);
+      if (!logos.has(String(x.icon).replace(/^logos:/, ""))) errors.push(`tech: "${x.id}" icon ${x.icon} not in the logos set`);
+      if (!Array.isArray(x.match) || !x.match.length) errors.push(`tech: "${x.id}" needs match terms`);
+    }
+  }
+}
+
 // The architecture map may only point at concepts in the syllabus.
 const mapFile = path.join(ROOT, "content", "architecture-map.json");
 if (fs.existsSync(mapFile)) {

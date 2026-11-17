@@ -14,6 +14,8 @@ const UI = {
   navCheatsheet: { en: "Cheatsheet", es: "Cheatsheet" },
   navInterview: { en: "Interview", es: "Entrevista" },
   navPractice: { en: "Practice", es: "Práctica" },
+  navLabs: { en: "Labs", es: "Labs" },
+  tryLab: { en: "Interactive lab", es: "Lab interactivo" },
   search: { en: "Search", es: "Buscar" },
   searchPlaceholder: { en: "Search concepts, acronyms, questions…", es: "Busca conceptos, siglas, preguntas…" },
   searchEmpty: { en: "No matches. Try an acronym (RAG, HNSW, LoRA) or a plain word.", es: "Sin resultados. Prueba una sigla (RAG, HNSW, LoRA) o una palabra simple." },

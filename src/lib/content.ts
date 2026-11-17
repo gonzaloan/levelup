@@ -83,3 +83,20 @@ export function checkItemsFor(id: string, locale: Locale): PItem[] {
   }
   return practiceCache.get(locale)!.filter((i) => i.c === id && !i.auto && i.type !== "recall");
 }
+
+/* Interactive labs (content/labs.json): each lab names the concepts it helps you feel. */
+export interface Lab { id: string; icon: string; title: I18n; blurb: I18n; concepts: string[] }
+export const getLabs = (): Lab[] => JSON.parse(fs.readFileSync(path.join(CONTENT, "labs.json"), "utf8"));
+export const getLab = (id: string) => getLabs().find((l) => l.id === id);
+export const labsFor = (conceptId: string) => getLabs().filter((l) => l.concepts.includes(conceptId));
+
+/** Where a concept sits in the study path: phase, module (1-based) and position inside it. */
+export function pathPosition(id: string) {
+  let mi = 0;
+  for (const ph of getPath()) for (const m of ph.modules) {
+    mi++;
+    const i = m.concepts.indexOf(id);
+    if (i >= 0) return { phase: ph, module: m, moduleNo: mi, index: i + 1, size: m.concepts.length };
+  }
+  return null;
+}

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
 import { LOCALES, m, t } from "@/lib/i18n";
-import { allConcepts, checkItemsFor, conceptsOf, domainIndex, getConcept, getDomain, neighbors } from "@/lib/content";
+import { allConcepts, checkItemsFor, conceptsOf, domainIndex, getConcept, getDomain, labsFor, neighbors, pathPosition } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
 import { Markdown } from "@/components/Markdown";
@@ -14,6 +14,7 @@ import { MasteredDot, MasteredToggle } from "@/components/Mastered";
 import { Toc } from "@/components/Toc";
 import { KeyNav } from "@/components/KeyNav";
 import { QuickCheck } from "@/components/practice/QuickCheck";
+import { Illustration, StackRow } from "@/components/Visual";
 
 type P = { params: Promise<{ locale: Locale; id: string }> };
 export const dynamicParams = false;
@@ -41,6 +42,10 @@ export default async function ConceptPage({ params }: P) {
   const related = c.related.map(getConcept).filter((x): x is NonNullable<typeof x> => !!x);
   const hue = hueFor(domainIndex(d.id));
   const checks = checkItemsFor(id, locale);
+  const labs = labsFor(id);
+  const pos = pathPosition(id);
+  // Design cases lead with the building blocks they use (their related concepts), like a course.
+  const isCase = c.domain === "design" || c.domain === "sysdesign";
 
   // Essentials first (one idea, one picture, how it works, a check); the rest is folded, one tap away.
   const toc = [
@@ -76,8 +81,14 @@ export default async function ConceptPage({ params }: P) {
 
       <article className="concept">
         <header className="concept-head">
-          <div className="crumbs"><DomainChip id={d.id} locale={locale} /><LevelBadge level={c.level} locale={locale} /></div>
-          <h1>{t(c.title, locale)}</h1>
+          <div className="crumbs">
+            <DomainChip id={d.id} locale={locale} /><LevelBadge level={c.level} locale={locale} />
+            {pos && <Link className="path-pos" href={`/${locale}/path/`}>{locale === "es" ? "Módulo" : "Module"} {String(pos.moduleNo).padStart(2, "0")} · {pos.index}/{pos.size}</Link>}
+          </div>
+          <div className="title-row">
+            <Illustration id={c.id} size={60} className="head-ill" />
+            <h1>{t(c.title, locale)}</h1>
+          </div>
           {c.aliases.length > 0 && <p className="aliases">{c.aliases.join(" · ")}</p>}
         </header>
 
@@ -100,6 +111,20 @@ export default async function ConceptPage({ params }: P) {
           {c.analogy && <p className="analogy"><span>{L("analogy")}:</span> {t(c.analogy, locale)}</p>}
         </section>
 
+        {isCase && related.length > 0 && (
+          <section className="fundamentals" aria-label={locale === "es" ? "Fundamentos que vas a usar" : "Fundamentals you'll use"}>
+            <h2 className="section-label">{locale === "es" ? "Fundamentos que vas a usar" : "Fundamentals you'll use"}</h2>
+            <div className="fund-list">
+              {related.map((r) => (
+                <Link key={r.id} href={`/${locale}/c/${r.id}/`} className="fund-item">
+                  <Illustration id={r.id} size={26} />
+                  <span>{t(r.title, locale)}</span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        )}
+
         {c.diagram && (
           <section id="diagram" className="diagram-top">
             <Diagram id={c.id} caption={t(c.diagram.caption, locale)} zoomLabel={locale === "es" ? "Ampliar" : "Expand"} closeLabel={locale === "es" ? "Cerrar" : "Close"} />
@@ -111,7 +136,20 @@ export default async function ConceptPage({ params }: P) {
           {c.keyPoints?.length
             ? <ul className="keypoints">{c.keyPoints.map((p, i) => <li key={i}><Markdown inline src={t(p, locale)} locale={locale} /></li>)}</ul>
             : <Markdown src={t(c.explain, locale)} locale={locale} />}
+          <StackRow concept={c} locale={locale} />
         </section>
+
+        {labs.length > 0 && (
+          <section className="lab-promo" aria-label="Labs">
+            {labs.map((l) => (
+              <Link key={l.id} href={`/${locale}/labs/${l.id}/`} className="lab-promo-card">
+                <span className="lc-icon"><Icon name={l.icon} size={20} /></span>
+                <span><small>{L("tryLab")}</small><strong>{t(l.title, locale)}</strong><span>{t(l.blurb, locale)}</span></span>
+                <Icon name="right" size={18} />
+              </Link>
+            ))}
+          </section>
+        )}
 
         {checks.length > 0 && (
           <section id="check" className="check">
