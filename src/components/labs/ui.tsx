@@ -48,7 +48,7 @@ export function Range({ label, value, min, max, step = 1, onChange, format = Str
   return (
     <label className="lab-range">
       <span className="lr-top"><span>{label}</span><output>{format(value)}</output></span>
-      <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+      <input type="range" min={min} max={max} step={step} value={value} aria-valuetext={format(value)} onChange={(e) => onChange(Number(e.target.value))} />
       {hint && <small>{hint}</small>}
     </label>
   );
@@ -64,7 +64,7 @@ export function LogRange({ label, value, min, max, onChange, format = fmtNum, hi
   return (
     <label className="lab-range">
       <span className="lr-top"><span>{label}</span><output>{format(value)}</output></span>
-      <input type="range" min={0} max={1000} value={pos} onChange={(e) => onChange(snap(10 ** (lo + (Number(e.target.value) / 1000) * (hi - lo))))} />
+      <input type="range" min={0} max={1000} value={pos} aria-valuetext={format(value)} onChange={(e) => onChange(snap(10 ** (lo + (Number(e.target.value) / 1000) * (hi - lo))))} />
       {hint && <small>{hint}</small>}
     </label>
   );
