@@ -2,14 +2,14 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
 import { m, t } from "@/lib/i18n";
-import { allConcepts, getConcept, getDomains } from "@/lib/content";
+import { allConcepts, getConcept, getDomains, getLabs } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
 import { SearchButton } from "@/components/SearchButton";
 import { ProgressMeter } from "@/components/Mastered";
 import { ContinueCard } from "@/components/Continue";
 import { getPath } from "@/lib/content";
-import { Illustration } from "@/components/Visual";
+import { Emoji, Illustration } from "@/components/Visual";
 
 // Asked again and again in Staff SWE and AI architect loops: a mix, not only AI.
 const HOT = ["case-news-feed", "consistent-hashing", "rate-limiting", "case-chat-system", "sliding-window", "caching", "case-payment-system", "behavioral-star", "llm-reference-architecture", "rag", "agents-vs-workflows", "prompt-injection", "kv-cache", "design-framework"];
@@ -67,6 +67,21 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
           </div>
         </section>
       )}
+
+      <section className="home-labs">
+        <div className="hl-head">
+          <h2 className="section-label">{locale === "es" ? "Labs: sistemas que puedes tocar" : "Labs: systems you can touch"}</h2>
+          <Link href={`/${locale}/labs/`} className="hl-all">{locale === "es" ? `Ver los ${getLabs().length}` : `See all ${getLabs().length}`} <Icon name="right" size={14} /></Link>
+        </div>
+        <div className="hl-row">
+          {getLabs().slice(0, 6).map((l) => (
+            <Link key={l.id} href={`/${locale}/labs/${l.id}/`} className="hl-card">
+              <Emoji name={l.art} size={30} />
+              <span>{t(l.title, locale)}</span>
+            </Link>
+          ))}
+        </div>
+      </section>
 
       <Link href={`/${locale}/graph/`} className="graph-promo">
         <span><strong>{locale === "es" ? "Mapa del conocimiento" : "Knowledge map"}</strong>
