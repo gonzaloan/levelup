@@ -1,7 +1,109 @@
 "use client";
-// Placeholder until this lab is built.
+// Big-O growth: one slider for n, one bar per complexity class, a 1 s budget line. Everything is
+// computed in log10 space, so 2ⁿ at n = 10⁹ never overflows. The speed (10⁸ simple ops/s) is a
+// labelled assumption at the low end of the concept's "some hundreds of millions".
+import { useMemo, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
+import { Insight, LabGrid, LogRange, Seg, Stat, YEAR_S, fmtDuration, fmtNum } from "./ui";
 
-export default function Lab({ locale }: { locale: Locale }) {
-  return <p className="lab-note">{locale === "es" ? "Este lab está en construcción." : "This lab is being built."}</p>;
+const LG_OPS = 8; // log10 of the assumed 10⁸ simple operations per second
+const AXIS = 16; // the track spans 10⁰ … 10¹⁶ steps; the 1 s budget (10⁸ steps) sits at 50%
+const CLASSES: { label: string; lg: (n: number) => number }[] = [
+  { label: "O(1)", lg: () => 0 },
+  { label: "O(log n)", lg: (n) => Math.log10(Math.log2(n)) },
+  { label: "O(n)", lg: (n) => Math.log10(n) },
+  { label: "O(n log n)", lg: (n) => Math.log10(n * Math.log2(n)) },
+  { label: "O(n²)", lg: (n) => 2 * Math.log10(n) },
+  { label: "O(n³)", lg: (n) => 3 * Math.log10(n) },
+  { label: "O(2ⁿ)", lg: (n) => n * Math.log10(2) },
+];
+const LIMITS = [20, 500, 5_000, 1e6]; // the CPH ~1 s table's boundaries
+
+const SUP = "⁰¹²³⁴⁵⁶⁷⁸⁹";
+const sci = (lg: number) => { const k = Math.floor(lg); return `${(10 ** (lg - k)).toFixed(1)}×10${[...String(k)].map((d) => SUP[Number(d)]).join("")}`; };
+const TONE = { good: "var(--good)", warn: "var(--accent)", bad: "var(--bad)" } as const;
+const GRID = "repeating-linear-gradient(to right, var(--border) 0 calc(12.5% - 1px), var(--border-2) calc(12.5% - 1px) 12.5%)";
+const mono: CSSProperties = { font: "650 13px ui-monospace, Menlo, monospace", whiteSpace: "nowrap" };
+
+const T = {
+  en: {
+    n: "Input size n", jump: "CPH limits (~1 s)", steps: "steps", years: "years",
+    cph: "CPH rule for this n", or: "or", logn: "log₂ n", cheap: "a log factor is cheap",
+    fits: "Slowest that fits 1 s", at: "at 10⁸ ops/s",
+    formula: "time ≈ steps ÷ 10⁸ simple ops/s  ·  1 s budget ≈ 10⁸ steps  ·  vertical line = 1 s",
+    insight: (n: string, fit: string, over?: string, time?: string) => over
+      ? `At n = ${n}, ${fit} still fits in ~1 s, but ${over} already takes ${time}. Read the limit on n first: it tells you which algorithm the problem expects.`
+      : `At n = ${n} every class fits in ~1 s: at small n the constants matter more than the Big-O.`,
+    note: "Assumption: 10⁸ simple operations per second, the low end of the concept's \"some hundreds of millions\"; orange rows (1–10 s) are borderline, since a faster machine or a smaller constant can make them fit. Constants are dropped and log means log₂. Budget table: Laaksonen, Competitive Programmer's Handbook.",
+  },
+  es: {
+    n: "Tamaño de la entrada n", jump: "Límites del CPH (~1 s)", steps: "pasos", years: "años",
+    cph: "Regla del CPH para este n", or: "o", logn: "log₂ n", cheap: "un factor log es barato",
+    fits: "Lo más lento que cabe en 1 s", at: "a 10⁸ ops/s",
+    formula: "tiempo ≈ pasos ÷ 10⁸ operaciones simples/s  ·  presupuesto de 1 s ≈ 10⁸ pasos  ·  línea vertical = 1 s",
+    insight: (n: string, fit: string, over?: string, time?: string) => over
+      ? `Con n = ${n}, ${fit} todavía cabe en ~1 s, pero ${over} ya tarda ${time}. Lee primero el límite de n: te dice qué algoritmo espera el problema.`
+      : `Con n = ${n} todas las clases caben en ~1 s: con n chico pesan más las constantes que la Big-O.`,
+    note: "Supuesto: 10⁸ operaciones simples por segundo, el extremo bajo de los \"unos cientos de millones\" del concepto; las filas naranjas (1–10 s) están al límite, porque una máquina más rápida o una constante menor puede hacerlas caber. Se omiten las constantes y log es log₂. Tabla de presupuesto: Laaksonen, Competitive Programmer's Handbook.",
+  },
+};
+
+export default function BigOLab({ locale }: { locale: Locale }) {
+  const t = T[locale];
+  const [n, setN] = useState(1e5);
+  const rows = useMemo(() => CLASSES.map((c) => {
+    const lg = c.lg(n), lgSec = lg - LG_OPS;
+    const tone: keyof typeof TONE = lgSec <= 0 ? "good" : lgSec <= 1 ? "warn" : "bad";
+    const steps = lg < 12 ? fmtNum(Math.round(10 ** lg)) : sci(lg);
+    const time = lgSec <= 13 ? fmtDuration(10 ** lgSec, locale) : `${sci(lgSec - Math.log10(YEAR_S))} ${t.years}`;
+    return { label: c.label, lg, lgSec, tone, steps, time };
+  }), [n, locale, t.years]);
+
+  const [rule, alt] = n <= 20 ? ["O(2ⁿ)"] : n <= 500 ? ["O(n³)"] : n <= 5_000 ? ["O(n²)"] : n <= 1e6 ? ["O(n log n)", "O(n)"] : ["O(log n)", "O(1)"];
+  const fit = [...rows].reverse().find((r) => r.lgSec <= 0) ?? rows[0];
+  const over = rows.find((r) => r.lgSec > 0);
+  const ticks = [0, 4, 8, 12, 16].map((lg) => ({ lg, text: fmtDuration(10 ** (lg - LG_OPS), locale) }));
+
+  return (
+    <LabGrid
+      controls={
+        <>
+          <LogRange label={t.n} value={n} min={10} max={1e9} onChange={setN} />
+          <Seg label={t.jump} value={n} onChange={setN} options={LIMITS.map((v) => ({ value: v, label: `n = ${fmtNum(v)}` }))} />
+        </>
+      }
+    >
+      <div className="lab-stats" aria-live="polite">
+        <Stat label={t.cph} value={rule} sub={alt ? `${t.or} ${alt}` : undefined} />
+        <Stat label={t.logn} value={`≈ ${Math.round(Math.log2(n))}`} sub={t.cheap} />
+        <Stat label={t.fits} value={fit.label} sub={`${fit.time} ${t.at}`} tone="good" />
+      </div>
+      <div>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
+          {rows.map((r) => (
+            <li key={r.label} style={{ display: "grid", gap: 5 }}>
+              <span style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13.5 }}>
+                <strong style={{ ...mono, color: "var(--text)" }}>{r.label}</strong>
+                <span style={{ ...mono, color: r.tone === "good" ? "var(--text-2)" : TONE[r.tone], whiteSpace: "normal", textAlign: "right", overflowWrap: "anywhere", minWidth: 0 }}>
+                  {r.steps} {t.steps} · {r.time}
+                </span>
+              </span>
+              <span className="lb-track" style={{ display: "block", position: "relative", background: GRID }}>
+                <span style={{ width: `${Math.max(1, Math.min(100, (r.lg / AXIS) * 100))}%`, background: TONE[r.tone] }} />
+                <span aria-hidden style={{ position: "absolute", top: 0, left: "50%", width: 2, background: "var(--text)" }} />
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div aria-hidden style={{ position: "relative", height: 18, marginTop: 6, fontSize: 11.5, color: "var(--muted)" }}>
+          {ticks.map(({ lg, text }) => (
+            <span key={lg} style={{ position: "absolute", left: `${(lg / AXIS) * 100}%`, whiteSpace: "nowrap", transform: lg === 0 ? "none" : lg === AXIS ? "translateX(-100%)" : "translateX(-50%)", color: lg === LG_OPS ? "var(--text)" : undefined, fontWeight: lg === LG_OPS ? 700 : undefined }}>{text}</span>
+          ))}
+        </div>
+      </div>
+      <p className="lab-formula">{t.formula}</p>
+      <Insight>{t.insight(fmtNum(n), fit.label, over?.label, over?.time)}</Insight>
+      <p className="lab-note">{t.note}</p>
+    </LabGrid>
+  );
 }

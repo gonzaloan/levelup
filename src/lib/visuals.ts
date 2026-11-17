@@ -15,7 +15,20 @@ function set(prefix: string): IconSet {
   return sets.get(prefix)!;
 }
 
-export interface Svg { body: string; viewBox: string }
+export interface Svg { body: string; viewBox: string; mono?: boolean }
+
+/** A logo drawn only in near-black (Apple, GitHub, OpenAI…) disappears on the dark theme; the
+ *  page inverts those (and only those) there. */
+function isDarkOnly(body: string): boolean {
+  const colors = [...body.matchAll(/(?:fill|stroke|stop-color)="(#[0-9a-fA-F]{3,6}|black|currentColor)"/g)].map((m) => m[1].toLowerCase());
+  if (!colors.length) return !/fill=/.test(body); // no explicit color = default black fill
+  return colors.every((c) => {
+    if (c === "black" || c === "currentcolor") return true;
+    const h = c.length === 4 ? c.slice(1).split("").map((x) => x + x).join("") : c.slice(1);
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16) / 255);
+    return Math.max(r, g, b) < 0.35; // near-black or dark gray, not a dark brand color
+  });
+}
 /** "fe:key" (Fluent Emoji Flat) or "logos:redis". Ids are made unique so two icons never clash. */
 export function svgOf(ref: string): Svg | null {
   const [prefix, name0] = ref.split(":");
@@ -23,7 +36,10 @@ export function svgOf(ref: string): Svg | null {
   const name = s.icons[name0] ? name0 : s.aliases?.[name0]?.parent;
   const icon = name ? s.icons[name] : undefined;
   if (!icon) return null;
-  return { body: replaceIDs(icon.body, `${name}-`), viewBox: `0 0 ${icon.width ?? s.width ?? 16} ${icon.height ?? s.height ?? 16}` };
+  return {
+    body: replaceIDs(icon.body, `${name}-`), viewBox: `0 0 ${icon.width ?? s.width ?? 16} ${icon.height ?? s.height ?? 16}`,
+    mono: prefix === "logos" && isDarkOnly(icon.body),
+  };
 }
 
 /* ------------------------------------------------------------------ illustrations */

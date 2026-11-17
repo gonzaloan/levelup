@@ -5,7 +5,7 @@ import { illustrationOf, stackOf, svgOf, type Svg } from "@/lib/visuals";
 
 export function InlineSvg({ svg, size, className, label }: { svg: Svg; size: number; className?: string; label?: string }) {
   return (
-    <svg viewBox={svg.viewBox} width={size} height={size} className={className} role={label ? "img" : undefined}
+    <svg viewBox={svg.viewBox} width={size} height={size} className={[className, svg.mono && "mono"].filter(Boolean).join(" ") || undefined} role={label ? "img" : undefined}
       aria-label={label} aria-hidden={label ? undefined : true} dangerouslySetInnerHTML={{ __html: svg.body }} />
   );
 }

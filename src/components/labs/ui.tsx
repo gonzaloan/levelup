@@ -29,6 +29,18 @@ export function fmtTime(ns: number): string {
   return `${trim(ns)} ns`;
 }
 
+const DUR = { en: ["min", "h", "days", "years"], es: ["min", "h", "días", "años"] } as const;
+export const YEAR_S = 31_557_600; // a Julian year (365.25 days) in seconds
+/** Seconds in the largest unit that still reads naturally: "4.4 h", "28.9 days", "4.75 years". */
+export function fmtDuration(sec: number, locale: "en" | "es"): string {
+  const [m, h, d, y] = DUR[locale];
+  if (sec < 60) return fmtTime(sec * 1e9);
+  if (sec < 3600) return `${trim(sec / 60)} ${m}`;
+  if (sec < 86_400) return `${trim(sec / 3600)} ${h}`;
+  if (sec < YEAR_S) return `${trim(sec / 86_400)} ${d}`;
+  return `${fmtNum(sec / YEAR_S)} ${y}`;
+}
+
 /* ------------------------------------------------------------------ controls */
 export function Range({ label, value, min, max, step = 1, onChange, format = String, hint }: {
   label: string; value: number; min: number; max: number; step?: number; onChange: (v: number) => void; format?: (v: number) => string; hint?: string;
