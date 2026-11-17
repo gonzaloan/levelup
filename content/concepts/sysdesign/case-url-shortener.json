@@ -1,0 +1,136 @@
+{
+  "id": "case-url-shortener",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": { "en": "Design: URL shortener", "es": "Diseño: acortador de URLs" },
+  "aliases": ["TinyURL design", "bit.ly design", "link shortener", "short links", "base62", "ID generation", "redirect service"],
+  "tldr": {
+    "en": "Give each long URL a short base62 key from a collision-free ID source, store key → URL in a sharded key-value store, serve redirects from cache, and log clicks asynchronously, off the redirect path.",
+    "es": "Asigna a cada URL larga una key corta en base62 desde una fuente de IDs sin colisiones, guarda key → URL en un key-value store particionado, sirve las redirecciones desde cache y registra los clics de forma asíncrona, fuera del camino de la redirección."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: create a short link for a long URL (optional custom alias and expiry), redirect `GET /{key}` to it, and count clicks per link. **Non-functional**: redirects in a few ms server-side, very high availability (a dead shortener breaks every place a link was pasted), and unguessable keys when links are private.\n\nScale (assumed): 100M new links/day ≈ 1.2k writes/s; at 100:1 reads ≈ 116k redirects/s; 5 years ≈ 180B links × ~500 B ≈ ~90 TB.\n\nQuestions I'd ask:\n\n1. Do we need click analytics, or only redirects? That decides 301 vs 302.\n2. Can links be edited or deleted after they are shared?\n3. Must keys be unguessable?\n\n### API and data model\n\n`POST /links {url, alias?, expires_at?} → {key}` and `GET /{key} → 302 Location: url`. One table, `links(key PK, url, owner_id, created_at, expires_at)`. Every read is a lookup by key, so a key-value store partitioned by `key` (DynamoDB, Cassandra) fits ([[sql-vs-nosql]]).\n\n### Architecture\n\n**Write path**: the API server takes an ID from its leased block, base62-encodes it and does a conditional insert. **Read path**: redirect service → in-process LRU → Redis → KV store, then `302`. Each redirect drops a click event on Kafka; a stream job rolls up counts ([[stream-processing]]). The redirect never waits on analytics.\n\n### The hard parts\n\n1. **Key generation**: hashing needs collision checks; a counter needs coordination.\n2. **The redirect code**: a `301` is cacheable by default (RFC 9110), so browsers may skip you on repeat clicks: cheaper, but you lose analytics and can't edit links. A `302` brings every click back.",
+    "es": "### Requisitos\n\n**Funcionales**: crear un enlace corto para una URL larga (alias personalizado y vencimiento opcionales), redirigir `GET /{key}` hacia ella y contar los clics por enlace. **No funcionales**: redirecciones en pocos ms del lado del servidor, disponibilidad muy alta (si el acortador cae, se rompe cada lugar donde se pegó un enlace) y keys imposibles de adivinar cuando los enlaces son privados.\n\nEscala (supuesta): 100M de enlaces nuevos al día ≈ 1.2k escrituras/s; con 100:1 de lecturas ≈ 116k redirecciones/s; en 5 años ≈ 180 mil millones de enlaces × ~500 B ≈ ~90 TB.\n\nPreguntas que haría:\n\n1. ¿Necesitamos analítica de clics o solo redirecciones? Eso decide entre 301 y 302.\n2. ¿Se pueden editar o borrar los enlaces después de compartirlos?\n3. ¿Las keys tienen que ser imposibles de adivinar?\n\n### API y modelo de datos\n\n`POST /links {url, alias?, expires_at?} → {key}` y `GET /{key} → 302 Location: url`. Una sola tabla, `links(key PK, url, owner_id, created_at, expires_at)`. Cada lectura es una búsqueda por key, así que encaja un key-value store particionado por `key` (DynamoDB, Cassandra) ([[sql-vs-nosql]]).\n\n### Arquitectura\n\n**Escritura**: el servidor de API toma un ID de su bloque reservado, lo codifica en base62 y hace un insert condicional. **Lectura**: servicio de redirección → LRU en el proceso → Redis → KV store, y luego `302`. Cada redirección deja un evento de clic en Kafka; un job de streaming agrega los conteos ([[stream-processing]]). La redirección nunca espera a la analítica.\n\n### Las partes difíciles\n\n1. **Generar keys**: el hash necesita verificar colisiones; el contador necesita coordinación.\n2. **El código de redirección**: un `301` es cacheable por defecto (RFC 9110), así que el navegador puede saltarte en los clics repetidos: es más barato, pero pierdes la analítica y no puedes editar enlaces. Un `302` te devuelve cada clic."
+  },
+  "keyPoints": [
+    {
+      "en": "Scale (assumed): ~1.2k writes/s against ~116k redirects/s, so the read path is the design.",
+      "es": "Escala (supuesta): ~1.2k escrituras/s contra ~116k redirecciones/s; el diseño gira en torno al camino de lectura."
+    },
+    {
+      "en": "Keys come from a **counter** leased in blocks and base62-encoded: 7 characters give ~3.5 trillion keys.",
+      "es": "Las keys salen de un **contador** reservado por bloques y codificado en base62: 7 caracteres dan ~3.5 billones de keys."
+    },
+    {
+      "en": "Truncated hashes collide after only ~2.2M links, so hashing needs a conditional insert and retry.",
+      "es": "Los hashes truncados chocan con apenas ~2.2M de enlaces, así que el hashing necesita un insert condicional y reintento."
+    },
+    {
+      "en": "Redirects read an in-process LRU, then Redis, then the KV store; clicks go async to Kafka.",
+      "es": "Las redirecciones leen un LRU en el proceso, luego Redis y luego el KV store; los clics van a Kafka de forma asíncrona."
+    },
+    {
+      "en": "A **302** brings every click back for analytics; a 301 is cacheable, so repeat clicks may skip you.",
+      "es": "Un **302** te devuelve cada clic para la analítica; un 301 es cacheable, así que los clics repetidos pueden saltarte."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  U[Client] -->|\"POST /links\"| A[Create API]\n  A --> G[\"Leased ID block<br/>base62 encode\"]\n  G -->|insert if absent| K[(\"KV store<br/>key to URL\")]\n  U -->|\"GET /key\"| R[Redirect service]\n  R --> L{\"LRU or<br/>Redis hit?\"}\n  L -->|miss| K\n  K -->|fill cache| L\n  L -->|hit| X[\"302 to long URL\"]\n  R -.->|async events| Q[Kafka]\n  Q --> S[Stream rollups]\n  S --> D[(Analytics store)]",
+    "caption": {
+      "en": "Writes take IDs from a local block; redirects are cache lookups, and analytics run beside the redirect, never in it.",
+      "es": "Las escrituras toman IDs de un bloque local; las redirecciones son lecturas de cache y la analítica corre al lado de la redirección, nunca dentro."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Base62 keys from leased ID blocks, and the redirect", "es": "Keys base62 desde bloques de IDs reservados, y la redirección" },
+    "source": "import string\n\nALPHABET = string.digits + string.ascii_letters   # 62 URL-safe symbols\n\ndef base62(n: int, width: int = 7) -> str:\n    out = []\n    while n:\n        n, r = divmod(n, 62)\n        out.append(ALPHABET[r])\n    return \"\".join(reversed(out)).rjust(width, \"0\")   # 62^7 ~ 3.5T keys\n\nclass IdLease:\n    \"\"\"Each API server leases a block of IDs: one DB write per million links.\"\"\"\n    def __init__(self, db, block: int = 1_000_000):\n        self.db, self.block, self.next, self.end = db, block, 0, 0\n\n    def take(self) -> int:\n        if self.next == self.end:   # block spent: one atomic increment\n            self.end = self.db.incr(\"link_counter\", self.block)\n            self.next = self.end - self.block\n        self.next += 1\n        return self.next - 1        # a crash only leaves a gap, never a dup\n\ndef create_link(url: str, lease: IdLease, kv, private: bool = False) -> str:\n    n = lease.take()\n    # Sequential keys are enumerable: permute them for private links\n    key = base62(permute(n) if private else n)\n    kv.put(key, url, if_not_exists=True)   # guard: a conflict means a bug\n    return key\n\ndef redirect(key: str):\n    url = local_lru.get(key) or redis.get(key) or kv.get(key)  # fill-on-miss elided\n    if url is None: return 404, {}\n    clicks.send_async({\"key\": key, \"ts\": now()})   # never block the redirect\n    return 302, {\"Location\": url}                  # 302: every click returns"
+  },
+  "example": {
+    "en": "A campaign link `sho.rt/aZ3k9Qx` goes out in a push to 5M users at 9:00, and ~50k clicks/s hit one key. The first miss reads the KV store once; after that each redirect server answers from its in-process LRU (TTL 60 s), so no single Redis node takes the whole spike. Every response is a `302`, and each click lands on Kafka as `{key, ts, country, referrer}`. A stream job rolls up per-minute counts: the dashboard trails by about a minute, and no redirect waited for it.",
+    "es": "Un enlace de campaña `sho.rt/aZ3k9Qx` sale en un push a 5M de usuarios a las 9:00, y ~50k clics/s golpean una sola key. El primer miss lee el KV store una vez; después, cada servidor de redirección responde desde su LRU en el proceso (TTL de 60 s), así ningún nodo de Redis recibe todo el pico. Cada respuesta es un `302`, y cada clic llega a Kafka como `{key, ts, country, referrer}`. Un job de streaming agrega conteos por minuto: el dashboard va un minuto atrás y ninguna redirección lo esperó."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "Key generation: counter vs hash", "es": "Generar keys: contador vs hash" },
+      "body": {
+        "en": "**Counter**: unique by construction, no collision check. One counter row is a bottleneck, so each API server leases a block of ~1M IDs with one atomic increment and spends it locally; a crash only leaves a gap. Sequential keys are enumerable, so permute the ID with a keyed bijection (a small block cipher) for private links. **Snowflake-style IDs** (41-bit ms timestamp, 10-bit machine, 12-bit sequence) skip the coordinator but need 11 base62 characters: too long. **Hash** (SHA-256 of the URL, first 7 characters): the same URL dedups for free, but ~42 bits collide after ~2.2M links (birthday bound), so insert with `if-not-exists` and retry with a salt. I'd pick leased counter blocks.",
+        "es": "**Contador**: único por construcción, sin verificar colisiones. Una sola fila contador es un cuello de botella, así que cada servidor de API reserva un bloque de ~1M de IDs con un incremento atómico y lo gasta localmente; una caída solo deja un hueco. Las keys secuenciales se pueden enumerar, así que para enlaces privados permuta el ID con una biyección con clave (un cifrado de bloque pequeño). **IDs estilo Snowflake** (timestamp de 41 bits en ms, 10 bits de máquina, 12 de secuencia): no necesitan coordinador, pero ocupan 11 caracteres base62, demasiado largo. **Hash** (SHA-256 de la URL, primeros 7 caracteres): la misma URL se deduplica gratis, pero ~42 bits chocan con ~2.2M de enlaces (paradoja del cumpleaños), así que inserta con `if-not-exists` y reintenta con un salt. Yo elegiría bloques de contador reservados."
+      }
+    },
+    {
+      "title": { "en": "Redirect path: 301 vs 302 and caching", "es": "Camino de redirección: 301 vs 302 y cache" },
+      "body": {
+        "en": "RFC 9110 makes `301` and `308` heuristically cacheable, and `302` and `307` not. After a 301 a browser may never ask again: less traffic, but no per-click analytics and no way to retarget the link. Use `302`, or a 301 with `Cache-Control: no-store`, when clicks or edits matter. The read path is cache-aside ([[caching]]): an in-process LRU with a short TTL absorbs hot keys, Redis holds the warm set, the KV store serves misses. Cache negative lookups too, or check a Bloom filter ([[probabilistic-structures]]), so scanners guessing keys never reach the database. Check expiry on read and sweep expired rows in the background.",
+        "es": "RFC 9110 define `301` y `308` como cacheables heurísticamente, y `302` y `307` no. Después de un 301, el navegador puede no volver a preguntarte nunca: menos tráfico, pero sin analítica por clic y sin forma de cambiar el destino. Usa `302`, o un 301 con `Cache-Control: no-store`, cuando importan los clics o las ediciones. El camino de lectura es cache-aside ([[caching]]): un LRU en el proceso con TTL corto absorbe las keys calientes, Redis guarda el conjunto tibio y el KV store atiende los misses. Cachea también las búsquedas negativas, o consulta un filtro de Bloom ([[probabilistic-structures]]), para que quien adivina keys nunca llegue a la base. Verifica el vencimiento al leer y limpia lo vencido en segundo plano."
+      }
+    },
+    {
+      "title": { "en": "Analytics and abuse", "es": "Analítica y abuso" },
+      "body": {
+        "en": "Clicks are events, not writes inside the redirect: publish `{key, ts, country, referrer}` to Kafka partitioned by key and roll up per-minute counts in a stream job; count unique visitors with HyperLogLog. If Kafka is down, buffer locally and drop, never fail the redirect. Abuse is the real operational load: short links hide phishing and malware. Check targets against a URL-reputation service at creation and again for flagged domains, rate-limit creation per account and IP ([[rate-limiting]]), and show an interstitial warning for suspicious targets.",
+        "es": "Los clics son eventos, no escrituras dentro de la redirección: publica `{key, ts, country, referrer}` en Kafka particionado por key y agrega conteos por minuto en un job de streaming; cuenta visitantes únicos con HyperLogLog. Si Kafka cae, guarda en un buffer local y descarta, pero nunca hagas fallar la redirección. El abuso es la carga operativa real: los enlaces cortos esconden phishing y malware. Verifica los destinos contra un servicio de reputación de URLs al crearlos y otra vez para dominios marcados, limita la creación por cuenta e IP ([[rate-limiting]]) y muestra una página de advertencia para destinos sospechosos."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "A redirect is one key lookup, mostly from cache: latency stays flat as links grow to billions.", "es": "Una redirección es una sola búsqueda por key, casi siempre en cache: la latencia no cambia aunque haya miles de millones de enlaces." },
+    { "en": "Leased counter blocks give unique keys with no per-write coordination and no collision checks.", "es": "Los bloques de contador reservados dan keys únicas sin coordinación por escritura ni verificación de colisiones." },
+    { "en": "Async analytics: a Kafka outage loses click counts, never redirects.", "es": "Analítica asíncrona: una caída de Kafka pierde conteos de clics, nunca redirecciones." }
+  ],
+  "cons": [
+    { "en": "A 302 sends every click to your servers: traffic a 301 would leave in browser caches.", "es": "Un 302 manda cada clic a tus servidores: tráfico que un 301 dejaría en la cache del navegador." },
+    { "en": "Counter keys are enumerable unless permuted; truly secret links need long random tokens.", "es": "Las keys de contador se pueden enumerar si no las permutas; los enlaces realmente secretos necesitan tokens aleatorios largos." },
+    { "en": "Blocks lost in crashes leave gaps, so key counts never equal link counts.", "es": "Los bloques perdidos en caídas dejan huecos, así que el conteo de keys nunca coincide con el de enlaces." }
+  ],
+  "whenToUse": {
+    "en": "Any service that hands out short, stable identifiers for long resources: share links, invite codes, QR codes, SMS links where every character counts.",
+    "es": "Cualquier servicio que entrega identificadores cortos y estables para recursos largos: enlaces para compartir, códigos de invitación, códigos QR, enlaces en SMS donde cada carácter cuenta."
+  },
+  "whenNotToUse": {
+    "en": "When the link is itself a secret (password reset, signed downloads): use long random tokens or signed URLs, not 7-character keys.",
+    "es": "Cuando el enlace es en sí un secreto (restablecer contraseña, descargas firmadas): usa tokens aleatorios largos o URLs firmadas, no keys de 7 caracteres."
+  },
+  "numbers": [
+    { "en": "Writes: 100M links/day (assumed) ÷ 86,400 s ≈ 1.2k/s; at 100:1 reads ≈ 116k redirects/s average.", "es": "Escrituras: 100M de enlaces/día (supuesto) ÷ 86,400 s ≈ 1.2k/s; con 100:1 de lecturas ≈ 116k redirecciones/s en promedio." },
+    { "en": "Key space: 62^6 ≈ 56.8B, 62^7 ≈ 3.5T; at 100M/day, 6 characters last ~1.6 years, 7 last ~96 years.", "es": "Espacio de keys: 62^6 ≈ 56.8 mil millones, 62^7 ≈ 3.5 billones; a 100M/día, 6 caracteres duran ~1.6 años y 7 duran ~96 años." },
+    { "en": "Storage: 5 years ≈ 180B links × ~500 B ≈ ~90 TB before replication.", "es": "Almacenamiento: 5 años ≈ 180 mil millones de enlaces × ~500 B ≈ ~90 TB antes de replicar." },
+    { "en": "Hash truncated to 7 base62 characters: ~50% chance of a collision after only ~2.2M links.", "es": "Hash truncado a 7 caracteres base62: ~50% de probabilidad de una colisión con apenas ~2.2M de enlaces." },
+    { "en": "Snowflake IDs (41-bit time, 10-bit machine, 12-bit sequence) need 11 base62 characters.", "es": "Los IDs Snowflake (41 bits de tiempo, 10 de máquina, 12 de secuencia) necesitan 11 caracteres base62." }
+  ],
+  "pitfalls": [
+    { "en": "Truncating a hash without a collision check: two URLs share a key and one silently redirects to the other's target.", "es": "Truncar un hash sin verificar colisiones: dos URLs comparten key y una redirige en silencio al destino de la otra." },
+    { "en": "Writing analytics synchronously in the redirect: that write becomes your p99 and your availability ceiling.", "es": "Escribir la analítica de forma síncrona en la redirección: esa escritura pasa a ser tu p99 y tu techo de disponibilidad." },
+    { "en": "Shipping 301s, then promising per-click analytics or editable links: browsers keep redirecting from their cache.", "es": "Responder con 301 y después prometer analítica por clic o enlaces editables: los navegadores siguen redirigiendo desde su cache." },
+    { "en": "No negative cache for unknown keys: scanners enumerating keys hit the database on every miss.", "es": "No cachear las keys inexistentes: quien enumera keys golpea la base de datos en cada miss." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you generate keys across many servers without collisions?", "es": "¿Cómo generas keys en muchos servidores sin colisiones?" },
+      "a": {
+        "en": "A counter, not a hash, but never one hot counter. Each API server leases a block of about a million IDs with one atomic increment, then base62-encodes locally: no coordination per write and no collision check. A crash only wastes the rest of a block. If keys must not be guessable, I permute the ID with a keyed bijection before encoding, or use random keys with a conditional insert.",
+        "es": "Un contador, no un hash, pero nunca un único contador caliente. Cada servidor de API reserva un bloque de cerca de un millón de IDs con un incremento atómico y luego codifica en base62 localmente: sin coordinación por escritura ni verificación de colisiones. Una caída solo desperdicia el resto de un bloque. Si las keys no deben poder adivinarse, permuto el ID con una biyección con clave antes de codificarlo, o uso keys aleatorias con un insert condicional."
+      }
+    },
+    {
+      "q": { "en": "301 or 302 for the redirect?", "es": "¿301 o 302 para la redirección?" },
+      "a": {
+        "en": "It depends on whether I need every click. A 301 is cacheable by default, so a browser that saw it may never ask me again: less traffic, but I lose analytics and can't retarget the link. A 302 isn't cached by default, so every click reaches my edge. For a product that sells click analytics I use 302 and make the redirect cheap with caching; for vanity links, 301 is fine.",
+        "es": "Depende de si necesito cada clic. Un 301 es cacheable por defecto, así que un navegador que ya lo vio puede no volver a preguntarme: menos tráfico, pero pierdo la analítica y no puedo cambiar el destino. Un 302 no se cachea por defecto, así que cada clic llega a mi edge. Para un producto que vende analítica de clics uso 302 y abarato la redirección con cache; para enlaces de vanidad, 301 está bien."
+      }
+    },
+    {
+      "q": { "en": "One link goes viral at 50k clicks/s. What breaks first?", "es": "Un enlace se vuelve viral con 50k clics/s. ¿Qué se rompe primero?" },
+      "a": {
+        "en": "Not the database: cache-aside reads it once. The weak spot is the single Redis node that owns that key. I put a small in-process LRU with a short TTL on every redirect server, which spreads the hot key across the fleet, and coalesce concurrent misses. Click events keyed by link would also pile onto one Kafka partition, so I add a random suffix to the partition key for hot links.",
+        "es": "No la base de datos: con cache-aside se lee una sola vez. El punto débil es el nodo de Redis dueño de esa key. Pongo un LRU pequeño en el proceso, con TTL corto, en cada servidor de redirección, lo que reparte la key caliente por toda la flota, y agrupo los misses concurrentes. Los eventos de clic con key por enlace también se amontonarían en una partición de Kafka, así que para enlaces calientes agrego un sufijo aleatorio a la key de partición."
+      }
+    }
+  ],
+  "related": ["back-of-envelope", "caching", "sharding", "probabilistic-structures", "stream-processing", "rate-limiting"],
+  "sources": [
+    { "title": "RFC 9110 — HTTP Semantics, §15.4 Redirection 3xx", "url": "https://www.rfc-editor.org/rfc/rfc9110.html#name-redirection-3xx" },
+    { "title": "MDN — Redirections in HTTP", "url": "https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Redirections" },
+    { "title": "Twitter (archived) — Snowflake ID generator README (2010)", "url": "https://github.com/twitter-archive/snowflake/tree/snowflake-2010" }
+  ]
+}

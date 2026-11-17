@@ -1,0 +1,82 @@
+{
+  "concept": "case-url-shortener",
+  "items": [
+    {
+      "id": "case-url-shortener.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your shortener answers with `301` and no cache headers. Product now sells per-click analytics, and customers report that repeat clicks from the same browser never show up. What do you change?",
+        "es": "Tu acortador responde con `301` y sin headers de cache. Producto ahora vende analítica por clic, y los clientes reportan que los clics repetidos desde el mismo navegador nunca aparecen. ¿Qué cambias?"
+      },
+      "options": [
+        {
+          "text": { "en": "Return `302`, or a 301 with `Cache-Control: no-store`", "es": "Responder `302`, o un 301 con `Cache-Control: no-store`" },
+          "why": { "en": "A 301 is cacheable by default, so the browser redirects from its cache without asking you.", "es": "Un 301 es cacheable por defecto, así que el navegador redirige desde su cache sin preguntarte." }
+        },
+        {
+          "text": { "en": "Add Kafka partitions so click events stop being dropped", "es": "Agregar particiones de Kafka para que no se pierdan eventos de clic" },
+          "why": { "en": "Nothing is dropped: the requests never arrive, because the browser answers from its cache.", "es": "No se pierde nada: las peticiones nunca llegan, porque el navegador responde desde su cache." }
+        },
+        {
+          "text": { "en": "Switch to `308` so the method and body are preserved", "es": "Cambiar a `308` para conservar el método y el body" },
+          "why": { "en": "308 is permanent and cacheable too; it fixes method changes, not missing clicks.", "es": "308 también es permanente y cacheable; corrige cambios de método, no clics faltantes." }
+        },
+        {
+          "text": { "en": "Raise the Redis TTL so redirects are served faster", "es": "Subir el TTL de Redis para servir las redirecciones más rápido" },
+          "why": { "en": "Server speed isn't the issue; repeat clicks never reach the server.", "es": "La velocidad del servidor no es el problema; los clics repetidos nunca llegan al servidor." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "RFC 9110 makes permanent redirects (301, 308) cacheable by default and temporary ones (302, 307) not. If the business needs every click, or the ability to change a link's target, the redirect must come back to you every time; you keep it cheap with your own caching.",
+        "es": "RFC 9110 hace cacheables por defecto las redirecciones permanentes (301, 308) y no las temporales (302, 307). Si el negocio necesita cada clic, o poder cambiar el destino de un enlace, la redirección tiene que volver a ti cada vez; la mantienes barata con tu propia cache."
+      }
+    },
+    {
+      "id": "case-url-shortener.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Assume **100M new links/day** and **6-character base62 keys** (62^6 ≈ 56.8B possible keys). How many **years** until the key space runs out?",
+        "es": "Supón **100M de enlaces nuevos al día** y **keys base62 de 6 caracteres** (62^6 ≈ 56.8 mil millones de keys posibles). ¿Cuántos **años** faltan para agotar el espacio de keys?"
+      },
+      "answer": 1.56,
+      "tolerance": 0.15,
+      "unit": "years",
+      "explain": {
+        "en": "56.8B ÷ 100M per day ≈ 568 days ≈ 1.56 years. One more character multiplies the space by 62: 62^7 ≈ 3.5T keys last ~96 years at the same rate, which is why 7 characters is the usual choice.",
+        "es": "56.8 mil millones ÷ 100M por día ≈ 568 días ≈ 1.56 años. Un carácter más multiplica el espacio por 62: 62^7 ≈ 3.5 billones de keys duran ~96 años al mismo ritmo, y por eso 7 caracteres es la elección habitual."
+      }
+    },
+    {
+      "id": "case-url-shortener.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate proposes: \"Take SHA-256 of the URL and keep the first 7 base62 characters. SHA-256 doesn't collide, so we need no check.\" What's the flaw?",
+        "es": "Alguien del equipo propone: \"Saquemos el SHA-256 de la URL y quedémonos con los primeros 7 caracteres base62. SHA-256 no tiene colisiones, así que no hace falta verificar.\" ¿Cuál es la falla?"
+      },
+      "options": [
+        {
+          "text": { "en": "7 characters keep only ~42 bits, so collisions start after a few million links", "es": "7 caracteres conservan solo ~42 bits, así que las colisiones empiezan con unos pocos millones de enlaces" },
+          "why": { "en": "Collision resistance belongs to the full 256-bit output, not to a 42-bit prefix.", "es": "La resistencia a colisiones es del resultado completo de 256 bits, no de un prefijo de 42 bits." }
+        },
+        {
+          "text": { "en": "SHA-256 is too slow to run on every link creation at peak", "es": "SHA-256 es demasiado lento para correrlo en cada creación de enlace en el pico" },
+          "why": { "en": "Hashing takes microseconds; at ~1.2k writes/s its speed is irrelevant.", "es": "Un hash toma microsegundos; a ~1.2k escrituras/s su velocidad es irrelevante." }
+        },
+        {
+          "text": { "en": "Collisions only matter once you use most of the 3.5 trillion keys", "es": "Las colisiones solo importan cuando usas la mayoría de los 3.5 billones de keys" },
+          "why": { "en": "That is the size of the space; the birthday bound makes a first collision ~50% likely near 2.2M links.", "es": "Ese es el tamaño del espacio; por la paradoja del cumpleaños, una primera colisión tiene ~50% de probabilidad cerca de 2.2M de enlaces." }
+        },
+        {
+          "text": { "en": "Base62 can encode integers but not hash output", "es": "Base62 codifica enteros, pero no la salida de un hash" },
+          "why": { "en": "A hash is a number; base62 encodes any integer prefix of it.", "es": "Un hash es un número; base62 codifica cualquier prefijo entero de él." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Truncating to 7 base62 characters leaves ~3.5T values, and the birthday bound puts a 50% chance of a first collision near 1.18 × √N ≈ 2.2M links. Hash keys need an `if-not-exists` insert and a retry with a salt; a leased counter avoids the problem entirely.",
+        "es": "Truncar a 7 caracteres base62 deja ~3.5 billones de valores, y la paradoja del cumpleaños pone un 50% de probabilidad de una primera colisión cerca de 1.18 × √N ≈ 2.2M de enlaces. Las keys por hash necesitan un insert `if-not-exists` y un reintento con salt; un contador reservado por bloques evita el problema."
+      }
+    }
+  ]
+}

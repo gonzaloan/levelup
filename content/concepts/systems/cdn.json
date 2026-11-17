@@ -1,0 +1,117 @@
+{
+  "id": "cdn",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "CDNs and edge caching", "es": "CDN y caché en el edge" },
+  "aliases": ["CDN", "edge cache", "PoP", "origin shield", "cache key", "Cache-Control", "s-maxage", "cache purge", "CloudFront", "Fastly", "Cloudflare"],
+  "tldr": {
+    "en": "A CDN caches your responses on servers near users, keyed by URL, so most requests never reach your origin; you control freshness with Cache-Control TTLs, versioned URLs and purges.",
+    "es": "Un CDN cachea tus respuestas en servidores cercanos a los usuarios, con la URL como clave, para que la mayoría de las peticiones nunca lleguen a tu origen; controlas la frescura con TTLs de Cache-Control, URLs versionadas y purgas."
+  },
+  "analogy": {
+    "en": "A publisher stocks bestsellers in every neighborhood bookstore so readers never visit the warehouse. A rare title is ordered from the regional depot, not reprinted at the press.",
+    "es": "Una editorial reparte los best sellers en cada librería de barrio para que nadie tenga que ir al almacén. Un título raro se pide al depósito regional, no se reimprime en la imprenta."
+  },
+  "explain": {
+    "en": "A **CDN** is a fleet of caching servers (**PoPs**) spread around the world. Each user reaches the nearest one: on a **hit** it answers from there; on a **miss** it fetches from your **origin** and keeps a copy.\n\n- **Cache key**: by default the URL (host + path + query). Every header, cookie or parameter you add to the key splits the cache into more, colder copies.\n- **Freshness**: the origin sets `Cache-Control`. `max-age` applies to every cache; `s-maxage` overrides it for shared caches like the CDN; `stale-while-revalidate` serves the old copy while refreshing it.\n- **Invalidation**: prefer **versioned URLs** (`app.3f9a1c.js`, cached for a year as `immutable`) over purges; a full purge makes every PoP miss at once.\n- **Origin shield**: a mid-tier cache that all PoP misses go through, so the origin sees ~one request per object instead of one per PoP.\n\n**Static** assets cache for months. **Dynamic** responses still gain: TLS ends near the user, connections to the origin stay warm, and public data can be microcached for seconds. Anything per user is `private`.",
+    "es": "Un **CDN** es una flota de servidores de caché (**PoPs**) repartidos por el mundo. Cada usuario llega al más cercano: si hay **hit**, responde desde ahí; si hay **miss**, pide el contenido a tu **origen** y guarda una copia.\n\n- **Cache key**: por defecto, la URL (host + ruta + query). Cada header, cookie o parámetro que agregas a la clave divide la caché en más copias, y más frías.\n- **Frescura**: la define el origen con `Cache-Control`. `max-age` aplica a toda caché; `s-maxage` lo reemplaza en cachés compartidas como el CDN; `stale-while-revalidate` sirve la copia vieja mientras la renueva.\n- **Invalidación**: prefiere **URLs versionadas** (`app.3f9a1c.js`, cacheado un año como `immutable`) a las purgas; una purga total hace que todos los PoPs fallen a la vez.\n- **Origin shield**: una caché intermedia por la que pasan los misses de todos los PoPs, así el origen ve ~una petición por objeto en vez de una por PoP.\n\nLos assets **estáticos** se cachean por meses. Las respuestas **dinámicas** también ganan: TLS termina cerca del usuario, las conexiones al origen siguen calientes y los datos públicos admiten microcaching de segundos. Todo lo que es por usuario va `private`."
+  },
+  "keyPoints": [
+    {
+      "en": "Users reach the nearest **PoP**; a miss goes to your origin and leaves a copy at the edge.",
+      "es": "Cada usuario llega al **PoP** más cercano; un miss va a tu origen y deja una copia en el edge."
+    },
+    {
+      "en": "The **cache key** is the URL by default; every header, cookie or parameter you add fragments the cache.",
+      "es": "La **cache key** es la URL por defecto; cada header, cookie o parámetro que agregas fragmenta la caché."
+    },
+    {
+      "en": "Ship assets under **versioned URLs** cached for a year as `immutable`; keep HTML short-lived instead of purging.",
+      "es": "Publica los assets con **URLs versionadas** cacheadas un año como `immutable`; dale al HTML un TTL corto en vez de purgar."
+    },
+    {
+      "en": "An **origin shield** funnels every PoP miss through one cache, so the origin sees ~one request per object.",
+      "es": "Un **origin shield** canaliza los misses de todos los PoPs por una sola caché: el origen ve ~una petición por objeto."
+    },
+    {
+      "en": "Per-user responses are `private` or `no-store`: a shared cache must never keep them.",
+      "es": "Las respuestas por usuario van `private` o `no-store`: una caché compartida nunca debe guardarlas."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  U[User request] --> E{\"Edge PoP<br/>cache hit?\"}\n  E -->|hit| R[Response from edge]\n  E -->|miss| S{\"Origin shield<br/>cache hit?\"}\n  S -->|hit| F[Fill edge cache]\n  S -->|miss| C[\"Collapse duplicate<br/>misses into one\"]\n  C --> O[(Origin)]\n  O --> FS[Fill shield cache]\n  FS --> F\n  F --> R",
+    "caption": {
+      "en": "Two cache tiers: PoPs answer most requests, and the shield turns many PoP misses into one origin request.",
+      "es": "Dos niveles de caché: los PoPs responden casi todo y el shield convierte muchos misses de PoPs en una sola petición al origen."
+    }
+  },
+  "code": {
+    "lang": "text",
+    "title": { "en": "Cache-Control per kind of response", "es": "Cache-Control según el tipo de respuesta" },
+    "source": "# Fingerprinted asset: a new build gets a new URL, so cache it a year\nGET /static/app.3f9a1c.js\nCache-Control: public, max-age=31536000, immutable\n\n# HTML entry point: browsers revalidate, the CDN keeps it 60 s\nGET /index.html\nCache-Control: public, max-age=0, s-maxage=60, stale-while-revalidate=30\n\n# Public API list: microcache at the edge, refresh in the background\nGET /api/products?page=1\nCache-Control: public, s-maxage=5, stale-while-revalidate=30\n\n# Per-user data: a shared cache must never store it\nGET /api/me\nCache-Control: private, no-store"
+  },
+  "example": {
+    "en": "Assume a launch page served from 300 PoPs with `s-maxage=60`. Without a shield, each busy PoP misses once a minute: up to ~300 origin requests per minute for one URL, all at once after a purge. With an origin shield they collapse to ~1. A week later the hit ratio falls from 95% to 40%: someone added the whole `Cookie` header to the cache key, so every session got its own copy. Origin load jumps 12× (5% → 60% of requests). Keying on the experiment variant alone restores it.",
+    "es": "Supón una página de lanzamiento servida desde 300 PoPs con `s-maxage=60`. Sin shield, cada PoP con tráfico falla una vez por minuto: hasta ~300 peticiones por minuto al origen por una sola URL, y todas juntas tras una purga. Con un origin shield se reducen a ~1. Una semana después el hit ratio cae de 95% a 40%: alguien agregó todo el header `Cookie` a la cache key y cada sesión obtuvo su propia copia. La carga del origen sube 12× (de 5% a 60% de las peticiones). Usar solo la variante del experimento como clave lo arregla."
+  },
+  "pros": [
+    { "en": "Lower latency: content comes from a PoP near the user, not a distant origin.", "es": "Menor latencia: el contenido sale de un PoP cercano al usuario, no de un origen lejano." },
+    { "en": "Offloads the origin: at a 95% hit ratio it serves only 5% of requests.", "es": "Descarga el origen: con 95% de hit ratio solo atiende el 5% de las peticiones." },
+    { "en": "Absorbs traffic spikes and volumetric DDoS at the edge, before they reach you.", "es": "Absorbe picos de tráfico y DDoS volumétricos en el edge, antes de que te lleguen." }
+  ],
+  "cons": [
+    { "en": "Staleness: a change shows up only after the TTL expires or a purge runs.", "es": "Datos viejos: un cambio solo aparece cuando expira el TTL o corre una purga." },
+    { "en": "A wrong cache key or header can leak private pages or crater the hit ratio.", "es": "Una cache key o un header mal puestos pueden filtrar páginas privadas o hundir el hit ratio." },
+    { "en": "Another vendor in the critical path, with its own outages, limits and bills.", "es": "Otro proveedor en el camino crítico, con sus propias caídas, límites y facturas." }
+  ],
+  "whenToUse": {
+    "en": "Static assets, media, downloads and public pages read by many users; also as the TLS and DDoS front door for APIs with a global audience.",
+    "es": "Assets estáticos, media, descargas y páginas públicas que leen muchos usuarios; también como puerta de entrada de TLS y DDoS para APIs con audiencia global."
+  },
+  "whenNotToUse": {
+    "en": "Per-user or write-heavy responses that can't be shared, single-region internal tools, or data that must never be stale, like balances or permissions.",
+    "es": "Respuestas por usuario o de mucha escritura que no se pueden compartir, herramientas internas de una sola región, o datos que nunca pueden estar viejos, como saldos o permisos."
+  },
+  "numbers": [
+    { "en": "Origin load = requests × (1 − hit ratio): 95% hits → 5% reach the origin; 99% → 1%.", "es": "Carga del origen = peticiones × (1 − hit ratio): 95% de hits → 5% llega al origen; 99% → 1%." },
+    { "en": "Fingerprinted assets: `Cache-Control: public, max-age=31536000, immutable` (one year).", "es": "Assets con huella: `Cache-Control: public, max-age=31536000, immutable` (un año)." },
+    { "en": "CloudFront: first 1,000 invalidation paths a month free; a `/*` wildcard counts as one path (checked Nov 2026).", "es": "CloudFront: las primeras 1,000 rutas de invalidación al mes son gratis; un comodín `/*` cuenta como una ruta (revisado en nov. 2026)." },
+    { "en": "CloudFront without a cache policy uses a 24 h default TTL when the origin sends no `Cache-Control`.", "es": "CloudFront sin cache policy usa un TTL por defecto de 24 h cuando el origen no envía `Cache-Control`." }
+  ],
+  "pitfalls": [
+    { "en": "Putting `Cookie`, `Authorization` or `User-Agent` in the cache key: one copy per user and a near-zero hit ratio.", "es": "Meter `Cookie`, `Authorization` o `User-Agent` en la cache key: una copia por usuario y un hit ratio casi nulo." },
+    { "en": "Caching authenticated pages in a shared cache: in Dec 2015 Steam showed ~34k users' account pages to other users this way.", "es": "Cachear páginas autenticadas en una caché compartida: en dic. 2015 Steam mostró así páginas de cuenta de ~34k usuarios a otras personas." },
+    { "en": "A CloudFront minimum TTL above 0 caches responses even when the origin sends `no-store` or `private`.", "es": "Un TTL mínimo mayor que 0 en CloudFront cachea respuestas aunque el origen envíe `no-store` o `private`." },
+    { "en": "Purging everything on every deploy: all PoPs miss at once and stampede the origin.", "es": "Purgar todo en cada deploy: todos los PoPs fallan a la vez y provocan una estampida sobre el origen." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you deploy a new frontend so no user gets a mix of old and new files?", "es": "¿Cómo haces deploy de un frontend nuevo sin que ningún usuario reciba una mezcla de archivos viejos y nuevos?" },
+      "a": {
+        "en": "I fingerprint every asset with a content hash, like `app.3f9a1c.js`, and cache it for a year as `immutable`: a new build is a new URL, so nothing needs purging. The HTML that points to them gets a short `s-maxage`, say 60 s, or one targeted purge. Order matters: upload the new assets first, then switch the HTML, and keep old assets for a few days for tabs that are still open.",
+        "es": "Le pongo a cada asset una huella con el hash de su contenido, como `app.3f9a1c.js`, y lo cacheo un año como `immutable`: un build nuevo es una URL nueva, así que no hay nada que purgar. El HTML que los referencia lleva un `s-maxage` corto, digamos 60 s, o una purga puntual. El orden importa: primero subo los assets nuevos, después cambio el HTML, y conservo los viejos unos días para las pestañas que siguen abiertas."
+      }
+    },
+    {
+      "q": { "en": "Your CDN hit ratio fell from 95% to 40% after a release. What happened?", "es": "Tu hit ratio en el CDN cayó de 95% a 40% después de un release. ¿Qué pasó?" },
+      "a": {
+        "en": "Origin load just went up 12×, so it's urgent. The usual cause is cache-key fragmentation: a new tracking parameter, a cookie or a `Vary: User-Agent` now in the key, so each variant gets its own cold copy. I'd diff the cache policy and response headers between releases, allow-list only the parameters that change the response, normalize the rest, and add hit ratio to the release checks.",
+        "es": "La carga del origen acaba de subir 12×, así que es urgente. La causa típica es la fragmentación de la cache key: un parámetro de tracking nuevo, una cookie o un `Vary: User-Agent` que ahora forma parte de la clave, y cada variante obtiene su propia copia fría. Compararía la cache policy y los headers de respuesta entre releases, dejaría en la clave solo los parámetros que cambian la respuesta, normalizaría el resto y sumaría el hit ratio a los chequeos del release."
+      }
+    },
+    {
+      "q": { "en": "Can a CDN help a dynamic, personalized API?", "es": "¿Puede un CDN ayudar a una API dinámica y personalizada?" },
+      "a": {
+        "en": "Yes, partly. Even with zero caching, the PoP terminates TLS near the user and reuses warm connections to the origin, which saves round trips. Public fragments, like a product list, can be microcached for a few seconds with stale-while-revalidate. Anything per user stays `private`. I'd split the page so the shared part is cacheable and only a small personalized call reaches the origin.",
+        "es": "Sí, en parte. Aunque no cachee nada, el PoP termina TLS cerca del usuario y reutiliza conexiones calientes al origen, lo que ahorra viajes de ida y vuelta. Las partes públicas, como una lista de productos, admiten microcaching de unos segundos con stale-while-revalidate. Lo que es por usuario sigue `private`. Separaría la página para que la parte compartida sea cacheable y solo una llamada personalizada pequeña llegue al origen."
+      }
+    }
+  ],
+  "related": ["caching", "object-storage", "load-balancing", "case-video-streaming", "consistent-hashing", "edge-ai"],
+  "sources": [
+    { "title": "RFC 9111 — HTTP Caching", "url": "https://www.rfc-editor.org/rfc/rfc9111" },
+    { "title": "Amazon CloudFront — Use Origin Shield", "url": "https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/origin-shield.html" },
+    { "title": "Amazon CloudFront — Manage how long content stays in the cache", "url": "https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/Expiration.html" },
+    { "title": "Valve — Steam store incident statement (Dec 2015)", "url": "https://store.steampowered.com/oldnews/19852" }
+  ]
+}

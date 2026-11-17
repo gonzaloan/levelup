@@ -1,0 +1,118 @@
+{
+  "id": "geospatial-indexing",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Geospatial indexing (geohash, S2, H3)", "es": "Indexación geoespacial (geohash, S2, H3)" },
+  "aliases": ["geohash", "quadtree", "S2", "H3", "R-tree", "nearby search", "proximity search", "GEOSEARCH"],
+  "tldr": {
+    "en": "Map coordinates to cell ids so \"what's near me?\" becomes a lookup of a few cells plus an exact distance filter; size cells to the search radius and split cells that get hot.",
+    "es": "Convierte coordenadas en ids de celda para que \"¿qué hay cerca de mí?\" sea una búsqueda de pocas celdas más un filtro de distancia exacta; ajusta el tamaño de celda al radio y divide las celdas calientes."
+  },
+  "analogy": {
+    "en": "Postal codes: to find pizzerias near you, check your postcode and the ones bordering it, then measure the real walk to each shop.",
+    "es": "Los códigos postales: para encontrar pizzerías cerca, revisas tu código postal y los que lo rodean, y después mides la distancia real a cada local."
+  },
+  "explain": {
+    "en": "A B-tree sorts one dimension; \"nearby\" needs two. A **geospatial index** maps (lat, lng) to **cells**, so proximity becomes ordinary key lookups.\n\n- **Geohash** interleaves latitude and longitude bits into a base-32 string; each extra character shrinks the cell. A shared prefix means close, but two close points across a cell edge may share no prefix, so you query the cell **plus its 8 neighbors**. Redis GEO stores a 52-bit geohash as a sorted-set score.\n- **Quadtree** splits a square into 4 children when it holds too many points: small cells downtown, big ones in the desert.\n- **S2** (Google) projects the sphere onto a cube and orders cells on a Hilbert curve. **H3** (Uber) uses hexagons, whose 6 neighbors are all the same distance away.\n- **R-tree** (PostGIS) indexes bounding boxes, so it handles shapes, not just points.\n\n**Nearby search**: find the query's cell, take the ring of cells covering the radius, fetch candidates, filter by exact distance, sort. **Hot cells** (a stadium, an airport) get split finer or their own shard.",
+    "es": "Un B-tree ordena una dimensión; \"cerca\" necesita dos. Un **índice geoespacial** convierte (lat, lng) en **celdas**, así la proximidad se vuelve una búsqueda por clave común y corriente.\n\n- **Geohash** intercala los bits de latitud y longitud en un string base 32; cada carácter extra achica la celda. Un prefijo compartido significa cercanía, pero dos puntos cercanos a ambos lados de un borde pueden no compartir ningún prefijo, por eso consultas la celda **más sus 8 vecinas**. Redis GEO guarda un geohash de 52 bits como score de un sorted set.\n- **Quadtree** divide un cuadrado en 4 hijos cuando tiene demasiados puntos: celdas chicas en el centro, grandes en el desierto.\n- **S2** (Google) proyecta la esfera sobre un cubo y ordena las celdas con una curva de Hilbert. **H3** (Uber) usa hexágonos, cuyos 6 vecinos están todos a la misma distancia.\n- **R-tree** (PostGIS) indexa bounding boxes, así que maneja formas y no solo puntos.\n\n**Búsqueda cercana**: encuentra la celda de la consulta, toma el anillo de celdas que cubre el radio, trae los candidatos, filtra por distancia exacta y ordena. Las **celdas calientes** (un estadio, un aeropuerto) se dividen más fino o van a su propio shard."
+  },
+  "keyPoints": [
+    {
+      "en": "B-trees sort one dimension; **cells** turn 2D proximity into ordinary key lookups.",
+      "es": "Los B-trees ordenan una dimensión; las **celdas** convierten la proximidad 2D en búsquedas por clave comunes."
+    },
+    {
+      "en": "**Geohash** interleaves lat/lng bits: a shared prefix means close, but close points across an edge may share none.",
+      "es": "**Geohash** intercala bits de lat/lng: un prefijo compartido indica cercanía, pero puntos cercanos separados por un borde pueden no compartir ninguno."
+    },
+    {
+      "en": "So query the cell **plus its neighbors**, then filter candidates by exact distance.",
+      "es": "Por eso consultas la celda **más sus vecinas** y luego filtras los candidatos por distancia exacta."
+    },
+    {
+      "en": "**Quadtrees** split dense cells; **H3** hexagons have equidistant neighbors; S2 orders cells on a Hilbert curve.",
+      "es": "Los **quadtrees** dividen las celdas densas; los hexágonos de **H3** tienen vecinos equidistantes; S2 ordena celdas con una curva de Hilbert."
+    },
+    {
+      "en": "Size cells to the search radius; split or shard **hot cells** like stadiums and airports.",
+      "es": "Ajusta el tamaño de celda al radio de búsqueda; divide o separa en otro shard las **celdas calientes**, como estadios y aeropuertos."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  P[\"Driver ping<br/>lat, lng\"] --> C1[\"Cell id<br/>(H3 res 8)\"]\n  C1 --> I[(\"Cell index<br/>cell to drivers\")]\n  Q[Rider query] --> C2[\"Rider cell<br/>plus 2-ring\"]\n  C2 --> I\n  I --> F[Exact distance filter]\n  F --> K[Nearest K drivers]\n  I -.->|hot cell| S[\"Split finer<br/>or own shard\"]",
+    "caption": {
+      "en": "Writes and reads meet on the same cell keys; the exact distance check runs only on a few cells' worth of candidates.",
+      "es": "Escrituras y lecturas se encuentran en las mismas claves de celda; la distancia exacta solo se calcula sobre los candidatos de unas pocas celdas."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Nearby drivers with H3 cells", "es": "Conductores cercanos con celdas H3" },
+    "source": "import math\nfrom collections import defaultdict\nimport h3  # h3-py v4\n\nRES, EDGE_KM = 8, 0.53   # res 8: ~0.74 km2 hexagons, ~0.53 km edge\ncells: dict[str, set[str]] = defaultdict(set)     # cell -> driver ids\nwhere: dict[str, tuple[float, float, str]] = {}  # driver -> (lat, lng, cell)\n\ndef update(driver: str, lat: float, lng: float) -> None:\n    cell = h3.latlng_to_cell(lat, lng, RES)\n    old = where.get(driver)\n    if old and old[2] != cell:\n        cells[old[2]].discard(driver)      # moved: leave the old cell\n    cells[cell].add(driver)\n    where[driver] = (lat, lng, cell)\n\ndef nearby(lat: float, lng: float, radius_km: float, k: int = 10) -> list:\n    origin = h3.latlng_to_cell(lat, lng, RES)\n    rings = math.ceil(radius_km / EDGE_KM)  # conservative: the disk covers the radius\n    found = []\n    for c in h3.grid_disk(origin, rings):   # 1 + 3r(r+1) cells\n        for d in cells.get(c, ()):\n            dist = h3.great_circle_distance((lat, lng), where[d][:2], unit=\"km\")\n            if dist <= radius_km:          # cells are coarse; distance is exact\n                found.append((dist, d))\n    return sorted(found)[:k]"
+  },
+  "example": {
+    "en": "Ride-hailing, with labelled assumptions: 500k online drivers ping every 4 s, so ~125k location writes/s. Drivers are indexed by H3 res 8 cells (~0.53 km edge) in sharded Redis. \"Nearest 10 drivers within 1 km\" reads a 2-ring: 19 cells, a few hundred candidates, one exact distance pass. When a concert ends, 3,000 drivers crowd one cell: that key takes ~750 writes/s plus every nearby rider's read. The hot cell is split into its res 9 children, spreading the load over ~7 keys.",
+    "es": "Ride-hailing, con supuestos explícitos: 500k conductores en línea envían su ubicación cada 4 s, o sea ~125k escrituras/s. Se indexan por celdas H3 de resolución 8 (~0.53 km de lado) en Redis con shards. \"Los 10 conductores más cercanos a 1 km\" lee un anillo de radio 2: 19 celdas, unos cientos de candidatos y una pasada de distancia exacta. Cuando termina un concierto, 3.000 conductores se juntan en una celda: esa clave recibe ~750 escrituras/s más la lectura de cada pasajero cercano. La celda caliente se divide en sus hijas de resolución 9 y la carga se reparte en ~7 claves."
+  },
+  "pros": [
+    { "en": "Turns 2D \"near me\" into key lookups that any KV store, cache or shard map can serve.", "es": "Convierte el \"cerca de mí\" en 2D en búsquedas por clave que cualquier KV store, caché o mapa de shards puede servir." },
+    { "en": "Cell ids are cheap to shard on and aggregate by (supply and demand per area).", "es": "Los ids de celda son fáciles de usar como clave de shard y para agregar (oferta y demanda por zona)." },
+    { "en": "Hierarchical: coarse cells for analytics, fine cells for matching, one scheme.", "es": "Jerárquico: celdas gruesas para analítica y finas para el matching, con un solo esquema." }
+  ],
+  "cons": [
+    { "en": "Edge effects: points just across a boundary need extra neighbor lookups.", "es": "Efectos de borde: los puntos justo al otro lado de un límite requieren consultar celdas vecinas." },
+    { "en": "Fixed grids skew: one downtown cell can hold thousands of points while rural cells sit empty.", "es": "Las grillas fijas se desbalancean: una celda del centro puede tener miles de puntos mientras las rurales quedan vacías." },
+    { "en": "Moving objects mean constant re-indexing writes: leave the old cell, join the new one.", "es": "Los objetos en movimiento implican reindexar todo el tiempo: salir de la celda vieja y entrar a la nueva." }
+  ],
+  "whenToUse": {
+    "en": "Nearby search, geofencing, ride or delivery matching, per-area aggregation (surge pricing, heatmaps) and sharding location data by region.",
+    "es": "Búsqueda de cercanía, geofencing, matching de viajes o entregas, agregación por zona (surge pricing, mapas de calor) y sharding de datos de ubicación por región."
+  },
+  "whenNotToUse": {
+    "en": "Small datasets (a scan or PostGIS on one box is fine), complex shape queries (use an R-tree), or non-geographic similarity (use ANN indexes).",
+    "es": "Datasets chicos (un escaneo o PostGIS en una sola máquina alcanza), consultas sobre formas complejas (usa un R-tree) o similitud no geográfica (usa índices ANN)."
+  },
+  "numbers": [
+    { "en": "Geohash at the equator: 5 chars ≈ 4.9 × 4.9 km, 6 ≈ 1.2 km × 609 m, 7 ≈ 153 × 152 m.", "es": "Geohash en el ecuador: 5 caracteres ≈ 4.9 × 4.9 km, 6 ≈ 1.2 km × 609 m, 7 ≈ 153 × 152 m." },
+    { "en": "H3: 16 resolutions, each with ~7× more cells; res 8 ≈ 0.74 km² (edge ~0.53 km), res 9 ≈ 0.1 km².", "es": "H3: 16 resoluciones, cada una con ~7× más celdas; res 8 ≈ 0.74 km² (lado ~0.53 km), res 9 ≈ 0.1 km²." },
+    { "en": "An H3 k-ring holds 1 + 3k(k+1) hexagons: 7 for k=1, 19 for k=2.", "es": "Un anillo H3 de radio k tiene 1 + 3k(k+1) hexágonos: 7 para k=1 y 19 para k=2." },
+    { "en": "S2: 31 levels (0–30) of 64-bit cell ids; leaf cells are ~1 cm across.", "es": "S2: 31 niveles (0–30) de ids de celda de 64 bits; las celdas hoja miden ~1 cm." },
+    { "en": "Redis GEO: a 52-bit geohash as the sorted-set score; a radius query checks the 1 + 8 surrounding areas.", "es": "Redis GEO: un geohash de 52 bits como score del sorted set; una consulta por radio revisa las 1 + 8 áreas que rodean el punto." }
+  ],
+  "pitfalls": [
+    { "en": "Querying only the user's own cell: a driver 50 m away across the edge is invisible.", "es": "Consultar solo la celda del usuario: un conductor a 50 m al otro lado del borde queda invisible." },
+    { "en": "Assuming geohash cells are uniform squares: they narrow toward the poles, and even lengths are 2:1 rectangles.", "es": "Suponer que las celdas geohash son cuadrados uniformes: se angostan hacia los polos y las longitudes pares son rectángulos de 2:1." },
+    { "en": "One fixed resolution city-wide: downtown cells overflow while suburbs need many rings.", "es": "Una sola resolución fija para toda la ciudad: las celdas del centro se desbordan y los suburbios necesitan muchos anillos." },
+    { "en": "Sharding by cell with no plan for hot cells: the stadium shard melts while the rest idle.", "es": "Hacer sharding por celda sin plan para las celdas calientes: el shard del estadio colapsa mientras el resto está ocioso." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How would you find the 10 nearest drivers to a rider?", "es": "¿Cómo encontrarías los 10 conductores más cercanos a un pasajero?" },
+      "a": {
+        "en": "I'd index drivers by cell, H3 or geohash, in an in-memory store like Redis, updated on every ping. For a query I compute the rider's cell, take the ring of cells covering the radius, fetch candidates, filter by exact distance and sort. If there are too few, I widen the ring. Locations are ephemeral, so memory with a TTL is fine. The real bottleneck is the write rate and hot cells, so I shard by region.",
+        "es": "Indexaría a los conductores por celda, H3 o geohash, en un store en memoria como Redis, actualizado en cada ping. Para una consulta calculo la celda del pasajero, tomo el anillo de celdas que cubre el radio, traigo los candidatos, filtro por distancia exacta y ordeno. Si hay muy pocos, amplío el anillo. Las ubicaciones son efímeras, así que memoria con TTL está bien. El verdadero cuello de botella es la tasa de escritura y las celdas calientes, por eso hago sharding por región."
+      }
+    },
+    {
+      "q": { "en": "Geohash, quadtree or H3: which would you pick?", "es": "Geohash, quadtree o H3: ¿cuál eliges?" },
+      "a": {
+        "en": "It depends on the store and the query. Geohash is a string prefix, so it works on any sorted KV store and Redis has it built in: my default for radius search. A quadtree adapts to density, good for very skewed data that fits in memory. H3's equidistant hexagon neighbors make per-area aggregation clean; Uber built it for surge pricing and dispatch. For polygons and spatial joins I'd use PostGIS and its R-tree.",
+        "es": "Depende del store y de la consulta. Geohash es un prefijo de string, así que funciona en cualquier KV store ordenado y Redis lo trae integrado: es mi opción por defecto para búsquedas por radio. Un quadtree se adapta a la densidad, bueno para datos muy desbalanceados que caben en memoria. Los vecinos equidistantes de H3 hacen limpia la agregación por zona; Uber lo creó para surge pricing y dispatch. Para polígonos y joins espaciales usaría PostGIS y su R-tree."
+      }
+    },
+    {
+      "q": { "en": "A concert ends and thousands of drivers and riders pile into one cell. What breaks?", "es": "Termina un concierto y miles de conductores y pasajeros se juntan en una celda. ¿Qué se rompe?" },
+      "a": {
+        "en": "That cell's key becomes a hot spot: every ping writes it and every nearby rider reads it, so one shard saturates while others idle. I'd split hot cells into finer children so load spreads over several keys, or give hot regions their own shard, and cap candidates per query. Reads tolerate a second of staleness, so replicas or a short cache can absorb them.",
+        "es": "La clave de esa celda se vuelve un hot spot: cada ping la escribe y cada pasajero cercano la lee, así que un shard se satura mientras los otros están ociosos. Dividiría las celdas calientes en hijas más finas para repartir la carga en varias claves, o les daría su propio shard, y limitaría los candidatos por consulta. Las lecturas toleran un segundo de desactualización, así que réplicas o una caché corta pueden absorberlas."
+      }
+    }
+  ],
+  "related": ["indexes", "sharding", "case-ride-hailing", "caching", "back-of-envelope"],
+  "sources": [
+    { "title": "Uber — H3: Uber's Hexagonal Hierarchical Spatial Index (2018)", "url": "https://www.uber.com/blog/h3/" },
+    { "title": "S2 Geometry — S2 Cell Hierarchy", "url": "https://s2geometry.io/devguide/s2cell_hierarchy" },
+    { "title": "Redis — GEOADD (how geohash scores work)", "url": "https://redis.io/docs/latest/commands/geoadd/" },
+    { "title": "Elastic — Geohash grid aggregation (cell sizes)", "url": "https://www.elastic.co/docs/reference/aggregations/search-aggregations-bucket-geohashgrid-aggregation" }
+  ]
+}

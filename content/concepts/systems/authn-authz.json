@@ -1,0 +1,117 @@
+{
+  "id": "authn-authz",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "AuthN vs AuthZ: sessions, JWT, OAuth", "es": "AuthN vs AuthZ: sesiones, JWT, OAuth" },
+  "aliases": ["authentication", "authorization", "OAuth 2.0", "OIDC", "PKCE", "JWT", "RBAC", "ABAC", "ReBAC", "SSO"],
+  "tldr": {
+    "en": "Authentication proves who you are; authorization decides what you may do. Use OIDC (auth code + PKCE) to log in, short-lived tokens or sessions to carry identity, and server-side checks on every request.",
+    "es": "La autenticación prueba quién eres; la autorización decide qué puedes hacer. Usa OIDC (auth code + PKCE) para el login, tokens de vida corta o sesiones para llevar la identidad y validaciones en el servidor en cada request."
+  },
+  "analogy": {
+    "en": "A hotel desk checks your passport once and hands you a key card. The card opens your room and the gym, not the kitchen, and dies at checkout.",
+    "es": "La recepción de un hotel revisa tu pasaporte una vez y te da una tarjeta. La tarjeta abre tu habitación y el gimnasio, no la cocina, y deja de funcionar al hacer checkout."
+  },
+  "explain": {
+    "en": "**Authentication (authN)** proves identity; **authorization (authZ)** decides access. Failing the first is `401`, the second `403`.\n\n**Carrying identity:**\n- **Server sessions**: a random id in an `HttpOnly`, `Secure`, `SameSite` cookie; the server looks it up. Revocation is instant: delete the row.\n- **JWT**: signed claims (`iss`, `sub`, `aud`, `exp`) that any service verifies without a lookup. Signed, not encrypted: anyone can read them. It stays valid until `exp`, so keep access tokens short and refresh them.\n\n**OAuth 2.0** delegates *access*: an app gets a scoped access token for an API. **OIDC** adds *identity* with a signed ID token. To sign users in, use the **authorization code flow with PKCE**: the app sends a hash of a random secret, then proves it holds the secret when redeeming the code, so an intercepted code is useless. RFC 9700 (2025) bans the password grant and steers away from the implicit grant.\n\n**Authorization models**: **RBAC** maps roles to permissions; **ABAC** evaluates attributes (tenant, owner, amount); **ReBAC** follows relationships, as in Google's Zanzibar. Enforce in the service that owns the data, deny by default.",
+    "es": "La **autenticación (authN)** prueba la identidad; la **autorización (authZ)** decide el acceso. Fallar la primera es un `401`; la segunda, un `403`.\n\n**Cómo se lleva la identidad:**\n- **Sesiones en el servidor**: un id aleatorio en una cookie `HttpOnly`, `Secure`, `SameSite`; el servidor lo busca. Revocar es instantáneo: borras la fila.\n- **JWT**: claims firmados (`iss`, `sub`, `aud`, `exp`) que cualquier servicio verifica sin consultar a nadie. Están firmados, no cifrados: cualquiera puede leerlos. Siguen siendo válidos hasta `exp`, así que los access tokens deben durar poco y renovarse.\n\n**OAuth 2.0** delega *acceso*: una app obtiene un access token con scopes para una API. **OIDC** agrega *identidad* con un ID token firmado. Para el login usa el **flujo authorization code con PKCE**: la app envía el hash de un secreto aleatorio y luego demuestra que tiene ese secreto al canjear el code, así un code interceptado no sirve. El RFC 9700 (2025) prohíbe el password grant y desaconseja el implicit grant.\n\n**Modelos de autorización**: **RBAC** asocia roles a permisos; **ABAC** evalúa atributos (tenant, dueño, monto); **ReBAC** sigue relaciones, como Zanzibar de Google. Aplica la autorización en el servicio dueño de los datos y niega por defecto."
+  },
+  "keyPoints": [
+    {
+      "en": "**AuthN** proves who you are (fails with 401); **authZ** decides what you may do (fails with 403).",
+      "es": "**AuthN** prueba quién eres (falla con 401); **authZ** decide qué puedes hacer (falla con 403)."
+    },
+    {
+      "en": "**Sessions** revoke instantly but need a lookup; **JWTs** verify locally but stay valid until `exp`.",
+      "es": "Las **sesiones** se revocan al instante pero requieren una consulta; los **JWT** se verifican localmente pero valen hasta `exp`."
+    },
+    {
+      "en": "OAuth delegates access; **OIDC** adds an ID token for login. Sign users in with auth code + **PKCE**.",
+      "es": "OAuth delega acceso; **OIDC** agrega un ID token para el login. Haz el login con auth code + **PKCE**."
+    },
+    {
+      "en": "PKCE sends a hash of a secret, then the secret at code exchange: a stolen code is useless.",
+      "es": "PKCE envía el hash de un secreto y luego el secreto al canjear el code: un code robado no sirve."
+    },
+    {
+      "en": "Model permissions with **RBAC**, ABAC or ReBAC; enforce where the data lives, and deny by default.",
+      "es": "Modela permisos con **RBAC**, ABAC o ReBAC; aplícalos donde viven los datos y niega por defecto."
+    }
+  ],
+  "diagram": {
+    "code": "sequenceDiagram\n  participant U as Browser\n  participant A as App\n  participant I as Identity provider\n  participant R as API\n  A->>A: verifier, challenge = SHA256(verifier)\n  U->>I: /authorize + challenge\n  I->>U: login and consent\n  I-->>A: redirect with code\n  A->>I: /token with code + verifier\n  I-->>A: ID token + access token\n  A->>R: Bearer access token\n  R->>R: verify signature, aud, exp, then policy",
+    "caption": {
+      "en": "Auth code + PKCE: only the app that created the verifier can redeem the code. The API checks the token, then its own authorization policy.",
+      "es": "Auth code + PKCE: solo la app que creó el verifier puede canjear el code. La API verifica el token y después su propia política de autorización."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Verify a JWT, then authorize the action", "es": "Verificar un JWT y luego autorizar la acción" },
+    "source": "import jwt\nfrom jwt import PyJWKClient\n\nISSUER = \"https://idp.example.com\"   # your OIDC provider\nAUDIENCE = \"orders-api\"              # this API, not any API\njwks = PyJWKClient(f\"{ISSUER}/.well-known/jwks.json\")  # caches keys by kid\n\ndef authenticate(token: str) -> dict:\n    key = jwks.get_signing_key_from_jwt(token)\n    return jwt.decode(                 # raises on bad signature, aud, iss, exp\n        token, key,\n        algorithms=[\"RS256\"],          # pinned: never trust the token's own alg\n        audience=AUDIENCE, issuer=ISSUER,\n        options={\"require\": [\"exp\", \"iss\", \"aud\", \"sub\"]},\n    )\n\ndef authorize(claims: dict, action: str, order: dict) -> bool:\n    if claims.get(\"tenant_id\") != order[\"tenant_id\"]:\n        return False                   # ABAC: tenant is a hard rule\n    roles = set(claims.get(\"roles\", []))\n    if action == \"read\":\n        return \"viewer\" in roles or claims[\"sub\"] == order[\"owner_id\"]\n    if action == \"refund\":\n        return \"support_admin\" in roles and order[\"amount\"] <= 500\n    return False                       # deny by default\n\ndef get_order(token: str, order_id: str) -> dict:\n    claims = authenticate(token)       # failure -> 401\n    order = load_order(order_id)\n    if not authorize(claims, \"read\", order):\n        raise PermissionError(\"forbidden\")  # -> 403\n    return order"
+  },
+  "example": {
+    "en": "A B2B SaaS on Amazon Cognito keeps the defaults: 1-hour access tokens, 30-day refresh tokens. An employee is fired at 10:00; disabling the user stops new refreshes, but the APIs verify JWTs locally and accept the old token until it expires. The fix: 5-minute access tokens, revoked refresh tokens, and a `jti` deny-list checked only on sensitive calls (refunds, exports). A separate audit finds the classic bug: changing `/orders/123` to `/orders/124` returned another tenant's order. A tenant check in every query closed it.",
+    "es": "Un SaaS B2B sobre Amazon Cognito usa los valores por defecto: access tokens de 1 hora y refresh tokens de 30 días. Despiden a un empleado a las 10:00; desactivar el usuario impide nuevos refresh, pero las APIs verifican los JWT localmente y aceptan el token viejo hasta que expira. La corrección: access tokens de 5 minutos, refresh tokens revocados y una deny-list por `jti` que se consulta solo en llamadas sensibles (reembolsos, exportaciones). Una auditoría aparte encuentra el bug clásico: cambiar `/orders/123` por `/orders/124` devolvía el pedido de otro tenant. Un chequeo de tenant en cada consulta lo cerró."
+  },
+  "pros": [
+    { "en": "OIDC hands login, MFA and SSO to a provider: you never store passwords.", "es": "OIDC delega el login, MFA y SSO a un proveedor: nunca guardas contraseñas." },
+    { "en": "JWTs let any service verify identity locally, with no auth call per request.", "es": "Los JWT permiten que cualquier servicio verifique la identidad localmente, sin llamar a un servicio de auth en cada request." },
+    { "en": "An explicit model (RBAC, ABAC, ReBAC) makes permissions testable and auditable.", "es": "Un modelo explícito (RBAC, ABAC, ReBAC) hace que los permisos se puedan probar y auditar." }
+  ],
+  "cons": [
+    { "en": "A JWT can't be revoked before `exp` without adding back a lookup (deny-list or introspection).", "es": "Un JWT no se puede revocar antes de `exp` sin volver a agregar una consulta (deny-list o introspección)." },
+    { "en": "OAuth has many flows and knobs; misconfigured redirect URIs, `aud` or `alg` cause real breaches.", "es": "OAuth tiene muchos flujos y opciones; redirect URIs, `aud` o `alg` mal configurados causan brechas reales." },
+    { "en": "Fine-grained authZ needs a policy engine and fresh data at check time: more latency and moving parts.", "es": "La autorización fina necesita un motor de políticas y datos frescos al momento de validar: más latencia y más piezas." }
+  ],
+  "whenToUse": {
+    "en": "Every multi-user system. Sessions for a first-party web app; OIDC plus short-lived JWTs when many services or third parties verify identity; ABAC or ReBAC once sharing and tenancy outgrow roles.",
+    "es": "Todo sistema con varios usuarios. Sesiones para una web app propia; OIDC más JWT de vida corta cuando muchos servicios o terceros verifican identidad; ABAC o ReBAC cuando el sharing y la tenencia superan a los roles."
+  },
+  "whenNotToUse": {
+    "en": "Skip JWTs when one backend serves one browser app: a session cookie is simpler and revocable. Never hand-roll login, password hashing or token crypto.",
+    "es": "Evita los JWT cuando un solo backend sirve a una sola app web: una cookie de sesión es más simple y revocable. Nunca implementes a mano el login, el hash de contraseñas ni la criptografía de tokens."
+  },
+  "numbers": [
+    { "en": "PKCE (RFC 7636, 2015): verifier of 43–128 chars; challenge = base64url(SHA-256(verifier)).", "es": "PKCE (RFC 7636, 2015): verifier de 43–128 caracteres; challenge = base64url(SHA-256(verifier))." },
+    { "en": "RFC 9700 (OAuth security BCP, Jan 2025): public clients MUST use PKCE; the password grant MUST NOT be used.", "es": "RFC 9700 (BCP de seguridad de OAuth, ene 2025): los clientes públicos DEBEN usar PKCE; el password grant NO DEBE usarse." },
+    { "en": "Amazon Cognito defaults (checked Nov 2026): access and ID tokens 1 hour, refresh tokens 30 days.", "es": "Valores por defecto de Amazon Cognito (revisados en nov 2026): access e ID tokens de 1 hora, refresh tokens de 30 días." },
+    { "en": "Google Zanzibar (2019): trillions of ACLs, millions of checks/s, p95 under 10 ms.", "es": "Google Zanzibar (2019): billones de ACLs, millones de validaciones/s, p95 bajo 10 ms." }
+  ],
+  "pitfalls": [
+    { "en": "Letting the token's `alg` header choose verification: `none` or an RS256→HS256 swap forges tokens. Pin algorithms.", "es": "Dejar que el header `alg` del token elija la verificación: `none` o un cambio RS256→HS256 permite falsificar tokens. Fija los algoritmos." },
+    { "en": "Not checking `aud`: a token minted for another API is accepted by yours.", "es": "No validar `aud`: tu API acepta un token emitido para otra API." },
+    { "en": "Checking roles but not ownership: `/orders/124` returns another tenant's data (broken object-level authorization).", "es": "Validar roles pero no la propiedad: `/orders/124` devuelve datos de otro tenant (broken object-level authorization)." },
+    { "en": "Authorizing only in the frontend or gateway: any direct call to the service skips it.", "es": "Autorizar solo en el frontend o en el gateway: cualquier llamada directa al servicio se lo salta." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "JWTs or server sessions?", "es": "¿JWT o sesiones en el servidor?" },
+      "a": {
+        "en": "For a first-party web app on one backend, sessions: a random id in an HttpOnly cookie, one Redis lookup, and logout or a ban is instant. JWTs pay off when many services or third parties verify identity without calling an auth service. The price is revocation: a JWT lives until `exp`. So I keep access tokens to minutes, rotate refresh tokens, and add a deny-list only for high-risk actions.",
+        "es": "Para una web app propia con un solo backend, sesiones: un id aleatorio en una cookie HttpOnly, una consulta a Redis, y el logout o un bloqueo son instantáneos. Los JWT convienen cuando muchos servicios o terceros verifican identidad sin llamar a un servicio de auth. El precio es la revocación: un JWT vive hasta `exp`. Por eso mantengo los access tokens en minutos, roto los refresh tokens y agrego una deny-list solo para acciones de alto riesgo."
+      }
+    },
+    {
+      "q": { "en": "How would you model permissions for a multi-tenant document app with sharing?", "es": "¿Cómo modelarías los permisos de una app de documentos multi-tenant con sharing?" },
+      "a": {
+        "en": "Roles alone break with sharing: \"editor of doc 42, viewer of folder 7\" explodes into per-object roles. I'd keep RBAC for coarse admin roles and model sharing as relationships, ReBAC like Zanzibar: user, member of team, editor of folder, parent of doc. The tenant id stays a hard ABAC rule on every query. One policy engine defines the rules, each service enforces them, deny by default, and every decision is logged.",
+        "es": "Los roles solos no aguantan el sharing: \"editor del doc 42, lector de la carpeta 7\" explota en roles por objeto. Mantendría RBAC para roles de administración gruesos y modelaría el sharing como relaciones, ReBAC al estilo Zanzibar: usuario, miembro de equipo, editor de carpeta, padre del doc. El id del tenant sigue siendo una regla ABAC estricta en cada consulta. Un motor de políticas define las reglas, cada servicio las aplica, se niega por defecto y se registra cada decisión."
+      }
+    },
+    {
+      "q": { "en": "Why PKCE if you already use the authorization code flow?", "es": "¿Para qué PKCE si ya usas el flujo authorization code?" },
+      "a": {
+        "en": "Because the code travels through the browser, where a malicious app on the same redirect scheme, a leaky redirect or logs can grab it. Without PKCE, whoever holds the code can redeem it. With PKCE the app first sends `SHA-256(verifier)` and must present the verifier itself, which never left the app, at the token endpoint. RFC 9700 requires it for public clients and recommends it for confidential ones, so I use it everywhere.",
+        "es": "Porque el code viaja por el navegador, donde una app maliciosa con el mismo esquema de redirect, un redirect que filtra datos o los logs pueden capturarlo. Sin PKCE, quien tenga el code puede canjearlo. Con PKCE la app primero envía `SHA-256(verifier)` y en el token endpoint debe presentar el verifier, que nunca salió de la app. El RFC 9700 lo exige para clientes públicos y lo recomienda para los confidenciales, así que lo uso siempre."
+      }
+    }
+  ],
+  "related": ["api-design", "multi-tenancy", "agent-authz", "tenant-isolation", "permission-aware-retrieval"],
+  "sources": [
+    { "title": "RFC 9700 — Best Current Practice for OAuth 2.0 Security (2025)", "url": "https://datatracker.ietf.org/doc/html/rfc9700" },
+    { "title": "OpenID Connect Core 1.0", "url": "https://openid.net/specs/openid-connect-core-1_0.html" },
+    { "title": "RFC 8725 — JSON Web Token Best Current Practices", "url": "https://datatracker.ietf.org/doc/html/rfc8725" },
+    { "title": "Pang et al. — Zanzibar: Google's Consistent, Global Authorization System (USENIX ATC 2019)", "url": "https://research.google/pubs/zanzibar-googles-consistent-global-authorization-system/" }
+  ]
+}

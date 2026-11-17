@@ -1,0 +1,64 @@
+{
+  "concept": "geospatial-indexing",
+  "items": [
+    {
+      "id": "geospatial-indexing.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your \"drivers near me\" feature computes the rider's geohash-6 cell (~1.2 km × 609 m) and returns the drivers stored under that exact cell. Riders complain that a car parked across the street never shows up. Best fix?",
+        "es": "Tu función \"conductores cerca de mí\" calcula la celda geohash-6 del pasajero (~1.2 km × 609 m) y devuelve los conductores guardados en esa misma celda. Los pasajeros se quejan de que un auto estacionado al cruzar la calle nunca aparece. ¿Cuál es la mejor corrección?"
+      },
+      "options": [
+        { "text": { "en": "Query the cell plus its 8 neighbors, then filter by exact distance", "es": "Consultar la celda más sus 8 vecinas y luego filtrar por distancia exacta" } },
+        { "text": { "en": "Switch to geohash-8 so the cells are much finer", "es": "Cambiar a geohash-8 para que las celdas sean mucho más finas" },
+          "why": { "en": "Smaller cells make it worse: more points end up near a boundary, in a different cell.", "es": "Celdas más chicas lo empeoran: más puntos quedan cerca de un borde, en otra celda." } },
+        { "text": { "en": "Move the location data from Redis to a SQL database", "es": "Mover los datos de ubicación de Redis a una base SQL" },
+          "why": { "en": "The store isn't the problem; any store returns only the cell you ask for.", "es": "El store no es el problema; cualquier store devuelve solo la celda que pides." } },
+        { "text": { "en": "Raise the driver ping rate so locations are fresher", "es": "Subir la frecuencia de pings para tener ubicaciones más frescas" },
+          "why": { "en": "The location is already right; it just falls in a neighboring cell with a different prefix.", "es": "La ubicación ya es correcta; solo cae en una celda vecina con otro prefijo." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Two close points on either side of a cell edge can have completely different geohashes. Every cell index needs the neighbors (Redis GEO checks the 1 + 8 surrounding areas) and then an exact distance check on the candidates.",
+        "es": "Dos puntos cercanos a ambos lados de un borde pueden tener geohashes totalmente distintos. Todo índice por celdas necesita las vecinas (Redis GEO revisa las 1 + 8 áreas alrededor) y después una verificación de distancia exacta sobre los candidatos."
+      }
+    },
+    {
+      "id": "geospatial-indexing.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Assume a city has **300,000** online drivers, each sending a location ping every **4 s**. After a concert, **10%** of them are inside one cell. How many writes per second hit that single cell's key?",
+        "es": "Supón que una ciudad tiene **300.000** conductores en línea y cada uno envía su ubicación cada **4 s**. Después de un concierto, el **10%** está dentro de una sola celda. ¿Cuántas escrituras por segundo recibe la clave de esa celda?"
+      },
+      "answer": 7500,
+      "tolerance": 0.1,
+      "unit": "writes/s",
+      "explain": {
+        "en": "300,000 / 4 s = 75,000 writes/s in total; 10% of that is 7,500 writes/s on one key, while most other keys see a handful. That is a hot cell: split it into finer child cells or give it its own shard.",
+        "es": "300.000 / 4 s = 75.000 escrituras/s en total; el 10% son 7.500 escrituras/s sobre una sola clave, mientras la mayoría de las otras recibe unas pocas. Eso es una celda caliente: divídela en celdas hijas más finas o dale su propio shard."
+      }
+    },
+    {
+      "id": "geospatial-indexing.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about geohash and H3 are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre geohash y H3 son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "A long shared geohash prefix means two points are close", "es": "Un prefijo geohash largo en común significa que dos puntos están cerca" } },
+        { "text": { "en": "Two close points always share a long geohash prefix", "es": "Dos puntos cercanos siempre comparten un prefijo geohash largo" },
+          "why": { "en": "Points straddling a cell edge can differ from the very first character.", "es": "Puntos a ambos lados de un borde pueden diferir desde el primer carácter." } },
+        { "text": { "en": "Each finer H3 resolution has ~7× more cells", "es": "Cada resolución H3 más fina tiene ~7× más celdas" } },
+        { "text": { "en": "An H3 hexagon's 6 neighbors are all the same distance away", "es": "Los 6 vecinos de un hexágono H3 están todos a la misma distancia" } },
+        { "text": { "en": "Geohash cells are equal squares everywhere on Earth", "es": "Las celdas geohash son cuadrados iguales en toda la Tierra" },
+          "why": { "en": "They narrow toward the poles, and even lengths give 2:1 rectangles (6 chars ≈ 1.2 km × 609 m).", "es": "Se angostan hacia los polos y las longitudes pares dan rectángulos de 2:1 (6 caracteres ≈ 1.2 km × 609 m)." } }
+      ],
+      "answers": [0, 2, 3],
+      "explain": {
+        "en": "Prefix → proximity holds one way only: shared prefix implies close, close does not imply shared prefix. That asymmetry is why every nearby query also reads the neighbor cells.",
+        "es": "Prefijo → cercanía vale en un solo sentido: un prefijo compartido implica cercanía, pero la cercanía no implica un prefijo compartido. Por esa asimetría toda consulta de cercanía también lee las celdas vecinas."
+      }
+    }
+  ]
+}

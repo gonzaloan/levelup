@@ -1,0 +1,74 @@
+{
+  "concept": "distributed-locks",
+  "items": [
+    {
+      "id": "distributed-locks.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A nightly job takes a Redis lock (`SET NX PX 30000`) before rewriting a customer ledger. After an incident you find two workers wrote the same ledger; one had a 45 s GC pause. Which change actually prevents the corruption?",
+        "es": "Un job nocturno toma un lock de Redis (`SET NX PX 30000`) antes de reescribir el libro contable de un cliente. Tras un incidente descubres que dos workers escribieron el mismo libro; uno tuvo una pausa de GC de 45 s. ¿Qué cambio evita de verdad la corrupción?"
+      },
+      "options": [
+        { "text": { "en": "Make the ledger store reject writes that carry an older fencing token", "es": "Hacer que el almacén del libro rechace escrituras con un fencing token más viejo" },
+          "why": { "en": "Storage sees every write, so it can refuse the paused worker's stale token no matter how long it slept.", "es": "El almacenamiento ve todas las escrituras, así que puede rechazar el token viejo del worker pausado sin importar cuánto durmió." } },
+        { "text": { "en": "Switch to Redlock across five independent Redis masters", "es": "Pasar a Redlock con cinco masters de Redis independientes" },
+          "why": { "en": "A majority of nodes doesn't stop a paused client from waking up and writing, and Redlock issues no token to check.", "es": "Una mayoría de nodos no impide que un cliente pausado despierte y escriba, y Redlock no emite tokens para validar." } },
+        { "text": { "en": "Raise the lock TTL from 30 seconds to 5 minutes", "es": "Subir el TTL del lock de 30 segundos a 5 minutos" },
+          "why": { "en": "Any pause longer than the new TTL repeats the bug, and a crashed holder now blocks work for 5 minutes.", "es": "Cualquier pausa más larga que el nuevo TTL repite el bug, y un dueño caído ahora bloquea el trabajo 5 minutos." } },
+        { "text": { "en": "Check that the lock is still held right before each write", "es": "Verificar que el lock sigue tomado justo antes de cada escritura" },
+          "why": { "en": "The pause can happen between the check and the write; only the resource itself can enforce the order.", "es": "La pausa puede ocurrir entre la verificación y la escritura; solo el propio recurso puede imponer el orden." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A lock service can't control what a stale client does after a pause. Fencing moves the check to the resource: each grant has a growing token, and storage rejects any write older than the highest token it has seen.",
+        "es": "Un servicio de locks no controla lo que hace un cliente desactualizado después de una pausa. El fencing mueve la validación al recurso: cada concesión tiene un token creciente y el almacenamiento rechaza cualquier escritura más vieja que el token más alto que ya vio."
+      }
+    },
+    {
+      "id": "distributed-locks.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the storage-side check so a writer with a **stale** token changes nothing, while the current holder can write repeatedly.",
+        "es": "Completa la validación del lado del almacenamiento para que un escritor con un token **viejo** no cambie nada, mientras el dueño actual puede escribir varias veces."
+      },
+      "lang": "sql",
+      "code": "-- :token comes from the lease grant and only grows\nUPDATE ledger\n   SET balance = :balance, fence = :token\n WHERE account_id = :id\n   ____;",
+      "options": [
+        { "text": "AND fence <= :token" },
+        { "text": "AND fence >= :token",
+          "why": { "en": "Inverted: it accepts stale tokens and rejects the newest holder.", "es": "Invertido: acepta tokens viejos y rechaza al dueño más nuevo." } },
+        { "text": "AND fence = :token",
+          "why": { "en": "A new holder's first write fails, because the row still stores the previous token.", "es": "La primera escritura de un dueño nuevo falla, porque la fila todavía guarda el token anterior." } },
+        { "text": "AND :token IS NOT NULL",
+          "why": { "en": "Only checks that some token exists; a paused client's old token still passes.", "es": "Solo verifica que exista algún token; el token viejo de un cliente pausado igual pasa." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Store the highest token seen on the resource and accept a write only if its token is at least that high. Equal tokens let the current holder write many times; lower ones are fenced off.",
+        "es": "Guarda en el recurso el token más alto visto y acepta una escritura solo si su token es al menos ese. Los tokens iguales permiten que el dueño actual escriba muchas veces; los menores quedan bloqueados."
+      }
+    },
+    {
+      "id": "distributed-locks.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about distributed locks are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre locks distribuidos son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "In practice a distributed lock is a lease that can expire under its holder", "es": "En la práctica un lock distribuido es un lease que puede expirar sin que su dueño lo note" } },
+        { "text": { "en": "A lock from a consensus store alone guarantees a single writer", "es": "Un lock de un almacén con consenso garantiza por sí solo un único escritor" },
+          "why": { "en": "Consensus agrees on who holds the lease, not on what a paused ex-holder does afterwards.", "es": "El consenso acuerda quién tiene el lease, no lo que haga después un ex dueño pausado." } },
+        { "text": { "en": "Fencing works only if the protected resource checks the token", "es": "El fencing funciona solo si el recurso protegido valida el token" } },
+        { "text": { "en": "A single Redis lock is fine to avoid duplicate, harmless work", "es": "Un solo lock de Redis alcanza para evitar trabajo duplicado e inofensivo" } },
+        { "text": { "en": "Releasing with a plain DEL is safe if the TTL is long enough", "es": "Liberar con un DEL simple es seguro si el TTL es lo bastante largo" },
+          "why": { "en": "If your lease already expired, DEL removes the next holder's lock. Compare the value before deleting.", "es": "Si tu lease ya expiró, el DEL borra el lock del siguiente dueño. Compara el valor antes de borrar." } }
+      ],
+      "answers": [0, 2, 3],
+      "explain": {
+        "en": "Decide first whether the lock is for efficiency or correctness. Efficiency locks tolerate a rare double run, so Redis is enough. Correctness locks need a lease from a consensus store or database plus a fence the resource enforces.",
+        "es": "Decide primero si el lock es de eficiencia o de correctitud. Los de eficiencia toleran una doble ejecución ocasional, así que Redis alcanza. Los de correctitud necesitan un lease de un almacén con consenso o de la base de datos, más un fencing que el recurso haga cumplir."
+      }
+    }
+  ]
+}

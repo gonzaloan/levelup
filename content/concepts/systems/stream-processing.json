@@ -1,0 +1,109 @@
+{
+  "id": "stream-processing",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Stream processing: windows, watermarks, state", "es": "Stream processing: ventanas, watermarks, estado" },
+  "aliases": ["Apache Flink", "Kafka Streams", "Spark Structured Streaming", "watermark", "event time", "windowing", "exactly-once", "stateful streaming"],
+  "tldr": {
+    "en": "Compute continuously over unbounded event streams: group events into windows by event time, use watermarks to decide when a window is complete, and checkpoint state so results survive failures exactly once.",
+    "es": "Calcula de forma continua sobre streams de eventos sin fin: agrupa eventos en ventanas por event time, usa watermarks para decidir cuándo una ventana está completa y haz checkpoints del estado para que los resultados sobrevivan a fallas exactamente una vez."
+  },
+  "analogy": {
+    "en": "Counting mailed ballots: you tally by postmark date, not arrival date, and declare a day closed only when you're confident no more ballots from that day are coming.",
+    "es": "Contar votos por correo: los cuentas por la fecha del matasellos, no por la de llegada, y das un día por cerrado solo cuando confías en que no llegarán más votos de ese día."
+  },
+  "explain": {
+    "en": "A **stream processor** (Flink, Kafka Streams, Spark Structured Streaming) runs a long-lived job that reads events, usually from Kafka ([[queues-streams]]), keeps **state** and emits results continuously.\n\n**Event time vs processing time.** Event time is when something happened on the device; processing time is when your job sees it. Phones go offline and partitions lag, so events arrive **out of order**. Aggregate by event time, or results change with every backlog and replay.\n\n**Windows** cut the infinite stream into groups: **tumbling** (fixed, no overlap), **hopping** (fixed, overlapping) and **session** (closed by a gap of inactivity).\n\n**Watermarks** decide when a window is complete: `Watermark(t)` declares no more events at or before *t*. A common one is the max event time seen minus an allowed delay; Kafka Streams calls that delay a **grace period**. Events behind it are **late**: drop them, side-output them or update the result.\n\n**State and exactly-once.** Per-key state (counts, joins) lives locally, often in RocksDB. Flink snapshots state plus source offsets in periodic **checkpoints** and rewinds to the last one after a crash. Exactly-once covers state and transactional sinks such as Kafka, not side effects like emails.",
+    "es": "Un **stream processor** (Flink, Kafka Streams, Spark Structured Streaming) corre un job de larga vida que lee eventos, casi siempre de Kafka ([[queues-streams]]), mantiene **estado** y emite resultados de forma continua.\n\n**Event time vs processing time.** El event time es cuándo ocurrió algo en el dispositivo; el processing time, cuándo lo ve tu job. Los teléfonos se quedan sin conexión y las particiones se atrasan, así que los eventos llegan **desordenados**. Agrega por event time, o los resultados cambiarán con cada backlog y cada replay.\n\nLas **ventanas** cortan el stream infinito en grupos: **tumbling** (fijas, sin solaparse), **hopping** (fijas, solapadas) y **session** (se cierran tras un período sin actividad).\n\nLos **watermarks** deciden cuándo una ventana está completa: `Watermark(t)` declara que no llegarán más eventos con tiempo menor o igual a *t*. Uno habitual es el máximo event time visto menos una demora permitida; Kafka Streams llama a esa demora **grace period**. Los eventos que quedan detrás son **tardíos**: descártalos, envíalos a una salida lateral o actualiza el resultado.\n\n**Estado y exactly-once.** El estado por clave (conteos, joins) vive localmente, a menudo en RocksDB. Flink guarda el estado junto con los offsets de la fuente en **checkpoints** periódicos y, tras una caída, vuelve al último. El exactly-once cubre el estado y los sinks transaccionales como Kafka, no efectos externos como enviar correos."
+  },
+  "keyPoints": [
+    {
+      "en": "Aggregate by **event time**, not processing time: events arrive late and out of order.",
+      "es": "Agrega por **event time**, no por processing time: los eventos llegan tarde y desordenados."
+    },
+    {
+      "en": "**Windows** bound the infinite stream: tumbling (fixed), hopping (overlapping), session (ends after inactivity).",
+      "es": "Las **ventanas** acotan el stream infinito: tumbling (fijas), hopping (solapadas), session (terminan tras inactividad)."
+    },
+    {
+      "en": "A **watermark** says older events are no longer expected; its delay trades result latency against dropped late data.",
+      "es": "Un **watermark** indica que ya no se esperan eventos más viejos; su demora equilibra la latencia del resultado contra los datos tardíos perdidos."
+    },
+    {
+      "en": "**Checkpoints** snapshot state with source offsets, so a crashed job rewinds and replays without loss or double counts.",
+      "es": "Los **checkpoints** guardan el estado con los offsets de la fuente, así un job caído retrocede y reprocesa sin perder ni contar doble."
+    },
+    {
+      "en": "Exactly-once covers state and transactional sinks, not side effects like emails or API calls.",
+      "es": "El exactly-once cubre el estado y los sinks transaccionales, no efectos externos como correos o llamadas a APIs."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  K[(Kafka topic)] --> S[Source reads offsets]\n  S --> W[\"Assign event time<br/>and watermarks\"]\n  W --> KB[Key by user_id]\n  KB --> WIN[1-min tumbling windows]\n  WIN <--> ST[(\"Local state<br/>RocksDB\")]\n  WIN -->|watermark passes window end| OUT[Emit result]\n  WIN -->|late event| LATE[Side output]\n  OUT --> SINK[(Transactional sink)]\n  CP[Checkpoint coordinator] -.->|\"snapshot state + offsets\"| ST",
+    "caption": {
+      "en": "Events get event-time stamps at the source, are grouped per key and window, and are emitted when the watermark passes the window's end; checkpoints make the state recoverable.",
+      "es": "Los eventos reciben su event time en la fuente, se agrupan por clave y ventana, y se emiten cuando el watermark pasa el fin de la ventana; los checkpoints hacen recuperable el estado."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": { "en": "Flink SQL: clicks per URL per minute, by event time", "es": "Flink SQL: clics por URL por minuto, por event time" },
+    "source": "-- Event time = ts; tolerate up to 30 s of out-of-order arrival\nCREATE TABLE clicks (\n  user_id STRING,\n  url     STRING,\n  ts      TIMESTAMP(3),\n  WATERMARK FOR ts AS ts - INTERVAL '30' SECOND\n) WITH (\n  'connector' = 'kafka',\n  'topic' = 'clicks',\n  'properties.bootstrap.servers' = 'kafka:9092',\n  'properties.group.id' = 'click-counts',\n  'format' = 'json'\n);\n\n-- Each 1-minute window emits once the watermark passes its end,\n-- i.e. ~30 s after the minute closes. Later events are dropped.\nSELECT window_start, window_end, url, COUNT(*) AS clicks\nFROM TUMBLE(TABLE clicks, DESCRIPTOR(ts), INTERVAL '1' MINUTE)\nGROUP BY window_start, window_end, url;"
+  },
+  "example": {
+    "en": "A ride app counts trip requests per city per minute for surge pricing. Phones buffer events in tunnels, so some arrive 10–60 s late (assumption). With processing time, a tunnel exit spikes the wrong minute. With event time and a 30 s watermark delay, each minute emits ~30 s after it ends, and only events later than that go to a side output for correction. When a task crashes, Flink restores the last checkpoint and replays Kafka from the saved offsets: counts are neither lost nor doubled.",
+    "es": "Una app de viajes cuenta solicitudes por ciudad por minuto para la tarifa dinámica. Los teléfonos acumulan eventos en los túneles, así que algunos llegan 10–60 s tarde (supuesto). Con processing time, la salida de un túnel infla el minuto equivocado. Con event time y un watermark de 30 s de demora, cada minuto se emite ~30 s después de terminar, y solo los eventos más tardíos van a una salida lateral para corregir. Cuando una tarea se cae, Flink restaura el último checkpoint y relee Kafka desde los offsets guardados: los conteos no se pierden ni se duplican."
+  },
+  "pros": [
+    { "en": "Results in seconds instead of at the next batch run.", "es": "Resultados en segundos en vez de esperar a la siguiente corrida batch." },
+    { "en": "Event time plus watermarks give the same answer on live data and on replay.", "es": "Event time más watermarks dan la misma respuesta sobre datos en vivo y en un replay." },
+    { "en": "Local state makes joins and aggregations fast, without a database round trip per event.", "es": "El estado local hace rápidos los joins y las agregaciones, sin un viaje a la base de datos por evento." }
+  ],
+  "cons": [
+    { "en": "Hard to operate: state size, checkpoint duration, backpressure and rescaling.", "es": "Difícil de operar: tamaño del estado, duración de los checkpoints, backpressure y reescalado." },
+    { "en": "A watermark is a guess: too tight drops late data, too loose delays every result.", "es": "Un watermark es una apuesta: muy ajustado descarta datos tardíos, muy holgado retrasa todos los resultados." },
+    { "en": "Exactly-once output only becomes visible when each checkpoint commits, and it stops at your sinks.", "es": "La salida exactly-once solo se vuelve visible cuando se confirma cada checkpoint, y termina en tus sinks." }
+  ],
+  "whenToUse": {
+    "en": "Continuous aggregates, fraud and anomaly detection, real-time ML features, CDC pipelines and alerting: anywhere a result is worth more in seconds than in hours.",
+    "es": "Agregados continuos, detección de fraude y anomalías, features de ML en tiempo real, pipelines de CDC y alertas: donde un resultado vale más en segundos que en horas."
+  },
+  "whenNotToUse": {
+    "en": "When hourly or daily freshness is fine, a batch job is simpler to run, debug and backfill. For stateless per-event work, a plain consumer is enough.",
+    "es": "Si alcanza con frescura horaria o diaria, un job batch es más simple de operar, depurar y reprocesar. Para trabajo por evento sin estado, alcanza con un consumidor común."
+  },
+  "numbers": [
+    { "en": "Bounded-out-of-orderness watermark ≈ max event time seen − allowed delay (e.g. 30 s).", "es": "Watermark de desorden acotado ≈ máximo event time visto − demora permitida (p. ej., 30 s)." },
+    { "en": "Flink exactly-once sinks use two-phase commit since Flink 1.4 (Dec 2017), committing on each checkpoint.", "es": "Los sinks exactly-once de Flink usan two-phase commit desde Flink 1.4 (dic. 2017) y confirman en cada checkpoint." },
+    { "en": "Kafka Streams: `processing.guarantee=exactly_once_v2` (Kafka 3.0+, brokers 2.5+).", "es": "Kafka Streams: `processing.guarantee=exactly_once_v2` (Kafka 3.0+, brokers 2.5+)." },
+    { "en": "With transactional output, readers using `read_committed` see results only after the commit: latency ≥ checkpoint interval.", "es": "Con salida transaccional, los lectores con `read_committed` ven los resultados solo tras el commit: latencia ≥ intervalo de checkpoint." }
+  ],
+  "pitfalls": [
+    { "en": "Using processing time for business metrics: a backlog or replay shifts events into the wrong windows.", "es": "Usar processing time para métricas de negocio: un backlog o un replay mueve eventos a las ventanas equivocadas." },
+    { "en": "An idle partition holds the watermark back, so windows never fire. Configure idleness.", "es": "Una partición inactiva frena el watermark y las ventanas nunca se disparan. Configura la inactividad (idleness)." },
+    { "en": "Unbounded state: joins or distinct counts on keys that never expire grow until the job dies. Set a state TTL.", "es": "Estado sin límite: joins o conteos distintos sobre claves que nunca expiran crecen hasta matar el job. Define un TTL de estado." },
+    { "en": "Assuming exactly-once covers your webhook or email call: make side effects idempotent.", "es": "Suponer que el exactly-once cubre tu webhook o tu envío de correo: haz idempotentes los efectos externos." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you handle late events in a windowed aggregation?", "es": "¿Cómo manejas eventos tardíos en una agregación por ventanas?" },
+      "a": {
+        "en": "First I measure lateness, event time versus arrival, per source. I set the watermark delay to cover most of it, say p99, accepting that each window emits that much later. For the stragglers I choose per use case: drop and count them, route them to a side output for a correction job, or allow lateness so the window re-emits an updated result, which downstream must treat as an upsert.",
+        "es": "Primero mido el retraso, event time contra llegada, por fuente. Ajusto la demora del watermark para cubrir casi todo, digamos el p99, aceptando que cada ventana se emite ese tiempo después. Para los rezagados elijo según el caso: descartarlos y contarlos, mandarlos a una salida lateral para un job de corrección, o permitir lateness para que la ventana reemita un resultado actualizado, que aguas abajo hay que tratar como upsert."
+      }
+    },
+    {
+      "q": { "en": "What does exactly-once really mean in Flink or Kafka Streams?", "es": "¿Qué significa de verdad exactly-once en Flink o Kafka Streams?" },
+      "a": {
+        "en": "Exactly-once state, not exactly-once execution. After a failure records are processed again, but state and source offsets rewind to the same checkpoint, so each event affects state once. Output needs the sink's help: Kafka transactions or a two-phase-commit sink that commits when the checkpoint completes, or idempotent upserts. A call to an external API can still run twice, so I give it an idempotency key.",
+        "es": "Estado exactly-once, no ejecución exactly-once. Tras una falla, los registros se procesan de nuevo, pero el estado y los offsets de la fuente vuelven al mismo checkpoint, así que cada evento afecta el estado una sola vez. La salida necesita ayuda del sink: transacciones de Kafka o un sink con two-phase commit que confirma al completar el checkpoint, o upserts idempotentes. Una llamada a una API externa igual puede ejecutarse dos veces, así que le doy una idempotency key."
+      }
+    }
+  ],
+  "related": ["queues-streams", "event-driven", "idempotency", "batch-vs-realtime", "feature-store", "clocks-ordering"],
+  "sources": [
+    { "title": "Akidau et al. — The Dataflow Model (VLDB 2015)", "url": "https://research.google/pubs/the-dataflow-model-a-practical-approach-to-balancing-correctness-latency-and-cost-in-massive-scale-unbounded-out-of-order-data-processing/" },
+    { "title": "Apache Flink docs — Timely Stream Processing (event time, watermarks)", "url": "https://nightlies.apache.org/flink/flink-docs-stable/docs/concepts/time/" },
+    { "title": "Apache Flink — End-to-End Exactly-Once Processing with Kafka (2018)", "url": "https://flink.apache.org/2018/02/28/an-overview-of-end-to-end-exactly-once-processing-in-apache-flink-with-apache-kafka-too/" }
+  ]
+}

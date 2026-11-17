@@ -1,0 +1,106 @@
+{
+  "id": "deployment-strategies",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Deployment strategies (canary, blue-green, flags)", "es": "Estrategias de deploy (canary, blue-green, flags)" },
+  "aliases": ["rolling update", "blue-green", "canary release", "feature flags", "feature toggles", "dark launch", "expand and contract", "progressive delivery", "rollback"],
+  "tldr": {
+    "en": "Ship changes to a small slice first, watch the metrics, then widen or roll back automatically; separate deploy from release with feature flags, and change schemas in backward-compatible expand/contract steps.",
+    "es": "Lleva los cambios primero a una porción pequeña, mira las métricas y luego amplía o haz rollback de forma automática; separa deploy de release con feature flags y cambia los esquemas en pasos expand/contract compatibles hacia atrás."
+  },
+  "explain": {
+    "en": "Roughly 70% of outages come from changes to a live system (Google SRE), so the goal is to **limit the blast radius** of a bad change and **undo it fast**.\n\n- **Rolling**: replace instances in batches (Kubernetes defaults: 25% surge, 25% unavailable). Cheap, but old and new versions serve side by side, and rollback is another rollout.\n- **Blue-green**: stand up a full new environment, flip the router, keep the old one idle to flip back instantly. Costs 2× capacity during the cutover.\n- **Canary**: send a small slice (say 5%) to the new version, compare its errors and latency with the baseline, then widen step by step or abort automatically.\n- **Feature flags** separate *deploy* (code is on the servers) from *release* (users see it): ramp per user or tenant, kill in seconds without a deploy.\n- **Dark launch**: run the new path on real traffic but discard its output, to test load and correctness.\n\n**Data is the hard part**: code rolls back, writes don't. Use **expand/contract**: add the new schema next to the old, migrate, and remove the old only when nothing reads it.",
+    "es": "Cerca del 70% de las caídas viene de cambios en un sistema en vivo (Google SRE), así que el objetivo es **limitar el radio de impacto** de un cambio malo y **deshacerlo rápido**.\n\n- **Rolling**: reemplaza instancias por lotes (defaults de Kubernetes: 25% de surge, 25% no disponible). Es barato, pero la versión vieja y la nueva atienden a la vez, y el rollback es otro rollout.\n- **Blue-green**: levanta un entorno nuevo completo, cambia el router y deja el viejo en espera para volver al instante. Cuesta 2× de capacidad durante el corte.\n- **Canary**: envía una porción pequeña (por ejemplo 5%) a la versión nueva, compara sus errores y latencia con la línea base y luego amplía paso a paso o aborta automáticamente.\n- Los **feature flags** separan el *deploy* (el código está en los servidores) del *release* (los usuarios lo ven): activas por usuario o tenant y apagas en segundos sin hacer deploy.\n- **Dark launch**: ejecuta el camino nuevo con tráfico real pero descarta su resultado, para probar carga y correctitud.\n\n**Lo difícil son los datos**: el código vuelve atrás, las escrituras no. Usa **expand/contract**: agrega el esquema nuevo junto al viejo, migra y elimina el viejo solo cuando nadie lo lee."
+  },
+  "keyPoints": [
+    {
+      "en": "Roughly **70% of outages** come from changes (Google SRE): limit the blast radius and undo fast.",
+      "es": "Cerca del **70% de las caídas** viene de cambios (Google SRE): limita el radio de impacto y deshaz rápido."
+    },
+    {
+      "en": "**Rolling** replaces instances in batches; **blue-green** flips all traffic between two full environments.",
+      "es": "**Rolling** reemplaza instancias por lotes; **blue-green** mueve todo el tráfico entre dos entornos completos."
+    },
+    {
+      "en": "**Canary**: give the new version a small slice, compare with the baseline, then widen or abort.",
+      "es": "**Canary**: dale a la versión nueva una porción pequeña, compárala con la línea base y luego amplía o aborta."
+    },
+    {
+      "en": "**Feature flags** separate deploy from release: ramp per user or tenant, kill in seconds.",
+      "es": "Los **feature flags** separan deploy de release: activas por usuario o tenant y apagas en segundos."
+    },
+    {
+      "en": "Code rolls back, data doesn't: change schemas with **expand/contract** so both versions keep working.",
+      "es": "El código vuelve atrás, los datos no: cambia los esquemas con **expand/contract** para que ambas versiones sigan funcionando."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  B[Build and tests] --> C[\"Canary<br/>5% of traffic\"]\n  C --> M{\"Errors and latency<br/>vs baseline?\"}\n  M -->|regressed| R[Auto rollback to 0%]\n  M -->|healthy| W[\"Widen<br/>25% then 50%\"]\n  W -->|next step| M\n  W -->|all steps pass| F[100% deployed]\n  F --> G[\"Feature flag<br/>ramps users\"]",
+    "caption": {
+      "en": "Each step must match the baseline before traffic widens; any regression rolls back automatically. The flag then controls who sees the feature.",
+      "es": "Cada paso debe igualar la línea base antes de ampliar el tráfico; cualquier regresión hace rollback automático. Después el flag controla quién ve la funcionalidad."
+    }
+  },
+  "code": {
+    "lang": "yaml",
+    "title": { "en": "Canary with automated analysis (Argo Rollouts)", "es": "Canary con análisis automático (Argo Rollouts)" },
+    "source": "apiVersion: argoproj.io/v1alpha1\nkind: Rollout\nmetadata:\n  name: checkout\nspec:\n  replicas: 20                 # selector and pod template omitted\n  strategy:\n    canary:\n      analysis:                    # runs in the background during the steps\n        templates:\n          - templateName: success-rate\n      steps:\n        - setWeight: 5             # 1 of 20 pods without a traffic router\n        - pause: {duration: 15m}\n        - setWeight: 25\n        - pause: {duration: 15m}\n        - setWeight: 50\n        - pause: {duration: 15m}   # then 100%\n---\napiVersion: argoproj.io/v1alpha1\nkind: AnalysisTemplate\nmetadata:\n  name: success-rate\nspec:\n  metrics:\n    - name: success-rate\n      interval: 5m\n      failureLimit: 2              # repeated bad readings abort: weight back to 0\n      successCondition: result[0] >= 0.99\n      provider:\n        prometheus:\n          address: http://prometheus:9090\n          query: |\n            sum(rate(http_requests_total{app=\"checkout\",code!~\"5..\"}[5m]))\n            / sum(rate(http_requests_total{app=\"checkout\"}[5m]))"
+  },
+  "example": {
+    "en": "**Knight Capital, 1 Aug 2012** (SEC order): new code was rolled out in stages to 8 servers, but a technician missed one. The new code **reused an old flag** that once enabled dead \"Power Peg\" logic, still present on that 8th server. Orders carrying the flag woke it up: ~4M executions in ~45 minutes and a loss of more than $460M. Mid-incident, removing the new code from the 7 good servers made it worse, because the flag kept arriving. Lessons: verify every target runs the build, never repurpose flags, delete dead code.",
+    "es": "**Knight Capital, 1 ago 2012** (orden de la SEC): el código nuevo se desplegó por etapas en 8 servidores, pero un técnico se saltó uno. El código nuevo **reutilizó un flag viejo** que antes activaba la lógica muerta \"Power Peg\", todavía presente en ese 8.º servidor. Las órdenes con el flag la despertaron: ~4M ejecuciones en ~45 minutos y una pérdida de más de $460M. En pleno incidente, quitar el código nuevo de los 7 servidores sanos lo empeoró, porque el flag seguía llegando. Lecciones: verifica que cada destino corra el build, nunca reutilices flags y borra el código muerto."
+  },
+  "pros": [
+    { "en": "Canaries catch bad changes while they touch only a few percent of users.", "es": "Los canaries detectan cambios malos mientras afectan solo a un pequeño porcentaje de usuarios." },
+    { "en": "Blue-green gives near-instant code rollback: flip the router back.", "es": "Blue-green da un rollback de código casi instantáneo: vuelves a cambiar el router." },
+    { "en": "Flags make release a runtime decision: per-tenant ramps, experiments, kill switches.", "es": "Los flags convierten el release en una decisión en tiempo de ejecución: activación por tenant, experimentos y kill switches." }
+  ],
+  "cons": [
+    { "en": "Blue-green doubles capacity during the switch; canaries need good metrics and enough traffic to judge.", "es": "Blue-green duplica la capacidad durante el cambio; los canaries necesitan buenas métricas y suficiente tráfico para decidir." },
+    { "en": "Old and new versions coexist during rolling and canary, so APIs and schemas must stay compatible.", "es": "Durante rolling y canary conviven la versión vieja y la nueva, así que APIs y esquemas deben seguir siendo compatibles." },
+    { "en": "Flags are debt: each one is a code path to test and, eventually, delete.", "es": "Los flags son deuda: cada uno es un camino de código que probar y, tarde o temprano, borrar." }
+  ],
+  "whenToUse": {
+    "en": "Canary with automated analysis for any service with real traffic; blue-green for atomic cutovers you can afford to double; flags for risky features, gradual ramps and kill switches.",
+    "es": "Canary con análisis automático para cualquier servicio con tráfico real; blue-green para cortes atómicos cuando puedes pagar el doble de capacidad; flags para funcionalidades riesgosas, activaciones graduales y kill switches."
+  },
+  "whenNotToUse": {
+    "en": "A canary can't judge a service with almost no traffic. No strategy undoes one-way effects (destructive migrations, sent emails, payments): gate those with dry runs and flags.",
+    "es": "Un canary no puede juzgar un servicio casi sin tráfico. Ninguna estrategia deshace efectos irreversibles (migraciones destructivas, emails enviados, pagos): protégelos con dry runs y flags."
+  },
+  "numbers": [
+    { "en": "Google SRE: roughly 70% of outages are due to changes in a live system.", "es": "Google SRE: aproximadamente el 70% de las caídas se debe a cambios en un sistema en vivo." },
+    { "en": "Kubernetes rolling update defaults: `maxSurge` 25% (rounded up), `maxUnavailable` 25% (rounded down).", "es": "Defaults del rolling update de Kubernetes: `maxSurge` 25% (redondeado hacia arriba), `maxUnavailable` 25% (redondeado hacia abajo)." },
+    { "en": "SRE workbook example: a change failing 20% of requests behind a 5% canary costs ~1% of all requests.", "es": "Ejemplo del SRE workbook: un cambio que falla en el 20% de los requests detrás de un canary del 5% cuesta ~1% del total." },
+    { "en": "CrowdStrike (Jul 2024): one content update crashed ~8.5M Windows devices (Microsoft's estimate); its remediation plan added canary, staged rollouts.", "es": "CrowdStrike (jul 2024): una actualización de contenido tumbó ~8.5M dispositivos Windows (estimación de Microsoft); su plan de remediación agregó canary y despliegues por etapas." }
+  ],
+  "pitfalls": [
+    { "en": "Renaming a column in one deploy: mid-rollout, the old version still uses the old name and fails.", "es": "Renombrar una columna en un solo deploy: a mitad del rollout, la versión vieja sigue usando el nombre viejo y falla." },
+    { "en": "Rolling back code after a migration the old code can't read: the rollback becomes the outage.", "es": "Hacer rollback del código después de una migración que el código viejo no puede leer: el rollback se convierte en la caída." },
+    { "en": "Judging a canary on CPU or averages instead of user-facing errors and latency.", "es": "Juzgar un canary por CPU o promedios en vez de errores y latencia que ve el usuario." },
+    { "en": "Repurposing or never deleting flags: Knight Capital's reused flag woke dead code.", "es": "Reutilizar flags o no borrarlos nunca: el flag reutilizado de Knight Capital despertó código muerto." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you roll back a deploy that included a database migration?", "es": "¿Cómo haces rollback de un deploy que incluía una migración de base de datos?" },
+      "a": {
+        "en": "I design so the schema never needs rolling back. Migrations ship separately and stay backward compatible: expand first (add the new column, nullable), deploy code that writes both, backfill, switch reads, then contract (drop the old column) a release or two later. At every step the previous code version still works, so rolling back is just redeploying the old image. Destructive steps happen only once nothing reads the old shape.",
+        "es": "Diseño para que el esquema nunca necesite rollback. Las migraciones van por separado y son compatibles hacia atrás: primero expand (agregar la columna nueva, nullable), deploy del código que escribe en ambas, backfill, cambiar las lecturas y luego contract (borrar la columna vieja) uno o dos releases después. En cada paso la versión anterior del código sigue funcionando, así que el rollback es solo volver a desplegar la imagen vieja. Los pasos destructivos ocurren solo cuando nadie lee la forma vieja."
+      }
+    },
+    {
+      "q": { "en": "Canary, blue-green or feature flags: which would you use?", "es": "Canary, blue-green o feature flags: ¿cuál usarías?" },
+      "a": {
+        "en": "They solve different problems, so usually several. A canary limits the blast radius of code and config changes: a small slice, automated comparison with the baseline, auto-abort. Blue-green fits an atomic cutover, like a runtime upgrade, when I can pay double capacity briefly. Flags control release: per tenant or percentage, with a kill switch that works in seconds. For a risky feature I deploy it dark behind a flag through a canary, then ramp the flag.",
+        "es": "Resuelven problemas distintos, así que suelo usar varios. Un canary limita el radio de impacto de cambios de código y configuración: una porción pequeña, comparación automática con la línea base y abort automático. Blue-green sirve para un corte atómico, como actualizar el runtime, cuando puedo pagar el doble de capacidad por un rato. Los flags controlan el release: por tenant o porcentaje, con un kill switch que actúa en segundos. Para una funcionalidad riesgosa la despliego apagada detrás de un flag mediante un canary y después activo el flag de a poco."
+      }
+    }
+  ],
+  "related": ["slos", "observability", "api-design", "ab-testing", "model-migrations", "incident-leadership"],
+  "sources": [
+    { "title": "Google SRE Workbook — Canarying Releases", "url": "https://sre.google/workbook/canarying-releases/" },
+    { "title": "Pete Hodgson — Feature Toggles (aka Feature Flags), martinfowler.com", "url": "https://martinfowler.com/articles/feature-toggles.html" },
+    { "title": "Danilo Sato — Parallel Change (expand and contract)", "url": "https://martinfowler.com/bliki/ParallelChange.html" },
+    { "title": "SEC — Knight Capital charged over 2012 trading incident", "url": "https://www.sec.gov/newsroom/press-releases/2013-222" }
+  ]
+}

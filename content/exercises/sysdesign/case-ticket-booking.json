@@ -1,0 +1,154 @@
+{
+  "concept": "case-ticket-booking",
+  "items": [
+    {
+      "id": "case-ticket-booking.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Load tests sell **0.3%** of seats twice. The booking code runs `SELECT status FROM seats WHERE …`, and if it reads AVAILABLE, runs `UPDATE seats SET status='HELD' …`. What's the right fix?",
+        "es": "Las pruebas de carga venden **0.3%** de los asientos dos veces. El código ejecuta `SELECT status FROM seats WHERE …` y, si lee AVAILABLE, ejecuta `UPDATE seats SET status='HELD' …`. ¿Cuál es la corrección correcta?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "One conditional UPDATE with the status in the WHERE, then check rows affected",
+            "es": "Un solo UPDATE condicional con el estado en el WHERE, revisando las filas afectadas"
+          }
+        },
+        {
+          "text": {
+            "en": "Wrap the SELECT and UPDATE in a READ COMMITTED transaction",
+            "es": "Envolver el SELECT y el UPDATE en una transacción READ COMMITTED"
+          },
+          "why": {
+            "en": "A plain SELECT takes no lock at READ COMMITTED: both buyers still read AVAILABLE before either writes.",
+            "es": "Un SELECT simple no toma locks en READ COMMITTED: ambos compradores siguen leyendo AVAILABLE antes de que alguno escriba."
+          }
+        },
+        {
+          "text": {
+            "en": "Cache seat status in Redis so the check is faster",
+            "es": "Guardar el estado del asiento en Redis para que el chequeo sea más rápido"
+          },
+          "why": {
+            "en": "A faster check narrows the window but keeps the race, and the cache adds staleness on top.",
+            "es": "Un chequeo más rápido achica la ventana pero mantiene la carrera, y además la cache agrega datos viejos."
+          }
+        },
+        {
+          "text": {
+            "en": "Add a unique index on `(event_id, seat_id)`",
+            "es": "Agregar un índice único sobre `(event_id, seat_id)`"
+          },
+          "why": {
+            "en": "The seat row already exists; both UPDATEs modify it and no new row is inserted, so the index never fires.",
+            "es": "La fila del asiento ya existe; ambos UPDATE la modifican y no se inserta ninguna fila nueva, así que el índice nunca actúa."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "The bug is the gap between read and write. Put the condition in the write itself (`WHERE status='AVAILABLE' …`): the database serializes concurrent updates on the row, re-checks the predicate, and the loser affects 0 rows.",
+        "es": "El bug es el hueco entre leer y escribir. Pon la condición en la propia escritura (`WHERE status='AVAILABLE' …`): la base serializa las actualizaciones concurrentes sobre la fila, vuelve a evaluar el predicado y quien pierde afecta 0 filas."
+      }
+    },
+    {
+      "id": "case-ticket-booking.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete the hold predicate so an **expired** hold counts as free, while live holds and SOLD seats stay untouchable.",
+        "es": "Completa el predicado del hold para que un hold **vencido** cuente como libre, mientras los holds vigentes y los asientos SOLD siguen intocables."
+      },
+      "lang": "sql",
+      "code": "UPDATE seats\nSET    status = 'HELD', hold_id = :hold_id,\n       hold_expires_at = now() + interval '10 minutes'\nWHERE  event_id = :event_id\n  AND  seat_id = ANY(:seat_ids)\n  AND  (status = 'AVAILABLE'\n        ____);",
+      "options": [
+        {
+          "text": "OR (status = 'HELD' AND hold_expires_at < now())"
+        },
+        {
+          "text": "OR hold_expires_at < now()",
+          "why": {
+            "en": "A SOLD seat keeps its old expiry in the past, so it matches and gets resold.",
+            "es": "Un asiento SOLD conserva su vencimiento viejo en el pasado, así que coincide y se revende."
+          }
+        },
+        {
+          "text": "OR (status = 'HELD' AND hold_expires_at > now())",
+          "why": {
+            "en": "Inverted: it steals live holds from buyers paying right now, and expired holds stay stuck.",
+            "es": "Está invertido: le roba holds vigentes a quienes están pagando, y los holds vencidos quedan trabados."
+          }
+        },
+        {
+          "text": "AND hold_expires_at < now()",
+          "why": {
+            "en": "Available seats have no expiry (NULL), so they never match and nothing can be held.",
+            "es": "Los asientos disponibles no tienen vencimiento (NULL), así que nunca coinciden y no se puede reservar nada."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Lazy expiry works only if the predicate is exact: free means AVAILABLE, or HELD with a deadline in the past. Any looser test lets a write overwrite a live hold or a sale.",
+        "es": "El vencimiento perezoso funciona solo si el predicado es exacto: libre significa AVAILABLE, o HELD con la fecha límite en el pasado. Cualquier prueba más laxa deja que una escritura pise un hold vigente o una venta."
+      }
+    },
+    {
+      "id": "case-ticket-booking.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about seat holds and locking are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre holds de asientos y bloqueo son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Treating expired holds as free in the predicate removes the need for a timer per hold",
+            "es": "Tratar los holds vencidos como libres en el predicado evita tener un timer por hold"
+          }
+        },
+        {
+          "text": {
+            "en": "`SELECT … FOR UPDATE` held through the buyer's payment is the safest way to reserve",
+            "es": "Un `SELECT … FOR UPDATE` retenido durante el pago es la forma más segura de reservar"
+          },
+          "why": {
+            "en": "Locks held for minutes queue every other buyer behind hot seats; a hold is a row state, not a lock.",
+            "es": "Los locks retenidos por minutos hacen fila a todos los demás detrás de los asientos calientes; un hold es un estado de la fila, no un lock."
+          }
+        },
+        {
+          "text": {
+            "en": "Optimistic writes fit booking because a lost seat isn't retried; the buyer picks another",
+            "es": "Las escrituras optimistas encajan en reservas porque un asiento perdido no se reintenta; se elige otro"
+          }
+        },
+        {
+          "text": {
+            "en": "Autoscaling the booking service 20× removes the need for a waiting room",
+            "es": "Autoescalar 20× el servicio de reservas elimina la necesidad de una sala de espera"
+          },
+          "why": {
+            "en": "Inventory is fixed: more servers just send more concurrent writes at the same hot rows.",
+            "es": "El inventario es fijo: más servidores solo mandan más escrituras concurrentes a las mismas filas calientes."
+          }
+        },
+        {
+          "text": {
+            "en": "Confirming the sale must re-check that the hold is still yours and unexpired",
+            "es": "Confirmar la venta exige volver a verificar que el hold siga siendo tuyo y vigente"
+          }
+        }
+      ],
+      "answers": [
+        0,
+        2,
+        4
+      ],
+      "explain": {
+        "en": "Correctness lives in conditional writes at two moments, hold and confirm. Locks across user think-time and extra servers both make contention worse, not better.",
+        "es": "La corrección vive en escrituras condicionales en dos momentos, el hold y la confirmación. Los locks durante el tiempo que piensa el usuario y los servidores extra empeoran la contención, no la mejoran."
+      }
+    }
+  ]
+}

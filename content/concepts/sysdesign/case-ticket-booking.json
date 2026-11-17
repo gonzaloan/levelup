@@ -1,0 +1,229 @@
+{
+  "id": "case-ticket-booking",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": {
+    "en": "Design: ticket booking",
+    "es": "Diseño: venta de boletos"
+  },
+  "aliases": [
+    "Ticketmaster",
+    "seat reservation",
+    "booking system",
+    "seat hold",
+    "virtual waiting room",
+    "inventory contention",
+    "flash sale"
+  ],
+  "tldr": {
+    "en": "Hold seats with one atomic conditional write that expires after ~10 minutes, charge with an idempotency key, then confirm only if the hold is still yours; a virtual waiting room meters the spike.",
+    "es": "Reserva asientos con una sola escritura condicional atómica que expira a los ~10 minutos, cobra con una clave de idempotencia y confirma solo si el hold sigue siendo tuyo; una sala de espera virtual dosifica el pico."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: browse events and seat maps, hold seats while the buyer pays, confirm and issue tickets. **Non-functional**: never sell a seat twice; holds expire so abandoned carts free their seats; survive on-sales where demand dwarfs inventory (assume a 50k-seat stadium and 2M fans in the first hour). Seat maps may lag by seconds; writes to a seat must be strongly consistent.\n\n### API and data model\n\n- `POST /events/{id}/holds {seat_ids}` → `hold_id, expires_at`\n- `POST /holds/{id}/purchase {payment, idempotency_key}`\n- `seats(event_id, seat_id, status, hold_id, hold_expires_at, order_id)`, partitioned by `event_id`\n\n### Architecture\n\nA CDN and a seat-map cache absorb browsing. A **virtual waiting room** in front of checkout admits buyers at a fixed rate with a signed token. The booking service writes holds to a relational DB. Payment carries an [[idempotency]] key; once it is authorized, the seats flip from HELD to SOLD.\n\n### The hard parts\n\n**Contention.** Two buyers click the same seat. Never read-then-write in app code: run one **conditional write**, `UPDATE … SET status='HELD' WHERE status='AVAILABLE' OR (status='HELD' AND hold_expires_at < now())`, and check rows affected. The loser gets 0 rows and picks another seat. That is the optimistic style: detect the conflict at write time. Pessimistic `SELECT … FOR UPDATE` locks rows first; held across a buyer's checkout, it queues everyone behind hot seats.\n\n**Expiry.** Holds expire lazily: the predicate treats an expired hold as free, so there is no timer per hold, and a sweeper only tidies the seat map. The purchase confirms only if the hold is still yours; otherwise it voids the payment.",
+    "es": "### Requisitos\n\n**Funcionales**: ver eventos y mapas de asientos, reservar asientos mientras la persona paga, confirmar y emitir boletos. **No funcionales**: nunca vender un asiento dos veces; los holds (reservas temporales) expiran para que los carritos abandonados liberen sus asientos; aguantar preventas donde la demanda supera por mucho al inventario (supón un estadio de 50k asientos y 2M de fans en la primera hora). El mapa de asientos puede atrasarse unos segundos; las escrituras sobre un asiento deben ser fuertemente consistentes.\n\n### API y modelo de datos\n\n- `POST /events/{id}/holds {seat_ids}` → `hold_id, expires_at`\n- `POST /holds/{id}/purchase {payment, idempotency_key}`\n- `seats(event_id, seat_id, status, hold_id, hold_expires_at, order_id)`, particionada por `event_id`\n\n### Arquitectura\n\nUna CDN y una cache del mapa de asientos absorben la navegación. Una **sala de espera virtual** frente al checkout deja pasar compradores a un ritmo fijo con un token firmado. El servicio de reservas escribe los holds en una base relacional. El pago lleva una clave de [[idempotency]]; cuando se autoriza, los asientos pasan de HELD a SOLD.\n\n### Las partes difíciles\n\n**Contención.** Dos compradores hacen clic en el mismo asiento. Nunca leas y luego escribas desde la app: ejecuta una sola **escritura condicional**, `UPDATE … SET status='HELD' WHERE status='AVAILABLE' OR (status='HELD' AND hold_expires_at < now())`, y revisa las filas afectadas. Quien pierde recibe 0 filas y elige otro asiento. Ese es el estilo optimista: detectas el conflicto al escribir. El pesimista, `SELECT … FOR UPDATE`, bloquea las filas antes; si lo mantienes durante el checkout, todos hacen fila detrás de los asientos más pedidos.\n\n**Expiración.** Los holds expiran de forma perezosa: el predicado trata un hold vencido como libre, así que no hay un timer por hold, y un sweeper solo limpia el mapa. La compra se confirma solo si el hold sigue siendo tuyo; si no, se anula el pago."
+  },
+  "keyPoints": [
+    {
+      "en": "Scope (assumed): a 50k-seat on-sale with 2M fans in the first hour; never sell a seat twice.",
+      "es": "Alcance (supuesto): una preventa de 50k asientos con 2M de fans en la primera hora; nunca vender un asiento dos veces."
+    },
+    {
+      "en": "Hold seats with one **conditional UPDATE**; zero rows affected means another buyer got there first.",
+      "es": "Reserva asientos con un solo **UPDATE condicional**; cero filas afectadas significa que otro comprador llegó primero."
+    },
+    {
+      "en": "Holds carry an expiry (~10 min): expired holds count as available, so no timers are needed.",
+      "es": "Los holds llevan vencimiento (~10 min): un hold vencido cuenta como disponible, así que no necesitas timers."
+    },
+    {
+      "en": "Pay with an **idempotency key**, then flip HELD to SOLD only if the hold is still yours.",
+      "es": "Paga con una **clave de idempotencia** y pasa de HELD a SOLD solo si el hold sigue siendo tuyo."
+    },
+    {
+      "en": "A **virtual waiting room** admits buyers at a fixed rate, so the database sees steady load, not the spike.",
+      "es": "Una **sala de espera virtual** deja pasar compradores a ritmo fijo, así la base ve carga estable y no el pico."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  F[Fans] -->|browse| CDN[\"CDN + seat-map cache\"]\n  F -->|buy| W[\"Virtual waiting room\"]\n  W -->|\"admit N per min,<br/>signed token\"| B[Booking service]\n  B -->|\"conditional UPDATE<br/>AVAILABLE to HELD\"| DB[(\"Seats DB<br/>per-event partition\")]\n  DB -->|0 rows| T[\"Seat taken:<br/>pick another\"]\n  DB -->|\"1 row, expires ~10 min\"| P[\"Payment<br/>idempotency key\"]\n  P -->|authorized| C{\"Hold still mine?\"}\n  C -->|yes| S[\"Mark SOLD,<br/>issue ticket\"]\n  C -->|no| V[Void payment]\n  SW[Expiry sweeper] -.->|release expired| DB\n  DB -.->|seat changes| CDN",
+    "caption": {
+      "en": "The waiting room meters arrivals; one conditional write decides each seat, and the sale confirms only while the hold is live.",
+      "es": "La sala de espera dosifica las llegadas; una escritura condicional decide cada asiento y la venta se confirma solo mientras el hold está vigente."
+    }
+  },
+  "code": {
+    "lang": "sql",
+    "title": {
+      "en": "Hold and confirm seats with conditional writes",
+      "es": "Reservar y confirmar asientos con escrituras condicionales"
+    },
+    "source": "-- Hold: one atomic conditional write. No read-then-write gap for a rival to slip into.\nBEGIN;\nUPDATE seats\nSET    status = 'HELD', hold_id = :hold_id,\n       hold_expires_at = now() + interval '10 minutes'\nWHERE  event_id = :event_id\n  AND  seat_id = ANY(:seat_ids)\n  AND  (status = 'AVAILABLE'\n        OR (status = 'HELD' AND hold_expires_at < now()));  -- expired hold = free\n-- App: rows affected < len(seat_ids) -> ROLLBACK (all or nothing), show \"seat taken\".\nCOMMIT;\n\n-- Confirm, after the payment is AUTHORIZED: only if the hold is still ours and live.\nBEGIN;\nUPDATE seats\nSET    status = 'SOLD', order_id = :order_id\nWHERE  event_id = :event_id\n  AND  hold_id = :hold_id\n  AND  status = 'HELD'\n  AND  hold_expires_at > now();\n-- rows affected < seat count -> ROLLBACK, void the authorization, apologize.\nCOMMIT;\n\n-- Pessimistic alternative: lock first, decide later. Fail fast instead of queueing.\nSELECT seat_id, status FROM seats\nWHERE  event_id = :event_id AND seat_id = ANY(:seat_ids)\nORDER  BY seat_id            -- same lock order for everyone: no deadlocks\nFOR UPDATE NOWAIT;"
+  },
+  "example": {
+    "en": "A 50k-seat stadium opens sales at 10:00 with ~2M fans queued (assumed). The waiting room admits 2k users/min, in random order among everyone who arrived before 10:00. Maya gets in at 10:07 and picks F12–F13: her hold `UPDATE` affects 2 rows, expiring at 10:17. A rival's `UPDATE` on F12 a millisecond later affects 0 rows, and he sees nearby seats instead. Maya's card is authorized at 10:12; the confirm `UPDATE` matches her `hold_id` and the seats become SOLD. By ~10:40 the inventory is gone, and the room tells the ~1.9M still waiting.",
+    "es": "Un estadio de 50k asientos abre la venta a las 10:00 con ~2M de fans en la fila (supuesto). La sala de espera deja pasar 2k usuarios/min, en orden aleatorio entre todos los que llegaron antes de las 10:00. Maya entra a las 10:07 y elige F12–F13: su `UPDATE` de hold afecta 2 filas y vence a las 10:17. El `UPDATE` de otro comprador sobre F12, un milisegundo después, afecta 0 filas y él ve asientos cercanos. La tarjeta de Maya se autoriza a las 10:12; el `UPDATE` de confirmación coincide con su `hold_id` y los asientos quedan SOLD. Hacia las ~10:40 se agota el inventario y la sala se lo avisa a los ~1.9M que siguen esperando."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Optimistic vs pessimistic locking",
+        "es": "Bloqueo optimista vs pesimista"
+      },
+      "body": {
+        "en": "**Pessimistic**: `SELECT … FOR UPDATE` locks the rows, then you decide and write. Safe, but locks held across a network round trip queue buyers, and multi-seat transactions that lock in different orders deadlock; lock in seat order and add `NOWAIT` to fail fast. **Optimistic**: read freely, then write only if nothing changed (a `version` column or a status predicate) and check rows affected. Under contention optimistic usually means retries, but a lost seat is never retried: the buyer picks another, so it fits booking well. **General admission** has no seat rows: one `remaining` counter becomes a hot row. Split it into buckets (say 20 × 1k) and decrement a random non-empty one `WHERE remaining >= n`.",
+        "es": "**Pesimista**: `SELECT … FOR UPDATE` bloquea las filas y luego decides y escribes. Es seguro, pero los locks retenidos durante un viaje por la red hacen fila a los compradores, y las transacciones de varios asientos que bloquean en distinto orden caen en deadlock; bloquea en orden de asiento y agrega `NOWAIT` para fallar rápido. **Optimista**: lees libremente y escribes solo si nada cambió (una columna `version` o un predicado sobre el estado), y revisas las filas afectadas. Con contención, lo optimista suele implicar reintentos, pero un asiento perdido no se reintenta: el comprador elige otro, así que encaja bien en reservas. **Admisión general** no tiene filas por asiento: un único contador `remaining` se vuelve una fila caliente. Divídelo en buckets (por ejemplo 20 × 1k) y descuenta de uno no vacío al azar con `WHERE remaining >= n`."
+      }
+    },
+    {
+      "title": {
+        "en": "Holds, expiry and the payment race",
+        "es": "Holds, vencimiento y la carrera con el pago"
+      },
+      "body": {
+        "en": "A hold is a row state with a deadline, not a lock: `HELD` plus `hold_expires_at`. ~10 minutes (assumed) is long enough to pay and short enough to recycle abandoned carts during the on-sale. The race: the payment succeeds just after the hold expired and someone else grabbed the seat. So authorize the card first, then confirm with `UPDATE … SET status='SOLD' WHERE hold_id = :mine AND hold_expires_at > now()`; 0 rows means void the authorization and apologize. Extending the hold by a minute or two when payment starts makes this rare. Retries of the purchase reuse the same idempotency key, so a double click never charges twice.",
+        "es": "Un hold es un estado de la fila con fecha límite, no un lock: `HELD` más `hold_expires_at`. ~10 minutos (supuesto) alcanza para pagar y es lo bastante corto para reciclar carritos abandonados durante la preventa. La carrera: el pago se aprueba justo después de que venció el hold y otra persona tomó el asiento. Por eso primero autorizas la tarjeta y luego confirmas con `UPDATE … SET status='SOLD' WHERE hold_id = :mine AND hold_expires_at > now()`; 0 filas significa anular la autorización y disculparte. Extender el hold uno o dos minutos cuando empieza el pago vuelve rara esta carrera. Los reintentos de la compra reutilizan la misma clave de idempotencia, así un doble clic nunca cobra dos veces."
+      }
+    },
+    {
+      "title": {
+        "en": "The virtual waiting room",
+        "es": "La sala de espera virtual"
+      },
+      "body": {
+        "en": "The bottleneck is fixed inventory, not servers: with 2M fans for 50k seats, most leave empty-handed however much you scale. The waiting room sits at the edge (your CDN or a product such as Cloudflare Waiting Room), gives each visitor a signed, expiring token with a queue position, and admits new users at the rate checkout can serve. Randomizing everyone who arrived before the open means the fastest bot doesn't win. Pair it with presale codes, and show sold-out the moment inventory is gone. Ticketmaster's Eras Tour presale (Nov 2022) saw 3.5B system requests, 4× its previous peak, which it attributed to bots and fans without codes.",
+        "es": "El cuello de botella es el inventario fijo, no los servidores: con 2M de fans para 50k asientos, la mayoría se va sin boletos por mucho que escales. La sala de espera vive en el edge (tu CDN o un producto como Cloudflare Waiting Room), le da a cada visitante un token firmado y con vencimiento con su posición en la fila, y deja pasar usuarios nuevos al ritmo que el checkout puede atender. Ordenar al azar a todos los que llegaron antes de la apertura evita que gane el bot más rápido. Combínala con códigos de preventa y muestra \"agotado\" en cuanto se acaba el inventario. La preventa del Eras Tour en Ticketmaster (nov 2022) recibió 3.5B de solicitudes al sistema, 4× su pico anterior, que la empresa atribuyó a bots y a fans sin código."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "A seat can never sell twice: correctness rests on one conditional write, not on app-level checks.",
+      "es": "Un asiento nunca se vende dos veces: la corrección depende de una escritura condicional, no de chequeos en la app."
+    },
+    {
+      "en": "Write load stays tiny (~21 orders/s); the waiting room turns the spike into a steady stream.",
+      "es": "La carga de escritura es mínima (~21 órdenes/s); la sala de espera convierte el pico en un flujo estable."
+    },
+    {
+      "en": "Expiring holds recycle abandoned carts with no timer per hold.",
+      "es": "Los holds con vencimiento reciclan carritos abandonados sin un timer por hold."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Fans queue for tickets that may sell out before their turn.",
+      "es": "Los fans hacen fila por boletos que pueden agotarse antes de su turno."
+    },
+    {
+      "en": "One event's partition is a hot spot; general-admission counters need bucketing.",
+      "es": "La partición de un evento es un punto caliente; los contadores de admisión general necesitan buckets."
+    },
+    {
+      "en": "Hold TTL is a compromise: too short fails slow payers, too long hoards seats.",
+      "es": "El TTL del hold es un compromiso: muy corto falla a quien paga lento, muy largo acapara asientos."
+    }
+  ],
+  "whenToUse": {
+    "en": "Any fixed inventory sold under contention: concert and sports seats, flights, hotel rooms, limited product drops, appointment slots.",
+    "es": "Cualquier inventario fijo vendido con contención: asientos de conciertos y deportes, vuelos, habitaciones de hotel, lanzamientos limitados, turnos de citas."
+  },
+  "whenNotToUse": {
+    "en": "Plentiful or restockable inventory (digital goods, everyday e-commerce): skip holds and waiting rooms; a stock decrement, with a rare oversell refunded, is cheaper.",
+    "es": "Inventario abundante o reponible (bienes digitales, e-commerce cotidiano): sáltate los holds y la sala de espera; descontar stock y reembolsar alguna sobreventa ocasional sale más barato."
+  },
+  "numbers": [
+    {
+      "en": "Demand (assumed): 2M fans for 50k seats = 40 fans per seat; ~97.5% leave without tickets.",
+      "es": "Demanda (supuesta): 2M de fans para 50k asientos = 40 fans por asiento; ~97.5% se van sin boletos."
+    },
+    {
+      "en": "Orders: 50k seats ÷ ~4 per order ≈ 12.5k orders; selling out in 10 min is only ~21 orders/s.",
+      "es": "Órdenes: 50k asientos ÷ ~4 por orden ≈ 12.5k órdenes; agotar en 10 min son apenas ~21 órdenes/s."
+    },
+    {
+      "en": "Waiting room (assumed 2k admits/min): the last of 2M fans would wait ~1,000 min (~17 h), so announce sold-out early.",
+      "es": "Sala de espera (supuesto: 2k admisiones/min): el último de 2M de fans esperaría ~1,000 min (~17 h), así que avisa pronto que se agotó."
+    },
+    {
+      "en": "Ticketmaster, Eras Tour presale (Nov 2022): 3.5B system requests, 4× its previous peak; 2M+ tickets sold that day.",
+      "es": "Ticketmaster, preventa del Eras Tour (nov 2022): 3.5B de solicitudes al sistema, 4× su pico anterior; más de 2M de boletos vendidos ese día."
+    },
+    {
+      "en": "Cloudflare Waiting Room has two main knobs: total active users and new users per minute (checked Nov 2026).",
+      "es": "Cloudflare Waiting Room tiene dos perillas principales: usuarios activos totales y usuarios nuevos por minuto (revisado en nov 2026)."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Read-then-write in app code (`SELECT` the status, then `UPDATE`): two buyers both see AVAILABLE and both win.",
+      "es": "Leer y luego escribir desde la app (`SELECT` del estado y después `UPDATE`): dos compradores ven AVAILABLE y ganan los dos."
+    },
+    {
+      "en": "An expiry predicate like `OR hold_expires_at < now()` without `status='HELD'`: sold seats with an old expiry get resold.",
+      "es": "Un predicado de vencimiento como `OR hold_expires_at < now()` sin `status='HELD'`: los asientos vendidos con un vencimiento viejo se revenden."
+    },
+    {
+      "en": "Confirming SOLD without checking the hold is still yours: an expired, re-held seat is sold twice.",
+      "es": "Confirmar SOLD sin revisar que el hold siga siendo tuyo: un asiento vencido y reservado por otro se vende dos veces."
+    },
+    {
+      "en": "Serving seat-map reads from the primary DB: browsing traffic, not purchases, takes it down.",
+      "es": "Servir las lecturas del mapa de asientos desde la base primaria: la navegación, no las compras, es lo que la tumba."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Two users click the same seat in the same millisecond. What happens?",
+        "es": "Dos usuarios hacen clic en el mismo asiento en el mismo milisegundo. ¿Qué pasa?"
+      },
+      "a": {
+        "en": "Both run the same conditional UPDATE: set HELD where the seat is available or its hold expired. The database serializes them on the row: the first commits and affects 1 row; the second re-checks the predicate, affects 0 rows and gets \"seat taken\" plus nearby alternatives. No app-level lock, no read-then-write gap. I'd avoid `SELECT FOR UPDATE` held across the buyer's checkout: it queues everyone behind hot seats.",
+        "es": "Los dos ejecutan el mismo UPDATE condicional: pasar a HELD si el asiento está disponible o su hold venció. La base los serializa sobre la fila: el primero hace commit y afecta 1 fila; el segundo vuelve a evaluar el predicado, afecta 0 filas y recibe \"asiento ocupado\" con alternativas cercanas. Sin locks en la app ni huecos entre leer y escribir. Evitaría un `SELECT FOR UPDATE` retenido durante el checkout: pone a todos en fila detrás de los asientos más pedidos."
+      }
+    },
+    {
+      "q": {
+        "en": "How would you sell 20k general-admission tickets with no seat numbers?",
+        "es": "¿Cómo venderías 20k boletos de admisión general, sin asientos numerados?"
+      },
+      "a": {
+        "en": "Without seat rows, one `remaining` counter becomes the hot row every buyer updates. I'd split inventory into buckets, say 20 of 1k, and send each buyer to a random non-empty bucket, decrementing with `WHERE remaining >= n`. Holds still expire and return to their bucket. An alternative is pre-minting 20k tokens into a queue and popping one per buyer. Either way the waiting room keeps the arrival rate sane.",
+        "es": "Sin filas por asiento, un único contador `remaining` se vuelve la fila caliente que todos actualizan. Dividiría el inventario en buckets, por ejemplo 20 de 1k, y mandaría a cada comprador a un bucket no vacío al azar, descontando con `WHERE remaining >= n`. Los holds siguen venciendo y vuelven a su bucket. Otra opción es pre-generar 20k tokens en una queue y sacar uno por comprador. En ambos casos, la sala de espera mantiene razonable el ritmo de llegada."
+      }
+    },
+    {
+      "q": {
+        "en": "Why a waiting room? Why not just autoscale the booking service?",
+        "es": "¿Por qué una sala de espera? ¿Por qué no autoescalar el servicio de reservas?"
+      },
+      "a": {
+        "en": "Because the bottleneck is inventory, not servers. With 2M fans for 50k seats, ~97.5% leave empty-handed whatever I scale; more capacity just sends more concurrent writes at the same hot rows. The waiting room admits buyers at the rate checkout can serve, randomizes early arrivals so bots don't win on speed, and announces sold-out early. I'd still autoscale the stateless edge that serves the queue page.",
+        "es": "Porque el cuello de botella es el inventario, no los servidores. Con 2M de fans para 50k asientos, ~97.5% se va sin boletos por mucho que escale; más capacidad solo manda más escrituras concurrentes a las mismas filas calientes. La sala de espera deja pasar compradores al ritmo que el checkout aguanta, ordena al azar a quienes llegaron temprano para que los bots no ganen por velocidad y avisa pronto que se agotó. Igual autoescalaría el edge sin estado que sirve la página de la fila."
+      }
+    }
+  ],
+  "related": [
+    "idempotency",
+    "distributed-locks",
+    "rate-limiting",
+    "consistency-models",
+    "case-payment-system",
+    "cdn"
+  ],
+  "sources": [
+    {
+      "title": "Ticketmaster — Taylor Swift | The Eras Tour Onsale Explained (Nov 2022)",
+      "url": "https://business.ticketmaster.com/press-release/taylor-swift-the-eras-tour-onsale-explained/"
+    },
+    {
+      "title": "PostgreSQL — SELECT: the locking clause (FOR UPDATE, NOWAIT, SKIP LOCKED)",
+      "url": "https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE"
+    },
+    {
+      "title": "Cloudflare — Waiting Room configuration settings",
+      "url": "https://developers.cloudflare.com/waiting-room/reference/configuration-settings/"
+    }
+  ]
+}

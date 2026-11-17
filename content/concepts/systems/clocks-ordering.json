@@ -1,0 +1,109 @@
+{
+  "id": "clocks-ordering",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Clocks and event ordering", "es": "Relojes y orden de eventos" },
+  "aliases": ["clock skew", "Lamport clock", "vector clock", "hybrid logical clock", "HLC", "TrueTime", "happens-before", "NTP"],
+  "tldr": {
+    "en": "Machine clocks drift and jump, so timestamps can't order events across nodes. Use logical clocks for causality (Lamport, vector) or hybrid clocks that also stay close to wall time.",
+    "es": "Los relojes de las máquinas se desvían y saltan, así que sus timestamps no sirven para ordenar eventos entre nodos. Usa relojes lógicos para la causalidad (Lamport, vectoriales) o relojes híbridos que además se mantienen cerca de la hora real."
+  },
+  "analogy": {
+    "en": "Two friends' watches disagree by a minute, so the times on their texts can't say who wrote first. But if Bea's text replies to Ana's, Ana's came first, whatever the watches say.",
+    "es": "Los relojes de dos amigas difieren en un minuto, así que la hora de sus mensajes no dice quién escribió primero. Pero si el mensaje de Bea responde al de Ana, el de Ana fue primero, digan lo que digan los relojes."
+  },
+  "explain": {
+    "en": "A machine's **wall clock** is a quartz crystal corrected by NTP. It **drifts**, and NTP can **step** it forwards or backwards, so `now()` on two nodes disagrees by about a millisecond on a LAN and tens of milliseconds over the internet. Never order cross-node events by wall time, and measure timeouts with a **monotonic clock**.\n\nWhat you usually need is **causal order**: if *a* could have influenced *b* (same process, or through a message), *a* **happened before** *b*.\n\n- **Lamport clock**: a counter. Increment on each event, attach it to messages, and on receipt jump to `max(local, received) + 1`. If a → b then L(a) < L(b), but not the reverse: it can't detect concurrency.\n- **Vector clock**: one counter per node, compared element-wise. If neither dominates, the writes are **concurrent**, a real conflict. Dynamo used them; the cost is one entry per writer.\n- **Hybrid logical clock (HLC)**: wall time plus a logical counter. Causal like Lamport, close to real time, fits in 64 bits. CockroachDB uses it.\n- **TrueTime** (Spanner): GPS and atomic clocks expose the uncertainty ε, and commits wait it out.",
+    "es": "El **reloj de pared** de una máquina es un cristal de cuarzo corregido por NTP. Se **desvía** (drift), y NTP puede hacerlo **saltar** hacia adelante o hacia atrás, así que `now()` en dos nodos difiere en alrededor de un milisegundo en una LAN y en decenas de milisegundos por internet. Nunca ordenes eventos entre nodos por hora de pared, y mide los timeouts con un **reloj monotónico**.\n\nLo que casi siempre necesitas es **orden causal**: si *a* pudo influir en *b* (mismo proceso, o a través de un mensaje), *a* **ocurrió antes** que *b* (happened-before).\n\n- **Reloj de Lamport**: un contador. Se incrementa en cada evento, viaja en los mensajes y, al recibir, salta a `max(local, recibido) + 1`. Si a → b, entonces L(a) < L(b), pero no al revés: no detecta concurrencia.\n- **Reloj vectorial**: un contador por nodo, comparados elemento a elemento. Si ninguno domina, las escrituras son **concurrentes**: un conflicto real. Dynamo los usaba; el costo es una entrada por cada nodo que escribe.\n- **Reloj lógico híbrido (HLC)**: hora de pared más un contador lógico. Causal como Lamport, cercano a la hora real y cabe en 64 bits. CockroachDB lo usa.\n- **TrueTime** (Spanner): relojes GPS y atómicos exponen la incertidumbre ε, y cada commit espera a que pase."
+  },
+  "keyPoints": [
+    {
+      "en": "Wall clocks **drift** and NTP can step them backwards: never order cross-node events by `now()`.",
+      "es": "Los relojes de pared se **desvían** y NTP puede atrasarlos de golpe: nunca ordenes eventos entre nodos con `now()`."
+    },
+    {
+      "en": "A **Lamport clock** is a counter: if a caused b, L(a) < L(b), but a smaller value proves nothing.",
+      "es": "Un **reloj de Lamport** es un contador: si a causó b, L(a) < L(b), pero un valor menor no prueba nada."
+    },
+    {
+      "en": "**Vector clocks** keep one counter per node, so they detect concurrent writes, at one entry per writer.",
+      "es": "Los **relojes vectoriales** guardan un contador por nodo, así detectan escrituras concurrentes, a costa de una entrada por escritor."
+    },
+    {
+      "en": "**HLC** is wall time plus a logical counter: causal like Lamport, close to real time, 64 bits.",
+      "es": "**HLC** es hora de pared más un contador lógico: causal como Lamport, cercano a la hora real, en 64 bits."
+    },
+    {
+      "en": "**TrueTime** exposes clock uncertainty (~1–7 ms in 2012); Spanner waits it out before a commit is visible.",
+      "es": "**TrueTime** expone la incertidumbre del reloj (~1–7 ms en 2012); Spanner la espera antes de que un commit sea visible."
+    }
+  ],
+  "diagram": {
+    "code": "sequenceDiagram\n  participant A as Node A, clock 80 ms fast\n  participant B as Node B\n  participant S as Store, last-write-wins\n  A->>S: x=1, wall 1080, Lamport 5\n  A->>B: message, Lamport 5\n  Note over B: Lamport = max(2, 5) + 1 = 6\n  B->>S: x=2, wall 1020, Lamport 6\n  Note over S: By wall time, x=1 wins (wrong)\n  Note over S: By Lamport, x=2 wins (causal)",
+    "caption": {
+      "en": "B writes after hearing from A, but A's fast clock makes last-write-wins keep the older value; a logical clock keeps the causal order.",
+      "es": "B escribe después de recibir el mensaje de A, pero el reloj adelantado de A hace que last-write-wins conserve el valor viejo; un reloj lógico respeta el orden causal."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A hybrid logical clock in 25 lines", "es": "Un reloj lógico híbrido en 25 líneas" },
+    "source": "import time\n\nclass HLC:\n    \"\"\"Hybrid logical clock (Kulkarni et al., 2014). Timestamps are (l, c) tuples.\"\"\"\n    def __init__(self):\n        self.l, self.c = 0, 0                  # l: max wall time seen, c: logical counter\n\n    def _pt(self) -> int:\n        return time.time_ns() // 1_000_000     # physical time in ms (may drift or step)\n\n    def now(self) -> tuple[int, int]:          # local or send event\n        old = self.l\n        self.l = max(old, self._pt())\n        self.c = self.c + 1 if self.l == old else 0\n        return (self.l, self.c)\n\n    def update(self, ml: int, mc: int) -> tuple[int, int]:  # receive event\n        old = self.l\n        self.l = max(old, ml, self._pt())      # never go behind anything we've seen\n        if self.l == old == ml:\n            self.c = max(self.c, mc) + 1\n        elif self.l == old:\n            self.c += 1\n        elif self.l == ml:\n            self.c = mc + 1\n        else:\n            self.c = 0                         # our wall clock moved ahead: reset\n        return (self.l, self.c)\n\n# Tuples compare lexicographically: (1080, 0) < (1080, 1) < (1081, 0)"
+  },
+  "example": {
+    "en": "A profile service stores `display_name` in a multi-region database with **last-write-wins** by wall-clock timestamp. NTP breaks in the EU region and its clocks run 2 s fast. A user renames themselves through EU, then a second later fixes a typo through US. The US write carries an *earlier* timestamp, so every replica silently keeps the typo. With HLC timestamps, the US node reads the EU version first, its clock jumps past that stamp, and the fix wins. Also alert on clock offset.",
+    "es": "Un servicio de perfiles guarda `display_name` en una base de datos multirregión con **last-write-wins** por timestamp de pared. NTP falla en la región EU y sus relojes quedan 2 s adelantados. Un usuario cambia su nombre a través de EU y un segundo después corrige un error de tipeo a través de US. La escritura de US lleva un timestamp *anterior*, así que todas las réplicas conservan el error en silencio. Con timestamps HLC, el nodo de US lee primero la versión de EU, su reloj salta por encima de ese valor y gana la corrección. Además, alerta sobre el desfase de reloj."
+  },
+  "pros": [
+    { "en": "Logical clocks order causally related events correctly with no clock sync at all.", "es": "Los relojes lógicos ordenan bien los eventos con relación causal sin ninguna sincronización de relojes." },
+    { "en": "Vector clocks detect truly concurrent writes, so you can merge them instead of silently dropping one.", "es": "Los relojes vectoriales detectan escrituras realmente concurrentes, así que puedes fusionarlas en vez de descartar una en silencio." },
+    { "en": "HLC timestamps stay near wall time: readable, usable for snapshots and TTLs, and 64 bits.", "es": "Los timestamps HLC se mantienen cerca de la hora real: son legibles, sirven para snapshots y TTLs, y ocupan 64 bits." }
+  ],
+  "cons": [
+    { "en": "Lamport clocks can't tell concurrent events from ordered ones.", "es": "Los relojes de Lamport no distinguen eventos concurrentes de eventos ordenados." },
+    { "en": "Vector clocks grow with the number of writers and need pruning.", "es": "Los relojes vectoriales crecen con la cantidad de escritores y hay que podarlos." },
+    { "en": "HLC and TrueTime still rely on a bounded skew; break the bound and the guarantees go.", "es": "HLC y TrueTime igual dependen de un desfase acotado; si se rompe esa cota, se pierden las garantías." }
+  ],
+  "whenToUse": {
+    "en": "Multi-writer or multi-region data, conflict detection, causal messaging, MVCC snapshots, and any time you are tempted to sort events from different machines by timestamp.",
+    "es": "Datos con varios escritores o multirregión, detección de conflictos, mensajería causal, snapshots MVCC y cada vez que tengas la tentación de ordenar por timestamp eventos de distintas máquinas."
+  },
+  "whenNotToUse": {
+    "en": "When one leader or one database already sequences every write (a Raft log index, a Postgres sequence): use that order instead of building clocks.",
+    "es": "Cuando un solo líder o una sola base de datos ya secuencia cada escritura (el índice del log de Raft, una secuencia de Postgres): usa ese orden en vez de construir relojes."
+  },
+  "numbers": [
+    { "en": "NTP accuracy: ~1 ms or better on a LAN, tens of ms over the public internet.", "es": "Precisión de NTP: ~1 ms o mejor en una LAN, decenas de ms por internet pública." },
+    { "en": "Spanner (2012): TrueTime ε is a ~1–7 ms sawtooth, ~4 ms most of the time; assumed drift 200 µs/s.", "es": "Spanner (2012): el ε de TrueTime es un diente de sierra de ~1–7 ms, ~4 ms casi siempre; drift supuesto de 200 µs/s." },
+    { "en": "200 µs/s of drift = 6 ms after 30 s, ~17 s after a day without sync.", "es": "Un drift de 200 µs/s = 6 ms tras 30 s y ~17 s tras un día sin sincronizar." },
+    { "en": "CockroachDB max clock offset defaults to 500 ms; a node 80% of that off from half the cluster shuts down (docs, Nov 2026).", "es": "El desfase máximo de reloj en CockroachDB es 500 ms por defecto; un nodo desfasado en un 80% de eso respecto de la mitad del clúster se apaga (docs, nov. 2026)." }
+  ],
+  "pitfalls": [
+    { "en": "Measuring timeouts or durations with wall time: an NTP step makes them negative or huge. Use a monotonic clock.", "es": "Medir timeouts o duraciones con la hora de pared: un salto de NTP los vuelve negativos o enormes. Usa un reloj monotónico." },
+    { "en": "Last-write-wins on wall-clock timestamps: one fast clock silently discards newer writes.", "es": "Last-write-wins con timestamps de pared: un solo reloj adelantado descarta en silencio escrituras más nuevas." },
+    { "en": "Treating a lower Lamport timestamp as proof that an event happened first.", "es": "Tomar un timestamp de Lamport menor como prueba de que un evento ocurrió primero." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why not order events across services by timestamp?", "es": "¿Por qué no ordenar eventos entre servicios por timestamp?" },
+      "a": {
+        "en": "Because each clock drifts and NTP corrects it in steps, so nodes disagree by milliseconds or more, enough to invert writes that are causally related. Last-write-wins on wall time then silently drops data. If one service owns the data, I let its log or sequence define the order. Across nodes I use a logical clock: Lamport for a total order consistent with causality, vector clocks to detect conflicts, or HLC to stay close to real time.",
+        "es": "Porque cada reloj se desvía y NTP lo corrige a saltos, así que los nodos difieren en milisegundos o más, lo suficiente para invertir escrituras con relación causal. Last-write-wins con hora de pared pierde datos en silencio. Si un servicio es dueño de los datos, dejo que su log o su secuencia definan el orden. Entre nodos uso un reloj lógico: Lamport para un orden total consistente con la causalidad, vectoriales para detectar conflictos o HLC para mantenerme cerca de la hora real."
+      }
+    },
+    {
+      "q": { "en": "How does Spanner get external consistency from physical clocks?", "es": "¿Cómo logra Spanner consistencia externa con relojes físicos?" },
+      "a": {
+        "en": "TrueTime returns an interval, not a point, with ε around 1–7 ms in the 2012 paper, backed by GPS and atomic clocks. A commit takes the interval's latest bound as its timestamp, then waits until that time has surely passed everywhere before making it visible. Any transaction that starts later gets a larger timestamp. The wait overlaps Paxos replication. Without that hardware, CockroachDB uses HLC plus a max-offset bound and restarts reads that fall in the uncertainty window.",
+        "es": "TrueTime devuelve un intervalo, no un punto, con un ε de alrededor de 1–7 ms en el paper de 2012, respaldado por relojes GPS y atómicos. Un commit toma el límite superior del intervalo como timestamp y espera hasta que ese instante haya pasado con certeza en todos lados antes de hacerlo visible. Cualquier transacción que empiece después recibe un timestamp mayor. La espera se solapa con la replicación Paxos. Sin ese hardware, CockroachDB usa HLC más una cota de desfase máximo y reinicia las lecturas que caen en la ventana de incertidumbre."
+      }
+    }
+  ],
+  "related": ["consistency-models", "replication", "consensus", "distributed-locks", "event-driven", "cap-pacelc"],
+  "sources": [
+    { "title": "Lamport — Time, Clocks, and the Ordering of Events in a Distributed System (CACM 1978)", "url": "https://www.microsoft.com/en-us/research/publication/time-clocks-ordering-events-distributed-system/" },
+    { "title": "Kulkarni et al. — Logical Physical Clocks and Consistent Snapshots (HLC, 2014)", "url": "https://cse.buffalo.edu/tech-reports/2014-04.pdf" },
+    { "title": "Corbett et al. — Spanner: Google's Globally-Distributed Database (OSDI 2012)", "url": "https://research.google/pubs/spanner-googles-globally-distributed-database-2/" },
+    { "title": "CockroachDB docs — Transaction Layer (HLC, max clock offset)", "url": "https://docs.cockroachlabs.com/docs/stable/architecture/transaction-layer" }
+  ]
+}

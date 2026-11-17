@@ -1,0 +1,114 @@
+{
+  "id": "object-storage",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Object storage (S3-style)", "es": "Almacenamiento de objetos (estilo S3)" },
+  "aliases": ["S3", "blob storage", "GCS", "Azure Blob Storage", "bucket", "multipart upload", "presigned URL", "storage classes", "Glacier", "lifecycle rules"],
+  "tldr": {
+    "en": "Store files as whole objects under bucket + key, over HTTP: virtually unlimited, very durable and cheap per GB, but you rewrite whole objects, pay per request, and keep metadata and queries in a database.",
+    "es": "Guarda archivos como objetos completos bajo bucket + key, vía HTTP: capacidad prácticamente ilimitada, muy durable y barata por GB, pero reescribes objetos enteros, pagas por petición y dejas metadatos y consultas en una base de datos."
+  },
+  "explain": {
+    "en": "**Object storage** (Amazon S3, Google Cloud Storage, Azure Blob) keeps **objects** (bytes plus metadata) in a **bucket** under a **key**. The namespace is flat: the `/` in `videos/2026/a.mp4` is just a character, and prefixes only group keys.\n\n- **Durability**: S3 Standard stores data across at least 3 AZs and is designed for 11 nines. Since Dec 2020, a read after a successful write returns the new object.\n- **Whole-object writes**: in general-purpose buckets you can't edit bytes in place; you upload a new version. A rename is a copy plus a delete.\n- **Multipart upload**: split a big file into parts (5 MiB–5 GiB, up to 10,000), upload them in parallel and retry only the part that failed.\n- **Presigned URLs**: your API signs a short-lived URL, so the client uploads or downloads directly, never through your servers.\n- **Storage classes**: the price per GB falls as retrieval gets slower or costlier; **lifecycle rules** move or delete objects by age.\n\nThe classic pattern: bytes in object storage, metadata and search in a database, delivery through a [[cdn]].",
+    "es": "El **almacenamiento de objetos** (Amazon S3, Google Cloud Storage, Azure Blob) guarda **objetos** (bytes más metadatos) en un **bucket** bajo una **key**. El espacio de nombres es plano: la `/` en `videos/2026/a.mp4` es solo un carácter, y los prefijos solo agrupan keys.\n\n- **Durabilidad**: S3 Standard guarda los datos en al menos 3 AZs y está diseñado para 11 nueves. Desde dic. 2020, una lectura después de una escritura exitosa devuelve el objeto nuevo.\n- **Escrituras de objeto completo**: en los buckets de propósito general no puedes editar bytes en su lugar; subes una versión nueva. Renombrar es copiar más borrar.\n- **Multipart upload**: divide un archivo grande en partes (5 MiB–5 GiB, hasta 10,000), súbelas en paralelo y reintenta solo la parte que falló.\n- **Presigned URLs**: tu API firma una URL de vida corta y el cliente sube o descarga directo, nunca a través de tus servidores.\n- **Clases de almacenamiento**: el precio por GB baja a medida que recuperar se vuelve más lento o más caro; las **lifecycle rules** mueven o borran objetos según su edad.\n\nEl patrón clásico: los bytes en almacenamiento de objetos, los metadatos y la búsqueda en una base de datos, y la entrega a través de un [[cdn]]."
+  },
+  "keyPoints": [
+    {
+      "en": "An object is bytes plus metadata under a **bucket + key**; the namespace is flat and prefixes just group keys.",
+      "es": "Un objeto son bytes más metadatos bajo **bucket + key**; el espacio de nombres es plano y los prefijos solo agrupan keys."
+    },
+    {
+      "en": "You replace whole objects, never edit bytes in place; a rename is a copy plus a delete.",
+      "es": "Reemplazas objetos completos, nunca editas bytes en su lugar; renombrar es copiar más borrar."
+    },
+    {
+      "en": "**Multipart upload** sends parts in parallel and retries only a failed part; use it from ~100 MB.",
+      "es": "El **multipart upload** sube partes en paralelo y reintenta solo la que falló; úsalo desde ~100 MB."
+    },
+    {
+      "en": "**Presigned URLs** let clients move bytes straight to storage, so your API servers never proxy them.",
+      "es": "Las **presigned URLs** permiten que el cliente mueva los bytes directo al storage, sin que tus servidores de API los pasen."
+    },
+    {
+      "en": "Keep bytes in object storage and metadata in a database; serve hot objects through a CDN.",
+      "es": "Deja los bytes en el almacenamiento de objetos y los metadatos en una base de datos; sirve los objetos calientes con un CDN."
+    }
+  ],
+  "diagram": {
+    "code": "sequenceDiagram\n  participant C as Client\n  participant A as API\n  participant S as S3 bucket\n  participant Q as Event queue\n  participant W as Worker\n  C->>A: POST /uploads (name, size)\n  A->>A: Check quota, sign URL\n  A-->>C: Presigned URL and key\n  C->>S: PUT bytes (multipart if large)\n  S-->>Q: ObjectCreated event\n  Q->>W: Validate, scan, process\n  W->>A: Mark upload ready",
+    "caption": {
+      "en": "The API authorizes and signs; the bytes go straight from the client to storage, and an event starts processing.",
+      "es": "La API autoriza y firma; los bytes van directo del cliente al storage y un evento inicia el procesamiento."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Presigned URLs and multipart upload with boto3", "es": "Presigned URLs y multipart upload con boto3" },
+    "source": "import boto3\nfrom boto3.s3.transfer import TransferConfig\n\ns3 = boto3.client(\"s3\")\nBUCKET = \"media-uploads\"  # example bucket\nMB = 1024 * 1024\n\ndef upload_url(user_id: str, upload_id: str, content_type: str) -> str:\n    key = f\"raw/{user_id}/{upload_id}\"  # the server picks the key, never the client\n    return s3.generate_presigned_url(\n        \"put_object\",\n        Params={\"Bucket\": BUCKET, \"Key\": key, \"ContentType\": content_type},\n        ExpiresIn=900,  # 15 min: a presigned URL is a bearer token\n    )\n\ndef download_url(key: str) -> str:\n    return s3.generate_presigned_url(\n        \"get_object\", Params={\"Bucket\": BUCKET, \"Key\": key}, ExpiresIn=300\n    )\n\n# Server-side large file: the SDK splits it into parallel parts\ncfg = TransferConfig(\n    multipart_threshold=100 * MB,  # AWS suggests multipart from ~100 MB\n    multipart_chunksize=100 * MB,\n    max_concurrency=8,\n)\ns3.upload_file(\"render.mp4\", BUCKET, \"renders/2026/render.mp4\", Config=cfg)"
+  },
+  "example": {
+    "en": "A video app accepts uploads up to 5 GB from phones. The API checks quota, writes an `uploads` row as `pending` and returns presigned URLs for each part. The phone uploads 100 MB parts, 4 at a time; on a flaky network only the dropped part is retried. Completing the upload fires an `ObjectCreated` event; a worker transcodes, stores renditions and flips the row to `ready`. A lifecycle rule aborts incomplete uploads after 7 days. API servers never touch a video byte.",
+    "es": "Una app de video acepta subidas de hasta 5 GB desde teléfonos. La API revisa la cuota, escribe una fila en `uploads` como `pending` y devuelve presigned URLs para cada parte. El teléfono sube partes de 100 MB, 4 a la vez; con una red inestable solo reintenta la parte que se cayó. Completar la subida dispara un evento `ObjectCreated`; un worker transcodifica, guarda las versiones y pasa la fila a `ready`. Una lifecycle rule aborta las subidas incompletas a los 7 días. Los servidores de la API nunca tocan un byte de video."
+  },
+  "pros": [
+    { "en": "Virtually unlimited capacity, with no servers or disks to manage.", "es": "Capacidad prácticamente ilimitada, sin servidores ni discos que administrar." },
+    { "en": "Very durable and cheap per GB, with colder classes for archives.", "es": "Muy durable y barato por GB, con clases más frías para archivos históricos." },
+    { "en": "Throughput scales out: parallel requests across prefixes reach tens of thousands per second.", "es": "El throughput escala horizontalmente: peticiones en paralelo sobre varios prefijos llegan a decenas de miles por segundo." }
+  ],
+  "cons": [
+    { "en": "Higher per-request latency than a disk or cache: ~100–200 ms for small objects, per AWS.", "es": "Más latencia por petición que un disco o una caché: ~100–200 ms para objetos pequeños, según AWS." },
+    { "en": "No partial updates, appends or atomic renames in general-purpose buckets.", "es": "Sin actualizaciones parciales, appends ni renombres atómicos en los buckets de propósito general." },
+    { "en": "You pay per request: millions of tiny objects can cost more in requests than in storage.", "es": "Pagas por petición: millones de objetos diminutos pueden costar más en peticiones que en almacenamiento." }
+  ],
+  "whenToUse": {
+    "en": "Files and blobs written once and read many times by key: images, video, backups, logs, ML datasets and model weights, data-lake tables, static sites.",
+    "es": "Archivos y blobs que se escriben una vez y se leen muchas veces por key: imágenes, video, backups, logs, datasets y pesos de modelos, tablas de un data lake, sitios estáticos."
+  },
+  "whenNotToUse": {
+    "en": "Small records you update or query by field (use a database), low-latency random reads (use a cache or block storage), or workloads that need in-place file edits.",
+    "es": "Registros pequeños que actualizas o consultas por campo (usa una base de datos), lecturas aleatorias de baja latencia (usa una caché o block storage) o cargas que necesitan editar archivos en su lugar."
+  },
+  "numbers": [
+    { "en": "S3 Standard: designed for 11 nines (99.999999999%) durability, data in at least 3 AZs.", "es": "S3 Standard: diseñado para 11 nueves (99.999999999%) de durabilidad, con datos en al menos 3 AZs." },
+    { "en": "Multipart: parts of 5 MiB–5 GiB, at most 10,000; max object ~50 TB (48.8 TiB) since Dec 2025.", "es": "Multipart: partes de 5 MiB–5 GiB, máximo 10,000; objeto máximo ~50 TB (48.8 TiB) desde dic. 2025." },
+    { "en": "Per partitioned prefix: at least 3,500 writes/s and 5,500 reads/s; spread keys across prefixes to go higher.", "es": "Por prefijo particionado: al menos 3,500 escrituras/s y 5,500 lecturas/s; reparte las keys en varios prefijos para ir más alto." },
+    { "en": "us-east-1 list price (Nov 2026), per GB-month: Standard $0.023, Standard-IA $0.0125, Glacier Instant Retrieval $0.004; PUTs $0.005 per 1,000.", "es": "Precio de lista en us-east-1 (nov. 2026), por GB-mes: Standard $0.023, Standard-IA $0.0125, Glacier Instant Retrieval $0.004; los PUT, $0.005 por cada 1,000." },
+    { "en": "Presigned URLs: up to 7 days with IAM user keys; with role credentials they expire with the session.", "es": "Presigned URLs: hasta 7 días con llaves de un usuario IAM; con credenciales de un rol expiran junto con la sesión." }
+  ],
+  "pitfalls": [
+    { "en": "Proxying uploads through API servers: you pay twice in bandwidth and tie up workers for minutes.", "es": "Pasar las subidas por los servidores de la API: pagas dos veces el ancho de banda y ocupas workers durante minutos." },
+    { "en": "Never aborting failed multipart uploads: orphaned parts are billed until an `AbortIncompleteMultipartUpload` lifecycle rule removes them.", "es": "No abortar nunca los multipart uploads fallidos: las partes huérfanas se cobran hasta que una lifecycle rule `AbortIncompleteMultipartUpload` las elimina." },
+    { "en": "Treating it like a filesystem: listing prefixes to find files, or \"renaming\" millions of objects.", "es": "Tratarlo como un filesystem: listar prefijos para encontrar archivos o \"renombrar\" millones de objetos." },
+    { "en": "Moving tiny or short-lived objects to cold classes: Glacier Instant Retrieval bills at least 128 KB and 90 days each.", "es": "Mover objetos diminutos o de vida corta a clases frías: Glacier Instant Retrieval cobra al menos 128 KB y 90 días por objeto." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Design uploads of files up to 5 GB from mobile clients.", "es": "Diseña la subida de archivos de hasta 5 GB desde clientes móviles." },
+      "a": {
+        "en": "The API never touches the bytes. It authenticates, checks quota, picks the key itself, records a pending row and returns presigned URLs, one per multipart part. The client uploads parts in parallel and retries only failed ones. Completion fires an `ObjectCreated` event; a worker validates, scans and processes, then marks the row ready. A lifecycle rule aborts incomplete uploads, and downloads go through a CDN with short-lived signed URLs.",
+        "es": "La API nunca toca los bytes. Autentica, revisa la cuota, elige la key ella misma, registra una fila pendiente y devuelve presigned URLs, una por cada parte del multipart. El cliente sube las partes en paralelo y reintenta solo las que fallan. Al completar se dispara un evento `ObjectCreated`; un worker valida, escanea y procesa, y marca la fila como lista. Una lifecycle rule aborta las subidas incompletas, y las descargas salen por un CDN con URLs firmadas de vida corta."
+      }
+    },
+    {
+      "q": { "en": "Why not store user files in the database as blobs?", "es": "¿Por qué no guardar los archivos de los usuarios como blobs en la base de datos?" },
+      "a": {
+        "en": "Each store is good at a different job. A database is built for small rows, indexes and transactions; multi-MB blobs bloat its backups, replication and buffer cache, and every byte flows through its connections. Object storage is cheaper per GB, scales out, is very durable and works with CDNs and presigned URLs. So I keep bytes in S3 and a metadata row in Postgres: key, owner, size, checksum, status.",
+        "es": "Cada almacén es bueno en algo distinto. Una base de datos está hecha para filas pequeñas, índices y transacciones; los blobs de varios MB inflan sus backups, su replicación y su buffer cache, y cada byte pasa por sus conexiones. El almacenamiento de objetos es más barato por GB, escala horizontalmente, es muy durable y funciona con CDNs y presigned URLs. Así que dejo los bytes en S3 y una fila de metadatos en Postgres: key, dueño, tamaño, checksum y estado."
+      }
+    },
+    {
+      "q": { "en": "Is S3 eventually consistent?", "es": "¿S3 es eventualmente consistente?" },
+      "a": {
+        "en": "Not anymore. Since December 2020, S3 gives strong read-after-write consistency for new objects, overwrites and LIST, at no extra cost. What it doesn't give is multi-object transactions or locks: two writers to the same key race and the latest wins. So I give each upload a unique key, use conditional writes when overwrites must not happen, and keep cross-object invariants in the database.",
+        "es": "Ya no. Desde diciembre de 2020, S3 ofrece consistencia fuerte de lectura después de escritura para objetos nuevos, sobrescrituras y LIST, sin costo extra. Lo que no ofrece son transacciones entre objetos ni locks: dos escritores sobre la misma key compiten y gana el más reciente. Por eso le doy a cada subida una key única, uso escrituras condicionales cuando no debe haber sobrescrituras y dejo los invariantes entre objetos en la base de datos."
+      }
+    }
+  ],
+  "related": ["cdn", "case-file-sync", "case-video-streaming", "sql-vs-nosql", "idempotency", "data-platform"],
+  "sources": [
+    { "title": "Amazon S3 — Uploading objects using multipart upload", "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/mpuoverview.html" },
+    { "title": "Amazon S3 — Download and upload objects with presigned URLs", "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/using-presigned-url.html" },
+    { "title": "Amazon S3 — Storage classes", "url": "https://aws.amazon.com/s3/storage-classes/" },
+    { "title": "Amazon S3 — Optimizing performance", "url": "https://docs.aws.amazon.com/AmazonS3/latest/userguide/optimizing-performance.html" }
+  ]
+}

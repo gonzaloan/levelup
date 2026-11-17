@@ -1,0 +1,234 @@
+{
+  "id": "case-web-crawler",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": {
+    "en": "Design: web crawler",
+    "es": "Diseño: web crawler"
+  },
+  "aliases": [
+    "web crawler",
+    "web spider",
+    "URL frontier",
+    "Googlebot-style crawler",
+    "politeness",
+    "robots.txt",
+    "Mercator",
+    "SimHash"
+  ],
+  "tldr": {
+    "en": "A URL frontier with one queue per host feeds fetch workers that obey robots.txt; new links pass a Bloom-filter seen-check, pages pass content dedup, and each host gets one request at a time.",
+    "es": "Un URL frontier con una cola por host alimenta workers de descarga que respetan robots.txt; los links nuevos pasan por un filtro de Bloom de ya vistos, las páginas por deduplicación de contenido, y cada host recibe una petición a la vez."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: start from seed URLs, crawl ~1B pages/month (assumption), store raw HTML for an indexer, and recrawl pages that change. **Non-functional**: polite (never overload a host, obey robots.txt), robust to spider traps and broken HTML, horizontally scalable, restartable after crashes.\n\nQuestions I'd ask: what is it for (search index, LLM training data, monitoring)? HTML only, or PDFs too? Do we render JavaScript? How fresh must pages be?\n\nScale: 1B pages ÷ ~2.6M s ≈ **~400 pages/s**. At ~185 KB per page (Common Crawl's 2026 average) that's ~185 TB/month of raw content.\n\n### High-level design\n\nSeeds → **URL frontier** → fetch workers (async HTTP, cached DNS and robots.txt) → content dedup → page store (object storage, WARC files) → link extractor → URL normalizer → **URL-seen filter** → back into the frontier.\n\n### The hard parts\n\n**Politeness without losing throughput.** The frontier (Mercator design) has *front queues* by priority and *back queues* that each hold one host. A heap keyed by each host's next allowed fetch time hands out work, so one host gets one request at a time while thousands of hosts run in parallel. Partition hosts across workers by `hash(host)`: one worker owns each host's queue, robots.txt and DNS entry.\n\n**Dedup at billions.** Normalize URLs (lowercase host, drop fragments and session ids, sort query params), then check a **Bloom filter** (~9.6 bits per URL at 1% false positives). For content, an exact hash catches copies and **SimHash** catches near-duplicates: Google used 64-bit fingerprints with ≤ 3 differing bits over 8B pages.",
+    "es": "### Requisitos\n\n**Funcionales**: partir de URLs semilla, rastrear ~1B de páginas al mes (supuesto), guardar el HTML crudo para un indexador y volver a rastrear las páginas que cambian. **No funcionales**: cortés (nunca sobrecargar un host y respetar robots.txt), resistente a spider traps y HTML roto, escalable horizontalmente y capaz de reanudar tras una caída.\n\nPreguntas que haría: ¿para qué es (índice de búsqueda, datos de entrenamiento de LLMs, monitoreo)? ¿Solo HTML o también PDFs? ¿Renderizamos JavaScript? ¿Qué tan frescas deben estar las páginas?\n\nEscala: 1B de páginas ÷ ~2.6M s ≈ **~400 páginas/s**. A ~185 KB por página (el promedio de Common Crawl en 2026) son ~185 TB/mes de contenido crudo.\n\n### Diseño de alto nivel\n\nSemillas → **URL frontier** → workers de descarga (HTTP asíncrono, DNS y robots.txt en cache) → deduplicación de contenido → almacén de páginas (object storage, archivos WARC) → extractor de links → normalizador de URLs → **filtro de URLs vistas** → de vuelta al frontier.\n\n### Las partes difíciles\n\n**Cortesía sin perder throughput.** El frontier (diseño de Mercator) tiene *colas frontales* por prioridad y *colas traseras* que guardan un solo host cada una. Un heap ordenado por la próxima hora permitida de cada host reparte el trabajo, así cada host recibe una petición a la vez mientras miles de hosts avanzan en paralelo. Reparte los hosts entre workers por `hash(host)`: un solo worker es dueño de la cola, el robots.txt y la entrada DNS de cada host.\n\n**Deduplicar a escala de miles de millones.** Normaliza las URLs (host en minúsculas, sin fragmentos ni ids de sesión, parámetros de query ordenados) y consulta un **filtro de Bloom** (~9.6 bits por URL con 1% de falsos positivos). Para el contenido, un hash exacto detecta copias y **SimHash** detecta casi duplicados: Google usó huellas de 64 bits con ≤ 3 bits distintos sobre 8B de páginas."
+  },
+  "keyPoints": [
+    {
+      "en": "Scale: ~1B pages/month is ~400 pages/s and ~185 TB of raw content (assumptions).",
+      "es": "Escala: ~1B de páginas al mes son ~400 páginas/s y ~185 TB de contenido crudo (supuestos)."
+    },
+    {
+      "en": "The **URL frontier** has priority front queues and per-host back queues; a heap schedules each host's next fetch.",
+      "es": "El **URL frontier** tiene colas frontales por prioridad y colas traseras por host; un heap agenda la próxima descarga de cada host."
+    },
+    {
+      "en": "Politeness by construction: hosts sharded by `hash(host)`, one request in flight per host, cached robots.txt.",
+      "es": "Cortesía por construcción: hosts repartidos por `hash(host)`, una petición en curso por host y robots.txt en cache."
+    },
+    {
+      "en": "Dedup twice: normalized URLs through a **Bloom filter**, page content through exact hashes and SimHash.",
+      "es": "Deduplica dos veces: URLs normalizadas con un **filtro de Bloom** y contenido con hashes exactos y SimHash."
+    },
+    {
+      "en": "Cap depth and URLs per host so infinite calendars and faceted search can't trap the crawler.",
+      "es": "Limita la profundidad y las URLs por host para que calendarios infinitos y búsquedas facetadas no atrapen al crawler."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  S[Seed URLs] --> F[\"URL frontier<br/>priority + per-host queues\"]\n  F --> W[Fetch workers]\n  R[(\"robots.txt + DNS cache\")] -.-> W\n  W --> D{\"Content seen?<br/>hash + SimHash\"}\n  D -->|unique| C[(Page store)]\n  D -->|unique| P[Link extractor]\n  D -.->|duplicate| X[Drop]\n  P --> N[URL normalizer]\n  N --> B{\"URL seen?<br/>Bloom filter\"}\n  B -->|new| F\n  B -.->|seen| X",
+    "caption": {
+      "en": "Every link passes the seen-check before the frontier, and every page passes content dedup before storage.",
+      "es": "Cada link pasa por el chequeo de ya vistos antes del frontier, y cada página por la deduplicación de contenido antes de guardarse."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Polite frontier: per-host queues plus a heap",
+      "es": "Frontier cortés: colas por host más un heap"
+    },
+    "source": "import heapq, time\nfrom collections import defaultdict, deque\nfrom urllib.parse import urlsplit\n\nclass Frontier:\n    def __init__(self, default_delay_s: float = 1.0):\n        self.delay = default_delay_s\n        self.queues = defaultdict(deque)   # host -> URLs: one back queue per host\n        self.heap = []                     # (earliest next fetch, host)\n        self.active = set()                # hosts in the heap or being fetched\n\n    def add(self, url: str) -> None:\n        host = urlsplit(url).hostname\n        self.queues[host].append(url)\n        if host not in self.active:        # idle host: eligible right away\n            self.active.add(host)\n            heapq.heappush(self.heap, (time.monotonic(), host))\n\n    def next(self) -> tuple[str, str] | None:\n        if not self.heap or self.heap[0][0] > time.monotonic():\n            return None                    # no host is due yet\n        _, host = heapq.heappop(self.heap)\n        return host, self.queues[host].popleft()\n\n    def done(self, host: str, crawl_delay_s: float | None = None) -> None:\n        # Reschedule only after the fetch ends: one request in flight per host\n        if self.queues[host]:\n            due = time.monotonic() + (crawl_delay_s or self.delay)\n            heapq.heappush(self.heap, (due, host))\n        else:\n            self.active.discard(host)\n            del self.queues[host]"
+  },
+  "example": {
+    "en": "A worker owns `shop.example`. Its robots.txt (cached ≤ 24 h, per RFC 9309) disallows `/cart`. The site has ~2M product pages, but each links to `?sort=` variants and appends a `sessionid`. Normalization strips `sessionid` and sorts parameters, so the Bloom filter sees ~2M URLs, not tens of millions. An event calendar links to *next day* forever; a depth limit and a per-host URL cap stop it. At 1 request/s, one pass over 2M pages takes ~23 days, so the frontier ranks pages that change most first.",
+    "es": "Un worker es dueño de `shop.example`. Su robots.txt (en cache ≤ 24 h, según el RFC 9309) prohíbe `/cart`. El sitio tiene ~2M de páginas de productos, pero cada una enlaza variantes `?sort=` y agrega un `sessionid`. La normalización quita el `sessionid` y ordena los parámetros, así el filtro de Bloom ve ~2M de URLs y no decenas de millones. Un calendario de eventos enlaza al *día siguiente* sin fin; un límite de profundidad y un tope de URLs por host lo cortan. A 1 petición/s, una pasada por 2M de páginas toma ~23 días, así que el frontier prioriza las páginas que más cambian."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "URL frontier and politeness",
+        "es": "URL frontier y cortesía"
+      },
+      "body": {
+        "en": "Front queues order URLs by priority (link-based importance, change rate, freshness target). A router moves URLs into back queues, each holding a single host, and a min-heap stores when each host may be fetched again. A worker pops the heap, fetches one URL, and only then reschedules that host after its delay. Mercator's rule of thumb: about 3× as many back queues as crawler threads, so threads stay busy. Shard hosts across machines with consistent hashing on the host name, so robots.txt, DNS and politeness state never need coordination, and rebalancing moves whole hosts.",
+        "es": "Las colas frontales ordenan las URLs por prioridad (importancia según links, ritmo de cambio, frescura objetivo). Un router las pasa a colas traseras, cada una con un solo host, y un min-heap guarda cuándo puede volver a descargarse cada host. Un worker saca del heap, descarga una URL y recién entonces reagenda ese host tras su espera. La regla práctica de Mercator: unas 3× más colas traseras que threads del crawler, para que los threads no queden ociosos. Reparte los hosts entre máquinas con consistent hashing sobre el nombre del host: robots.txt, DNS y cortesía no requieren coordinación, y rebalancear mueve hosts completos."
+      }
+    },
+    {
+      "title": {
+        "en": "Dedup: URLs and content",
+        "es": "Deduplicación: URLs y contenido"
+      },
+      "body": {
+        "en": "A Bloom filter answers \"seen?\" in memory: ~9.6 bits per URL at 1% false positives, so 10B URLs fit in ~12 GB. It never says \"new\" for a URL it has seen; a false positive only means skipping a page never crawled, and those often come back through other links or sitemaps. Back it with a sharded KV of URL hashes when coverage matters. Content dedup runs after the fetch: an exact hash of the normalized body catches mirrors, and 64-bit SimHash catches pages that differ only in ads or timestamps.",
+        "es": "Un filtro de Bloom responde \"¿ya visto?\" en memoria: ~9.6 bits por URL con 1% de falsos positivos, así que 10B de URLs caben en ~12 GB. Nunca dice \"nueva\" para una URL que ya vio; un falso positivo solo significa saltarse una página nunca rastreada, y esas suelen volver por otros links o por sitemaps. Respáldalo con un KV particionado de hashes de URL cuando la cobertura importa. La deduplicación de contenido corre tras la descarga: un hash exacto del cuerpo normalizado detecta espejos, y SimHash de 64 bits detecta páginas que solo difieren en anuncios o timestamps."
+      }
+    },
+    {
+      "title": {
+        "en": "robots.txt, traps and recrawl",
+        "es": "robots.txt, trampas y re-rastreo"
+      },
+      "body": {
+        "en": "RFC 9309 (2022) sets the rules: cache robots.txt for at most 24 h, parse at least 500 KiB, treat a 4xx as no restrictions and a 5xx as complete disallow. Google ignores `crawl-delay`; other crawlers honor it. Traps (calendars, faceted filters, session ids) are infinite URL spaces: cap depth and URLs per host, and drop URLs whose path repeats. Recrawl by estimated change rate: shorten the interval when the content hash changed, lengthen it when not, and use `If-Modified-Since` or `ETag` so unchanged pages return a cheap 304.",
+        "es": "El RFC 9309 (2022) fija las reglas: guarda robots.txt en cache como máximo 24 h, procesa al menos 500 KiB, trata un 4xx como sin restricciones y un 5xx como prohibición total. Google ignora `crawl-delay`; otros crawlers lo respetan. Las trampas (calendarios, filtros facetados, ids de sesión) son espacios de URLs infinitos: limita la profundidad y las URLs por host, y descarta URLs cuyo path se repite. Re-rastrea según el ritmo de cambio estimado: acorta el intervalo si cambió el hash del contenido, alárgalo si no, y usa `If-Modified-Since` o `ETag` para que las páginas sin cambios devuelvan un 304 barato."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Politeness is structural: one owner per host and a heap, no global rate limiter to tune.",
+      "es": "La cortesía es estructural: un dueño por host y un heap, sin un rate limiter global que ajustar."
+    },
+    {
+      "en": "Host-sharded workers keep robots.txt, DNS and per-host state local, so they scale out with no coordination.",
+      "es": "Los workers particionados por host mantienen robots.txt, DNS y el estado por host en local, y escalan sin coordinación."
+    },
+    {
+      "en": "A Bloom filter checks billions of URLs in memory at ~1.2 bytes each.",
+      "es": "Un filtro de Bloom revisa miles de millones de URLs en memoria a ~1.2 bytes cada una."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Bloom false positives silently skip ~1% of new URLs unless you confirm against a KV.",
+      "es": "Los falsos positivos del filtro de Bloom se saltan en silencio ~1% de las URLs nuevas, salvo que confirmes contra un KV."
+    },
+    {
+      "en": "Politeness caps big sites: at 1 request/s, 2M pages take ~23 days per pass.",
+      "es": "La cortesía limita a los sitios grandes: a 1 petición/s, 2M de páginas toman ~23 días por pasada."
+    },
+    {
+      "en": "Recrawl freshness and new-page discovery compete for the same fetch budget.",
+      "es": "La frescura del re-rastreo y el descubrimiento de páginas nuevas compiten por el mismo presupuesto de descargas."
+    }
+  ],
+  "whenToUse": {
+    "en": "Search indexes, LLM training corpora, price or SEO monitoring: any job that must fetch a large, changing set of third-party pages politely.",
+    "es": "Índices de búsqueda, corpus de entrenamiento de LLMs, monitoreo de precios o SEO: cualquier trabajo que deba descargar con cortesía un conjunto grande y cambiante de páginas de terceros."
+  },
+  "whenNotToUse": {
+    "en": "Sites with APIs, sitemaps or feeds, or a small corpus: use those, or Common Crawl's monthly archives, before building a crawler.",
+    "es": "Sitios con APIs, sitemaps o feeds, o un corpus chico: usa eso, o los archivos mensuales de Common Crawl, antes de construir un crawler."
+  },
+  "numbers": [
+    {
+      "en": "Throughput: 1B pages/month ÷ ~2.6M s ≈ ~400 pages/s (assumption); plan ~800/s for a 2× peak.",
+      "es": "Throughput: 1B de páginas/mes ÷ ~2.6M s ≈ ~400 páginas/s (supuesto); planifica ~800/s para un pico de 2×."
+    },
+    {
+      "en": "Common Crawl, Aug 2026: 2.14B pages, 360 TiB uncompressed, ~185 KB per page.",
+      "es": "Common Crawl, ago. 2026: 2.14B de páginas, 360 TiB sin comprimir, ~185 KB por página."
+    },
+    {
+      "en": "Bloom filter: ~9.6 bits per item at 1% false positives, so 10B URLs ≈ 12 GB.",
+      "es": "Filtro de Bloom: ~9.6 bits por elemento con 1% de falsos positivos, así que 10B de URLs ≈ 12 GB."
+    },
+    {
+      "en": "RFC 9309: cache robots.txt ≤ 24 h, parse ≥ 500 KiB, 5xx means assume complete disallow.",
+      "es": "RFC 9309: robots.txt en cache ≤ 24 h, procesar ≥ 500 KiB, un 5xx significa asumir prohibición total."
+    },
+    {
+      "en": "Near-duplicates: Google used 64-bit SimHash with ≤ 3 differing bits on 8B pages (WWW 2007).",
+      "es": "Casi duplicados: Google usó SimHash de 64 bits con ≤ 3 bits distintos sobre 8B de páginas (WWW 2007)."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "No URL normalization: session ids and sort parameters turn one page into thousands of \"new\" URLs.",
+      "es": "No normalizar URLs: los ids de sesión y los parámetros de orden convierten una página en miles de URLs \"nuevas\"."
+    },
+    {
+      "en": "Rate-limiting per worker instead of per host: 50 polite workers still hit one host 50 times at once.",
+      "es": "Limitar por worker en vez de por host: 50 workers corteses igual golpean un host 50 veces a la vez."
+    },
+    {
+      "en": "Treating a 5xx on robots.txt as \"no rules\": RFC 9309 says assume complete disallow.",
+      "es": "Tratar un 5xx en robots.txt como \"sin reglas\": el RFC 9309 dice asumir prohibición total."
+    },
+    {
+      "en": "No depth limit or per-host URL cap: calendars and faceted search are infinite.",
+      "es": "Sin límite de profundidad ni tope de URLs por host: los calendarios y las búsquedas facetadas son infinitos."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "How do you guarantee politeness with 1,000 workers?",
+        "es": "¿Cómo garantizas la cortesía con 1,000 workers?"
+      },
+      "a": {
+        "en": "I make it structural instead of tuning a rate limiter. Hosts are partitioned by `hash(host)`, so exactly one worker owns each host's queue, robots.txt and DNS cache. Inside that worker, a heap keyed by next allowed fetch time hands out a host only after its previous fetch finished plus the delay. One request in flight per host, thousands of hosts in parallel, and rebalancing moves whole hosts.",
+        "es": "La hago estructural en vez de ajustar un rate limiter. Los hosts se reparten por `hash(host)`, así un solo worker es dueño de la cola, el robots.txt y la cache DNS de cada host. Dentro de ese worker, un heap ordenado por la próxima hora permitida entrega un host solo cuando terminó su descarga anterior más la espera. Una petición en curso por host, miles de hosts en paralelo, y rebalancear mueve hosts completos."
+      }
+    },
+    {
+      "q": {
+        "en": "Your Bloom filter says a URL was seen. What if it's wrong?",
+        "es": "Tu filtro de Bloom dice que una URL ya se vio. ¿Y si se equivoca?"
+      },
+      "a": {
+        "en": "Then we skip a page we never crawled; it can never cause a double crawl, because Bloom filters have no false negatives. At 1% that's acceptable for discovery, and the page often resurfaces through other links or the sitemap. For domains where coverage matters, I confirm positive hits against a sharded KV of URL hashes. I also size the filter for the expected count, because past it the false-positive rate climbs fast.",
+        "es": "Entonces nos saltamos una página que nunca rastreamos; nunca puede causar un rastreo doble, porque los filtros de Bloom no tienen falsos negativos. Con 1% es aceptable para el descubrimiento, y la página suele volver por otros links o por el sitemap. Para dominios donde la cobertura importa, confirmo los positivos contra un KV particionado de hashes de URL. Además dimensiono el filtro para la cantidad esperada, porque pasado ese punto la tasa de falsos positivos sube rápido."
+      }
+    },
+    {
+      "q": {
+        "en": "How do you decide what to recrawl, and when?",
+        "es": "¿Cómo decides qué volver a rastrear y cuándo?"
+      },
+      "a": {
+        "en": "By estimated change rate times importance, not round-robin. I store each fetch's content hash: if it changed since the last visit I shorten the interval, if not I lengthen it, within bounds. Conditional GETs with `ETag` or `If-Modified-Since` make unchanged pages a cheap 304. A news homepage ends up checked hourly, an archive page monthly, and a fixed budget is split between recrawl and discovery.",
+        "es": "Por ritmo de cambio estimado por importancia, no en round-robin. Guardo el hash del contenido de cada descarga: si cambió desde la última visita acorto el intervalo, si no lo alargo, dentro de límites. Los GET condicionales con `ETag` o `If-Modified-Since` hacen que una página sin cambios sea un 304 barato. La portada de un diario termina revisándose cada hora, una página de archivo cada mes, y un presupuesto fijo se reparte entre re-rastreo y descubrimiento."
+      }
+    }
+  ],
+  "related": [
+    "probabilistic-structures",
+    "consistent-hashing",
+    "queues-streams",
+    "object-storage",
+    "rate-limiting",
+    "case-typeahead"
+  ],
+  "sources": [
+    {
+      "title": "RFC 9309 — Robots Exclusion Protocol (2022)",
+      "url": "https://www.rfc-editor.org/rfc/rfc9309"
+    },
+    {
+      "title": "Google Search Central — How Google interprets robots.txt",
+      "url": "https://developers.google.com/search/docs/crawling-indexing/robots/robots_txt"
+    },
+    {
+      "title": "Manku, Jain, Das Sarma — Detecting near-duplicates for web crawling (WWW 2007)",
+      "url": "https://research.google/pubs/detecting-near-duplicates-for-web-crawling/"
+    },
+    {
+      "title": "Common Crawl — August 2026 crawl archive",
+      "url": "https://commoncrawl.org/blog/august-2026-crawl-archive-now-available"
+    }
+  ]
+}
