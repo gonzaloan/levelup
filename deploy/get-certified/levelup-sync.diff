@@ -42,7 +42,7 @@ index 631a236..2960f21 100644
  
  Learners' stories at `#/testimonials`, on the home page and on each cert's landing page.
 diff --git a/deploy/template.yaml b/deploy/template.yaml
-index 5a89416..6e53914 100644
+index bfa0d34..5e8f237 100644
 --- a/deploy/template.yaml
 +++ b/deploy/template.yaml
 @@ -36,6 +36,14 @@ Parameters:
@@ -185,7 +185,7 @@ index 5a89416..6e53914 100644
    # ─────────────────────────────────────────────────────────
    # Sync API: HTTP API with JWT authorizer -> Lambda -> DynamoDB
    # ─────────────────────────────────────────────────────────
-@@ -826,6 +945,16 @@ Outputs:
+@@ -831,6 +950,16 @@ Outputs:
    AlarmTopicArn:
      Description: SNS topic the alarms publish to. Subscribe more endpoints here if needed.
      Value: !Ref AlarmTopic
@@ -203,13 +203,13 @@ index 5a89416..6e53914 100644
      Description: Hosted UI base domain for login/signup.
      Value: !Sub 'https://getcertified-${AWS::AccountId}.auth.${AWS::Region}.amazoncognito.com'
 diff --git a/tools/check-infra.cjs b/tools/check-infra.cjs
-index 3339ead..8ac8c9a 100644
+index 8d8ed57..7b86cf4 100644
 --- a/tools/check-infra.cjs
 +++ b/tools/check-infra.cjs
-@@ -17,6 +17,12 @@
-  *                                table. Raising the ceiling is a decision, made here in one place.
-  *   PUBLIC_ROUTE_UNTHROTTLED     an HttpApi event with `Authorizer: NONE` has a RouteSettings
-  *                                entry (or DefaultRouteSettings) with a ThrottlingRateLimit.
+@@ -21,6 +21,12 @@
+  *                                ThrottlingRateLimit. Without it a route nobody thought about
+  *                                (the Sage player routes, an authorized route a signed-in client
+  *                                loops on) is bounded only by the account limit of 10,000 req/s.
 + *   BROWSER_TABLE_UNBOUNDED      a DynamoDB table that a browser role can reach (a role assumed
 + *                                through cognito-identity.amazonaws.com) is PROVISIONED, at most
 + *                                MAX_BROWSER_CAPACITY read and write units, literal numbers, with no
@@ -217,14 +217,14 @@ index 3339ead..8ac8c9a 100644
 + *                                front, so the provisioned capacity IS the cost ceiling: on-demand
 + *                                or autoscaling would bill whatever a signed-in caller sends.
   *
-  * Scope of the last rule: it covers a route that opts OUT of a default authorizer, which is the
-  * mistake this repository can make in deploy/template.yaml. The Sage API has no default
-@@ -34,14 +40,21 @@ const RULE = {
-   FUNCTION_WITHOUT_LOG_GROUP: "FUNCTION_WITHOUT_LOG_GROUP",
+  * Plain text parsing, like tools/check-workflows.cjs: no YAML dependency, and every rule is a
+  * property of one resource's indented block.
+@@ -35,14 +41,21 @@ const RULE = {
    LOG_GROUP_WITHOUT_RETENTION: "LOG_GROUP_WITHOUT_RETENTION",
    LOG_RETENTION_TOO_LONG: "LOG_RETENTION_TOO_LONG",
--  PUBLIC_ROUTE_UNTHROTTLED: "PUBLIC_ROUTE_UNTHROTTLED"
-+  PUBLIC_ROUTE_UNTHROTTLED: "PUBLIC_ROUTE_UNTHROTTLED",
+   PUBLIC_ROUTE_UNTHROTTLED: "PUBLIC_ROUTE_UNTHROTTLED",
+-  API_WITHOUT_DEFAULT_THROTTLE: "API_WITHOUT_DEFAULT_THROTTLE"
++  API_WITHOUT_DEFAULT_THROTTLE: "API_WITHOUT_DEFAULT_THROTTLE",
 +  BROWSER_TABLE_UNBOUNDED: "BROWSER_TABLE_UNBOUNDED"
  };
  
@@ -242,7 +242,7 @@ index 3339ead..8ac8c9a 100644
  
  const indentOf = (line) => line.match(/^ */)[0].length;
  const isContent = (line) => line.trim() !== "" && !line.trim().startsWith("#");
-@@ -103,6 +116,34 @@ function throttledRoutes(resources) {
+@@ -104,6 +117,34 @@ function throttledRoutes(resources) {
    return { all, routes };
  }
  
@@ -277,7 +277,7 @@ index 3339ead..8ac8c9a 100644
  function auditTemplate(text, file) {
    const resources = splitResources(text);
    const faults = [];
-@@ -133,10 +174,13 @@ function auditTemplate(text, file) {
+@@ -137,10 +178,13 @@ function auditTemplate(text, file) {
        }
      });
    });
@@ -292,20 +292,20 @@ index 3339ead..8ac8c9a 100644
  
  /* -------------------------------------------------------------------------- */
  /* CLI                                                                        */
-@@ -153,7 +197,7 @@ function main() {
+@@ -157,7 +201,7 @@ function main() {
      return 1;
    }
    console.log("INFRA OK — " + TEMPLATES.length + " template(s): every Lambda logs to a group kept at most " + MAX_RETENTION_DAYS + " days, " +
--    "every route that opts out of the authorizer is throttled.");
-+    "every route that opts out of the authorizer is throttled, every table a browser reaches has a fixed capacity.");
+-    "every API has a default throttle and every route that opts out of the authorizer has its own.");
++    "every API has a default throttle, every route that opts out of the authorizer has its own, every table a browser reaches has a fixed capacity.");
    return 0;
  }
  
 diff --git a/tools/check-infra.test.cjs b/tools/check-infra.test.cjs
-index b064724..7eac12e 100644
+index 17c1cbc..936cbee 100644
 --- a/tools/check-infra.test.cjs
 +++ b/tools/check-infra.test.cjs
-@@ -86,4 +86,47 @@ ok("an authorized route needs no throttle",
+@@ -93,4 +93,47 @@ ok("route throttles alone do not stand in for the default",
  ok("every finding names its resource",
    I.auditTemplate(template(FUNCTION().slice(0, 4))).every((f) => f.resource === "ApiFunction" && f.detail));
  

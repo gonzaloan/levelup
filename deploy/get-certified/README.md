@@ -1,6 +1,6 @@
 # get-certified change: levelup sync on the shared login
 
-`levelup-sync.diff` (base: get-certified `3df065b`) lets levelup sign in with get-certified's
+`levelup-sync.diff` (base: get-certified `ff7cb0e`) lets levelup sign in with get-certified's
 accounts and sync study state **without any API or Lambda**: the browser gets one-hour AWS
 credentials from an identity pool and reads/writes only its own item in a DynamoDB table.
 get-certified's `npm run gate` and `cfn-lint` pass on it. Not yet deployed or tested live.
