@@ -16,6 +16,28 @@
     "en": "Every chunk carries **metadata** copied from its source at ingestion: `tenant_id`, `allowed_groups`, `doc_type`, `updated_at`, `region`. At query time you pass a **filter** with the vector or keyword search, so only eligible chunks get scored.\n\nOne mechanism, two jobs:\n\n- **Relevance filters**: *\"only 2024 policies\"*, *\"only product X manuals\"*, often extracted from the query by [[query-transformation]].\n- **Authorization filters**: the user's groups must overlap the chunk's `allowed_groups`. This is security, so the filter is **built in code from the authenticated identity**: never from the prompt, never from LLM tool arguments, and never by asking the model to ignore what it shouldn't see. Once forbidden text reaches the window, [[prompt-injection]] can get it out.\n\n**Pre-filter vs post-filter.** Pre-filtering restricts the ANN search to allowed vectors and returns k results. Post-filtering searches first and drops forbidden hits: a user who can read 1% of the corpus keeps ~1 of 100. Use an engine with native filtered search (Qdrant payload indexes, pgvector iterative scans, Pinecone metadata filters) and benchmark recall *with* realistic filters, since very selective ones can degrade HNSW.\n\n**ACLs change.** Sync them from the source systems (SharePoint, Google Drive, Confluence) via webhooks plus a periodic full reconciliation, and re-check permissions on the final chunks when staleness matters.",
     "es": "Cada chunk lleva **metadatos** copiados de su fuente al ingerirlo: `tenant_id`, `allowed_groups`, `doc_type`, `updated_at`, `region`. Al consultar pasas un **filtro** junto con la búsqueda vectorial o por palabras clave, así solo se puntúan los chunks elegibles.\n\nUn mecanismo, dos trabajos:\n\n- **Filtros de relevancia**: *\"solo políticas de 2024\"*, *\"solo manuales del producto X\"*, muchas veces extraídos de la consulta con [[query-transformation]].\n- **Filtros de autorización**: los grupos del usuario deben coincidir con algún grupo en `allowed_groups` del chunk. Esto es seguridad, así que el filtro **se construye en código a partir de la identidad autenticada**: nunca desde el prompt, nunca desde los argumentos de una herramienta del LLM y nunca pidiéndole al modelo que ignore lo que no debería ver. Una vez que el texto prohibido llega a la ventana, un [[prompt-injection]] puede sacarlo.\n\n**Pre-filtro vs. post-filtro.** El pre-filtro restringe la búsqueda ANN a los vectores permitidos y devuelve k resultados. El post-filtro busca primero y descarta lo prohibido: un usuario que puede leer el 1% del corpus conserva ~1 de 100. Usa un motor con búsqueda filtrada nativa (índices de payload en Qdrant, iterative scans en pgvector, filtros de metadatos en Pinecone) y mide el recall *con* filtros realistas, porque los muy selectivos pueden degradar HNSW.\n\n**Las ACL cambian.** Sincronízalas desde los sistemas fuente (SharePoint, Google Drive, Confluence) con webhooks más una reconciliación completa periódica, y vuelve a verificar permisos sobre los chunks finales cuando la desactualización importe."
   },
+  "keyPoints": [
+    {
+      "en": "The same **filter** mechanism serves relevance (\"only 2024 policies\") and authorization (the user's groups).",
+      "es": "El mismo mecanismo de **filtro** sirve para relevancia (\"solo políticas de 2024\") y para autorización (los grupos del usuario)."
+    },
+    {
+      "en": "Build the authorization filter from the **authenticated identity**, never from the prompt or LLM tool arguments.",
+      "es": "Construye el filtro de autorización a partir de la **identidad autenticada**, nunca del prompt ni de los argumentos de tools del LLM."
+    },
+    {
+      "en": "**Pre-filter** inside the ANN search; post-filtering leaves a user who can read 1% with ~1 of 100 hits.",
+      "es": "Aplica un **pre-filtro** dentro de la búsqueda ANN; con post-filtro, un usuario que puede leer el 1% se queda con ~1 de 100 resultados."
+    },
+    {
+      "en": "Benchmark recall with realistic filters: very selective ones can degrade HNSW.",
+      "es": "Mide el recall con filtros realistas: los muy selectivos pueden degradar HNSW."
+    },
+    {
+      "en": "**ACLs change**: sync them via webhooks plus periodic reconciliation, or revoked access lingers until your next sync.",
+      "es": "**Las ACL cambian**: sincronízalas con webhooks más una reconciliación periódica, o el acceso revocado sigue vigente hasta tu próxima sincronización."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  SRC[\"Source systems<br/>(Drive, Confluence)\"] -->|\"docs + ACLs\"| ING[Ingestion]\n  SRC -.->|ACL change webhook| ING\n  ING --> IDX[(\"Chunks + tenant,<br/>group metadata\")]\n  U[\"User session<br/>(verified identity)\"] --> F[\"Filter built in code\"]\n  U --> Q[User query]\n  Q --> S[Filtered ANN search]\n  F --> S\n  IDX --> S\n  S --> C[\"Re-check ACL<br/>on final chunks\"]\n  C --> L[LLM prompt]",
     "caption": {

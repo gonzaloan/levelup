@@ -32,6 +32,7 @@ Architect**. They will use this page two ways: to *learn* a concept in five minu
 | `tldr` | yes | ≤ 35 words | the one sentence you'd say out loud in an interview |
 | `analogy` | no | ≤ 40 words | everyday analogy; skip it rather than force a bad one |
 | `explain` | yes | 90–230 words (EN) | markdown. What it is → how it works. Design cases may go to 420 |
+| `keyPoints` | yes | 3–5 items, ≤ 20 words each (EN) | `[{en, es}]`. "How it works" in 20 seconds; the page shows these and folds `explain` |
 | `diagram` | strongly encouraged | ≤ 14 nodes | `{code, caption{en,es}}`, Mermaid (rules below) |
 | `code` | when it helps | ≤ 35 lines | `{lang, title{en,es}, source}`. Runnable-ish, real libraries |
 | `example` | yes | 40–130 words | markdown. A concrete scenario with numbers |
@@ -84,3 +85,18 @@ means *apply for*). Same facts and numbers in both languages.
 
 Spoken, first person, structured: claim → reason → what I'd do / trade-off. A Staff answer names
 the trade-off and the failure mode unprompted. No "Great question".
+
+## Key points (`keyPoints`)
+
+The page leads with them under "How it works"; `explain` becomes the folded "full explanation".
+A reader who reads only the TL;DR, the diagram and these bullets must understand the concept.
+
+- **3–5 bullets, ≤ 20 words each (EN).** One idea per bullet. Read top-down they tell the mechanism:
+  what it is → how it works → the trade-off or the rule of thumb.
+- **Plain words.** Short sentences, active voice, no hedging. Bold at most one key term per bullet.
+- **Facts only from this concept file** (`explain`, `example`, `numbers`). No new figures; keep `~`.
+- **Do not repeat the TL;DR**; build on it.
+- **Spanish is authored** (neutral LatAm, `tú`); keep the English term when that is what engineers
+  say (embedding, chunk, prompt, cache).
+- Write them with `node tools/set-keypoints.mjs <id> <points.json>` (inserts after `explain`,
+  validates, never reformats the file). Gold: `content/concepts/rag/reranking.json`.

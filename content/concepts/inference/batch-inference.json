@@ -16,6 +16,28 @@
     "en": "**Batch inference** runs a large set of LLM calls where no user waits on any single result: classify 10M tickets, backfill embeddings after a model change, run nightly evals, generate synthetic data. You optimize **cost and throughput**, not latency.\n\nTwo ways to run it:\n\n- **Provider batch APIs**: submit requests in bulk (OpenAI Batch takes a JSONL file, Anthropic Message Batches a list in one API call) and get per-item results back as JSONL within 24 h at **~50% off**. Both run on limits separate from your real-time quota, so a backfill doesn't starve production.\n- **Self-hosted max throughput**: vLLM in offline mode (`LLM.generate` over the whole list) or a Ray Data pipeline. With no latency SLO you can raise batch sizes until decode stops being memory-bound, which is where tokens per GPU-dollar peak ([[continuous-batching]], [[api-vs-self-host]]).\n\nThe rest is classic data-pipeline engineering:\n\n- **Idempotency**: a stable `custom_id` per item, like `doc123-prompt_v3` (Anthropic allows only `[A-Za-z0-9_-]`, max 64 chars), so reruns skip finished work and results join back reliably ([[idempotency]]).\n- **Checkpointing**: shard into files of ~10k–50k requests and record each shard's batch id and status. A crash costs one shard, not the job.\n- **Partial failure**: batches return per-item errors and can expire with work unfinished. Reconcile input against output and resubmit only the gaps.\n- **Provenance**: store model id and prompt version on every output row.",
     "es": "La **inferencia batch** ejecuta un gran conjunto de llamadas a un LLM donde ningún usuario espera un resultado puntual: clasificar 10M tickets, regenerar embeddings después de cambiar de modelo, correr evals cada noche, generar datos sintéticos. Optimizas **costo y throughput**, no latencia.\n\nDos formas de hacerlo:\n\n- **Batch APIs de proveedores**: envías las peticiones en bloque (OpenAI Batch recibe un archivo JSONL; Anthropic Message Batches, una lista en una sola llamada a la API) y recibes los resultados por ítem en JSONL en menos de 24 h con **~50% de descuento**. Ambas usan límites separados de tu cuota en tiempo real, para que un backfill no deje sin capacidad a producción.\n- **Self-hosted a máximo throughput**: vLLM en modo offline (`LLM.generate` sobre toda la lista) o un pipeline de Ray Data. Sin SLO de latencia puedes subir el tamaño de batch hasta que el decode deje de estar limitado por memoria, que es donde los tokens por dólar de GPU llegan a su máximo ([[continuous-batching]], [[api-vs-self-host]]).\n\nLo demás es ingeniería clásica de pipelines de datos:\n\n- **Idempotencia**: un `custom_id` estable por ítem, como `doc123-prompt_v3` (Anthropic solo admite `[A-Za-z0-9_-]`, máximo 64 caracteres), para que al re-ejecutar se salte lo terminado y los resultados se unan sin errores ([[idempotency]]).\n- **Checkpoints**: divide en archivos de ~10k–50k peticiones y registra el batch id y el estado de cada shard. Una caída cuesta un shard, no todo el job.\n- **Fallas parciales**: los batches devuelven errores por ítem y pueden expirar con trabajo pendiente. Compara entrada contra salida y reenvía solo lo que falta.\n- **Procedencia**: guarda el id del modelo y la versión del prompt en cada fila de salida."
   },
+  "keyPoints": [
+    {
+      "en": "Batch APIs run on **separate limits** from your real-time quota, so a backfill doesn't starve production.",
+      "es": "Las APIs batch usan **límites separados** de tu cuota en tiempo real, así que un backfill no le quita capacidad a producción."
+    },
+    {
+      "en": "Self-hosted, with no latency SLO, raise **batch sizes** until decode stops being memory-bound.",
+      "es": "En self-hosting, sin SLO de latencia, sube el **tamaño de batch** hasta que el decode deje de estar limitado por memoria."
+    },
+    {
+      "en": "Give every item a **stable id** (`custom_id`) so reruns skip finished work and results join back reliably.",
+      "es": "Dale a cada ítem un **id estable** (`custom_id`) para que los reintentos salten lo ya terminado y los resultados se unan sin errores."
+    },
+    {
+      "en": "**Checkpoint** in shards of ~10k–50k requests with their batch ids, so a crash costs one shard.",
+      "es": "Haz **checkpoints** en shards de ~10k–50k requests con su batch id, así una caída cuesta un shard y no todo el job."
+    },
+    {
+      "en": "Items can fail or expire: **reconcile** input against output and resubmit only the gaps.",
+      "es": "Algunos ítems fallan o expiran: **concilia** el input con el output y reenvía solo los huecos."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  S[(Source docs)] --> P[\"Shard + build JSONL<br/>custom_id per item\"]\n  P --> U[Upload batch file]\n  U --> B[\"Batch API<br/>within 24 h\"]\n  B --> D[Download results]\n  D --> V{Item OK?}\n  V -->|yes| W[(Results table)]\n  V -->|error or expired| Q[Resubmit queue]\n  Q --> P\n  P -.->|shard to batch id| K[(Checkpoint log)]\n  D -.->|mark shard done| K",
     "caption": {

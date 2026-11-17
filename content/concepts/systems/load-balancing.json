@@ -16,6 +16,28 @@
     "en": "A **load balancer** sits in front of N replicas and picks one per connection or request, skipping unhealthy ones.\n\n**L4 vs L7.** L4 (AWS NLB, Google Maglev, IPVS) balances *TCP connections*: fast and protocol-blind. L7 (Envoy, NGINX, HAProxy, AWS ALB) parses HTTP/gRPC, balances *requests*, routes by path or header and can retry. gRPC multiplexes many requests on one long-lived HTTP/2 connection, so behind L4 they all land on one replica.\n\n**Algorithms:**\n\n- **Round robin**: fine when requests cost the same.\n- **Least connections / outstanding requests**: adapts to slow requests.\n- **Power of two choices (P2C)**: sample two replicas, send to the less loaded. Nearly as good as checking all, no global state; Envoy's least-request default.\n- **[[consistent-hashing]]**: same key → same replica, for cache affinity.\n\n**Health:** active probes plus passive **outlier ejection** (pull a host after consecutive 5xx). **Sticky sessions** pin users to replicas; avoid them unless state truly lives there.\n\n**LLM serving breaks round robin.** A 100k-token RAG prompt costs hundreds of times a 200-token chat turn. Route on **queue depth and [[kv-cache]] usage** exported by each server, and add **prefix-aware routing**: requests sharing a system prompt or conversation go to the replica already caching that prefix, skipping most of the prefill. The Kubernetes Gateway API Inference Extension, llm-d and the SGLang router do this.",
     "es": "Un **load balancer** se ubica delante de N réplicas y elige una por conexión o por request, salteando las que no están sanas.\n\n**L4 vs L7.** L4 (AWS NLB, Google Maglev, IPVS) balancea *conexiones TCP*: rápido y sin entender el protocolo. L7 (Envoy, NGINX, HAProxy, AWS ALB) interpreta HTTP/gRPC, balancea *requests*, enruta por path o header y puede reintentar. gRPC multiplexa muchos requests sobre una conexión HTTP/2 de larga vida, así que detrás de un L4 todos caen en una sola réplica.\n\n**Algoritmos:**\n\n- **Round robin**: sirve cuando todos los requests cuestan lo mismo.\n- **Menos conexiones / requests pendientes**: se adapta a los requests lentos.\n- **Power of two choices (P2C)**: toma dos réplicas al azar y manda a la menos cargada. Casi tan bueno como revisar todas, sin estado global; es el default del least-request de Envoy.\n- **[[consistent-hashing]]**: misma clave → misma réplica, para afinidad de caché.\n\n**Salud:** health checks activos más **outlier ejection** pasiva (sacar un host tras varios 5xx seguidos). Las **sticky sessions** atan usuarios a réplicas; evítalas salvo que el estado realmente viva ahí.\n\n**El serving de LLMs rompe el round robin.** Un prompt RAG de 100k tokens cuesta cientos de veces más que un turno de chat de 200 tokens. Enruta según **profundidad de cola y uso de [[kv-cache]]** que exporta cada servidor, y suma **ruteo por prefijo**: los requests que comparten system prompt o conversación van a la réplica que ya tiene ese prefijo en caché, y se saltan casi todo el prefill. Gateway API Inference Extension de Kubernetes, llm-d y el router de SGLang hacen esto."
   },
+  "keyPoints": [
+    {
+      "en": "**L4** balances TCP connections; L7 parses HTTP and balances requests, routing by path or header.",
+      "es": "**L4** balancea conexiones TCP; L7 parsea HTTP, balancea requests y enruta por path o header."
+    },
+    {
+      "en": "**gRPC** multiplexes many requests on one HTTP/2 connection, so behind L4 they all land on one replica.",
+      "es": "**gRPC** multiplexa muchos requests en una conexión HTTP/2, así que detrás de un L4 todos caen en la misma réplica."
+    },
+    {
+      "en": "**Power of two choices**: sample two replicas, send to the less loaded; nearly as good as checking all.",
+      "es": "**Power of two choices**: toma dos réplicas al azar y envía a la menos cargada; es casi tan bueno como revisarlas todas."
+    },
+    {
+      "en": "Combine active probes with passive **outlier ejection**, which pulls a host after consecutive 5xx.",
+      "es": "Combina probes activos con **outlier ejection** pasivo, que saca un host tras varios 5xx seguidos."
+    },
+    {
+      "en": "For LLMs, add **prefix-aware routing**: requests sharing a system prompt go to the replica already caching it.",
+      "es": "En LLMs, suma **routing por prefijo**: los requests que comparten system prompt van a la réplica que ya lo tiene en cache."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  C[Chat and RAG requests] --> G[\"L7 router<br/>Envoy or gateway\"]\n  G --> H[\"Drop unhealthy<br/>outlier ejection\"]\n  H --> P[\"Hash prompt prefix<br/>find home replica\"]\n  P --> D{\"Home load<br/>within slack?\"}\n  D -->|yes| R1[\"Replica A<br/>prefix in KV cache\"]\n  D -->|no| T[\"Power of two<br/>least queued tokens\"]\n  T -->|or| R2[Replica B]\n  T -->|or| R3[Replica C]\n  R1 -.->|queue and KV use| G\n  R2 -.-> G\n  R3 -.-> G",
     "caption": {

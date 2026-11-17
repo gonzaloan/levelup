@@ -16,6 +16,28 @@
     "en": "**Consensus** lets a group of machines agree on one sequence of values — a **replicated log** — so every replica applies the same commands in the same order despite crashes and partitions. Apply that log to a state machine to get a fault-tolerant database, lock service or config store.\n\n**Raft** (2014) breaks it into three parts:\n\n1. **Leader election.** Time is split into numbered *terms*. A follower that hears no heartbeat within a randomized timeout (150–300 ms) becomes a candidate and asks for votes; a majority makes it leader. Each node votes once per term, and only for a candidate whose log is at least as up to date as its own.\n2. **Log replication.** Clients write to the leader, which appends the command and sends `AppendEntries` to followers. Once a **majority** has persisted it, the entry is *committed*, applied and acknowledged.\n3. **Safety.** Any two majorities overlap, so every new leader already holds all committed entries.\n\n**2f+1** nodes survive **f** failures: 3 tolerate 1, 5 tolerate 2; a 4th node adds cost, not tolerance. A minority partition cannot commit: Raft chooses consistency over availability ([[cap-pacelc]]).\n\n**Paxos** (Lamport) solves the same problem and underpins Chubby and Spanner. Raft runs **etcd** (Kubernetes' brain), **Consul**, CockroachDB and **Kafka KRaft**; ZooKeeper uses the similar **ZAB**. You consume consensus through these systems; you almost never write it.",
     "es": "El **consenso** permite que un grupo de máquinas se ponga de acuerdo en una secuencia de valores (un **log replicado**) para que cada réplica aplique los mismos comandos en el mismo orden pese a caídas y particiones de red. Aplica ese log a una máquina de estados y obtienes una base de datos, un servicio de locks o un almacén de configuración tolerante a fallas.\n\n**Raft** (2014) lo divide en tres partes:\n\n1. **Elección de líder.** El tiempo se divide en *terms* numerados. Un follower que no recibe heartbeat dentro de un timeout aleatorio (150–300 ms) se vuelve candidato y pide votos; una mayoría lo convierte en líder. Cada nodo vota una vez por term, y solo por un candidato cuyo log esté al menos tan actualizado como el suyo.\n2. **Replicación del log.** Los clientes escriben al líder, que agrega el comando y envía `AppendEntries` a los followers. Cuando una **mayoría** lo persistió, la entrada queda *confirmada* (committed), se aplica y se responde.\n3. **Seguridad.** Dos mayorías siempre se cruzan, así que todo líder nuevo ya tiene todas las entradas confirmadas.\n\n**2f+1** nodos sobreviven a **f** fallas: 3 toleran 1 y 5 toleran 2; un 4.º nodo agrega costo, no tolerancia. Una partición minoritaria no puede confirmar nada: Raft elige consistencia sobre disponibilidad ([[cap-pacelc]]).\n\n**Paxos** (Lamport) resuelve el mismo problema y es la base de Chubby y Spanner. Raft mueve **etcd** (el cerebro de Kubernetes), **Consul**, CockroachDB y **Kafka KRaft**; ZooKeeper usa el similar **ZAB**. El consenso lo consumes a través de estos sistemas; casi nunca lo implementas."
   },
+  "keyPoints": [
+    {
+      "en": "**Leader election**: a follower missing heartbeats past a randomized timeout becomes a candidate; a majority vote makes it leader.",
+      "es": "**Elección de leader**: un follower que no recibe heartbeats durante un timeout aleatorio se vuelve candidato; una mayoría de votos lo hace leader."
+    },
+    {
+      "en": "Any two **majorities overlap**, so every new leader already holds all committed entries.",
+      "es": "Dos **mayorías siempre se solapan**, así que todo leader nuevo ya tiene todas las entradas confirmadas."
+    },
+    {
+      "en": "A **4th node** adds cost, not tolerance: 3 nodes tolerate 1 failure, 5 tolerate 2.",
+      "es": "Un **4.º nodo** suma costo, no tolerancia: 3 nodos toleran 1 falla y 5 toleran 2."
+    },
+    {
+      "en": "A minority partition can't commit: Raft picks **consistency** over availability.",
+      "es": "Una partición minoritaria no puede confirmar: Raft elige **consistencia** por sobre disponibilidad."
+    },
+    {
+      "en": "You consume consensus through **etcd**, Consul, ZooKeeper or Kafka KRaft; you almost never write it.",
+      "es": "Usas consenso a través de **etcd**, Consul, ZooKeeper o Kafka KRaft; casi nunca lo implementas tú."
+    }
+  ],
   "diagram": {
     "code": "sequenceDiagram\n  participant C as Client\n  participant L as Leader\n  participant F1 as Follower 1\n  participant F2 as Follower 2\n  C->>L: PUT x=1\n  L->>L: Append entry 42, fsync\n  L->>F1: AppendEntries(term 5, 42)\n  L->>F2: AppendEntries(term 5, 42)\n  F1-->>L: OK after fsync\n  Note over L,F1: 2 of 3 stored it, committed\n  L->>L: Apply to state machine\n  L-->>C: OK\n  F2-->>L: OK (late, harmless)",
     "caption": {

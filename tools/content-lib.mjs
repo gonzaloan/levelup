@@ -7,6 +7,8 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const CONTENT = path.join(ROOT, "content");
 export const LEVELS = ["core", "advanced", "staff"];
 export const LANGS = ["python", "typescript", "javascript", "sql", "yaml", "bash", "json", "text", "go", "java"];
+// Every concept leads with its key points (the page folds `explain`).
+export const REQUIRE_KEY_POINTS = true;
 
 export function loadDomains() {
   return JSON.parse(fs.readFileSync(path.join(CONTENT, "domains.json"), "utf8"));
@@ -27,7 +29,7 @@ export function listConceptFiles() {
   return out.sort();
 }
 
-const words = (s) => String(s || "").replace(/```[\s\S]*?```/g, " ").replace(/\[\[([a-z0-9-]+)\]\]/g, "x").replace(/[*_`#>\[\]()]/g, " ").split(/\s+/).filter(Boolean).length;
+const words = (s) => String(s || "").replace(/```[\s\S]*?```/g, " ").replace(/\[\[([a-z0-9-]+)\]\]/g, "x").replace(/[*_`#>\[\]()]/g, " ").split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length; // punctuation alone is not a word
 
 // Function words that are (nearly) exclusive to one language — a cheap "is this really Spanish" probe.
 const EN_FW = /\b(the|and|with|which|that|this|of|is|are|you|your|for|when|it)\b/gi;
@@ -52,7 +54,7 @@ export function validateConcept(c, file, domains) {
   if (file && path.basename(path.dirname(file)) !== c.domain) E(`file is not under content/concepts/${c.domain}/`);
   if (!LEVELS.includes(c.level)) E(`level must be one of ${LEVELS}`);
 
-  const isCase = c.domain === "design";
+  const isCase = c.domain === "design" || c.domain === "sysdesign";
   const t = (field, v, { min = 0, max = Infinity, req = true, es = true } = {}) => {
     if (v == null) { if (req) E(`${field} missing`); return; }
     if (typeof v !== "object" || typeof v.en !== "string" || typeof v.es !== "string") return E(`${field} must be {en, es} strings`);
@@ -75,6 +77,8 @@ export function validateConcept(c, file, domains) {
   t("tldr", c.tldr, { min: 8, max: 45 });
   t("analogy", c.analogy, { req: false, max: 50 });
   t("explain", c.explain, { min: 60, max: isCase ? 460 : 270 });
+  // The page leads with these; `explain` is the folded "full explanation".
+  if (c.keyPoints !== undefined || REQUIRE_KEY_POINTS) list("keyPoints", c.keyPoints, 3, 5, (f, x) => t(f, x, { min: 4, max: 20 }));
   t("example", c.example, { min: 25, max: 170 });
   t("whenToUse", c.whenToUse, { max: 55 });
   t("whenNotToUse", c.whenNotToUse, { max: 55 });
@@ -101,7 +105,7 @@ export function validateConcept(c, file, domains) {
     else if (c.code.source.split("\n").length > 40) E(`code.source: ${c.code.source.split("\n").length} lines > 40`);
     t("code.title", c.code.title, { max: 14, es: false });
   }
-  const known = new Set(["id","domain","level","title","aliases","tldr","analogy","explain","diagram","code","example","deepDive","pros","cons","whenToUse","whenNotToUse","numbers","pitfalls","interview","related","sources"]);
+  const known = new Set(["id","domain","level","title","aliases","tldr","analogy","explain","keyPoints","diagram","code","example","deepDive","pros","cons","whenToUse","whenNotToUse","numbers","pitfalls","interview","related","sources"]);
   for (const k of Object.keys(c)) if (!known.has(k)) E(`unknown field "${k}"`);
   return { errors, warnings };
 }

@@ -16,6 +16,28 @@
     "en": "**GraphRAG** uses an LLM to build a knowledge graph from your documents, then retrieves over the graph and its summaries, not only over raw chunks.\n\nChunk RAG fails on *global* questions — \"What are the main themes across these 5,000 interviews?\" — because no single chunk holds the answer and top-k returns 5 arbitrary fragments. Microsoft's GraphRAG (Edge et al., 2024) fixes that at index time:\n\n1. **Extract** — an LLM reads every chunk and emits entities, relations and claims.\n2. **Graph** — merge them into one graph; repeated entity names collapse into one node.\n3. **Cluster** — hierarchical **Leiden** community detection groups densely connected entities at several levels.\n4. **Summarize** — an LLM writes a *community report* per cluster, bottom-up.\n\nAt query time you pick a mode:\n\n- **Global search** — map-reduce over community reports: each batch of reports yields a scored partial answer, and the best are reduced into one. For themes and overviews; many LLM calls per query.\n- **Local search** — match the query to entities, then pull their neighbors, relations, source chunks and reports. For multi-hop questions like \"how is X related to Y?\".\n\nThe price is indexing: one or more LLM calls per chunk plus one per community, repeated as the corpus changes. **LightRAG** skips community reports and supports incremental inserts; Microsoft's **LazyGraphRAG** swaps LLM extraction for cheap NLP and defers summarization to query time.",
     "es": "**GraphRAG** usa un LLM para construir un grafo de conocimiento a partir de tus documentos y luego recupera sobre el grafo y sus resúmenes, no solo sobre chunks sueltos.\n\nEl RAG por chunks falla en preguntas *globales* —\"¿Cuáles son los temas principales en estas 5,000 entrevistas?\"— porque ningún chunk contiene la respuesta y el top-k devuelve 5 fragmentos arbitrarios. GraphRAG de Microsoft (Edge et al., 2024) lo resuelve al indexar:\n\n1. **Extraer**: un LLM lee cada chunk y emite entidades, relaciones y afirmaciones.\n2. **Armar el grafo**: todo se fusiona en un solo grafo; los nombres de entidad repetidos colapsan en un nodo.\n3. **Agrupar**: la detección jerárquica de comunidades **Leiden** junta las entidades densamente conectadas, en varios niveles.\n4. **Resumir**: un LLM escribe un *reporte de comunidad* por cada grupo, de abajo hacia arriba.\n\nAl consultar eliges un modo:\n\n- **Búsqueda global**: map-reduce sobre los reportes; cada lote de reportes produce una respuesta parcial con puntaje y las mejores se combinan en una. Para temas y panoramas; muchas llamadas al LLM por consulta.\n- **Búsqueda local**: asocia la consulta con entidades y trae sus vecinos, relaciones, chunks de origen y reportes. Para preguntas multi-hop como \"¿qué relación tiene X con Y?\".\n\nEl precio es la indexación: una o más llamadas al LLM por chunk más una por comunidad, y se repite cuando cambia el corpus. **LightRAG** se salta los reportes de comunidad y admite inserciones incrementales; **LazyGraphRAG** de Microsoft cambia la extracción con LLM por NLP barato y deja el resumen para el momento de la consulta."
   },
+  "keyPoints": [
+    {
+      "en": "Chunk RAG fails on **global** questions: no single chunk holds \"the main themes\", so top-k returns arbitrary fragments.",
+      "es": "El RAG por chunks falla en preguntas **globales**: ningún chunk contiene \"los temas principales\", así que el top-k trae fragmentos arbitrarios."
+    },
+    {
+      "en": "At index time an LLM extracts entities and relations, **Leiden** clusters them, and an LLM summarizes each community.",
+      "es": "Al indexar, un LLM extrae entidades y relaciones, **Leiden** las agrupa en comunidades y un LLM resume cada una."
+    },
+    {
+      "en": "**Global search** map-reduces over community reports for themes and overviews, at many LLM calls per query.",
+      "es": "La **búsqueda global** hace map-reduce sobre los reportes de comunidad para temas y panoramas, con muchas llamadas al LLM por consulta."
+    },
+    {
+      "en": "**Local search** matches query entities and pulls their neighbors, relations and source chunks, for multi-hop questions.",
+      "es": "La **búsqueda local** ubica las entidades de la consulta y trae sus vecinos, relaciones y chunks fuente, para preguntas multi-hop."
+    },
+    {
+      "en": "Indexing takes at least one LLM call per chunk plus one per community; keep simple lookups on hybrid search.",
+      "es": "Indexar cuesta al menos una llamada al LLM por chunk más una por comunidad; deja las consultas puntuales en búsqueda híbrida."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  D[Chunks] --> E[\"LLM extract<br/>entities + relations\"]\n  E --> G[(Knowledge graph)]\n  G --> C[\"Leiden<br/>communities\"]\n  C --> S[\"LLM community<br/>reports\"]\n  Q[Query] --> M{Search mode}\n  M -->|global| MR[\"Map-reduce<br/>over reports\"]\n  M -->|local| L[\"Entity neighborhood<br/>+ source chunks\"]\n  S -.-> MR\n  G -.-> L\n  MR --> A[Answer]\n  L --> A",
     "caption": {

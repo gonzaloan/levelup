@@ -16,6 +16,28 @@
     "en": "Contextual retrieval repairs **chunks that lost their context** when the document was split. A chunk reading *\"The company's revenue grew by 3% over the previous quarter\"* names neither the company nor the quarter, so neither its embedding nor [[bm25]] can match *\"ACME Q2 2023 revenue growth\"*.\n\nThe fix, published by Anthropic in 2024, runs once, at **indexing time**:\n\n1. For each chunk, send the **whole document plus the chunk** to a cheap LLM: *\"give a short succinct context to situate this chunk within the overall document\"*.\n2. It returns ~50–100 tokens, e.g. *\"From ACME's Q2 2023 SEC filing; previous quarter revenue was $314M.\"*\n3. **Prepend** that context to the chunk and index the result in both the vector store (*contextual embeddings*) and the BM25 index (*contextual BM25*).\n\nQuery time does not change, so latency doesn't either. The cost is one LLM call per chunk, each re-reading the full document; [[prompt-caching]] makes that cheap, because the document is cached once and every chunk reads it from cache.\n\nStore the generated context **next to** the original text, not instead of it: you cite and show the real chunk, and you can regenerate contexts when you change the prompt or model.",
     "es": "Contextual retrieval repara **chunks que perdieron su contexto** al dividir el documento. Un chunk que dice *\"Los ingresos de la empresa crecieron 3% respecto al trimestre anterior\"* no nombra ni la empresa ni el trimestre, así que ni su embedding ni [[bm25]] pueden coincidir con *\"crecimiento de ingresos de ACME en el Q2 2023\"*.\n\nLa solución, publicada por Anthropic en 2024, se ejecuta una sola vez, **al indexar**:\n\n1. Para cada chunk, envía **el documento completo más el chunk** a un LLM barato: *\"da un contexto breve y conciso que sitúe este chunk dentro del documento completo\"*.\n2. Devuelve ~50–100 tokens, por ejemplo *\"Del reporte de ACME ante la SEC del Q2 2023; los ingresos del trimestre anterior fueron $314M.\"*\n3. **Antepón** ese contexto al chunk e indexa el resultado tanto en el vector store (*contextual embeddings*) como en el índice BM25 (*contextual BM25*).\n\nEl tiempo de consulta no cambia, así que la latencia tampoco. El costo es una llamada al LLM por chunk, y cada una vuelve a leer el documento completo; [[prompt-caching]] lo abarata, porque el documento se cachea una vez y cada chunk lo lee desde la caché.\n\nGuarda el contexto generado **junto al** texto original, no en su lugar: así citas y muestras el chunk real, y puedes regenerar los contextos cuando cambies el prompt o el modelo."
   },
+  "keyPoints": [
+    {
+      "en": "Split chunks **lose context**: \"revenue grew by 3%\" names neither company nor quarter, so search misses it.",
+      "es": "Los chunks **pierden contexto** al dividirse: \"los ingresos crecieron 3%\" no dice qué empresa ni qué trimestre, así que la búsqueda no lo encuentra."
+    },
+    {
+      "en": "Each call sees the **whole document** plus one chunk; prompt caching makes the repeated document reads cheap.",
+      "es": "Cada llamada ve el **documento completo** más un chunk; el prompt caching abarata las lecturas repetidas del documento."
+    },
+    {
+      "en": "The prepended context gives BM25 the missing exact terms and moves the embedding into the right neighborhood.",
+      "es": "El contexto antepuesto le da a BM25 los términos exactos que faltaban y lleva el embedding al vecindario correcto."
+    },
+    {
+      "en": "Store the context **next to** the original text: you cite the real chunk and can regenerate contexts later.",
+      "es": "Guarda el contexto **junto al** texto original: citas el chunk real y puedes regenerar los contextos más adelante."
+    },
+    {
+      "en": "Under ~200K tokens (~500 pages) of knowledge, skip retrieval and send everything with caching.",
+      "es": "Con menos de ~200K tokens (~500 páginas) de conocimiento, sáltate la recuperación y envía todo con caché."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  D[Full document] --> C[Chunker]\n  C --> K[Chunk i]\n  D -.->|cached prefix| G[\"LLM: situate chunk<br/>(cheap model)\"]\n  K --> G\n  G --> X[\"Context + chunk\"]\n  X --> E[Embed]\n  X --> B[BM25 tokenize]\n  E --> V[(Vector index)]\n  B --> L[(BM25 index)]\n  Q[User query] --> H[\"Hybrid search<br/>+ rerank\"]\n  V --> H\n  L --> H",
     "caption": {

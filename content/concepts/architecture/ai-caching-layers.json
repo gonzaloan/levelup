@@ -16,6 +16,28 @@
     "en": "A cache is only as good as its **key** and its **invalidation**. An AI system has several, outside in:\n\n- **Client / CDN**: identical public answers (FAQ, generated docs). Saves the whole request. Never for personalized output.\n- **Exact response cache**: hash(normalized input, model, params, prompt version) → answer. Saves 100% of a call; low hit rate on free-form chat.\n- **[[semantic-caching]]**: embedding similarity above a threshold → stored answer. More hits, but a false hit serves a wrong answer.\n- **Retrieval-result cache**: query → top-k chunk ids. Skips embedding, vector search and [[reranking]]. Key by index version.\n- **Tool-result cache**: API or DB results with a TTL matching data freshness; also shields rate-limited APIs.\n- **Embedding cache**: hash(text, embedding model) → vector. Makes re-indexing cheap; valid until the model changes.\n- **Provider [[prompt-caching]]**: reuses the computed prefix. ~90% off cached input and lower TTFT, but only if the prompt is **static first** (instructions, tools, documents) and variable last.\n- **Engine [[kv-cache]] / prefix caching** (vLLM, SGLang): the same idea when you self-host.\n\n**Scope every key** by tenant, permissions (an ACL hash), model, prompt version and index version. A key without the tenant is a data leak ([[tenant-isolation]]). Set TTLs by how fast the truth changes, and track hit rate and wrong-hit rate per layer.",
     "es": "Una caché vale lo que valen su **clave** y su **invalidación**. Un sistema de IA tiene varias, de afuera hacia adentro:\n\n- **Cliente / CDN**: respuestas públicas idénticas (FAQ, documentación generada). Ahorra la request completa. Nunca para respuestas personalizadas.\n- **Caché de respuesta exacta**: hash(entrada normalizada, modelo, parámetros, versión del prompt) → respuesta. Ahorra el 100% de la llamada; pocos hits en chat libre.\n- **[[semantic-caching]]**: similitud de embeddings sobre un umbral → respuesta guardada. Más hits, pero un hit falso entrega una respuesta incorrecta.\n- **Caché de resultados de recuperación**: consulta → ids de los chunks del top-k. Se salta el embedding, la búsqueda vectorial y el [[reranking]]. Incluye la versión del índice en la clave.\n- **Caché de resultados de herramientas**: respuestas de APIs o bases de datos con un TTL acorde a la frescura del dato; además protege APIs con rate limit.\n- **Caché de embeddings**: hash(texto, modelo de embeddings) → vector. Abarata el reindexado; vale hasta que cambia el modelo.\n- **[[prompt-caching]] del proveedor**: reutiliza el prefijo ya calculado. ~90% de descuento en el input cacheado y menor TTFT, pero solo si el prompt va **primero lo estático** (instrucciones, herramientas, documentos) y al final lo variable.\n- **[[kv-cache]] del motor / prefix caching** (vLLM, SGLang): la misma idea cuando haces self-hosting.\n\n**Acota cada clave** por tenant, permisos (un hash de ACL), modelo, versión del prompt y versión del índice. Una clave sin tenant es una fuga de datos ([[tenant-isolation]]). Fija los TTL según qué tan rápido cambia la verdad y mide la tasa de hits y de hits erróneos por capa."
   },
+  "keyPoints": [
+    {
+      "en": "A cache is only as good as its **key** and its invalidation.",
+      "es": "Una cache vale lo que valen su **clave** y su invalidación."
+    },
+    {
+      "en": "Exact and semantic caches skip the model call; a semantic false hit serves a wrong answer.",
+      "es": "Las caches exacta y semántica se saltan la llamada al modelo; un falso hit semántico sirve una respuesta equivocada."
+    },
+    {
+      "en": "**Prompt caching** gives ~90% off cached input, but only with static content first and variable content last.",
+      "es": "El **prompt caching** da ~90% de descuento en el input cacheado, pero solo si lo estático va primero y lo variable al final."
+    },
+    {
+      "en": "Key retrieval caches by index version and embedding caches by model, so stale entries simply stop matching.",
+      "es": "Versiona la clave de retrieval con el índice y la de embeddings con el modelo; así las entradas viejas simplemente dejan de coincidir."
+    },
+    {
+      "en": "Set TTLs by how fast the truth changes, and track hit rate and wrong-hit rate per layer.",
+      "es": "Fija los TTL según qué tan rápido cambia la verdad, y mide el hit rate y el wrong-hit rate por capa."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  Q[Request] --> X{\"Exact or semantic<br/>cache hit?\"}\n  X -->|hit| A[Return answer]\n  X -->|miss| R{\"Retrieval cache<br/>hit?\"}\n  R -->|miss| E[\"Embed query<br/>embedding cache\"]\n  E --> V[(Vector index)]\n  V --> K[Top-k chunk ids]\n  R -->|hit| K\n  K --> P[\"Prompt: static prefix,<br/>then variable\"]\n  P --> PC[\"Prefix cache<br/>provider or engine\"]\n  PC --> G[Generate]\n  G <-->|tool calls| TC[(Tool-result cache)]\n  G --> A\n  G -.->|\"store, scoped key\"| X",
     "caption": {

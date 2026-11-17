@@ -16,6 +16,28 @@
     "en": "An index is not built once: it is a **replica of your sources** that drifts the moment a document changes. Lifecycle is everything that keeps it correct.\n\n- **Incremental ingestion** — consume changes instead of re-crawling: CDC from the database log (e.g. Debezium), webhooks or change APIs from Drive, Confluence or SharePoint, plus a periodic reconciliation crawl for missed events. Upsert by a stable `doc_id`; hash each chunk and skip re-embedding unchanged ones.\n- **Deletions** — every chunk carries its `doc_id`, so one delete removes *all* its chunks. Many ANN indexes only tombstone deletes until compaction. A GDPR erasure must reach the index, caches and derived stores; embeddings can be inverted back toward the text, so treat them as personal data.\n- **Versioning** — store `doc_version`, `chunker_version`, `embedding_model` and `content_hash` per chunk, so staleness is queryable.\n- **Model changes** — vectors from two models live in incompatible spaces: **never mix them in one index**. Build a new (green) index, backfill, dual-write live changes, evaluate, then **swap an alias** atomically and keep the old (blue) one for rollback.\n- **Freshness SLA** — e.g. p95 edit-to-searchable under 15 min, deletions under 1 h; measure the lag and alert on it.\n- **Dedup** — exact hashes plus near-duplicate detection, or the top-k fills with five copies of one page.",
     "es": "Un índice no se construye una sola vez: es una **réplica de tus fuentes** que se desfasa en cuanto cambia un documento. El ciclo de vida es todo lo que lo mantiene correcto.\n\n- **Ingesta incremental**: consume cambios en vez de volver a rastrear todo: CDC desde el log de la base de datos (p. ej. Debezium), webhooks o APIs de cambios de Drive, Confluence o SharePoint, más un rastreo periódico de conciliación para eventos perdidos. Haz upsert por un `doc_id` estable; calcula un hash por chunk y no vuelvas a generar el embedding de los que no cambiaron.\n- **Borrados**: cada chunk lleva su `doc_id`, así un borrado elimina *todos* sus chunks. Muchos índices ANN solo marcan los borrados (tombstones) hasta la compactación. Una solicitud de borrado bajo GDPR debe llegar al índice, a los caches y a los almacenes derivados; los embeddings se pueden invertir para aproximar el texto, así que trátalos como datos personales.\n- **Versionado**: guarda `doc_version`, `chunker_version`, `embedding_model` y `content_hash` por chunk, para poder consultar qué está desactualizado.\n- **Cambio de modelo**: los vectores de dos modelos viven en espacios incompatibles: **nunca los mezcles en un mismo índice**. Construye un índice nuevo (green), haz el backfill, escribe los cambios en vivo en ambos, evalúa y luego **cambia el alias** de forma atómica, conservando el viejo (blue) para hacer rollback.\n- **SLA de frescura**: p. ej. p95 de edición a búsqueda menor a 15 min y borrados en menos de 1 h; mide el desfase y alerta sobre él.\n- **Deduplicación**: hashes exactos más detección de casi duplicados, o el top-k se llena con cinco copias de la misma página."
   },
+  "keyPoints": [
+    {
+      "en": "**Ingest incrementally**: CDC or webhooks for changes, plus a periodic reconciliation crawl for missed events.",
+      "es": "**Ingiere de forma incremental**: CDC o webhooks para los cambios, más un rastreo periódico de reconciliación para los eventos perdidos."
+    },
+    {
+      "en": "Upsert by a stable `doc_id` and hash each chunk, so unchanged chunks skip re-embedding.",
+      "es": "Haz upsert por un `doc_id` estable y calcula un hash por chunk, así los chunks sin cambios no regeneran su embedding."
+    },
+    {
+      "en": "Deletes must reach every chunk, cache and copy; embeddings can be inverted, so treat them as **personal data**.",
+      "es": "Los borrados deben llegar a cada chunk, caché y copia; los embeddings se pueden invertir, así que trátalos como **datos personales**."
+    },
+    {
+      "en": "Re-embedding is cheap; the real work is the backfill, dual-writes and an eval gate before the alias swap.",
+      "es": "Regenerar los embeddings es barato; el trabajo real es el backfill, la doble escritura y una evaluación antes de cambiar el alias."
+    },
+    {
+      "en": "Set a **freshness SLA**, e.g. p95 edit-to-searchable under 15 min, and alert on the measured lag.",
+      "es": "Define un **SLA de frescura**, p. ej. p95 de edición a búsqueda menor a 15 min, y alerta sobre el desfase medido."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  S[Sources] -->|\"CDC, webhooks\"| Q[Change queue]\n  Q --> P[\"Parse, chunk,<br/>hash, dedup\"]\n  P -->|changed chunks| E1[\"Embed v1\"]\n  P -->|changed chunks| E2[\"Embed v2\"]\n  P -->|tombstones| D[\"Delete by doc_id\"]\n  E1 --> B[(Blue index v1)]\n  E2 --> G[(Green index v2)]\n  D --> B\n  D --> G\n  R[Retriever] --> A{Alias kb}\n  A -->|live| B\n  A -.->|swap after eval| G",
     "caption": {

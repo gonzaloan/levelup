@@ -16,6 +16,28 @@
     "en": "The **KV cache** stores the attention **keys** and **values** of every token already processed, so generating the next token doesn't recompute them.\n\nIn [[attention]], each new token's query is compared with the keys of *all* previous tokens and mixes their values. In a causal model those K and V vectors never change once computed, so the server computes them once (for the whole prompt during **prefill**, then one token per step during **decode**) and appends them to the cache. Each decode step then does new work for one token, not the whole sequence.\n\nThe cost is memory, linear in context length:\n\n`bytes per token = 2 (K and V) × layers × kv_heads × head_dim × bytes per value`\n\nLlama-3.1-8B (32 layers, 8 KV heads, head_dim 128, fp16): 2×32×8×128×2 = **128 KiB per token**. A full 128k context is **~16 GiB**, as much as the model's weights, for *one* sequence. Multiply by concurrent requests and the KV cache, not the weights, sets your batch size and throughput.\n\nThat's why most of [[gpu-memory-math]] is KV math, and why so many tricks target it: **GQA** shares KV heads (8 instead of 32 above, 4× less), [[paged-attention]] removes fragmentation, FP8 KV halves it, and **prefix caching** reuses the KV of a shared prompt prefix across requests, the mechanism behind [[prompt-caching]].",
     "es": "El **KV cache** guarda las **keys** y **values** de atención de cada token ya procesado, para que generar el siguiente token no obligue a recalcularlos.\n\nEn [[attention]], la query de cada token nuevo se compara con las keys de *todos* los tokens anteriores y combina sus values. En un modelo causal esos vectores K y V no cambian una vez calculados, así que el servidor los calcula una sola vez (para todo el prompt durante el **prefill** y luego un token por paso durante el **decode**) y los agrega al cache. Cada paso de decode hace trabajo nuevo solo para un token, no para toda la secuencia.\n\nEl costo es memoria, lineal en la longitud del contexto:\n\n`bytes por token = 2 (K y V) × capas × kv_heads × head_dim × bytes por valor`\n\nLlama-3.1-8B (32 capas, 8 KV heads, head_dim 128, fp16): 2×32×8×128×2 = **128 KiB por token**. Un contexto completo de 128k ocupa **~16 GiB**, tanto como los pesos del modelo, y eso para *una* sola secuencia. Multiplícalo por los requests concurrentes y verás que es el KV cache, no los pesos, lo que define tu tamaño de batch y tu throughput.\n\nPor eso casi todo el [[gpu-memory-math]] es cálculo de KV, y por eso tantas técnicas lo atacan: **GQA** comparte KV heads (8 en vez de 32 arriba, 4× menos), [[paged-attention]] elimina la fragmentación, el KV en FP8 lo reduce a la mitad y el **prefix caching** reutiliza el KV de un prefijo de prompt compartido entre requests, el mecanismo detrás del [[prompt-caching]]."
   },
+  "keyPoints": [
+    {
+      "en": "Past tokens' **K and V** never change in a causal model, so each is computed once and appended.",
+      "es": "En un modelo causal, las **K y V** de los tokens pasados nunca cambian, así que se calculan una vez y se agregan al cache."
+    },
+    {
+      "en": "Prefill caches the whole prompt; each **decode** step then does new work for just one token.",
+      "es": "El prefill guarda todo el prompt en el cache; luego cada paso de **decode** hace trabajo nuevo solo para un token."
+    },
+    {
+      "en": "Size per token = 2 × layers × KV heads × head_dim × bytes: **128 KiB** for Llama-3.1-8B fp16.",
+      "es": "Tamaño por token = 2 × capas × KV heads × head_dim × bytes: **128 KiB** en Llama-3.1-8B fp16."
+    },
+    {
+      "en": "At 128k context one sequence needs ~16 GiB, so the KV cache, **not the weights**, sets your batch size.",
+      "es": "Con 128k de contexto, una secuencia ocupa ~16 GiB: el KV cache, **no los pesos**, define tu tamaño de batch."
+    },
+    {
+      "en": "Shrink it with **GQA** (4×), FP8 KV (2×), PagedAttention against fragmentation, and prefix caching across requests.",
+      "es": "Se reduce con **GQA** (4×), KV en FP8 (2×), PagedAttention contra la fragmentación y prefix caching entre requests."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  P[Prompt tokens] --> F[\"Prefill<br/>all tokens in parallel\"]\n  F -->|write K and V| C[(KV cache)]\n  N[New token] --> D[\"Decode step<br/>compute q, k, v\"]\n  D -->|append k and v| C\n  C -->|read all K and V| A[\"Attention<br/>q against cache\"]\n  D --> A\n  A --> O[Next token]\n  O -.->|loop| N",
     "caption": {

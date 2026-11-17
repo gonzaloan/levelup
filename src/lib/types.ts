@@ -19,6 +19,7 @@ export interface Concept {
   tldr: I18n;
   analogy?: I18n;
   explain: I18n;
+  keyPoints?: I18n[];
   diagram?: { code: string; caption: I18n };
   code?: { lang: string; title: I18n; source: string };
   example: I18n;

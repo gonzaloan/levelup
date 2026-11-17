@@ -16,6 +16,28 @@
     "en": "**LoRA** (Low-Rank Adaptation) fine-tunes a model without touching its original weights. For a frozen matrix `W` (say 4096×4096) it learns an update `ΔW = B·A`, where `A` is r×4096, `B` is 4096×r and the rank is **r ≈ 8–64**. The layer computes `Wx + (α/r)·BAx`. At r=16 that's ~131k trainable numbers instead of ~16.8M; across a model, typically **under 1%** of parameters.\n\nIt works because the change fine-tuning needs is low-rank: a few directions, not a rewrite. What you get:\n- **Memory.** No gradients or optimizer state for frozen weights; on GPT-3 175B the paper cut GPU memory ~3×.\n- **Small, swappable adapters.** GPT-3's checkpoint went from 350 GB to ~35 MB. Keep one base and many adapters.\n- **No inference cost if merged.** Fold `BA` into `W` for a single task, or keep it separate to swap per request.\n\n**QLoRA** stores the frozen base in 4-bit **NF4** (plus double quantization and paged optimizers) and trains bf16 LoRA adapters on top. It fine-tuned a **65B model on a single 48 GB GPU** while matching 16-bit fine-tuning on the paper's benchmarks.\n\n**Multi-LoRA serving:** vLLM, S-LoRA and LoRAX keep one base in GPU memory and batch requests for different adapters together, so hundreds of tenants or tasks share the same GPUs.",
     "es": "**LoRA** (Low-Rank Adaptation) hace fine-tuning sin tocar los pesos originales del modelo. Para una matriz congelada `W` (por ejemplo, 4096×4096) aprende una actualización `ΔW = B·A`, donde `A` es r×4096, `B` es 4096×r y el rango es **r ≈ 8–64**. La capa calcula `Wx + (α/r)·BAx`. Con r=16 son ~131k números entrenables en vez de ~16.8M; en todo el modelo, normalmente **menos del 1%** de los parámetros.\n\nFunciona porque el cambio que necesita el fine-tuning es de bajo rango: unas pocas direcciones, no reescribir todo. Lo que obtienes:\n- **Memoria.** Sin gradientes ni estado del optimizador para los pesos congelados; en GPT-3 175B el paper redujo la memoria de GPU ~3×.\n- **Adapters pequeños e intercambiables.** El checkpoint de GPT-3 pasó de 350 GB a ~35 MB. Tienes una base y muchos adapters.\n- **Sin costo en inferencia si lo fusionas.** Sumas `BA` a `W` para una sola tarea, o lo dejas aparte para cambiarlo en cada request.\n\n**QLoRA** guarda la base congelada en 4 bits **NF4** (más doble cuantización y optimizadores paginados) y entrena encima adapters LoRA en bf16. Logró hacer fine-tuning de un **modelo de 65B en una sola GPU de 48 GB** igualando al fine-tuning en 16 bits en los benchmarks del paper.\n\n**Serving multi-LoRA:** vLLM, S-LoRA y LoRAX mantienen una sola base en la memoria de la GPU y agrupan en el mismo batch requests de distintos adapters, así cientos de clientes o tareas comparten las mismas GPUs."
   },
+  "keyPoints": [
+    {
+      "en": "For each frozen matrix W it learns **ΔW = B·A**: two thin matrices of rank r ≈ 8–64.",
+      "es": "Para cada matriz congelada W aprende **ΔW = B·A**: dos matrices delgadas de rango r ≈ 8–64."
+    },
+    {
+      "en": "It works because the change fine-tuning needs is **low-rank**: a few directions, not a rewrite.",
+      "es": "Funciona porque el cambio que necesita el fine-tuning es de **rango bajo**: pocas direcciones, no una reescritura."
+    },
+    {
+      "en": "Frozen weights need no gradients or **optimizer state**, so GPU memory drops (~3× on GPT-3 175B).",
+      "es": "Los pesos congelados no necesitan gradientes ni **estado del optimizador**, así que la memoria de GPU baja (~3× en GPT-3 175B)."
+    },
+    {
+      "en": "**Merge** BA into W for zero inference cost, or keep adapters separate to swap them per request.",
+      "es": "**Fusiona** BA en W y no pagas costo extra de inferencia, o mantén los adapters separados para cambiarlos por solicitud."
+    },
+    {
+      "en": "**Multi-LoRA serving** (vLLM, S-LoRA, LoRAX) batches many tenants' adapters over one shared base model.",
+      "es": "El **serving multi-LoRA** (vLLM, S-LoRA, LoRAX) agrupa en lotes los adapters de muchos clientes sobre un solo modelo base."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  X[Input x] --> W[\"Frozen W<br/>d x d\"]\n  X --> A[\"A: r x d<br/>trainable\"]\n  A --> B[\"B: d x r<br/>trainable\"]\n  W --> S[\"Sum<br/>Wx + BAx\"]\n  B -->|scale alpha/r| S\n  S --> H[Output h]\n  Q[\"Base in 4-bit NF4<br/>QLoRA\"] -.-> W",
     "caption": {

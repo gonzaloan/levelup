@@ -16,6 +16,28 @@
     "en": "**Streaming** returns the answer token by token while the model decodes, instead of one JSON body at the end. LLM APIs (OpenAI, Anthropic, vLLM's OpenAI-compatible server) use **Server-Sent Events (SSE)**: one long-lived HTTP response with `Content-Type: text/event-stream`, where each chunk is a `data: {...}` line followed by a blank line.\n\nWhy it matters: decode is slow and sequential. At ~50–100 tokens/s, a 500-token answer takes 5–10 s. Users judge speed by **time to first token (TTFT)**, usually a few hundred ms, and they read slower than the model writes, so after the first token they rarely wait again. See [[prefill-decode]] and [[inference-metrics]].\n\nWhat gets harder:\n\n- **Partial structure**: JSON and tool-call arguments arrive as fragments. Accumulate deltas and parse when the block ends.\n- **Cancellation**: when the client disconnects, abort the upstream call or you keep paying for tokens nobody reads.\n- **Buffering**: nginx, CDNs, load balancers and gzip middleware may hold chunks. Disable it (`proxy_buffering off`, `X-Accel-Buffering: no`).\n- **Errors mid-stream**: the 200 status is already sent, so errors travel as in-band events.\n- **Moderation**: text is shown before you can check it. Buffer by sentence, or don't stream high-risk output.\n\nSSE is one-way and plain HTTP; use WebSockets only when the client must also talk mid-stream, as in voice.",
     "es": "El **streaming** devuelve la respuesta token por token mientras el modelo decodifica, en lugar de un solo cuerpo JSON al final. Las APIs de LLMs (OpenAI, Anthropic, el servidor compatible con OpenAI de vLLM) usan **Server-Sent Events (SSE)**: una respuesta HTTP de larga duración con `Content-Type: text/event-stream`, donde cada chunk es una línea `data: {...}` seguida de una línea en blanco.\n\nPor qué importa: el decode es lento y secuencial. A ~50–100 tokens/s, una respuesta de 500 tokens tarda 5–10 s. Los usuarios juzgan la velocidad por el **tiempo al primer token (TTFT)**, normalmente unos cientos de ms, y leen más lento de lo que el modelo escribe, así que después del primer token casi nunca vuelven a esperar. Revisa [[prefill-decode]] e [[inference-metrics]].\n\nQué se complica:\n\n- **Estructura parcial**: el JSON y los argumentos de tool calls llegan en fragmentos. Acumula los deltas y parsea cuando termina el bloque.\n- **Cancelación**: si el cliente se desconecta, aborta la llamada al proveedor o seguirás pagando tokens que nadie lee.\n- **Buffering**: nginx, CDNs, balanceadores y middleware de gzip pueden retener los chunks. Desactívalo (`proxy_buffering off`, `X-Accel-Buffering: no`).\n- **Errores a mitad del stream**: el status 200 ya se envió, así que los errores viajan como eventos dentro del stream.\n- **Moderación**: el texto se muestra antes de que puedas revisarlo. Acumula por oración o no hagas streaming de salidas de alto riesgo.\n\nSSE es unidireccional y HTTP simple; usa WebSockets solo cuando el cliente también necesita hablar a mitad del stream, como en voz."
   },
+  "keyPoints": [
+    {
+      "en": "Decode runs ~50–100 tokens/s, so a 500-token answer is 5–10 s of blank screen without streaming.",
+      "es": "El decode va a ~50–100 tokens/s: sin streaming, una respuesta de 500 tokens son 5–10 s de pantalla en blanco."
+    },
+    {
+      "en": "JSON and **tool-call** arguments arrive as fragments: accumulate the deltas and parse when the block ends.",
+      "es": "El JSON y los argumentos de **tool calls** llegan en fragmentos: acumula los deltas y parsea cuando termina el bloque."
+    },
+    {
+      "en": "When the client disconnects, **abort the upstream call**, or you keep paying for tokens nobody reads.",
+      "es": "Si el cliente se desconecta, **aborta la llamada upstream** o seguirás pagando tokens que nadie lee."
+    },
+    {
+      "en": "nginx, CDNs and gzip middleware may hold chunks: turn off **buffering** with `proxy_buffering off` or `X-Accel-Buffering: no`.",
+      "es": "nginx, las CDNs y el middleware de gzip pueden retener chunks: desactiva el **buffering** con `proxy_buffering off` o `X-Accel-Buffering: no`."
+    },
+    {
+      "en": "The 200 status is already sent, so mid-stream errors travel as **in-band events**.",
+      "es": "El status 200 ya se envió, así que los errores a mitad del stream viajan como **eventos in-band**."
+    }
+  ],
   "diagram": {
     "code": "sequenceDiagram\n  participant B as Browser\n  participant A as API server\n  participant M as LLM provider\n  B->>A: POST /chat\n  A->>M: request with stream=true\n  M-->>A: first delta at TTFT\n  A-->>B: data: first tokens\n  M-->>A: more deltas\n  A-->>B: data: more tokens\n  alt model finishes\n    M-->>A: finish_reason stop\n    A-->>B: data: [DONE]\n  else user clicks Stop\n    B--xA: client disconnects\n    A--xM: abort upstream call\n  end",
     "caption": {

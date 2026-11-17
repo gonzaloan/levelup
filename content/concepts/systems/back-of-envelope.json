@@ -16,6 +16,28 @@
     "en": "**Back-of-the-envelope estimation** is rough arithmetic that gets the *power of ten* right for latency, throughput, storage and cost. That power of ten decides the architecture: one Postgres box or a sharded cluster, 4 GPUs or 400.\n\nThe recipe:\n\n1. **Latency** — memorize the ladder: main memory is ~100× slower than L1, an SSD random read ~100–1,000× slower than memory, a cross-continent round trip ~300× slower than one inside a datacenter. Count the hops on the critical path.\n2. **Traffic** — `DAU × requests per user ÷ 86,400 s` = average QPS. Multiply by **2–5×** for peak.\n3. **Storage** — `items/day × bytes × retention × replication factor`.\n4. **Bandwidth** — `QPS × payload size`. Watch bits vs bytes (×8).\n\nFor LLM systems, **count tokens, not requests**. Peak tokens/s = peak QPS × tokens per request, with prefill (input) and decode (output) sized separately; decode is usually the bottleneck. Then `GPUs = peak output tokens/s ÷ tokens/s per GPU`, where the per-GPU figure is *measured* at your latency SLO, plus headroom. See [[gpu-memory-math]] for whether the model fits at all and [[token-economics]] for the bill.\n\nRound aggressively (86,400 ≈ 10⁵), say every assumption out loud, and sanity-check the result against something you know.",
     "es": "Una **estimación de servilleta** es aritmética aproximada para acertar la *potencia de diez* en latencia, throughput, almacenamiento y costo. Esa potencia de diez es la que decide la arquitectura: un solo Postgres o un clúster con sharding, 4 GPUs o 400.\n\nLa receta:\n\n1. **Latencia**: memoriza la escalera. La memoria principal es ~100× más lenta que la caché L1, una lectura aleatoria en SSD es ~100–1,000× más lenta que la memoria y un round trip entre continentes es ~300× más lento que uno dentro del mismo datacenter. Cuenta los saltos en el camino crítico.\n2. **Tráfico**: `DAU × requests por usuario ÷ 86,400 s` = QPS promedio. Multiplica por **2–5×** para el pico.\n3. **Almacenamiento**: `elementos/día × bytes × retención × factor de replicación`.\n4. **Ancho de banda**: `QPS × tamaño del payload`. Cuidado con bits contra bytes (×8).\n\nEn sistemas con LLMs, **cuenta tokens, no requests**. Tokens/s en el pico = QPS pico × tokens por request, dimensionando por separado el prefill (entrada) y el decode (salida); el decode suele ser el cuello de botella. Luego `GPUs = tokens de salida/s pico ÷ tokens/s por GPU`, donde la cifra por GPU se *mide* con tu SLO de latencia, y suma holgura. Revisa [[gpu-memory-math]] para saber si el modelo siquiera cabe y [[token-economics]] para la factura.\n\nRedondea sin miedo (86,400 ≈ 10⁵), di cada supuesto en voz alta y contrasta el resultado con algo que ya conozcas."
   },
+  "keyPoints": [
+    {
+      "en": "**Latency**: count hops on the critical path; each rung down (memory, SSD, network) is ~100× slower or more.",
+      "es": "**Latencia**: cuenta los saltos en el camino crítico; cada escalón hacia abajo (memoria, SSD, red) es ~100× más lento o más."
+    },
+    {
+      "en": "**Traffic**: DAU × requests per user ÷ 86,400 s gives average QPS; multiply by 2–5× for peak.",
+      "es": "**Tráfico**: DAU × requests por usuario ÷ 86,400 s da el QPS promedio; multiplica por 2–5× para el pico."
+    },
+    {
+      "en": "**Storage** = items per day × bytes × retention × replication factor; bandwidth = QPS × payload size.",
+      "es": "**Almacenamiento** = ítems por día × bytes × retención × factor de replicación; ancho de banda = QPS × tamaño del payload."
+    },
+    {
+      "en": "For LLMs **count tokens**: GPUs = peak output tokens/s ÷ tokens/s per GPU measured at your SLO, plus headroom.",
+      "es": "En LLMs **cuenta tokens**: GPUs = tokens/s de salida en el pico ÷ tokens/s por GPU medidos en tu SLO, más margen."
+    },
+    {
+      "en": "Round hard (86,400 ≈ 10⁵), say every assumption aloud and sanity-check the result against something known.",
+      "es": "Redondea sin miedo (86,400 ≈ 10⁵), di cada supuesto en voz alta y contrasta el resultado con algo que ya conozcas."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  D[\"DAU × requests per user\"] --> R[Requests per day]\n  R -->|\"÷ 86,400 s\"| A[Average QPS]\n  A -->|\"× 2–5\"| P[Peak QPS]\n  P -->|\"× output tokens\"| T[\"Peak tokens/s\"]\n  T -->|\"÷ measured tokens/s per GPU\"| G[\"GPUs at 100%\"]\n  G -->|\"÷ target utilization\"| F[GPU fleet]\n  R -->|\"× bytes × retention\"| S[Raw storage]\n  S -->|\"× replication\"| ST[Total storage]",
     "caption": {

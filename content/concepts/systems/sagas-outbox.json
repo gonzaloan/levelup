@@ -28,6 +28,28 @@
     "en": "A business action often spans services that each own their database: reserve stock, charge the card, create the shipment. **Two-phase commit** across them is rarely available (brokers and SaaS APIs don't join an XA transaction) and blocks participants if the coordinator dies. Instead:\n\n**Saga**: a sequence of *local* transactions, each paired with a **compensating action** that semantically undoes it (a refund, not a DELETE). If step 3 fails, run the compensations for steps 2 and 1. Sagas have **no isolation**: others can see the in-between state, so mark it (`status = PENDING`) and put the irreversible step last.\n\n- **Orchestration**: one coordinator (Temporal, AWS Step Functions) tells each service what to do. The flow is explicit and testable.\n- **Choreography**: each service reacts to the previous one's event. No central brain, but the flow lives nowhere and cycles creep in.\n\n**Transactional outbox** solves the **dual-write problem** inside every step: \"update my DB, then publish an event\" is two writes, and a crash in between leaves them disagreeing. Write the event to an `outbox` table *in the same transaction* as the business change; a relay publishes it by polling or by **CDC** (Debezium tailing the WAL). Delivery is at-least-once, so consumers must be idempotent ([[idempotency]]).",
     "es": "Una acción de negocio suele cruzar servicios que tienen cada uno su propia base: reservar stock, cobrar la tarjeta, crear el envío. El **two-phase commit** entre ellos casi nunca está disponible (los brokers y las APIs SaaS no participan en una transacción XA) y bloquea a los participantes si el coordinador muere. En su lugar:\n\n**Saga**: una secuencia de transacciones *locales*, cada una con una **acción compensatoria** que la deshace en términos de negocio (un reembolso, no un DELETE). Si falla el paso 3, ejecutas las compensaciones de los pasos 2 y 1. Las sagas **no tienen aislamiento**: otros pueden ver el estado intermedio, así que márcalo (`status = PENDING`) y deja el paso irreversible para el final.\n\n- **Orquestación**: un coordinador (Temporal, AWS Step Functions) le dice a cada servicio qué hacer. El flujo es explícito y se puede probar.\n- **Coreografía**: cada servicio reacciona al evento del anterior. No hay un cerebro central, pero el flujo no vive en ningún lado y aparecen ciclos.\n\nEl **transactional outbox** resuelve el **problema de la doble escritura** dentro de cada paso: \"actualizo mi base y luego publico un evento\" son dos escrituras, y una caída entre ambas las deja en desacuerdo. Escribe el evento en una tabla `outbox` *en la misma transacción* que el cambio de negocio; un relay lo publica haciendo polling o con **CDC** (Debezium leyendo el WAL). La entrega es at-least-once, así que los consumidores deben ser idempotentes ([[idempotency]])."
   },
+  "keyPoints": [
+    {
+      "en": "**2PC** is rarely available across services: brokers and SaaS APIs don't join an XA transaction.",
+      "es": "**2PC** casi nunca está disponible entre servicios: los brokers y las APIs SaaS no se suman a una transacción XA."
+    },
+    {
+      "en": "A **compensating action** undoes a step semantically: a refund, not a DELETE.",
+      "es": "Una **acción compensatoria** deshace un paso en lo semántico: un reembolso, no un DELETE."
+    },
+    {
+      "en": "Sagas have **no isolation**: mark in-between state as PENDING and put the irreversible step last.",
+      "es": "Las sagas **no tienen aislamiento**: marca el estado intermedio como PENDING y deja el paso irreversible al final."
+    },
+    {
+      "en": "**Orchestration** (Temporal, Step Functions) keeps the flow explicit; choreography has no central brain, so the flow lives nowhere.",
+      "es": "La **orquestación** (Temporal, Step Functions) deja el flujo explícito; la coreografía no tiene cerebro central y el flujo no vive en ningún lado."
+    },
+    {
+      "en": "The **outbox** relay publishes by polling or CDC, at least once, so consumers must be idempotent.",
+      "es": "El relay del **outbox** publica por polling o CDC, al menos una vez, así que los consumidores deben ser idempotentes."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  subgraph SAGA[\"Orchestrated saga\"]\n    O[Orchestrator] -->|step 1 ok| F[Reserve flight]\n    O -->|step 2 ok| H[Reserve hotel]\n    O -->|step 3 fails| P[Charge card]\n    O -->|compensate 2| CH[Cancel hotel]\n    O -->|compensate 1| CF[Cancel flight]\n  end\n  subgraph OUTBOX[\"Transactional outbox, inside each step\"]\n    S[Service] -->|one local transaction| DB[(\"Business row<br/>+ outbox row\")]\n    DB -->|CDC reads WAL| R[\"Relay (Debezium)\"]\n    R --> K[(Kafka topic)]\n    K --> C[\"Consumer<br/>dedupes by event id\"]\n  end",
     "caption": {

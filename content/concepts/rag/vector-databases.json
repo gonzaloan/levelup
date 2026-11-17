@@ -16,6 +16,28 @@
     "en": "A vector database stores **vectors + metadata + an id** and answers one question fast: *the k vectors nearest to this query vector, among rows matching this filter*. Under the hood it is an approximate nearest-neighbor index ([[ann-indexes]]), usually HNSW, wrapped in what a database owes you: upserts and deletes, metadata filters, persistence, replication, backups and access control.\n\nEngines differ less on raw speed than on:\n\n- **Filtered search**: `tenant_id = 42 AND lang = 'es'`. Naive post-filtering (ANN top 100, then filter) can return 2 rows; good engines filter during index traversal.\n- **Hybrid**: keyword scoring ([[bm25]]) or sparse vectors next to dense ones.\n- **Multi-tenancy**: namespaces or per-tenant shards, so one customer never sees another's data.\n- **Ops model**: an extension (pgvector), an embedded library (LanceDB), a server you run (Qdrant, Weaviate, Milvus) or a managed service (Pinecone, turbopuffer).\n\n**Storage math**: 1M × 1536 dims × 4 bytes ≈ 6 GB of raw float32, and HNSW wants it in RAM. int8 quantization cuts it to ~1.5 GB, binary to ~0.2 GB.\n\nMy default: **pgvector** if you already run Postgres and stay under tens of millions of vectors; Elasticsearch/OpenSearch if that is already your search stack; a dedicated engine when scale, filtering or tenancy outgrow those.",
     "es": "Una base de datos vectorial guarda **vectores + metadatos + un id** y responde rápido una sola pregunta: *los k vectores más cercanos a este vector de consulta, entre las filas que cumplen este filtro*. Por dentro es un índice de vecinos más cercanos aproximados ([[ann-indexes]]), casi siempre HNSW, envuelto en lo que una base de datos te debe: upserts y borrados, filtros por metadatos, persistencia, replicación, backups y control de acceso.\n\nLos motores se diferencian menos por velocidad bruta que por:\n\n- **Búsqueda filtrada**: `tenant_id = 42 AND lang = 'es'`. El post-filtrado ingenuo (top 100 del ANN y después filtrar) puede devolver 2 filas; los buenos motores filtran mientras recorren el índice.\n- **Híbrida**: puntuación por palabras clave ([[bm25]]) o vectores dispersos junto a los densos.\n- **Multi-tenancy**: namespaces o shards por cliente, para que un cliente nunca vea los datos de otro.\n- **Modelo operativo**: una extensión (pgvector), una biblioteca embebida (LanceDB), un servidor que operas tú (Qdrant, Weaviate, Milvus) o un servicio administrado (Pinecone, turbopuffer).\n\n**Cuentas de almacenamiento**: 1M × 1536 dimensiones × 4 bytes ≈ 6 GB de float32 crudo, y HNSW lo quiere en RAM. Cuantizar a int8 lo baja a ~1.5 GB; a binario, a ~0.2 GB.\n\nMi opción por defecto: **pgvector** si ya operas Postgres y te quedas por debajo de decenas de millones de vectores; Elasticsearch/OpenSearch si ese ya es tu stack de búsqueda; un motor dedicado cuando la escala, el filtrado o la multi-tenancy los superan."
   },
+  "keyPoints": [
+    {
+      "en": "Inside is an **ANN index**, usually HNSW, plus database duties: upserts, deletes, filters, replication, access control.",
+      "es": "Por dentro hay un **índice ANN**, casi siempre HNSW, más funciones de base de datos: upserts, borrados, filtros, replicación y control de acceso."
+    },
+    {
+      "en": "Engines differ less on raw speed than on filtering, hybrid search, **multi-tenancy** and ops burden.",
+      "es": "Los motores se diferencian menos por velocidad que por filtrado, búsqueda híbrida, **multi-tenancy** y carga operativa."
+    },
+    {
+      "en": "Filter during index traversal: **post-filtering** an ANN top 100 by tenant can leave you just 2 rows.",
+      "es": "Filtra durante el recorrido del índice: con **post-filtering**, un top 100 del ANN filtrado por tenant puede dejarte solo 2 filas."
+    },
+    {
+      "en": "HNSW wants vectors in **RAM**: 1M at 1536 dims ≈ 6 GB of float32, ~1.5 GB as int8.",
+      "es": "HNSW quiere los vectores en **RAM**: 1M de 1536 dimensiones ≈ 6 GB en float32 y ~1.5 GB en int8."
+    },
+    {
+      "en": "Already on Postgres? **pgvector** is enough under tens of millions of vectors; go dedicated beyond that.",
+      "es": "¿Ya usas Postgres? **pgvector** alcanza por debajo de decenas de millones de vectores; más allá, pasa a un motor dedicado."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  C[Chunks] --> E[Embedding model]\n  E -->|\"vector + metadata\"| U[Upsert]\n  U --> I[(\"ANN index<br/>+ metadata\")]\n  Q[User query] --> QE[Embed query]\n  QE --> S[Filtered ANN search]\n  F[\"Filter: tenant, ACL\"] --> S\n  I --> S\n  S --> K[\"Top-k ids + scores\"]",
     "caption": {

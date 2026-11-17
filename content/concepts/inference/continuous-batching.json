@@ -16,6 +16,28 @@
     "en": "**Continuous batching** (also *iteration-level* or *in-flight* batching) decides who is in the batch at every forward pass, not once per batch.\n\nWith **static batching**, 8 requests start together and the batch runs until its *longest* member finishes. LLM output lengths vary wildly: if one answer needs 1,000 tokens and the rest 50, seven slots idle for ~950 steps, and new arrivals wait for the whole batch to drain, so their TTFT includes someone else's generation.\n\n**Orca** (OSDI 2022) moved scheduling to the granularity of one iteration. Every step, the scheduler:\n\n1. removes sequences that hit EOS or `max_tokens` and frees their KV cache;\n2. admits waiting requests if there is KV memory for them (their prefill joins this step, often chunked: [[prefill-decode]]);\n3. runs one forward pass that emits one token for every running sequence.\n\nDecode is bandwidth-bound, so an extra sequence in a step costs little until compute or memory runs out: a full batch is where throughput comes from. **KV memory is the real limit.** [[paged-attention]] allocates it in small blocks so more sequences fit; when it fills, the scheduler preempts a sequence and recomputes or swaps it back later.\n\nIt's the default in vLLM, SGLang, TGI, TensorRT-LLM (\"in-flight batching\") and LMDeploy. You don't choose it; you tune its caps: max sequences and max tokens per step.",
     "es": "El **continuous batching** (también *iteration-level* o *in-flight batching*) decide quién está en el batch en cada pasada del modelo, no una vez por batch.\n\nCon **static batching**, 8 requests arrancan juntos y el batch corre hasta que termina su miembro *más largo*. La longitud de las salidas de un LLM varía muchísimo: si una respuesta necesita 1,000 tokens y las demás 50, siete lugares quedan ociosos durante ~950 pasos, y los requests que llegan esperan a que se vacíe todo el batch, así que su TTFT incluye la generación de otro.\n\n**Orca** (OSDI 2022) llevó la planificación a la granularidad de una iteración. En cada paso, el scheduler:\n\n1. saca las secuencias que llegaron a EOS o a `max_tokens` y libera su KV cache;\n2. admite requests en espera si hay memoria de KV para ellos (su prefill entra en este paso, a menudo en chunks: [[prefill-decode]]);\n3. ejecuta una pasada que emite un token para cada secuencia activa.\n\nEl decode está limitado por ancho de banda, así que sumar una secuencia a un paso cuesta poco hasta que se acaba el cómputo o la memoria: el throughput sale de mantener el batch lleno. **La memoria de KV es el límite real.** [[paged-attention]] la asigna en bloques chicos para que entren más secuencias; cuando se llena, el scheduler hace preemption de una secuencia y luego la recalcula o la trae de vuelta.\n\nEs el comportamiento por defecto en vLLM, SGLang, TGI, TensorRT-LLM (\"in-flight batching\") y LMDeploy. No eliges usarlo; ajustas sus límites: máximo de secuencias y máximo de tokens por paso."
   },
+  "keyPoints": [
+    {
+      "en": "With **static batching**, the batch runs until its longest member finishes, so short answers leave slots idle.",
+      "es": "Con **static batching**, el batch corre hasta que termina su miembro más largo, así que las respuestas cortas dejan lugares ociosos."
+    },
+    {
+      "en": "New arrivals also wait for the batch to drain, so their TTFT includes someone else's generation.",
+      "es": "Los requests nuevos también esperan a que el batch se vacíe, así que su TTFT incluye la generación de otro."
+    },
+    {
+      "en": "Every step, the scheduler drops finished sequences, frees their **KV cache** and admits waiting requests that fit.",
+      "es": "En cada paso, el scheduler saca las secuencias terminadas, libera su **KV cache** y admite los requests en espera que quepan."
+    },
+    {
+      "en": "Decode is bandwidth-bound, so an extra sequence costs little; **KV memory** is the real limit.",
+      "es": "El decode está limitado por ancho de banda, así que una secuencia extra cuesta poco; el límite real es la **memoria de KV**."
+    },
+    {
+      "en": "vLLM, SGLang and TGI do it by default; you only tune **max sequences** and tokens per step.",
+      "es": "vLLM, SGLang y TGI lo traen por defecto; solo ajustas el **máximo de secuencias** y de tokens por paso."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  Q[(Request queue)] --> S{\"Scheduler<br/>every iteration\"}\n  S -->|admit if KV fits| B[Running batch]\n  S -->|KV full| P[Preempt or wait]\n  B --> F[\"Forward pass<br/>+1 token each\"]\n  F --> D{Sequence done?}\n  D -->|EOS or max_tokens| R[Return and free KV]\n  D -->|no| B\n  R -.->|slot freed| S",
     "caption": {

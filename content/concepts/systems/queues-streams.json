@@ -28,6 +28,28 @@
     "en": "Both decouple producers from consumers, but they model different things.\n\nA **message queue** (SQS, RabbitMQ) is a *to-do list*. Each message is work for **one** consumer, which **acks** it when done; the broker then **deletes** it. An unacked message reappears after a visibility timeout. Add workers to go faster; ordering is weak unless you use FIFO queues.\n\nA **log/stream** (Kafka, Kinesis, Redpanda) is a *ledger*. Messages are appended to **partitions** and **retained** (7 days by default in Kafka) whether or not anyone read them. Each **consumer group** tracks its own **offset**, so many systems read the same events and any of them can **replay** by rewinding. Order holds **per partition**, so the key (`user_id`, `doc_id`) decides what stays ordered, and a group's parallelism is capped by the partition count.\n\n**Delivery semantics:**\n- **At-most-once**: ack before processing; a crash loses the message.\n- **At-least-once** (the practical default): ack after processing; a crash means redelivery, so handlers must be idempotent ([[idempotency]]).\n- **Effectively-once**: at-least-once plus dedup or idempotent writes. Kafka transactions give exactly-once only *within* Kafka.\n\nProduction also needs **backpressure** (bounded depth, autoscale on lag) and a **dead-letter queue** that parks poison messages after N attempts.\n\nFor AI: queue long generations to GPU workers; stream document changes into an embedding pipeline you can replay when the model changes.",
     "es": "Ambos desacoplan a productores de consumidores, pero modelan cosas distintas.\n\nUna **cola de mensajes** (SQS, RabbitMQ) es una *lista de pendientes*. Cada mensaje es trabajo para **un** consumidor, que lo **confirma** (ack) al terminar; entonces el broker lo **borra**. Un mensaje sin confirmar reaparece tras un visibility timeout. Agrega workers para ir más rápido; el orden es débil salvo que uses colas FIFO.\n\nUn **log/stream** (Kafka, Kinesis, Redpanda) es un *libro contable*. Los mensajes se agregan a **particiones** y se **retienen** (7 días por defecto en Kafka) los lea alguien o no. Cada **consumer group** lleva su propio **offset**, así que muchos sistemas leen los mismos eventos y cualquiera puede **reprocesar** rebobinando. El orden se mantiene **por partición**, así que la clave (`user_id`, `doc_id`) decide qué queda ordenado, y el paralelismo de un grupo está limitado por el número de particiones.\n\n**Semánticas de entrega:**\n- **At-most-once**: confirma antes de procesar; una caída pierde el mensaje.\n- **At-least-once** (el default práctico): confirma después de procesar; una caída implica reentrega, así que los handlers deben ser idempotentes ([[idempotency]]).\n- **Effectively-once**: at-least-once más deduplicación o escrituras idempotentes. Las transacciones de Kafka dan exactly-once solo *dentro* de Kafka.\n\nEn producción también necesitas **backpressure** (profundidad acotada, autoscaling según el lag) y una **dead-letter queue** que aparte los mensajes venenosos tras N intentos.\n\nEn IA: encola las generaciones largas hacia workers con GPU; publica los cambios de documentos en un stream que alimenta el pipeline de embeddings y que puedes reprocesar cuando cambias de modelo."
   },
+  "keyPoints": [
+    {
+      "en": "In a queue, an unacked message **reappears** after a visibility timeout; add workers to go faster.",
+      "es": "En una queue, un mensaje sin ack **reaparece** tras el visibility timeout; para ir más rápido, agregas workers."
+    },
+    {
+      "en": "A stream **retains** messages (7 days by default in Kafka), so any consumer group can replay by rewinding.",
+      "es": "Un stream **retiene** los mensajes (7 días por defecto en Kafka), así que cualquier consumer group puede hacer replay rebobinando."
+    },
+    {
+      "en": "Order holds only **per partition**: the key decides what stays ordered, and partitions cap a group's parallelism.",
+      "es": "El orden solo se cumple **por partición**: la key decide qué queda ordenado y las particiones limitan el paralelismo de un grupo."
+    },
+    {
+      "en": "**At-least-once** is the practical default: ack after processing, so a crash means redelivery and handlers must be idempotent.",
+      "es": "**At-least-once** es lo práctico: haces ack después de procesar, así que un crash implica reentrega y los handlers deben ser idempotentes."
+    },
+    {
+      "en": "Add **backpressure** and a dead-letter queue that parks poison messages after N attempts.",
+      "es": "Agrega **backpressure** y una dead-letter queue que aparte los mensajes venenosos tras N intentos."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  API[API server] -->|enqueue job| Q[(SQS queue)]\n  Q --> W1[GPU worker 1]\n  Q --> W2[GPU worker 2]\n  W1 -.->|\"ack: delete\"| Q\n  Q -->|\"after 3 failures\"| DLQ[(Dead-letter queue)]\n  CDC[Doc change events] --> K[(\"Kafka topic<br/>keyed by doc_id\")]\n  K --> G1[\"Group embedder<br/>offset 9,120\"]\n  K --> G2[\"Group search-indexer<br/>offset 9,087\"]\n  K --> G3[\"Group embedder-v2<br/>replay from 0\"]",
     "caption": {

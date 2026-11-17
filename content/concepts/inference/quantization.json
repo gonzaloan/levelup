@@ -16,6 +16,28 @@
     "en": "**Quantization** stores a model's numbers in fewer bits: weights (and sometimes activations and the [[kv-cache]]) go from 16-bit floats to 8 or 4 bits, plus a scale factor per group of values to map them back.\n\nWhy it speeds things up: low-batch **decode** is memory-bandwidth bound, because each new token reads every weight from HBM (see [[prefill-decode]]). Fewer bytes per weight means less time per token, and the freed memory goes to KV cache and bigger batches.\n\nFrom safest to most aggressive:\n\n- **FP8 / INT8, W8A8**: weights *and* activations in 8 bits, running on low-precision tensor cores (FP8 needs Ada or Hopper and newer). Usually near-lossless, and it also speeds up compute-bound prefill. INT8 needs outlier handling (LLM.int8(), SmoothQuant).\n- **INT4 weight-only, W4A16**: weights ~4× smaller than FP16, dequantized to 16-bit inside the matmul. **GPTQ** (second-order error correction) and **AWQ** (scales up the ~1% of salient channels, found from activations) are the standard serving formats. **bitsandbytes NF4** is the easy quantize-on-load option behind QLoRA. **GGUF** (llama.cpp, e.g. `Q4_K_M`) targets CPUs, Macs and laptops.\n- **3 bits or fewer**: large quality drops except on the biggest models.\n\nRule of thumb: 8-bit is safe; 4-bit costs little on 70B models but visibly more on 7–8B ones and on math, code and long context. Never ship one without re-running your own evals.",
     "es": "La **cuantización** guarda los números de un modelo con menos bits: los pesos (y a veces las activaciones y el [[kv-cache]]) pasan de floats de 16 bits a 8 o 4 bits, más un factor de escala por grupo de valores para reconstruirlos.\n\nPor qué acelera: el **decode** con batch chico está limitado por el ancho de banda de memoria, porque cada token nuevo lee todos los pesos desde HBM (ver [[prefill-decode]]). Menos bytes por peso significa menos tiempo por token, y la memoria liberada se va al KV cache y a batches más grandes.\n\nDe lo más seguro a lo más agresivo:\n\n- **FP8 / INT8, W8A8**: pesos *y* activaciones en 8 bits, sobre tensor cores de baja precisión (FP8 requiere Ada o Hopper en adelante). Suele ser casi sin pérdida y también acelera el prefill, que está limitado por cómputo. INT8 necesita manejar outliers (LLM.int8(), SmoothQuant).\n- **INT4 solo pesos, W4A16**: pesos ~4× más chicos que en FP16, que se decuantizan a 16 bits dentro del matmul. **GPTQ** (corrección de error de segundo orden) y **AWQ** (escala el ~1% de canales más importantes, detectados por las activaciones) son los formatos estándar para serving. **bitsandbytes NF4** es la opción fácil que cuantiza al cargar y la base de QLoRA. **GGUF** (llama.cpp, por ejemplo `Q4_K_M`) apunta a CPUs, Macs y laptops.\n- **3 bits o menos**: caídas de calidad grandes, salvo en los modelos más grandes.\n\nRegla práctica: 8 bits es seguro; 4 bits cuesta poco en modelos de 70B pero se nota más en los de 7–8B y en matemáticas, código y contexto largo. Nunca lo despliegues sin volver a correr tus propios evals."
   },
+  "keyPoints": [
+    {
+      "en": "Each group of values keeps a **scale factor** that maps the low-bit numbers back.",
+      "es": "Cada grupo de valores guarda un **factor de escala** que convierte de vuelta los números de pocos bits."
+    },
+    {
+      "en": "Decode reads every weight for each token, so fewer bytes per weight means less time per token.",
+      "es": "El decode lee todos los pesos en cada token, así que menos bytes por peso significa menos tiempo por token."
+    },
+    {
+      "en": "**W8A8** (FP8/INT8) quantizes weights and activations, is usually near-lossless and also speeds up prefill.",
+      "es": "**W8A8** (FP8/INT8) cuantiza pesos y activaciones, suele ser casi sin pérdida y además acelera el prefill."
+    },
+    {
+      "en": "**W4A16** shrinks weights ~4× and dequantizes inside the matmul; GPTQ and AWQ are the standard serving formats.",
+      "es": "**W4A16** reduce los pesos ~4× y los descuantiza dentro del matmul; GPTQ y AWQ son los formatos estándar para serving."
+    },
+    {
+      "en": "4-bit costs little on 70B models but more on 7–8B, math, code and long context: rerun your **evals**.",
+      "es": "4 bits cuesta poco en modelos de 70B pero más en 7–8B, matemática, código y contexto largo: vuelve a correr tus **evals**."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  W[\"BF16 weights<br/>~16 GB\"] --> Q[\"Quantizer<br/>GPTQ or AWQ\"]\n  C[\"Calibration set<br/>~128 samples\"] --> Q\n  Q --> P[(\"INT4 + scales<br/>~5.5 GB\")]\n  P -->|4x fewer bytes read| D[\"Kernel dequantizes<br/>in registers\"]\n  D --> M[\"BF16 matmul<br/>with activations\"]\n  M --> T[Next token]",
     "caption": {

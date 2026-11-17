@@ -16,6 +16,28 @@
     "en": "Start with the arithmetic: **1B × 768 dims × 4 bytes ≈ 3 TB** of raw float32, before any index. Keeping that in RAM, replicated, takes a fleet of big machines. Every billion-scale design trades **recall, latency and cost** with four levers:\n\n- **Compress.** Scalar **int8** (4×, ~0.77 TB), **binary** quantization (32×, ~96 GB), **product quantization** (PQ, e.g. 96 bytes per vector) or **Matryoshka** truncation (store 256 of 768 dims). Search the compressed codes, then **rescore** the top few hundred with full vectors.\n- **Move off RAM.** **DiskANN** keeps compressed vectors in RAM and the graph plus full vectors on NVMe: a billion points on one 64 GB machine. Object-storage engines (turbopuffer, Amazon S3 Vectors) are cheaper and elastic, but cold queries take hundreds of ms.\n- **Shard and replicate.** Hash sharding fans every query out to every shard: cost grows with shard count and p99 is the slowest shard. Sharding by tenant or partition sends a query to one shard. Replicas add QPS and availability.\n- **Filter inside the index.** Post-filtering a selective predicate empties your top-k. Use filter-aware indexes (ACORN, Filtered-DiskANN, payload indexes) or partition on the filter.\n\nAdd **tiers** (hot data in RAM, the long tail on SSD or object storage) and plan **reindexing**: a new embedding model means re-embedding everything into a new index built side by side ([[index-lifecycle]]).",
     "es": "Empieza por la aritmética: **1B × 768 dimensiones × 4 bytes ≈ 3 TB** de float32 crudo, antes de cualquier índice. Tener eso en RAM, y replicado, exige una flota de máquinas grandes. Todo diseño a escala de miles de millones negocia **recall, latencia y costo** con cuatro palancas:\n\n- **Comprimir.** **int8** escalar (4×, ~0.77 TB), **cuantización binaria** (32×, ~96 GB), **product quantization** (PQ, p. ej. 96 bytes por vector) o truncado **Matryoshka** (guardar 256 de 768 dimensiones). Buscas sobre los códigos comprimidos y luego haces **rescoring** de los mejores cientos con los vectores completos.\n- **Salir de la RAM.** **DiskANN** deja los vectores comprimidos en RAM y el grafo más los vectores completos en NVMe: mil millones de puntos en una máquina de 64 GB. Los motores sobre object storage (turbopuffer, Amazon S3 Vectors) son más baratos y elásticos, pero las consultas en frío tardan cientos de ms.\n- **Particionar y replicar.** El sharding por hash manda cada consulta a todos los shards: el costo crece con la cantidad de shards y el p99 es el del shard más lento. Particionar por tenant o por categoría manda la consulta a un solo shard. Las réplicas suman QPS y disponibilidad.\n- **Filtrar dentro del índice.** Post-filtrar con un predicado selectivo vacía tu top-k. Usa índices que entienden filtros (ACORN, Filtered-DiskANN, payload indexes) o particiona por el filtro.\n\nAgrega **niveles** (lo caliente en RAM, la cola larga en SSD u object storage) y planea el **reindexado**: un modelo de embeddings nuevo implica regenerar todos los embeddings en un índice nuevo construido en paralelo ([[index-lifecycle]])."
   },
+  "keyPoints": [
+    {
+      "en": "Do the arithmetic first: 1B × 768 dims × 4 bytes ≈ 3 TB of raw float32.",
+      "es": "Haz la cuenta primero: 1B × 768 dims × 4 bytes ≈ 3 TB de float32 crudo."
+    },
+    {
+      "en": "**Compress** with int8 (4×), binary (32×) or PQ, then rescore the top few hundred with full vectors.",
+      "es": "**Comprime** con int8 (4×), binario (32×) o PQ, y luego recalcula el score de los pocos cientos mejores con los vectores completos."
+    },
+    {
+      "en": "**DiskANN** keeps compressed vectors in RAM and the graph plus full vectors on NVMe SSD.",
+      "es": "**DiskANN** deja los vectores comprimidos en RAM y el grafo con los vectores completos en un SSD NVMe."
+    },
+    {
+      "en": "Hash sharding fans each query out to all shards, so p99 is the slowest one; tenant sharding hits one shard.",
+      "es": "El sharding por hash manda cada consulta a todos los shards, así que el p99 es el del más lento; por tenant, va a uno solo."
+    },
+    {
+      "en": "**Post-filtering** a selective predicate empties your top-k; filter inside the index or partition on the filter.",
+      "es": "Hacer **post-filtering** con un predicado selectivo vacía tu top-k; filtra dentro del índice o particiona por ese filtro."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  Q[Query vector] --> R{\"Router:<br/>tenant or fan-out\"}\n  R --> A[\"Shard 1<br/>(replica set)\"]\n  R --> B[\"Shard 2<br/>(replica set)\"]\n  R --> C[\"Shard N<br/>(replica set)\"]\n  A --> P[\"Search compressed<br/>codes in RAM\"]\n  P --> S[\"Rescore candidates<br/>from SSD\"]\n  S --> M[\"Merge top-k<br/>across shards\"]\n  B --> M\n  C --> M\n  M --> K[Top 10 to app]\n  O[(\"Cold tier<br/>object storage\")] -.->|load on demand| S",
     "caption": {

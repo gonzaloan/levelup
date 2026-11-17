@@ -1,12 +1,15 @@
-# levelup — AI Architect Field Guide
+# levelup — Staff Engineer & AI Architect Field Guide
 
-A bilingual (ES/EN) study guide and interview cheatsheet for Staff/Principal AI Architects.
+A bilingual (ES/EN) study guide and interview cheatsheet for Staff/Principal Software Engineers and
+AI Architects: coding patterns, system design, distributed systems, AI systems, leadership.
 Static Next.js export, content-as-data, no backend, no tracking. Read this before changing anything.
 
 ## The product, in one line
-Every concept on one page, in the same order: one-sentence TL;DR → how it works → diagram → code →
-real example → trade-offs → numbers → pitfalls → interview Q&A → related → sources.
-Simple and concise beats exhaustive. If a field needs scrolling to read, it is too long.
+Every concept on one page, in the same order: one-sentence TL;DR → diagram → **key points** (3–5
+bullets, "how it works") → **check yourself** (its exercises, inline) → everything else folded
+(full explanation, code, example, trade-offs, numbers, pitfalls, interview Q&A, deep dive) →
+related → sources. The owner wants it **concise, scannable and interactive**: essentials first,
+detail one tap away. The study path answers one question first: "what do I do next?".
 
 ## Run & verify
 - `npm run dev` — local dev (tolerates concepts that are not written yet).

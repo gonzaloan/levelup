@@ -48,6 +48,7 @@ export default async function ConceptPage({ params }: P) {
     c.diagram && { id: "diagram", label: L("diagram") },
     { id: "how", label: L("howItWorks") },
     checks.length && { id: "check", label: L("checkTitle") },
+    c.keyPoints?.length && { id: "full", label: L("fullExplanation") },
     c.code && { id: "code", label: L("code") },
     { id: "example", label: L("example") },
     { id: "tradeoffs", label: L("tradeoffs") },
@@ -107,7 +108,9 @@ export default async function ConceptPage({ params }: P) {
 
         <section id="how">
           <h2>{L("howItWorks")}</h2>
-          <Markdown src={t(c.explain, locale)} locale={locale} />
+          {c.keyPoints?.length
+            ? <ul className="keypoints">{c.keyPoints.map((p, i) => <li key={i}><Markdown inline src={t(p, locale)} locale={locale} /></li>)}</ul>
+            : <Markdown src={t(c.explain, locale)} locale={locale} />}
         </section>
 
         {checks.length > 0 && (
@@ -121,6 +124,13 @@ export default async function ConceptPage({ params }: P) {
         <section className="deeper" aria-label={L("goDeeper")}>
           <h2>{L("goDeeper")}</h2>
           <p className="hint">{L("goDeeperHint")}</p>
+
+          {!!c.keyPoints?.length && (
+            <details id="full" className="fold">
+              <summary>{L("fullExplanation")}</summary>
+              <Markdown src={t(c.explain, locale)} locale={locale} />
+            </details>
+          )}
 
           {c.code && (
             <details id="code" className="fold">

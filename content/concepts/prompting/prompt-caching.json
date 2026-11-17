@@ -16,6 +16,28 @@
     "en": "Every call starts with **prefill**: computing attention keys and values ([[kv-cache]]) for every input token. If 50k tokens of tools, system prompt and documents are identical across calls, that work is identical too. **Prompt caching** keeps that KV state on the provider's side and reuses it when a new request starts with the *exact same prefix*, byte for byte from the first token.\n\nThat one rule dictates the layout:\n\n1. Tools and system prompt (static)\n2. Reference documents and examples (static per session)\n3. Conversation history (append-only)\n4. The new user message (variable), last\n\nProvider terms (as of late 2026):\n\n- **Anthropic**: opt-in `cache_control`, as one top-level field (auto-placed breakpoint) or up to 4 explicit breakpoints. Writes cost 1.25× base input with a 5-minute TTL refreshed on every hit, or 2× for 1 hour; reads cost 0.1× (0.05× or less on some newer models).\n- **OpenAI**: on by default from 1,024 tokens; check `cached_tokens` in usage. Older models charge no write fee and discount cached input 50–90%; GPT-5.6 and later bill writes at 1.25× (30-minute TTL) and reads at 0.1×.\n- **Gemini**: implicit caching by default (2.5+), plus explicit caches with a TTL and an hourly storage fee on supported models.\n- **Self-hosted**: vLLM automatic prefix caching, SGLang RadixAttention.\n\nThe answer is still generated fresh, so unlike [[semantic-caching]] it can never serve a stale response.",
     "es": "Cada llamada empieza con el **prefill**: calcular las keys y values de atención ([[kv-cache]]) para cada token de entrada. Si 50k tokens de herramientas, system prompt y documentos son idénticos entre llamadas, ese trabajo también lo es. El **prompt caching** guarda ese estado KV del lado del proveedor y lo reutiliza cuando una nueva petición empieza con *exactamente el mismo prefijo*, byte por byte desde el primer token.\n\nEsa sola regla define el orden del prompt:\n\n1. Herramientas y system prompt (estáticos)\n2. Documentos de referencia y ejemplos (estáticos durante la sesión)\n3. Historial de la conversación (solo crece al final)\n4. El nuevo mensaje del usuario (variable), al último\n\nCondiciones de cada proveedor (a fines de 2026):\n\n- **Anthropic**: se activa con `cache_control`, como un solo campo de nivel superior (breakpoint automático) o con hasta 4 breakpoints explícitos. Escribir cuesta 1.25× el input base con un TTL de 5 minutos que se renueva con cada hit, o 2× para 1 hora; leer cuesta 0.1× (0.05× o menos en algunos modelos nuevos).\n- **OpenAI**: activo por defecto desde 1,024 tokens; revisa `cached_tokens` en el usage. Los modelos anteriores no cobran la escritura y descuentan 50–90% el input en caché; GPT-5.6 y posteriores cobran la escritura a 1.25× (TTL de 30 minutos) y la lectura a 0.1×.\n- **Gemini**: caché implícita por defecto (2.5+), más cachés explícitas con TTL y un cargo de almacenamiento por hora en los modelos que las soportan.\n- **Self-hosted**: automatic prefix caching de vLLM y RadixAttention de SGLang.\n\nLa respuesta se genera de nuevo cada vez, así que, a diferencia del [[semantic-caching]], nunca puede devolver una respuesta vieja."
   },
+  "keyPoints": [
+    {
+      "en": "Every call starts with **prefill**, computing keys and values for each input token; identical prefixes repeat identical work.",
+      "es": "Cada llamada empieza con el **prefill**, que calcula claves y valores de cada token de entrada; un prefijo idéntico repite trabajo idéntico."
+    },
+    {
+      "en": "A hit needs the **exact same prefix**, byte for byte from the first token.",
+      "es": "Un acierto exige el **mismo prefijo exacto**, byte por byte desde el primer token."
+    },
+    {
+      "en": "So **order** the prompt: tools and system, then documents, then append-only history, then the new message.",
+      "es": "Por eso **ordena** el prompt: herramientas y system, luego documentos, luego el historial append-only y al final el mensaje nuevo."
+    },
+    {
+      "en": "Writes cost 1.25× base input on Anthropic, reads 0.1× (late 2026), so the **first reuse** breaks even.",
+      "es": "En Anthropic escribir cuesta 1.25× la entrada base y leer 0.1× (fines de 2026), así que la **primera reutilización** ya compensa."
+    },
+    {
+      "en": "Unlike **semantic caching**, the answer is generated fresh, so it can never serve a stale response.",
+      "es": "A diferencia del **semantic caching**, la respuesta se genera de nuevo, así que nunca puede servir una respuesta obsoleta."
+    }
+  ],
   "diagram": {
     "code": "sequenceDiagram\n  participant A as App\n  participant P as Provider\n  participant C as Prefix cache\n  A->>P: Static prefix + question 1\n  P->>C: Lookup prefix hash\n  C-->>P: Miss\n  P->>P: Prefill 50k tokens\n  P->>C: Store KV state, 5 min\n  P-->>A: Answer, write billed 1.25x\n  A->>P: Same prefix + question 2\n  P->>C: Lookup prefix hash\n  C-->>P: Hit, reuse KV state\n  P-->>A: Faster answer, read 0.1x",
     "caption": {

@@ -16,6 +16,28 @@
     "en": "**Replication** keeps the same data on several machines so you survive node loss and spread reads. Three topologies:\n\n- **Single-leader** (Postgres, MySQL, MongoDB): all writes go to the leader, which streams its log to followers. **Synchronous** followers ack before the commit returns: no data loss on failover, but more latency, and a dead follower can block writes. **Asynchronous** followers are fast but lag, so failover can lose the last seconds of writes. The usual compromise: one sync follower, the rest async.\n- **Multi-leader**: a leader per region accepts local writes and replicates to the others. Low write latency everywhere, but two regions can edit the same row, so you need **conflict resolution** (last-write-wins loses data; CRDTs or app-level merges don't).\n- **Leaderless** (Dynamo, Cassandra): clients write to W of N replicas and read from R. **Read repair** fixes stale replicas during reads; background anti-entropy fixes the rest.\n\n**Failover** promotes a follower when the leader dies. The danger is **split brain**: two nodes both accepting writes. Use consensus-based election (Patroni on etcd) plus **fencing**, so the old leader's writes are rejected.\n\n**Read replicas** scale reads but add **lag anomalies**: users who don't see their own update need read-your-writes routing, see [[consistency-models]].",
     "es": "La **replicación** mantiene los mismos datos en varias máquinas para sobrevivir a la pérdida de un nodo y repartir lecturas. Hay tres topologías:\n\n- **Un solo líder** (Postgres, MySQL, MongoDB): todas las escrituras van al líder, que envía su log a los seguidores. Los seguidores **síncronos** confirman antes de que el commit regrese: no se pierden datos en un failover, pero hay más latencia y un seguidor caído puede bloquear escrituras. Los **asíncronos** son rápidos pero se atrasan, así que un failover puede perder los últimos segundos de escrituras. El punto medio habitual: un seguidor síncrono y el resto asíncronos.\n- **Multilíder**: un líder por región acepta escrituras locales y replica a los demás. Latencia de escritura baja en todas partes, pero dos regiones pueden editar la misma fila, así que necesitas **resolución de conflictos** (last-write-wins pierde datos; los CRDTs o las fusiones a nivel de aplicación no).\n- **Sin líder** (Dynamo, Cassandra): los clientes escriben en W de N réplicas y leen de R. El **read repair** corrige réplicas atrasadas durante las lecturas; un proceso anti-entropía en segundo plano corrige el resto.\n\nEl **failover** promueve a un seguidor cuando el líder muere. El peligro es el **split brain**: dos nodos aceptando escrituras a la vez. Usa elección basada en consenso (Patroni sobre etcd) más **fencing**, para que se rechacen las escrituras del líder viejo.\n\nLas **réplicas de lectura** escalan lecturas pero traen **anomalías de lag**: un usuario que no ve su propia actualización necesita ruteo read-your-writes, mira [[consistency-models]]."
   },
+  "keyPoints": [
+    {
+      "en": "**Single-leader**: the leader takes all writes and streams its log to followers, which serve reads but can lag.",
+      "es": "**Single-leader**: el leader recibe todas las escrituras y envía su log a los followers, que sirven lecturas pero pueden ir atrasados."
+    },
+    {
+      "en": "**Sync** followers prevent data loss on failover but add latency; async ones are fast but can lose recent writes.",
+      "es": "Los followers **síncronos** evitan perder datos en el failover pero suman latencia; los asíncronos son rápidos pero pueden perder las últimas escrituras."
+    },
+    {
+      "en": "**Multi-leader** gives low write latency in every region but needs conflict resolution; last-write-wins loses data.",
+      "es": "**Multi-leader** da baja latencia de escritura en cada región, pero exige resolver conflictos; last-write-wins pierde datos."
+    },
+    {
+      "en": "**Leaderless** stores write to W of N replicas, read from R and fix stale copies with read repair.",
+      "es": "Los sistemas **leaderless** escriben en W de N réplicas, leen de R y corrigen las copias viejas con read repair."
+    },
+    {
+      "en": "**Failover** risks split brain; consensus-based election plus fencing makes sure the old leader's writes get rejected.",
+      "es": "El **failover** arriesga un split brain; la elección por consenso más fencing asegura que se rechacen las escrituras del leader anterior."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  CW[Client writes] --> L[(Leader)]\n  L -->|\"sync: ack before commit\"| F1[(\"Follower A<br/>other AZ\")]\n  L -.->|\"async: lag ms to s\"| F2[(Follower B)]\n  L -.->|async| F3[(Follower C)]\n  CR[Client reads] --> F2\n  CR --> F3\n  H[\"Failover manager<br/>(Patroni + etcd)\"] -.->|health checks| L\n  H -.->|\"promote on failure\"| F1",
     "caption": {

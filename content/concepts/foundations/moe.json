@@ -16,6 +16,28 @@
     "en": "A **Mixture of Experts** model swaps the dense feed-forward (FFN) block in some or all [[transformer]] layers for **many FFNs (experts)** plus a **router**. For each token, at each MoE layer, the router scores the experts and sends the token to the **top-k** (often 1–8); their outputs are mixed using the router weights. Attention stays shared.\n\nThat splits model size into two numbers:\n\n- **Total parameters**: what you must store. Capacity and knowledge.\n- **Active parameters**: what each token computes. FLOPs per token.\n\nMixtral 8x7B has ~47B total but ~13B active (top-2 of 8; not 56B, because only the FFNs are replicated). DeepSeek-V3 has 671B total and 37B active (8 of 256 routed experts plus 1 shared). You get large-model quality at small-model compute per token.\n\nThe bill arrives elsewhere:\n\n- **Memory**: every expert must be loaded; Mixtral needs ~94 GB in bf16 though it computes like a 13B.\n- **Load balancing**: the router collapses onto a few favourite experts unless an auxiliary loss or bias term spreads tokens.\n- **Expert parallelism**: experts live on different GPUs, so each MoE layer does an all-to-all token exchange.\n- **Serving**: a batch's tokens together touch most experts, so decode still streams most weights from memory; the FLOP savings pay off at large, compute-bound batches.",
     "es": "Un modelo **Mixture of Experts** cambia el bloque feed-forward (FFN) denso de algunas o todas las capas del [[transformer]] por **muchos FFNs (expertos)** más un **router**. Para cada token, en cada capa MoE, el router puntúa a los expertos y manda el token a los **top-k** (normalmente 1–8); sus salidas se combinan con los pesos del router. La atención sigue siendo compartida.\n\nEso divide el tamaño del modelo en dos números:\n\n- **Parámetros totales**: lo que tienes que almacenar. Capacidad y conocimiento.\n- **Parámetros activos**: lo que calcula cada token. FLOPs por token.\n\nMixtral 8x7B tiene ~47B totales pero ~13B activos (top-2 de 8; no son 56B porque solo se replican los FFNs). DeepSeek-V3 tiene 671B totales y 37B activos (8 de 256 expertos ruteados más 1 compartido). Obtienes calidad de modelo grande con cómputo por token de modelo chico.\n\nLa cuenta llega por otro lado:\n\n- **Memoria**: todos los expertos deben estar cargados; Mixtral necesita ~94 GB en bf16 aunque calcula como uno de 13B.\n- **Balance de carga**: el router colapsa sobre unos pocos expertos favoritos, salvo que una loss auxiliar o un término de sesgo reparta los tokens.\n- **Expert parallelism**: los expertos viven en GPUs distintas, así que cada capa MoE hace un intercambio all-to-all de tokens.\n- **Serving**: los tokens de un batch, juntos, tocan casi todos los expertos, así que el decode igual lee casi todos los pesos de memoria; el ahorro de FLOPs rinde con batches grandes, limitados por cómputo."
   },
+  "keyPoints": [
+    {
+      "en": "Size splits in two: **total parameters** you must store, and active parameters each token computes.",
+      "es": "El tamaño se divide en dos: los **parámetros totales** que almacenas y los activos que calcula cada token."
+    },
+    {
+      "en": "Mixtral 8x7B holds ~47B, not 56B, because only the **FFNs** are replicated; ~13B are active.",
+      "es": "Mixtral 8x7B tiene ~47B, no 56B, porque solo se replican los **FFNs**; ~13B son activos."
+    },
+    {
+      "en": "**Memory** follows the total: every expert stays loaded, so Mixtral needs ~94 GB in bf16.",
+      "es": "La **memoria** depende del total: todos los expertos van cargados, así que Mixtral necesita ~94 GB en bf16."
+    },
+    {
+      "en": "**Load balancing** needs an auxiliary loss or bias term, or the router collapses onto a few favourite experts.",
+      "es": "El **balance de carga** requiere una loss auxiliar o un término de sesgo; si no, el router colapsa sobre unos pocos expertos favoritos."
+    },
+    {
+      "en": "FLOP savings pay off at large, compute-bound batches; at low traffic you pay for **idle memory**.",
+      "es": "El ahorro de FLOPs rinde con batches grandes, limitados por cómputo; con poco tráfico pagas **memoria ociosa**."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  A[\"Attention (shared)\"] --> T[Token hidden state]\n  T --> R{\"Router<br/>top-2 of 8\"}\n  R -->|weight 0.7| E2[\"Expert 2 (FFN)\"]\n  R -->|weight 0.3| E5[\"Expert 5 (FFN)\"]\n  R -.->|not computed| X[\"Experts 1,3,4,6,7,8\"]\n  E2 --> S[Weighted sum]\n  E5 --> S\n  S --> N[Next layer]",
     "caption": {

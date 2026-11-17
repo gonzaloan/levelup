@@ -16,6 +16,28 @@
     "en": "**Speculative decoding** lets a big model emit several tokens per forward pass without changing what it would have produced.\n\nAt small batch sizes, decode is memory-bound: producing one token reads all of the target's weights while the GPU's math units mostly idle (see [[prefill-decode]]). Scoring 5 tokens in one pass costs about the same as scoring 1. Speculative decoding exploits that:\n\n1. A cheap **draft** proposes *k* tokens (typically 3–8) one by one.\n2. The **target** runs *one* forward pass over all *k*, getting its own probabilities at every position.\n3. Each draft token is accepted with probability min(1, p_target / p_draft). At the first rejection, a replacement is sampled from the corrected leftover distribution and the rest is discarded. If all *k* pass, the target adds one bonus token.\n\nThis rejection rule makes the output distribution **identical** to the target's (Leviathan et al.; Chen et al.): lossless, not an approximation. Speed depends on the **acceptance rate**: at 80% with k=4, each target pass yields ~3.4 tokens, typically **2–3×** lower latency.\n\nDraft options: a small model from the same family and tokenizer; **Medusa** heads or **EAGLE**, light heads trained on the target's own hidden states; or **n-gram / prompt lookup**, which copies spans from the prompt for free and shines on edits, summaries and RAG answers that quote sources.",
     "es": "El **speculative decoding** permite que un modelo grande emita varios tokens por pasada sin cambiar lo que habría generado.\n\nCon batches chicos, el decode está limitado por memoria: producir un token lee todos los pesos del modelo objetivo mientras las unidades de cómputo de la GPU están casi ociosas (ver [[prefill-decode]]). Evaluar 5 tokens en una pasada cuesta más o menos lo mismo que evaluar 1. El speculative decoding aprovecha eso:\n\n1. Un **borrador** barato propone *k* tokens (típicamente 3–8) uno por uno.\n2. El **modelo objetivo** hace *una* pasada sobre los *k* y obtiene sus propias probabilidades en cada posición.\n3. Cada token del borrador se acepta con probabilidad min(1, p_objetivo / p_borrador). En el primer rechazo, se muestrea un reemplazo de la distribución residual corregida y se descarta el resto. Si los *k* pasan, el objetivo agrega un token extra.\n\nEsta regla de rechazo hace que la distribución de salida sea **idéntica** a la del objetivo (Leviathan et al.; Chen et al.): sin pérdida, no es una aproximación. La velocidad depende de la **tasa de aceptación**: con 80% y k=4, cada pasada del objetivo rinde ~3.4 tokens, típicamente **2–3×** menos latencia.\n\nOpciones de borrador: un modelo chico de la misma familia y con el mismo tokenizer; cabezas **Medusa** o **EAGLE**, livianas y entrenadas sobre los estados ocultos del propio objetivo; o **n-gramas / prompt lookup**, que copia fragmentos del prompt gratis y brilla en ediciones, resúmenes y respuestas RAG que citan fuentes."
   },
+  "keyPoints": [
+    {
+      "en": "At small batches decode is memory-bound, so scoring 5 tokens in one pass costs about the same as 1.",
+      "es": "Con batches pequeños el decode está limitado por memoria: puntuar 5 tokens en una pasada cuesta casi lo mismo que 1."
+    },
+    {
+      "en": "At the first rejection, the target samples a replacement; if all k pass, it adds a **bonus token**.",
+      "es": "En el primer rechazo, el modelo objetivo muestrea un reemplazo; si pasan los k, agrega un **token extra**."
+    },
+    {
+      "en": "Speed depends on the **acceptance rate**: at 80% with k=4, each target pass yields ~3.4 tokens.",
+      "es": "La velocidad depende de la **tasa de aceptación**: con 80% y k=4, cada pasada del objetivo da ~3.4 tokens."
+    },
+    {
+      "en": "Drafts can be a small same-tokenizer model, Medusa or EAGLE heads, or **prompt lookup** copying spans from the input.",
+      "es": "El draft puede ser un modelo pequeño con el mismo tokenizer, cabezas Medusa o EAGLE, o **prompt lookup**, que copia tramos del input."
+    },
+    {
+      "en": "**Big batches** erase the gain (e.g. ~1.1× at batch 64), so turn speculation off under peak load.",
+      "es": "Los **batches grandes** borran la ganancia (p. ej., ~1.1× con batch 64), así que apaga la especulación en los picos de carga."
+    }
+  ],
   "diagram": {
     "code": "sequenceDiagram\n  participant D as Draft model\n  participant T as Target model\n  participant O as Output\n  D->>D: Propose k=4 tokens one by one\n  D->>T: the cat sat on\n  T->>T: One forward pass scores all 4\n  T->>O: Accept the cat sat\n  T->>O: Reject on, sample down instead\n  Note over D,T: Next round continues after down",
     "caption": {

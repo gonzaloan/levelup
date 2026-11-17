@@ -16,6 +16,28 @@
     "en": "An API is a contract; pick its style by who calls it and how long the work takes.\n\n- **REST** (HTTP + JSON): resources as nouns (`/orders/42`), HTTP verbs as actions (`GET` safe; `PUT`, `DELETE` idempotent; `POST` not), and status codes that mean something (`201`, `409`, `429`). Universal and cacheable: the default for public APIs.\n- **gRPC**: protobuf over HTTP/2, generated clients, bidirectional **streaming**. Compact and strictly typed; best between internal services (browsers need gRPC-Web).\n- **GraphQL**: clients ask for exactly the fields they need. Good for many UIs over many backends; harder to cache and rate-limit.\n\n**Long-running work** must not hold a request open for minutes:\n\n- `202 Accepted` and a `Location: /jobs/123` to poll.\n- **Webhooks**: call the client back when done (signed, retried with backoff).\n- **SSE / WebSockets**: push progress or tokens over an open connection ([[streaming]]).\n\nDay-one essentials:\n\n- **Cursor pagination** (`?after=opaque_cursor`), not `OFFSET`, which slows on deep pages and skips or repeats rows as data changes.\n- **Versioning**: additive changes only; breaking ones get `/v2` or a dated header.\n- **Idempotency keys** on `POST`, so a retry never charges twice ([[idempotency]]).\n\nLLM APIs hit all of this: answers stream over SSE, agent runs take minutes, batch jobs hours, and every retry costs tokens.",
     "es": "Una API es un contrato; elige su estilo según quién la llama y cuánto tarda el trabajo.\n\n- **REST** (HTTP + JSON): recursos como sustantivos (`/orders/42`), verbos HTTP como acciones (`GET` seguro; `PUT` y `DELETE` idempotentes; `POST` no) y códigos de estado con significado (`201`, `409`, `429`). Universal y cacheable: la opción por defecto para APIs públicas.\n- **gRPC**: protobuf sobre HTTP/2, clientes generados y **streaming** bidireccional. Compacto y con tipado estricto; ideal entre servicios internos (los navegadores necesitan gRPC-Web).\n- **GraphQL**: el cliente pide exactamente los campos que necesita. Sirve para muchas UIs sobre muchos backends; es más difícil de cachear y de limitar.\n\nEl **trabajo de larga duración** no debe mantener una petición abierta por minutos:\n\n- `202 Accepted` y un `Location: /jobs/123` para consultar.\n- **Webhooks**: llamas al cliente cuando termina (firmado y reintentado con backoff).\n- **SSE / WebSockets**: empujas el progreso o los tokens por una conexión abierta ([[streaming]]).\n\nLo esencial desde el día uno:\n\n- **Paginación por cursor** (`?after=opaque_cursor`), no `OFFSET`, que se vuelve lento en páginas profundas y salta o repite filas cuando los datos cambian.\n- **Versionado**: solo cambios aditivos; los que rompen van a `/v2` o a un header con fecha.\n- **Claves de idempotencia** en `POST`, para que un reintento nunca cobre dos veces ([[idempotency]]).\n\nLas APIs de LLMs juntan todo esto: las respuestas llegan por SSE, las ejecuciones de agentes tardan minutos, los jobs batch, horas, y cada reintento cuesta tokens."
   },
+  "keyPoints": [
+    {
+      "en": "**REST** treats resources as nouns and HTTP verbs as actions: GET is safe, PUT and DELETE idempotent, POST not.",
+      "es": "**REST** modela recursos como sustantivos y verbos HTTP como acciones: GET es seguro, PUT y DELETE son idempotentes, POST no."
+    },
+    {
+      "en": "**GraphQL** lets clients ask for exactly the fields they need, but it's harder to cache and rate-limit.",
+      "es": "**GraphQL** deja que el cliente pida exactamente los campos que necesita, pero es más difícil de cachear y limitar."
+    },
+    {
+      "en": "Go **async** past ~30 s: API Gateway's default timeout is 29 s, ALB's idle timeout 60 s.",
+      "es": "Pasa a **async** después de ~30 s: el timeout por defecto de API Gateway es de 29 s y el idle timeout del ALB, de 60 s."
+    },
+    {
+      "en": "Use **cursor pagination**, not OFFSET, which slows on deep pages and skips or repeats rows as data changes.",
+      "es": "Usa **paginación por cursor**, no OFFSET, que se vuelve lento en páginas profundas y salta o repite filas si los datos cambian."
+    },
+    {
+      "en": "**Versioning**: ship additive changes only; breaking ones get `/v2` or a dated header.",
+      "es": "**Versionado**: solo cambios aditivos; los que rompen compatibilidad van a `/v2` o a un header con fecha."
+    }
+  ],
   "diagram": {
     "code": "sequenceDiagram\n  participant C as Client\n  participant A as API\n  participant Q as Job queue\n  participant W as LLM worker\n  C->>A: POST /v1/summaries + Idempotency-Key\n  A->>Q: enqueue job 123\n  A-->>C: 202 Accepted, Location /v1/jobs/123\n  Q->>W: deliver job 123\n  C->>A: GET /v1/jobs/123\n  A-->>C: 200 running, Retry-After 5\n  W->>A: mark job 123 succeeded\n  alt webhook registered\n    A->>C: POST signed callback\n  else polling\n    C->>A: GET /v1/jobs/123\n    A-->>C: 200 succeeded + result\n  end",
     "caption": {

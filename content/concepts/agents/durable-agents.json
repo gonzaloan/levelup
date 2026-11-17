@@ -16,6 +16,28 @@
     "en": "**Durable execution** makes a long-running agent survive failures. A 40-step agent that runs for 20 minutes — or waits 3 days for an approval — will meet a crash, deploy, OOM or rate limit. Without durability it restarts from zero, re-paying every LLM call and possibly **re-running side effects**.\n\nThe mechanism:\n- **Checkpoint every step** — messages, tool results and plan go to a durable store (Postgres, Temporal's event history). On restart the engine **replays** completed steps from the log instead of re-executing them: the trajectory is **event-sourced**.\n- **Steps are activities** — LLM and tool calls run as retriable units with **timeouts** and backoff; the orchestration code stays deterministic.\n- **Idempotency keys** — the classic trap is **success-then-timeout**: the refund API succeeded, the response was lost, the retry refunds again. Derive a key from workflow id + step id so a retry is a no-op ([[idempotency]]).\n- **Durable waits** — pause for a human signal for days at zero compute, then resume ([[human-in-the-loop]]).\n\nTools: **Temporal** (workflows + activities, replay), **LangGraph checkpointers** (state saved per super-step, keyed by `thread_id`), **AWS Step Functions** (Standard workflows run up to 1 year; `.waitForTaskToken` for callbacks), plus Restate, Inngest and DBOS.\n\nThe constraint: workflow code must be **deterministic** — no clock, randomness or I/O outside activities, or replay diverges from history.",
     "es": "La **ejecución durable** hace que un agente de larga duración sobreviva a las fallas. Un agente de 40 pasos que corre 20 minutos, o que espera 3 días una aprobación, se va a topar con una caída, un deploy, un OOM o un rate limit. Sin durabilidad, arranca de cero, vuelve a pagar cada llamada al LLM y puede **repetir efectos secundarios**.\n\nEl mecanismo:\n- **Checkpoint en cada paso**: mensajes, resultados de herramientas y plan van a un almacén durable (Postgres, el historial de eventos de Temporal). Al reiniciar, el motor **reproduce** los pasos completados desde el log en vez de ejecutarlos otra vez: la trayectoria queda **event-sourced**.\n- **Los pasos son actividades**: las llamadas al LLM y a herramientas corren como unidades reintentables con **timeouts** y backoff; el código de orquestación se mantiene determinista.\n- **Claves de idempotencia**: la trampa clásica es **éxito y luego timeout**: la API de reembolsos respondió bien, la respuesta se perdió y el reintento reembolsa otra vez. Deriva una clave del id del workflow + id del paso para que el reintento no haga nada ([[idempotency]]).\n- **Esperas durables**: pausa días esperando una señal humana sin gastar cómputo y luego continúa ([[human-in-the-loop]]).\n\nHerramientas: **Temporal** (workflows + actividades, replay), los **checkpointers de LangGraph** (estado guardado por super-step, con `thread_id` como clave), **AWS Step Functions** (los workflows Standard corren hasta 1 año; `.waitForTaskToken` para callbacks), además de Restate, Inngest y DBOS.\n\nLa restricción: el código del workflow debe ser **determinista**: nada de reloj, aleatoriedad ni I/O fuera de las actividades, o el replay se desvía del historial."
   },
+  "keyPoints": [
+    {
+      "en": "Without it, a crash or deploy restarts from zero, re-paying LLM calls and maybe re-running **side effects**.",
+      "es": "Sin durabilidad, una caída o un deploy reinicia desde cero, vuelve a pagar llamadas al LLM y quizá repite **efectos secundarios**."
+    },
+    {
+      "en": "Engines like Temporal **replay** completed steps from the event history instead of re-executing them.",
+      "es": "Motores como Temporal hacen **replay** de los pasos completados desde el historial de eventos en vez de volver a ejecutarlos."
+    },
+    {
+      "en": "**Success-then-timeout**: the refund succeeded but the response was lost; an idempotency key makes the retry a no-op.",
+      "es": "**Success-then-timeout**: el reembolso se hizo pero la respuesta se perdió; una idempotency key convierte el reintento en un no-op."
+    },
+    {
+      "en": "**Durable waits** pause for a human signal for days at zero compute, then resume.",
+      "es": "Las **esperas durables** pausan días a la espera de la señal de una persona, sin consumir cómputo, y luego reanudan."
+    },
+    {
+      "en": "Workflow code must be **deterministic**: no clock, randomness or I/O outside activities, or replay diverges.",
+      "es": "El código del workflow debe ser **determinista**: sin reloj, aleatoriedad ni I/O fuera de las activities, o el replay diverge."
+    }
+  ],
   "diagram": {
     "code": "sequenceDiagram\n  participant W as Agent workflow\n  participant H as Event history\n  participant L as LLM activity\n  participant R as Refund API\n  W->>L: next action for step 8\n  L-->>W: refund order 42\n  W->>H: record step 8 decision\n  W->>R: refund, key wf1-step8\n  R-->>W: timeout, but refund succeeded\n  Note over W: worker crashes and restarts\n  W->>H: replay steps 1 to 8 from log\n  W->>R: retry, same key wf1-step8\n  R-->>W: already done, original result\n  W->>H: record step 8 result",
     "caption": {

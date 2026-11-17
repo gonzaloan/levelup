@@ -3,8 +3,8 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://levelup.skillrealm.dev"),
-  title: { default: "AI Architect Field Guide", template: "%s · AI Architect Field Guide" },
-  description: "The study guide and interview cheatsheet for Staff/Principal AI Architects: every concept explained simply, with diagrams, code, trade-offs and interview questions. EN/ES.",
+  title: { default: "Staff Engineer & AI Architect Field Guide", template: "%s · levelup" },
+  description: "Study guide and interview prep for Staff/Principal engineers and AI architects: coding patterns, system design, distributed systems, AI systems and leadership. Diagrams, code, practice. EN/ES.",
 };
 
 export const viewport: Viewport = {

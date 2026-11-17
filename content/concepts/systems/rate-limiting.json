@@ -16,6 +16,28 @@
     "en": "A **rate limiter** decides, per request, whether a client is within its allowance, and rejects or queues the rest. It protects capacity, cost and fairness between tenants.\n\n**Algorithms:**\n\n- **Token bucket**: capacity *B*, refilled at *r* tokens/s; each request spends tokens. Bursts up to *B*, average *r*. The default choice; Anthropic documents using it for its API limits.\n- **Leaky bucket**: a queue drained at a fixed rate. Smooth output, no bursts.\n- **Fixed window**: one counter per minute. Cheap, but up to **2×** the limit passes around a boundary.\n- **Sliding window log**: every timestamp stored. Exact; memory grows with traffic.\n- **Sliding window counter**: weights the previous window's count by its overlap. Near-exact with two counters.\n\n**Where:** at the edge, in the API gateway or [[llm-gateway]], keyed by API key or tenant. With many gateway replicas, keep counters in **Redis** behind an atomic Lua script; otherwise each replica enforces its own copy and the real limit becomes N×.\n\n**LLM twist:** one 100k-token request costs as much as hundreds of short ones, so limit **tokens per minute (TPM)** as well as RPM, plus concurrent streams. Reserve estimated input + `max_tokens` on admission, then refund the unused part. Plans map to bucket sizes per tenant ([[multi-tenancy]]). Reject with **429 + Retry-After** so clients back off precisely.",
     "es": "Un **rate limiter** decide, en cada request, si el cliente está dentro de su cuota, y rechaza o encola el resto. Protege capacidad, costo y equidad entre tenants.\n\n**Algoritmos:**\n\n- **Token bucket**: capacidad *B*, recargada a *r* tokens/s; cada request gasta tokens. Ráfagas de hasta *B*, promedio *r*. La opción por defecto; Anthropic documenta que lo usa para los límites de su API.\n- **Leaky bucket**: una cola que se vacía a ritmo fijo. Salida pareja, sin ráfagas.\n- **Ventana fija**: un contador por minuto. Barato, pero en el borde entre ventanas puede pasar hasta **2×** el límite.\n- **Ventana deslizante con log**: guarda cada timestamp. Exacto; la memoria crece con el tráfico.\n- **Ventana deslizante con contador**: pondera el conteo de la ventana anterior según cuánto se solapa. Casi exacto con dos contadores.\n\n**Dónde:** en el borde, en el API gateway o en el [[llm-gateway]], por API key o tenant. Con muchas réplicas del gateway, guarda los contadores en **Redis** con un script Lua atómico; si no, cada réplica aplica su propia copia y el límite real se vuelve N×.\n\n**El giro con LLMs:** un request de 100k tokens cuesta lo mismo que cientos de requests cortos, así que limita **tokens por minuto (TPM)** además de RPM, y también streams concurrentes. Reserva la entrada estimada + `max_tokens` al admitir y devuelve lo que no se usó. Cada plan se traduce en tamaños de bucket por tenant ([[multi-tenancy]]). Rechaza con **429 + Retry-After** para que los clientes esperen lo justo."
   },
+  "keyPoints": [
+    {
+      "en": "**Token bucket** is the default: capacity B allows bursts, refill rate r sets the average.",
+      "es": "El **token bucket** es la opción por defecto: la capacidad B permite ráfagas y la recarga r fija el promedio."
+    },
+    {
+      "en": "A **fixed window** is cheap but lets up to 2× the limit through around a boundary.",
+      "es": "Una **ventana fija** es barata, pero deja pasar hasta 2× el límite alrededor del borde."
+    },
+    {
+      "en": "With many gateway replicas, keep counters in **Redis**; local limits on N replicas become N× the limit.",
+      "es": "Con muchas réplicas del gateway, guarda los contadores en **Redis**; con límites locales, N réplicas dan N× el límite."
+    },
+    {
+      "en": "**Reserve** estimated input + `max_tokens` when admitting an LLM call, then refund the unused part.",
+      "es": "**Reserva** el input estimado + `max_tokens` al admitir una llamada al LLM y luego devuelve lo que no se usó."
+    },
+    {
+      "en": "Map plans to **bucket sizes** per tenant, so one noisy script hits 429s while others never notice.",
+      "es": "Asigna **tamaños de bucket** por plan y tenant: un script ruidoso recibe 429 mientras los demás ni lo notan."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  C[Client request] --> G[\"Gateway<br/>identify tenant\"]\n  G --> E[\"Estimate cost<br/>input + max_tokens\"]\n  E --> B{\"Bucket has room?<br/>RPM and TPM\"}\n  R[(\"Redis buckets<br/>per tenant\")] -.-> B\n  B -->|no| X[\"429 + Retry-After\"]\n  B -->|yes| L[LLM provider]\n  L --> U[\"Reconcile real tokens<br/>refund the rest\"]\n  U -.-> R",
     "caption": {

@@ -10,7 +10,16 @@ import { ProgressMeter } from "@/components/Mastered";
 import { ContinueCard } from "@/components/Continue";
 import { getPath } from "@/lib/content";
 
-const HOT = ["llm-reference-architecture", "rag", "reranking", "agents-vs-workflows", "mcp", "prompt-injection", "llm-as-judge", "kv-cache", "prompt-caching", "model-routing", "ai-tradeoff-triangle", "llm-resilience", "hallucinations", "design-framework", "case-feed-ranking"];
+// Asked again and again in Staff SWE and AI architect loops: a mix, not only AI.
+const HOT = ["case-news-feed", "consistent-hashing", "rate-limiting", "case-chat-system", "sliding-window", "caching", "case-payment-system", "behavioral-star", "llm-reference-architecture", "rag", "agents-vs-workflows", "prompt-injection", "kv-cache", "design-framework"];
+
+// The syllabus in three tracks. A topic missing here lands in the last one, so a new domain
+// still shows up.
+const TRACKS: { id: string; en: string; es: string; domains: string[] }[] = [
+  { id: "swe", en: "Staff software engineering", es: "Ingeniería de software Staff", domains: ["coding", "systems", "sysdesign", "leadership"] },
+  { id: "ai", en: "AI systems", es: "Sistemas de IA", domains: ["foundations", "prompting", "rag", "agents", "evals", "training", "inference", "security", "architecture", "design"] },
+  { id: "ml", en: "Machine learning", es: "Machine learning", domains: ["ml", "mlops"] },
+];
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
   const { locale } = await params;
@@ -34,14 +43,12 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
   return (
     <main className="home">
       <section className="hero">
-        <p className="eyebrow">Staff · Principal · AI Architect</p>
+        <p className="eyebrow">Staff · Principal · Software Engineer · AI Architect</p>
         <h1>{L("heroTitle")}</h1>
         <p className="hero-sub">{L("heroSub")}</p>
         <SearchButton big label={L("search")} placeholder={L("searchPlaceholder")} />
         <div className="hero-ctas">
           <Link className="btn btn-primary" href={`/${locale}/path/`}>{L("startHere")} <Icon name="right" size={16} /></Link>
-          <Link className="btn" href={`/${locale}/map/`}><Icon name="map" size={16} /> {L("openMap")}</Link>
-          <Link className="btn" href={`/${locale}/cheatsheet/`}><Icon name="list" size={16} /> {L("openCheatsheet")}</Link>
           <Link className="btn" href={`/${locale}/practice/`}><Icon name="cards" size={16} /> {L("practiceQuestions")}</Link>
         </div>
         <ul className="stats">
@@ -60,23 +67,28 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
         </section>
       )}
 
-      <section>
-        <h2 className="section-label">{locale === "es" ? "El temario, en orden de estudio" : "The syllabus, in study order"}</h2>
-        <div className="domain-grid">
-          {domains.map((d, i) => (
-            <Link key={d.id} href={`/${locale}/d/${d.id}/`} className="domain-card" style={{ ["--h" as string]: hueFor(i) }}>
-              <div className="dc-head">
-                <span className="dc-icon"><Icon name={d.icon} size={22} /></span>
-                <span className="dc-n">{String(i + 1).padStart(2, "0")}</span>
-              </div>
-              <h3>{t(d.title, locale)}</h3>
-              <p>{t(d.tagline, locale)}</p>
-              <ProgressMeter ids={d.concepts} label={locale === "es" ? "estudiados" : "studied"} />
-            </Link>
-          ))}
-        </div>
-        <p className="legend">{L("levelLegend")}</p>
-      </section>
+      {TRACKS.map((tr, ti) => {
+        const ids = new Set(TRACKS.flatMap((x) => x.domains));
+        const list = domains.filter((d) => tr.domains.includes(d.id) || (ti === TRACKS.length - 1 && !ids.has(d.id)));
+        return (
+          <section key={tr.id} className="track">
+            <h2 className="section-label">{locale === "es" ? tr.es : tr.en}</h2>
+            <div className="track-list">
+              {list.map((d) => {
+                const i = domains.indexOf(d);
+                return (
+                  <Link key={d.id} href={`/${locale}/d/${d.id}/`} className="domain-card" style={{ ["--h" as string]: hueFor(i) }}>
+                    <span className="dc-icon"><Icon name={d.icon} size={20} /></span>
+                    <span className="dr-text"><strong>{t(d.title, locale)}</strong><small>{t(d.tagline, locale)}</small></span>
+                    <ProgressMeter ids={d.concepts} label={locale === "es" ? "estudiados" : "studied"} />
+                  </Link>
+                );
+              })}
+            </div>
+          </section>
+        );
+      })}
+      <p className="legend">{L("levelLegend")}</p>
     </main>
   );
 }

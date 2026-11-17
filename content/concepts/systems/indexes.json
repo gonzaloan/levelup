@@ -16,6 +16,28 @@
     "en": "An **index** is a second, sorted structure that lets the database find rows without scanning the table. Two designs dominate:\n\n- **B-tree** (Postgres, MySQL InnoDB): a shallow balanced tree of fixed-size pages (8 KB in Postgres, 16 KB in InnoDB). With hundreds of keys per page, 3–4 levels cover billions of rows and the top levels stay in RAM, so a lookup costs ~1 disk read. Keys stay sorted, so **range scans and ORDER BY … LIMIT** are cheap. Writes modify pages **in place** (plus the WAL).\n- **LSM tree** (RocksDB, Cassandra, ScyllaDB, Bigtable): writes go to a WAL and an in-memory **memtable**; when it fills, it is flushed as an immutable sorted **SSTable**. Background **compaction** merges SSTables and drops overwritten and deleted (tombstoned) keys. Writes are sequential and fast; a read may check several files, so per-file **Bloom filters** skip the ones that can't hold the key.\n\nThe trade-off is the **RUM conjecture**: you can minimize two of read, write (update) and space amplification, never all three. B-trees favor reads; LSMs favor writes and pay with compaction I/O and read amplification.\n\nTwo rules hold for any index: **column order matters** (equality columns first, then the range or sort column), and **every index slows writes**, because each insert must update it.",
     "es": "Un **índice** es una segunda estructura ordenada que le permite a la base encontrar filas sin recorrer toda la tabla. Dominan dos diseños:\n\n- **B-tree** (Postgres, MySQL InnoDB): un árbol balanceado y poco profundo de páginas de tamaño fijo (8 KB en Postgres, 16 KB en InnoDB). Con cientos de claves por página, 3–4 niveles cubren miles de millones de filas y los niveles superiores viven en RAM, así que una búsqueda cuesta ~1 lectura de disco. Las claves están ordenadas, por eso los **rangos y el ORDER BY … LIMIT** son baratos. Las escrituras modifican páginas **en su lugar** (más el WAL).\n- **LSM tree** (RocksDB, Cassandra, ScyllaDB, Bigtable): las escrituras van a un WAL y a una **memtable** en memoria; cuando se llena, se vuelca como un **SSTable** ordenado e inmutable. La **compactación** en segundo plano fusiona SSTables y descarta claves sobrescritas o borradas (tombstones). Escribir es secuencial y rápido; una lectura puede revisar varios archivos, así que un **Bloom filter** por archivo descarta los que no pueden tener la clave.\n\nEl trade-off es la **conjetura RUM**: puedes minimizar dos de la amplificación de lectura, de escritura y de espacio, nunca las tres. Los B-trees favorecen la lectura; los LSM favorecen la escritura y lo pagan con I/O de compactación y amplificación de lectura.\n\nDos reglas valen para cualquier índice: **el orden de las columnas importa** (primero las de igualdad, luego la de rango u orden) y **todo índice frena las escrituras**, porque cada insert tiene que actualizarlo."
   },
+  "keyPoints": [
+    {
+      "en": "A **B-tree** stays 3–4 levels deep with its top levels in RAM, so a lookup costs ~1 disk read.",
+      "es": "Un **B-tree** se mantiene en 3–4 niveles con los superiores en RAM, así que una búsqueda cuesta ~1 lectura a disco."
+    },
+    {
+      "en": "An **LSM** flushes its memtable as immutable sorted SSTables; background compaction merges them and drops deleted keys.",
+      "es": "Un **LSM** vuelca su memtable como SSTables ordenados e inmutables; la compactación en segundo plano los fusiona y descarta las keys borradas."
+    },
+    {
+      "en": "LSM reads may check several files, so per-file **Bloom filters** skip those that can't hold the key.",
+      "es": "Una lectura en LSM puede revisar varios archivos, así que los **Bloom filters** por archivo saltan los que no pueden tener la key."
+    },
+    {
+      "en": "**RUM conjecture**: you can minimize two of read, write and space amplification, never all three.",
+      "es": "**Conjetura RUM**: puedes minimizar dos de la amplificación de lectura, escritura y espacio, nunca las tres."
+    },
+    {
+      "en": "In composite indexes **column order matters**: equality columns first, then the range or sort column.",
+      "es": "En índices compuestos **el orden de columnas importa**: primero las de igualdad, luego la de rango u orden."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  subgraph BT[\"B-tree: read-optimized\"]\n    BW[Read or write] --> RT[\"Root page<br/>(cached in RAM)\"]\n    RT --> BR[Branch page]\n    BR --> LF[\"Leaf page<br/>updated in place\"]\n  end\n  subgraph LSM[\"LSM tree: write-optimized\"]\n    W[Write] --> LOG[(WAL)]\n    W --> MT[\"Memtable<br/>sorted, in RAM\"]\n    MT -->|flush when full| SS[\"SSTables<br/>immutable, sorted\"]\n    SS -->|background compaction| SS\n    R[Read] -->|check first| MT\n    R -->|then newest file first| BF{\"Bloom filter<br/>per SSTable\"}\n    BF -->|maybe present| SS\n  end",
     "caption": {

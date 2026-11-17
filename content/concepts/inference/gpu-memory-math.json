@@ -16,6 +16,28 @@
     "en": "Three numbers decide whether a model fits, how many users it serves at once, and how fast it can talk.\n\n1. **Weights** = parameters × bytes per parameter. FP16/BF16 = 2 bytes, FP8/INT8 = 1, INT4 = 0.5. A 70B model is ~140 GB in FP16, ~70 GB in FP8, ~35 GB in INT4 (plus scales).\n2. **KV cache** per token = `2 × layers × kv_heads × head_dim × bytes`. Llama-3-70B in FP16: 2×80×8×128×2 = 320 KiB, so one 8k-token sequence holds ~2.7 GB ([[kv-cache]]).\n3. **Overhead**: CUDA context, CUDA graphs and activation buffers, a few GB per GPU. vLLM claims 90% of GPU memory by default (`gpu_memory_utilization=0.9`), loads the weights, profiles activations and turns the rest into KV blocks.\n\nThen **max concurrent sequences ≈ (usable memory − weights) ÷ (KV per token × context)**. Weights are a fixed cost; the KV pool is what you sell.\n\nBandwidth sets the speed limit. At batch 1, each decode step reads every weight once, so **tokens/s ≤ HBM bandwidth ÷ weight bytes**: a 7B FP16 model (14 GB) on an A100 (~2 TB/s) tops out near ~140 tokens/s, and real engines reach only part of that. Batching shares each read across sequences, so aggregate throughput grows with concurrency, which is why the KV pool matters ([[prefill-decode]]).",
     "es": "Tres números deciden si un modelo cabe, a cuántos usuarios atiende a la vez y qué tan rápido puede hablar.\n\n1. **Pesos** = parámetros × bytes por parámetro. FP16/BF16 = 2 bytes, FP8/INT8 = 1, INT4 = 0.5. Un modelo de 70B ocupa ~140 GB en FP16, ~70 GB en FP8 y ~35 GB en INT4 (más las escalas).\n2. **KV cache** por token = `2 × capas × kv_heads × head_dim × bytes`. Llama-3-70B en FP16: 2×80×8×128×2 = 320 KiB, así que una secuencia de 8k tokens ocupa ~2.7 GB ([[kv-cache]]).\n3. **Overhead**: contexto de CUDA, CUDA graphs y buffers de activaciones, unos pocos GB por GPU. Por defecto vLLM toma el 90% de la memoria de la GPU (`gpu_memory_utilization=0.9`), carga los pesos, perfila las activaciones y convierte el resto en bloques de KV.\n\nEntonces **secuencias concurrentes máximas ≈ (memoria usable − pesos) ÷ (KV por token × contexto)**. Los pesos son un costo fijo; el pool de KV es lo que vendes.\n\nEl ancho de banda pone el límite de velocidad. Con batch 1, cada paso de decode lee todos los pesos una vez, así que **tokens/s ≤ ancho de banda de HBM ÷ bytes de pesos**: un modelo de 7B en FP16 (14 GB) en una A100 (~2 TB/s) llega como máximo a ~140 tokens/s, y los motores reales alcanzan solo una parte. El batching reparte cada lectura entre varias secuencias, así que el throughput total crece con la concurrencia, y por eso importa tanto el pool de KV ([[prefill-decode]])."
   },
+  "keyPoints": [
+    {
+      "en": "Bytes per parameter set weight size: **FP16** = 2, FP8/INT8 = 1, INT4 = 0.5 (plus scales).",
+      "es": "Los bytes por parámetro fijan el tamaño de los pesos: **FP16** = 2, FP8/INT8 = 1, INT4 = 0.5 (más escalas)."
+    },
+    {
+      "en": "**KV per token** = 2 × layers × `kv_heads` × `head_dim` × bytes: 320 KiB on Llama-3-70B FP16.",
+      "es": "**KV por token** = 2 × capas × `kv_heads` × `head_dim` × bytes: 320 KiB en Llama-3-70B con FP16."
+    },
+    {
+      "en": "Max **concurrent sequences** ≈ (usable memory − weights) ÷ (KV per token × context).",
+      "es": "Máximo de **secuencias concurrentes** ≈ (memoria usable − pesos) ÷ (KV por token × contexto)."
+    },
+    {
+      "en": "A 7B FP16 model (14 GB) on an A100 (~2 TB/s) caps near ~140 tokens/s; real engines reach less.",
+      "es": "Un modelo 7B en FP16 (14 GB) en una A100 (~2 TB/s) topa cerca de ~140 tokens/s; los motores reales llegan a menos."
+    },
+    {
+      "en": "**Batching** shares each weight read across sequences, so aggregate throughput grows with concurrency.",
+      "es": "El **batching** reparte cada lectura de pesos entre secuencias, así que el throughput total crece con la concurrencia."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  G[\"GPU HBM<br/>80 GB H100\"] --> U[\"Usable 90%<br/>72 GB\"]\n  U --> W[\"Weights<br/>params × bytes\"]\n  U --> A[\"Activations + CUDA graphs\"]\n  U --> K[\"KV pool<br/>whatever is left\"]\n  K -->|divide by KV per sequence| C[\"Max concurrent<br/>sequences\"]\n  W -->|read once per step| S[\"Decode ceiling<br/>bandwidth ÷ weights\"]\n  C --> T[Aggregate throughput]\n  S --> T",
     "caption": {

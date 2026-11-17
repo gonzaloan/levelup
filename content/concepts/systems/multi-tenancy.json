@@ -16,6 +16,28 @@
     "en": "**Multi-tenancy** means one system serves many customers (tenants) while each sees only its own data and gets predictable performance. AWS's SaaS guidance names three models, chosen **per layer** (compute, database, index, queue):\n\n- **Silo**: dedicated resources per tenant, up to a separate cloud account. Strongest isolation, easy residency and per-tenant keys; cost and ops grow linearly with tenants.\n- **Pool**: shared resources, every row and request carries a `tenant_id`. Lowest cost per tenant, one fleet to upgrade; isolation must be enforced below app code, e.g. Postgres **row-level security** ([[tenant-isolation]]).\n- **Bridge**: a mix, e.g. pooled app tier with a schema per tenant, or pool for free/pro tiers and silo for enterprise.\n\nThe pool's signature problem is the **noisy neighbor**: one tenant's bulk import saturates shared CPU, DB connections or GPUs. Contain it with per-tenant [[rate-limiting]] and quotas, fair queuing, and moving whales to their own shard or silo.\n\nTwo habits make it work:\n\n- A **tenant catalog**: one lookup mapping tenant → tier, database, index, region. Moving a tenant to a silo becomes a data copy plus one catalog update.\n- **Cost per tenant**: meter tokens, GPU-seconds and storage by `tenant_id`, or a heavy flat-plan customer quietly costs more than it pays.\n\n**AI angle**: per-tenant vector namespaces, plus token quotas and model tiers enforced on the [[llm-gateway]].",
     "es": "**Multi-tenancy** significa que un mismo sistema atiende a muchos clientes (tenants) mientras cada uno ve solo sus datos y recibe un rendimiento predecible. La guía SaaS de AWS nombra tres modelos, que se eligen **por capa** (cómputo, base de datos, índice, cola):\n\n- **Silo**: recursos dedicados por tenant, hasta una cuenta de nube separada. El aislamiento más fuerte, residencia de datos sencilla y llaves por tenant; el costo y la operación crecen de forma lineal con los tenants.\n- **Pool**: recursos compartidos, cada fila y cada petición lleva un `tenant_id`. El menor costo por tenant y una sola flota que actualizar; el aislamiento se debe imponer por debajo del código de la app, por ejemplo con **row-level security** de Postgres ([[tenant-isolation]]).\n- **Bridge**: una mezcla, por ejemplo un app tier compartido con un schema por tenant, o pool para los planes free/pro y silo para enterprise.\n\nEl problema típico del pool es el **vecino ruidoso**: la importación masiva de un tenant satura la CPU, las conexiones a la base de datos o las GPUs compartidas. Contenlo con [[rate-limiting]] y cuotas por tenant, colas justas y moviendo a los clientes gigantes a su propio shard o silo.\n\nDos hábitos lo hacen funcionar:\n\n- Un **catálogo de tenants**: una sola consulta que mapea tenant → plan, base de datos, índice, región. Mover un tenant a un silo se vuelve una copia de datos más un solo cambio en el catálogo.\n- **Costo por tenant**: mide tokens, segundos de GPU y almacenamiento por `tenant_id`, o un cliente pesado con tarifa plana te costará más de lo que paga sin que lo notes.\n\n**Ángulo IA**: namespaces vectoriales por tenant, además de cuotas de tokens y niveles de modelo aplicados en el [[llm-gateway]]."
   },
+  "keyPoints": [
+    {
+      "en": "**Silo** gives the strongest isolation, easy residency and per-tenant keys, but cost and ops grow linearly with tenants.",
+      "es": "**Silo** da el aislamiento más fuerte, residencia fácil y keys por tenant, pero el costo y la operación crecen linealmente con los tenants."
+    },
+    {
+      "en": "**Pool** has the lowest cost per tenant, but isolation must live below app code, e.g. row-level security.",
+      "es": "**Pool** tiene el menor costo por tenant, pero el aislamiento debe vivir debajo del código de la app, p. ej. row-level security."
+    },
+    {
+      "en": "The pool's signature risk is the **noisy neighbor**; contain it with per-tenant quotas, fair queuing and moving whales out.",
+      "es": "El riesgo típico del pool es el **noisy neighbor**; contenlo con cuotas por tenant, fair queuing y moviendo a los tenants gigantes aparte."
+    },
+    {
+      "en": "A **tenant catalog** maps tenant → tier, database, index, region; moving a tenant becomes a data copy plus one update.",
+      "es": "Un **catálogo de tenants** mapea tenant → tier, base de datos, índice y región; mover un tenant es copiar datos y actualizar una entrada."
+    },
+    {
+      "en": "Meter **cost per tenant** (tokens, GPU-seconds, storage), or a heavy flat-plan customer quietly costs more than it pays.",
+      "es": "Mide el **costo por tenant** (tokens, GPU-segundos, storage), o un cliente pesado con plan fijo te costará más de lo que paga."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  R[\"Request with JWT\"] --> G[\"Gateway: resolve tenant\"]\n  G --> K[(Tenant catalog)]\n  G --> Q{Within tenant quota?}\n  Q -->|no| X[\"429 + Retry-After\"]\n  Q -->|yes| T{Tenant tier}\n  T -->|free / pro| P[Pooled app tier]\n  P --> DB[(\"Shared Postgres<br/>RLS on tenant_id\")]\n  P --> VI[(\"Vector index<br/>namespace per tenant\")]\n  T -->|enterprise| S[Dedicated stack]\n  S --> SD[(\"Dedicated DB<br/>and index\")]",
     "caption": {

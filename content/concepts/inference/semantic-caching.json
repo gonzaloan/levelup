@@ -16,6 +16,28 @@
     "en": "A **semantic cache** sits in front of the LLM and stores (query embedding, response) pairs. A new query is embedded, matched to the nearest stored query, and gets the cached response if cosine similarity clears a threshold, typically **~0.90–0.95**, tuned on your data. A hit costs one embedding and one vector lookup, tens of milliseconds, instead of a multi-second generation.\n\nBuild it in layers:\n\n1. **Exact-match cache first**: hash the normalized prompt plus model and prompt version. Zero false hits, nearly free.\n2. **Semantic layer second**, only where traffic repeats with different wording.\n\nThe risks are why it's an advanced tool:\n\n- **False hits**: \"cancel my order\" vs \"cancel my subscription\", \"with\" vs \"without\", Spain vs Mexico all score as near-duplicates. The user gets a fluent answer to a different question.\n- **Staleness**: prices and policies change. Set TTLs per content type and invalidate when the source changes.\n- **Leakage**: a personalized or permissioned answer served to someone else. **Scope the cache key** by tenant, user or permission set, locale, model and prompt version.\n\nIt works for FAQ-like, non-personalized traffic with heavy repetition; measure the near-duplicate rate in your logs before building it. Unlike [[prompt-caching]], which reuses computation and always generates fresh, this reuses the *answer*.",
     "es": "Una **caché semántica** se pone delante del LLM y guarda pares (embedding de la consulta, respuesta). Una consulta nueva se convierte en embedding, se compara con la consulta guardada más cercana y recibe la respuesta en caché si la similitud coseno supera un umbral, normalmente **~0.90–0.95**, ajustado con tus datos. Un hit cuesta un embedding y una búsqueda vectorial, decenas de milisegundos, en vez de una generación de varios segundos.\n\nConstrúyela por capas:\n\n1. **Primero, caché de coincidencia exacta**: un hash del prompt normalizado más el modelo y la versión del prompt. Cero falsos hits, casi gratis.\n2. **Después, la capa semántica**, solo donde el tráfico se repite con otras palabras.\n\nLos riesgos son la razón por la que es una herramienta avanzada:\n\n- **Falsos hits**: \"cancelar mi pedido\" vs \"cancelar mi suscripción\", \"con\" vs \"sin\", España vs México puntúan como casi duplicados. El usuario recibe una respuesta fluida a otra pregunta.\n- **Datos viejos**: precios y políticas cambian. Define TTLs por tipo de contenido e invalida cuando cambia la fuente.\n- **Fugas**: una respuesta personalizada o con permisos servida a otra persona. **Acota la llave de caché** por tenant, usuario o conjunto de permisos, idioma, modelo y versión del prompt.\n\nFunciona con tráfico tipo FAQ, no personalizado y muy repetitivo; mide la tasa de casi duplicados en tus logs antes de construirla. A diferencia del [[prompt-caching]], que reutiliza cómputo y siempre genera de nuevo, esto reutiliza la *respuesta*."
   },
+  "keyPoints": [
+    {
+      "en": "A hit needs cosine similarity above a tuned **threshold**, typically ~0.90–0.95, and costs tens of ms.",
+      "es": "Hay hit si la similitud coseno supera un **umbral** ajustado, normalmente ~0.90–0.95, y cuesta decenas de ms."
+    },
+    {
+      "en": "Layer it: an **exact-match cache** on the hashed prompt first, a semantic layer only where wording varies.",
+      "es": "Constrúyela por capas: primero una **caché exacta** sobre el hash del prompt, y la capa semántica solo donde cambia la redacción."
+    },
+    {
+      "en": "**False hits** come from near-duplicates like \"cancel my order\" vs \"cancel my subscription\", or \"with\" vs \"without\".",
+      "es": "Los **falsos hits** salen de casi duplicados como \"cancelar mi pedido\" vs \"cancelar mi suscripción\", o \"con\" vs \"sin\"."
+    },
+    {
+      "en": "**Scope the cache key** by tenant, user, locale, model and prompt version, so private answers never leak.",
+      "es": "**Acota la llave de caché** por tenant, usuario, idioma, modelo y versión del prompt, para que nada privado se filtre."
+    },
+    {
+      "en": "Set **TTLs** per content type and invalidate when the source changes: prices and policies go stale.",
+      "es": "Define **TTLs** por tipo de contenido e invalida cuando cambia la fuente: precios y políticas envejecen."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  Q[Query] --> S[\"Scope key<br/>tenant, ACL, version\"]\n  S --> E{Exact hash hit?}\n  E -->|yes| R[Cached answer]\n  E -->|no| V[\"Embed + ANN search<br/>within scope\"]\n  V --> T{\"Cosine >= 0.93?\"}\n  T -->|yes| R\n  T -->|no| L[Call LLM]\n  L --> W[(\"Cache store<br/>with TTL\")]\n  L --> A[Fresh answer]",
     "caption": {

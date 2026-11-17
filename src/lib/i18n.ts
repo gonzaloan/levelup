@@ -6,7 +6,7 @@ export const DEFAULT_LOCALE: Locale = "es";
 export const t = (x: I18n | undefined, l: Locale) => (x ? x[l] || x.en : "");
 
 const UI = {
-  brand: { en: "AI Architect Field Guide", es: "Guía de campo · AI Architect" },
+  brand: { en: "Staff Engineer & AI Architect Field Guide", es: "Guía de campo · Staff Engineer y AI Architect" },
   brandShort: { en: "Field Guide", es: "Guía de campo" },
   navDomains: { en: "Topics", es: "Temas" },
   navMap: { en: "Map", es: "Mapa" },
@@ -18,10 +18,10 @@ const UI = {
   searchPlaceholder: { en: "Search concepts, acronyms, questions…", es: "Busca conceptos, siglas, preguntas…" },
   searchEmpty: { en: "No matches. Try an acronym (RAG, HNSW, LoRA) or a plain word.", es: "Sin resultados. Prueba una sigla (RAG, HNSW, LoRA) o una palabra simple." },
   searchHint: { en: "↑↓ to move · Enter to open · Esc to close", es: "↑↓ para moverte · Enter para abrir · Esc para cerrar" },
-  heroTitle: { en: "Everything a Staff/Principal AI Architect is expected to know — explained simply.", es: "Todo lo que un Staff/Principal AI Architect debe saber, explicado simple." },
+  heroTitle: { en: "Everything a Staff/Principal engineer and AI architect is expected to know — explained simply.", es: "Todo lo que un Staff/Principal Engineer y AI Architect debe saber, explicado simple." },
   heroSub: {
-    en: "Each concept in one page: the one-liner, how it works, a diagram, code, a real example, trade-offs, numbers and the interview questions. Built to learn from and to keep open as a cheatsheet.",
-    es: "Cada concepto en una página: la frase clave, cómo funciona, un diagrama, código, un ejemplo real, trade-offs, números y las preguntas de entrevista. Hecha para aprender y para tenerla abierta como cheatsheet.",
+    en: "Coding patterns, system design, distributed systems, AI systems and Staff leadership. Each concept: one line, a diagram, how it works in a few points, and a quick check.",
+    es: "Patrones de coding, diseño de sistemas, sistemas distribuidos, sistemas de IA y liderazgo Staff. Cada concepto: una frase, un diagrama, cómo funciona en pocos puntos y una prueba rápida.",
   },
   startHere: { en: "Start here", es: "Empieza aquí" },
   openCheatsheet: { en: "Open the cheatsheet", es: "Abrir el cheatsheet" },
@@ -180,6 +180,7 @@ const UI = {
   checkScore: { en: "right", es: "correctas" },
   checkDone: { en: "Done. To keep it, let spaced repetition bring it back.", es: "Listo. Para no olvidarlo, deja que el repaso espaciado te lo traiga de vuelta." },
   checkAgain: { en: "Try again", es: "Intentar de nuevo" },
+  fullExplanation: { en: "Full explanation", es: "Explicación completa" },
   goDeeper: { en: "Go deeper", es: "Profundiza" },
   goDeeperHint: { en: "Open only what you need.", es: "Abre solo lo que necesites." },
   pPracticeConcept: { en: "Practice this concept", es: "Practicar este concepto" },

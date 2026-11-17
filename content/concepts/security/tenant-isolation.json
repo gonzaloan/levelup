@@ -16,6 +16,28 @@
     "en": "In a multi-tenant AI product many customers share the same models, indexes, caches and pipelines. **Tenant isolation** means tenant A can never see, influence or be trained on tenant B's data, and AI adds leak paths classic SaaS didn't have:\n\n- **Retrieval**: one missing `tenant_id` filter and vector search returns another company's contract.\n- **Semantic cache**: a near-duplicate question hits an answer generated from another tenant's documents.\n- **Fine-tuning**: a shared model trained on everyone's data can regurgitate it.\n- **Context bleed**: shared agent memory, a session-id bug or a connection-pool race mixes conversations.\n- **Logs, traces and eval sets** that pool raw prompts across tenants.\n\nThe patterns:\n\n- Derive `tenant_id` from the **verified auth token** and enforce it **server-side** (database row-level security, a retrieval wrapper), never from the client or the LLM.\n- **Per-tenant namespaces or indexes** for large or regulated tenants; a shared index with a mandatory filter for the long tail.\n- **Cache keys** scoped by tenant *and* permission set ([[permission-aware-retrieval]]).\n- **Per-tenant encryption keys**: offboarding becomes deleting a key.\n- **No cross-tenant training** without explicit consent.\n- **Automated isolation tests** in CI: plant canaries, query as another tenant, expect zero results.",
     "es": "En un producto de IA multi-tenant muchos clientes comparten los mismos modelos, índices, caches y pipelines. **Aislamiento de tenants** significa que el tenant A nunca puede ver ni influir en los datos del tenant B, ni entrenarse con ellos, y la IA agrega vías de fuga que el SaaS clásico no tenía:\n\n- **Recuperación**: falta un filtro por `tenant_id` y la búsqueda vectorial devuelve el contrato de otra empresa.\n- **Cache semántica**: una pregunta casi idéntica recibe una respuesta generada con documentos de otro tenant.\n- **Fine-tuning**: un modelo compartido entrenado con los datos de todos puede regurgitarlos.\n- **Mezcla de contexto**: memoria de agente compartida, un bug en el id de sesión o una condición de carrera en el pool de conexiones mezclan conversaciones.\n- **Logs, trazas y sets de evaluación** que juntan prompts crudos de varios tenants.\n\nLos patrones:\n\n- Deriva `tenant_id` del **token de autenticación verificado** y aplícalo **del lado del servidor** (row-level security en la base, un wrapper de recuperación), nunca desde el cliente ni desde el LLM.\n- **Namespaces o índices por tenant** para clientes grandes o regulados; un índice compartido con filtro obligatorio para la cola larga.\n- **Claves de cache** con alcance por tenant *y* por conjunto de permisos ([[permission-aware-retrieval]]).\n- **Claves de cifrado por tenant**: dar de baja a un cliente se reduce a borrar una clave.\n- **Nada de entrenamiento entre tenants** sin consentimiento explícito.\n- **Tests de aislamiento automatizados** en CI: siembra canarios, consulta como otro tenant y espera cero resultados."
   },
+  "keyPoints": [
+    {
+      "en": "AI adds new leak paths: one missing `tenant_id` filter and vector search returns another company's contract.",
+      "es": "La IA agrega vías de fuga: falta un filtro por `tenant_id` y la búsqueda vectorial devuelve el contrato de otra empresa."
+    },
+    {
+      "en": "Scope **semantic cache** keys by tenant and permission set, or near-duplicate questions leak answers across tenants.",
+      "es": "Incluye tenant y conjunto de permisos en las claves de la **cache semántica**, o una pregunta casi idéntica filtra respuestas entre tenants."
+    },
+    {
+      "en": "Give large or regulated tenants **dedicated namespaces**; the long tail shares an index with a mandatory filter.",
+      "es": "Da **namespaces dedicados** a los tenants grandes o regulados; la cola larga comparte un índice con filtro obligatorio."
+    },
+    {
+      "en": "**Per-tenant encryption keys** turn offboarding into deleting a key; never train across tenants without consent.",
+      "es": "Las **claves de cifrado por tenant** reducen la baja de un cliente a borrar una clave; no entrenes entre tenants sin consentimiento."
+    },
+    {
+      "en": "In CI, plant **canaries** in each tenant, query as another tenant and fail the deploy on any hit.",
+      "es": "En CI, siembra **canarios** en cada tenant, consulta como otro tenant y haz fallar el deploy si aparece alguno."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  U[\"Request + JWT\"] --> G[\"API layer<br/>tenant from token\"]\n  G --> C{\"Cache lookup<br/>key: tenant + ACL\"}\n  C -->|hit| A[Answer]\n  C -->|miss| R[\"Retriever<br/>tenant filter enforced\"]\n  R --> I[(Tenant namespace)]\n  R --> M[LLM]\n  M --> A\n  G --> L[(Logs tagged by tenant)]\n  K[Per-tenant KMS key] -.-> I\n  T[Canary isolation tests] -.-> R",
     "caption": {

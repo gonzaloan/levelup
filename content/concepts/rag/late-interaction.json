@@ -16,6 +16,28 @@
     "en": "**Late interaction** keeps **one embedding per token** instead of squeezing a whole passage into one vector, and compares query and document token by token at search time.\n\nThe scoring rule is **MaxSim**: for each query token, find its most similar document token (dot product), then sum those maxima over the query. So \"rotate *API keys*\" can match \"key rotation for the *API*\" token by token, even when the passage's averaged meaning drifted elsewhere.\n\nIt sits between the two architectures you already know:\n\n- **Bi-encoder** (one vector): documents encoded offline, one dot product per document. Fast, but one vector blurs details.\n- **Cross-encoder** ([[reranking]]): query and document read together. Most precise, but nothing can be pre-computed.\n- **Late interaction**: document token vectors are pre-computed offline like a bi-encoder; only the cheap MaxSim runs at query time.\n\nThe catch is **storage**: a 300-token chunk becomes ~300 vectors of 128 dims instead of one. **ColBERTv2** stores each as a centroid id plus a 1–2-bit residual per dimension (6–10× smaller), and the **PLAID** engine prunes candidates through those centroids before full scoring. **ColPali** applies the same idea to page *images*: one vector per image patch, so PDFs with tables and charts are retrieved without OCR.",
     "es": "**Late interaction** guarda **un embedding por token** en vez de comprimir todo un pasaje en un solo vector, y compara consulta y documento token por token al momento de buscar.\n\nLa regla de puntaje es **MaxSim**: para cada token de la consulta busca el token del documento más parecido (producto punto) y luego suma esos máximos sobre toda la consulta. Así, \"rotar *claves de API*\" coincide token por token con \"rotación de *claves* para la *API*\", aunque el significado promedio del pasaje se haya ido por otro lado.\n\nQueda entre las dos arquitecturas que ya conoces:\n\n- **Bi-encoder** (un vector): documentos codificados offline, un producto punto por documento. Rápido, pero un solo vector difumina los detalles.\n- **Cross-encoder** ([[reranking]]): consulta y documento se leen juntos. El más preciso, pero no se puede precalcular nada.\n- **Late interaction**: los vectores por token del documento se precalculan offline como en un bi-encoder; al consultar solo corre el MaxSim, que es barato.\n\nLa trampa es el **almacenamiento**: un chunk de 300 tokens se vuelve ~300 vectores de 128 dimensiones en vez de uno. **ColBERTv2** guarda cada uno como un id de centroide más un residuo de 1–2 bits por dimensión (6–10× menos espacio), y el motor **PLAID** poda candidatos con esos centroides antes del puntaje completo. **ColPali** aplica la misma idea a *imágenes* de páginas: un vector por parche de imagen, así recuperas PDFs con tablas y gráficos sin OCR."
   },
+  "keyPoints": [
+    {
+      "en": "**MaxSim** matches token by token: each query token takes its best document token, and the maxima are summed.",
+      "es": "**MaxSim** compara token por token: cada token de la consulta toma su token de documento más parecido y se suman esos máximos."
+    },
+    {
+      "en": "It works as a reranker: score a hybrid top 200 with ColBERT instead of 200 cross-encoder passes.",
+      "es": "Funciona como reranker: puntúas un top 200 híbrido con ColBERT en vez de hacer 200 pasadas de cross-encoder."
+    },
+    {
+      "en": "**Storage** is the catch: a 300-token chunk takes ~77 KB uncompressed, versus ~4 KB as one vector.",
+      "es": "El **almacenamiento** es el costo: un chunk de 300 tokens ocupa ~77 KB sin comprimir, frente a ~4 KB como un solo vector."
+    },
+    {
+      "en": "**ColBERTv2** shrinks the index 6–10× with residual compression, and PLAID prunes candidates before full scoring.",
+      "es": "**ColBERTv2** reduce el índice 6–10× con compresión residual, y PLAID poda candidatos antes del puntaje completo."
+    },
+    {
+      "en": "**ColPali** applies it to page images, one vector per patch, so tables and charts are retrieved without OCR.",
+      "es": "**ColPali** lo aplica a imágenes de página, un vector por parche, así que tablas y gráficos se recuperan sin OCR."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  D[Document] --> DE[\"Encode offline<br/>1 vector per token\"]\n  DE --> C[\"Compress<br/>centroid + residual\"]\n  C --> I[(Token index)]\n  Q[Query] --> QE[\"Encode query<br/>~32 token vectors\"]\n  QE --> M[\"MaxSim per<br/>query token\"]\n  I --> M\n  M --> S[\"Sum = score\"]\n  S --> K[Top-k passages]",
     "caption": {

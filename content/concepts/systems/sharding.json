@@ -28,6 +28,28 @@
     "en": "**Partitioning** (sharding) splits a dataset so each node owns a subset; [[replication]] then copies each partition. Replication scales reads; partitioning scales **writes and storage**.\n\n- **Range partitioning** (Bigtable, HBase, CockroachDB): contiguous key ranges per shard. Range scans are cheap, but a monotonic key (timestamp, auto-increment ID) sends every insert to the last shard.\n- **Hash partitioning** (Cassandra, DynamoDB): `hash(key)` picks the shard. Even spread, but range queries fan out to every shard.\n\n**Hotspots** survive hashing: a celebrity key or whale tenant still lands on one shard. Split it with salted sub-keys (`key#0..7`) and fan its reads out, or give it its own shard.\n\n**Rebalancing**: never `hash % node_count`, since adding a node moves almost every key. Map many fixed logical partitions to nodes and move whole partitions, or use [[consistent-hashing]].\n\n**Secondary indexes**: *local* ones live inside each shard (cheap writes, scatter-gather reads); *global* ones are partitioned by the indexed value (one-shard reads, but writes touch several shards and usually update asynchronously).\n\n**Choose the shard key** so hot queries include it, cardinality is high and load is even. In multi-tenant SaaS that's often `tenant_id`: queries and transactions stay on one shard, and a vector search never fans out across tenants. Cross-shard joins and transactions (2PC) are the price of a wrong key.",
     "es": "El **particionamiento** (sharding) divide un dataset para que cada nodo sea dueño de un subconjunto; luego la [[replication]] copia cada partición. La replicación escala lecturas; el particionamiento escala **escrituras y almacenamiento**.\n\n- **Por rangos** (Bigtable, HBase, CockroachDB): rangos contiguos de keys por shard. Los escaneos por rango son baratos, pero una key monótona (timestamp, ID autoincremental) manda cada inserción al último shard.\n- **Por hash** (Cassandra, DynamoDB): `hash(key)` elige el shard. Reparto parejo, pero las consultas por rango se abren a todos los shards.\n\nLos **hotspots** sobreviven al hash: una key de celebridad o un tenant gigante sigue cayendo en un solo shard. Divídelo con sub-keys con sal (`key#0..7`) y reparte sus lecturas, o dale su propio shard.\n\n**Rebalanceo**: nunca uses `hash % cantidad_de_nodos`, porque al sumar un nodo se mueven casi todas las keys. Asigna muchas particiones lógicas fijas a los nodos y mueve particiones completas, o usa [[consistent-hashing]].\n\n**Índices secundarios**: los *locales* viven dentro de cada shard (escrituras baratas, lecturas scatter-gather); los *globales* se particionan por el valor indexado (lecturas a un solo shard, pero las escrituras tocan varios shards y suelen actualizarse de forma asíncrona).\n\n**Elige la shard key** para que las consultas frecuentes la incluyan, tenga alta cardinalidad y reparta la carga. En SaaS multi-tenant suele ser `tenant_id`: consultas y transacciones quedan en un shard, y una búsqueda vectorial nunca se abre a otros tenants. Los joins y transacciones entre shards (2PC) son el precio de una key equivocada."
   },
+  "keyPoints": [
+    {
+      "en": "**Range** sharding makes scans cheap, but a monotonic key like a timestamp sends every insert to the last shard.",
+      "es": "El sharding por **rango** abarata los scans, pero una key monótona como un timestamp manda cada insert al último shard."
+    },
+    {
+      "en": "**Hash** sharding spreads keys evenly, but range queries fan out to every shard.",
+      "es": "El sharding por **hash** reparte las keys de forma pareja, pero las consultas por rango se abren a todos los shards."
+    },
+    {
+      "en": "**Hotspots** survive hashing: split a whale key into salted sub-keys or give it its own shard.",
+      "es": "Los **hotspots** sobreviven al hash: divide una key gigante en sub-keys con salt o dale su propio shard."
+    },
+    {
+      "en": "Never use `hash % N`: 10 → 11 nodes moves ~91% of keys; use fixed partitions or consistent hashing.",
+      "es": "Nunca uses `hash % N`: pasar de 10 a 11 nodos mueve ~91% de las keys; usa particiones fijas o consistent hashing."
+    },
+    {
+      "en": "Pick a **shard key** that hot queries include, like `tenant_id`; a wrong key forces cross-shard joins and 2PC.",
+      "es": "Elige una **shard key** que incluyan las consultas frecuentes, como `tenant_id`; una key equivocada obliga a joins entre shards y 2PC."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  Q[\"Query with shard key\"] --> RT{\"Router<br/>hash(key) mod 1024\"}\n  RT -->|\"partitions 0-255\"| S1[(Shard 1)]\n  RT -->|\"256-511\"| S2[(Shard 2)]\n  RT -->|\"512-767\"| S3[(Shard 3)]\n  RT -->|\"768-1023\"| S4[(Shard 4)]\n  X[\"Query without shard key\"] -.->|scatter| S1\n  X -.->|scatter| S2\n  X -.->|scatter| S3\n  X -.->|scatter| S4\n  S1 -.-> M[\"Gather and merge top-k\"]\n  S2 -.-> M\n  S3 -.-> M\n  S4 -.-> M",
     "caption": {

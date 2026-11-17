@@ -16,6 +16,28 @@
     "en": "Exact k-nearest-neighbor search compares the query with all N vectors: O(N·d). At 10M × 768 dims that is ~7.7 billion multiply-adds and ~31 GB of memory read per query. **ANN** (approximate nearest neighbor) indexes look at a tiny fraction and accept missing a few true neighbors. The quality metric is **recall@k**: the share of the true top-k you got back.\n\n- **HNSW** (Hierarchical Navigable Small World): a layered proximity graph. Search enters the sparse top layer, hops greedily toward the query and descends to layer 0, which holds every vector. Knobs: `M` (links per node), `efConstruction` (build effort) and `efSearch` (candidate list at query time, your main recall/latency dial). Best recall per millisecond, but RAM-heavy and slow to build.\n- **IVF** (inverted file): k-means splits the vectors into `nlist` clusters; a query scans only the `nprobe` closest. Cheaper to build; misses neighbors sitting across a cluster border.\n- **PQ** (product quantization): chops each vector into sub-vectors and stores a 1-byte centroid code for each, 32–64× smaller. Distances become approximate, so it usually ships as IVF-PQ plus rescoring with full vectors.\n- **DiskANN**: a graph on SSD with compressed vectors in RAM; billion-scale on one machine.\n\nEvery knob moves you along the same curve: more recall costs latency or memory.",
     "es": "La búsqueda exacta de los k vecinos más cercanos compara la consulta con los N vectores: O(N·d). Con 10M × 768 dimensiones son ~7,700 millones de multiplicaciones y sumas, y ~31 GB de memoria leída por consulta. Los índices **ANN** (vecinos más cercanos aproximados) miran una fracción mínima y aceptan perder algunos vecinos reales. La métrica de calidad es el **recall@k**: qué parte del top-k verdadero recuperaste.\n\n- **HNSW** (Hierarchical Navigable Small World): un grafo de proximidad por capas. La búsqueda entra por la capa superior, que es dispersa, salta de forma voraz hacia la consulta y baja hasta la capa 0, donde están todos los vectores. Perillas: `M` (enlaces por nodo), `efConstruction` (esfuerzo de construcción) y `efSearch` (lista de candidatos al consultar, tu perilla principal de recall contra latencia). El mejor recall por milisegundo, pero consume mucha RAM y tarda en construirse.\n- **IVF** (archivo invertido): k-means reparte los vectores en `nlist` clústeres; cada consulta revisa solo los `nprobe` más cercanos. Se construye más barato; pierde vecinos que quedan del otro lado de la frontera de un clúster.\n- **PQ** (cuantización de producto): corta cada vector en subvectores y guarda para cada uno un código de 1 byte del centroide más cercano, 32–64× más chico. Las distancias se vuelven aproximadas, por eso suele usarse como IVF-PQ más un rescoring con los vectores completos.\n- **DiskANN**: un grafo en SSD con vectores comprimidos en RAM; escala de miles de millones en una sola máquina.\n\nCada perilla te mueve sobre la misma curva: más recall cuesta latencia o memoria."
   },
+  "keyPoints": [
+    {
+      "en": "Measure quality as **recall@k**: the share of the true top-k neighbors the index actually returned.",
+      "es": "Mide la calidad con **recall@k**: la fracción de los verdaderos top-k vecinos que el índice sí devolvió."
+    },
+    {
+      "en": "**HNSW** is a layered graph searched by greedy hops: best recall per millisecond, but RAM-heavy and slow to build.",
+      "es": "**HNSW** es un grafo por capas que se recorre con saltos voraces: el mejor recall por milisegundo, pero usa mucha RAM y tarda en construirse."
+    },
+    {
+      "en": "**IVF** splits vectors into `nlist` k-means clusters and scans only the `nprobe` closest, missing neighbors across borders.",
+      "es": "**IVF** divide los vectores en `nlist` clusters con k-means y solo revisa los `nprobe` más cercanos; pierde vecinos que quedan al otro lado de un borde."
+    },
+    {
+      "en": "**PQ** stores compact codes, 32–64× smaller, so it usually ships as IVF-PQ plus rescoring with full vectors.",
+      "es": "**PQ** guarda códigos compactos, 32–64× más pequeños, así que suele usarse como IVF-PQ con rescoring sobre los vectores completos."
+    },
+    {
+      "en": "Sweep efSearch on real queries against brute-force results; keep the smallest value that hits your recall target.",
+      "es": "Barre efSearch con consultas reales contra resultados de fuerza bruta y quédate con el valor más bajo que alcance tu recall objetivo."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  Q[Query vector] --> H{Index type}\n  H -->|HNSW| T[\"Sparse top layer\"]\n  T -->|greedy descent| L0[\"Layer 0 beam<br/>size efSearch\"]\n  H -->|IVF-PQ| C[\"nprobe nearest<br/>centroids\"]\n  C --> P[\"Scan PQ codes<br/>in clusters\"]\n  P --> R[\"Rescore with<br/>full vectors\"]\n  L0 --> K[Top-k results]\n  R --> K\n  K -.->|\"vs brute force\"| M[\"Measure recall@k\"]",
     "caption": {

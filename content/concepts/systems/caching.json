@@ -16,6 +16,28 @@
     "en": "A **cache** keeps a copy of expensive-to-get data in faster storage (process memory, Redis, a CDN edge) so repeated reads skip the slow path. Average latency is `hit_rate × cache_time + miss_rate × origin_time`, and origin load is proportional to the miss rate.\n\n**How data gets in:**\n- **Cache-aside** (the default): read the cache; on a miss, load from the DB and fill it. The cache can die without losing data.\n- **Read-through**: the same flow, but the cache layer loads on a miss.\n- **Write-through**: every write updates DB and cache synchronously — fresh reads, slower writes.\n- **Write-behind**: write to the cache, flush to the DB asynchronously — fast writes, data loss if the cache dies.\n\n**Staleness**: a **TTL** bounds how old data can get; **invalidation** deletes the key on write (delete, don't set, so racing writers can't cache an old value). **Eviction** when memory fills: **LRU** (recency) or **LFU** (frequency, resists one-off scans).\n\n**Stampede**: a hot key expires and thousands of requests hit the DB at once. Fixes: **request coalescing** (one fetch, the rest wait), **jittered TTLs**, **stale-while-revalidate**.\n\nAI stacks add three caches: provider [[prompt-caching]] of a stable prefix, response caches (exact or [[semantic-caching]]), and **embedding caches** keyed by `hash(model, text)` so re-ingestion skips unchanged chunks.",
     "es": "Una **caché** guarda una copia de datos costosos de obtener en un almacenamiento más rápido (memoria del proceso, Redis, un edge de CDN) para que las lecturas repetidas se salten el camino lento. La latencia promedio es `hit_rate × tiempo_cache + miss_rate × tiempo_origen`, y la carga sobre el origen es proporcional al miss rate.\n\n**Cómo entran los datos:**\n- **Cache-aside** (el default): lee la caché; si falla, carga desde la base de datos y llénala. La caché puede caerse sin perder datos.\n- **Read-through**: el mismo flujo, pero la capa de caché carga cuando hay un miss.\n- **Write-through**: cada escritura actualiza base y caché de forma síncrona: lecturas frescas, escrituras más lentas.\n- **Write-behind**: escribe en la caché y vuelca a la base de forma asíncrona: escrituras rápidas, pero pierdes datos si la caché se cae.\n\n**Datos viejos**: un **TTL** acota qué tan viejo puede ser un dato; la **invalidación** borra la clave al escribir (bórrala, no la sobrescribas, para que escritores concurrentes no dejen un valor viejo). **Desalojo** cuando se llena la memoria: **LRU** (lo más reciente) o **LFU** (lo más frecuente, resiste escaneos únicos).\n\n**Estampida**: expira una clave caliente y miles de peticiones golpean la base a la vez. Soluciones: **request coalescing** (una sola carga, el resto espera), **TTLs con jitter** y **stale-while-revalidate**.\n\nLos stacks de IA suman tres cachés: [[prompt-caching]] del proveedor sobre un prefijo estable, cachés de respuestas (exactas o [[semantic-caching]]) y **cachés de embeddings** con clave `hash(model, text)` para que la reingesta se salte los chunks sin cambios."
   },
+  "keyPoints": [
+    {
+      "en": "**Cache-aside** is the default: read the cache; on a miss, load from the DB and fill it.",
+      "es": "**Cache-aside** es lo habitual: lees la cache y, si hay miss, cargas desde la DB y la llenas."
+    },
+    {
+      "en": "Write-through keeps reads fresh but slows writes; **write-behind** writes fast but loses data if the cache dies.",
+      "es": "Write-through mantiene las lecturas frescas pero hace lentas las escrituras; **write-behind** escribe rápido pero pierde datos si la cache muere."
+    },
+    {
+      "en": "Origin load tracks the **miss rate**: going from 90% to 99% hits cuts backend traffic 10×.",
+      "es": "La carga del origen sigue al **miss rate**: pasar de 90% a 99% de hits reduce 10× el tráfico al backend."
+    },
+    {
+      "en": "Stop **stampedes** on hot keys with request coalescing, jittered TTLs or stale-while-revalidate.",
+      "es": "Evita los **stampedes** en keys calientes con request coalescing, TTLs con jitter o stale-while-revalidate."
+    },
+    {
+      "en": "AI stacks add **three caches**: provider prompt caching, response caches, and embedding caches keyed by `hash(model, text)`.",
+      "es": "Los stacks de IA suman **tres caches**: el prompt caching del proveedor, caches de respuestas y caches de embeddings por `hash(model, text)`."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  R[Request] --> C{\"Redis hit?\"}\n  C -->|hit| A[Return value]\n  C -->|miss| L{\"Rebuild lock<br/>acquired?\"}\n  L -->|yes| D[(Database)]\n  D --> W[\"SET key<br/>TTL 300s plus jitter\"]\n  W --> A\n  L -->|no| S[\"Wait briefly<br/>or serve stale\"]\n  S --> A",
     "caption": {

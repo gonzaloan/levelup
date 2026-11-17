@@ -16,6 +16,28 @@
     "en": "**Structured outputs** make the model return data your code can consume. Three levels of guarantee:\n\n1. **Prompt only** (\"reply in JSON\"): works most of the time, and at a million calls \"most\" means thousands of stray code fences, trailing prose and missing keys.\n2. **JSON mode** (`response_format: json_object`): always syntactically valid JSON, but *any* JSON. Your keys and types are not guaranteed.\n3. **Strict schema** (OpenAI Structured Outputs; Gemini, Anthropic and vLLM offer equivalents): **constrained decoding**. The schema is compiled into a grammar, and at every step the tokens that would violate it are masked out before sampling. The output always matches types, required keys and enums.\n\nIn code you declare a **Pydantic** model; the SDK turns it into JSON Schema and parses the reply back into a typed object.\n\nWhat it does **not** give you is correct values: a schema-valid invoice can still carry a hallucinated total. So **validate** semantics (Pydantic validators, cross-field checks), **retry** with the error message, and handle refusals and truncation.\n\nDesign rules:\n- **Enums** (`Literal[...]`) for classification, so labels can't be invented.\n- **Reasoning field first.** Keys are generated in schema order; an `answer` before `reasoning` commits before thinking. A rigid schema with no room to reason can lower quality.\n- **Nullable, not omitted.** Strict mode requires every key, so let absent values be `null`.",
     "es": "Los **structured outputs** hacen que el modelo devuelva datos que tu código puede consumir. Tres niveles de garantía:\n\n1. **Solo prompt** (\"responde en JSON\"): funciona casi siempre, y en un millón de llamadas \"casi\" son miles de bloques de código sueltos, prosa extra al final y llaves faltantes.\n2. **JSON mode** (`response_format: json_object`): siempre es JSON sintácticamente válido, pero *cualquier* JSON. Tus llaves y tipos no están garantizados.\n3. **Esquema estricto** (Structured Outputs de OpenAI; Gemini, Anthropic y vLLM tienen equivalentes): **decodificación restringida**. El esquema se compila en una gramática y en cada paso se bloquean los tokens que la violarían antes de muestrear. La salida siempre respeta tipos, llaves obligatorias y enums.\n\nEn código declaras un modelo de **Pydantic**; el SDK lo convierte en JSON Schema y parsea la respuesta de vuelta a un objeto tipado.\n\nLo que **no** te da es que los valores sean correctos: una factura que cumple el esquema puede traer un total alucinado. Por eso **valida** la semántica (validadores de Pydantic, chequeos entre campos), **reintenta** pasando el mensaje de error y maneja los rechazos y los cortes por longitud.\n\nReglas de diseño:\n- **Enums** (`Literal[...]`) para clasificar, así no se inventan etiquetas.\n- **El campo de razonamiento primero.** Las llaves se generan en el orden del esquema; un `answer` antes de `reasoning` decide antes de pensar. Un esquema rígido sin espacio para razonar puede bajar la calidad.\n- **Nullable, no omitido.** El modo estricto exige todas las llaves, así que deja que los valores ausentes sean `null`."
   },
+  "keyPoints": [
+    {
+      "en": "Prompt-only JSON breaks at scale; **JSON mode** always parses but doesn't guarantee your keys or types.",
+      "es": "El JSON pedido solo en el prompt falla a escala; el **JSON mode** siempre parsea, pero no garantiza tus claves ni tus tipos."
+    },
+    {
+      "en": "Strict mode compiles the schema into a grammar: **constrained decoding** masks invalid tokens before sampling.",
+      "es": "El modo estricto compila el schema en una gramática: el **constrained decoding** enmascara los tokens inválidos antes de muestrear."
+    },
+    {
+      "en": "Keys generate in schema order, so put a **reasoning field** before the answer; rigid schemas can lower quality.",
+      "es": "Las claves se generan en el orden del schema: pon un **campo de razonamiento** antes de la respuesta; un schema rígido puede bajar la calidad."
+    },
+    {
+      "en": "Use **enums** for classification so labels can't be invented, and nullable fields for absent values.",
+      "es": "Usa **enums** para clasificar, así no se inventan etiquetas, y campos nullable para los valores ausentes."
+    },
+    {
+      "en": "Allow 1–2 **retries** with the validation error; if over ~1% of calls need one, fix schema or prompt.",
+      "es": "Permite 1–2 **reintentos** con el error de validación; si más de ~1% de las llamadas los necesita, corrige el schema o el prompt."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  S[Pydantic model] --> J[JSON Schema]\n  J --> G[\"Grammar<br/>(compiled, cached)\"]\n  L[Next-token logits] --> K[\"Mask invalid<br/>tokens\"]\n  G --> K\n  K --> T[Sample token]\n  T -->|not done| L\n  T -->|done| V[\"Validate values<br/>(Pydantic)\"]\n  V -->|error| R[Retry with error]\n  V -->|ok| A[Typed object]",
     "caption": {

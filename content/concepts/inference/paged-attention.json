@@ -16,6 +16,28 @@
     "en": "**PagedAttention** stores each request's [[kv-cache]] in small fixed-size **blocks** (16 tokens by default in vLLM) that can live anywhere in GPU memory, the way an OS maps virtual pages to physical frames. A per-request **block table** maps logical blocks to physical ones, and the attention kernel reads through it.\n\nBefore it, servers reserved one contiguous KV slab per request, sized for the *maximum* output length. Most of it was never filled, and the gaps between slabs could not be reused: Kwon et al. (SOSP 2023) measured only **20–38%** of KV memory holding real tokens, i.e. **~60–80% wasted**. With paging, memory grows one block at a time as tokens arrive, so the only waste is the half-empty last block: **under 4%**.\n\nTwo consequences:\n\n- **More sequences per GPU.** Freed memory becomes batch size, which [[continuous-batching]] turns into throughput: **2–4×** over FasterTransformer and Orca at the same latency.\n- **Sharing.** Blocks are reference-counted, so parallel samples, beam-search branches and requests with a common prefix point to the same physical blocks. A block is copied only when one sequence writes to it (**copy-on-write**). Automatic prefix caching reuses full blocks across requests the same way.\n\n**vLLM** is the server built around it; SGLang, TensorRT-LLM and TGI also use a paged KV cache.",
     "es": "**PagedAttention** guarda el [[kv-cache]] de cada request en **bloques** pequeños de tamaño fijo (16 tokens por defecto en vLLM) que pueden estar en cualquier parte de la memoria de la GPU, igual que un sistema operativo mapea páginas virtuales a marcos físicos. Una **tabla de bloques** por request traduce bloques lógicos a físicos, y el kernel de atención lee a través de ella.\n\nAntes, los servidores reservaban un bloque contiguo de KV por request, dimensionado para la longitud *máxima* de salida. La mayor parte nunca se llenaba y los huecos entre reservas no se podían reutilizar: Kwon et al. (SOSP 2023) midieron que solo el **20–38%** de la memoria de KV guardaba tokens reales, es decir, **~60–80% desperdiciado**. Con paginación, la memoria crece bloque a bloque a medida que llegan tokens, así que el único desperdicio es el último bloque a medio llenar: **menos de 4%**.\n\nDos consecuencias:\n\n- **Más secuencias por GPU.** La memoria liberada se convierte en tamaño de batch, y [[continuous-batching]] lo transforma en throughput: **2–4×** frente a FasterTransformer y Orca con la misma latencia.\n- **Compartir.** Los bloques llevan conteo de referencias, así que muestras paralelas, ramas de beam search y requests con un prefijo común apuntan a los mismos bloques físicos. Un bloque se copia solo cuando una secuencia escribe en él (**copy-on-write**). El prefix caching automático reutiliza bloques completos entre requests de la misma forma.\n\n**vLLM** es el servidor construido alrededor de esta idea; SGLang, TensorRT-LLM y TGI también usan un KV cache paginado."
   },
+  "keyPoints": [
+    {
+      "en": "Older servers reserved one contiguous **KV slab** per request, sized for the maximum output length.",
+      "es": "Los servidores anteriores reservaban un **tramo contiguo** de KV por request, del tamaño de la salida máxima."
+    },
+    {
+      "en": "Most of each slab stayed empty: only 20–38% of KV memory held real tokens.",
+      "es": "Casi todo ese tramo quedaba vacío: solo el 20–38% de la memoria de KV tenía tokens reales."
+    },
+    {
+      "en": "A per-request **block table** maps logical blocks to physical ones; memory grows one 16-token block at a time.",
+      "es": "Una **block table** por request mapea bloques lógicos a físicos; la memoria crece un bloque de 16 tokens a la vez."
+    },
+    {
+      "en": "Waste drops to the half-empty last block, under 4%, and freed memory becomes bigger batches.",
+      "es": "El desperdicio se reduce al último bloque a medio llenar, menos de 4%, y la memoria liberada se vuelve batches más grandes."
+    },
+    {
+      "en": "Shared prefixes and parallel samples point to the same blocks, copied only when one sequence writes (**copy-on-write**).",
+      "es": "Los prefijos compartidos y las muestras paralelas apuntan a los mismos bloques, que se copian solo cuando una secuencia escribe (**copy-on-write**)."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  A[\"Request A<br/>3 logical blocks\"] --> T[Block table]\n  B[\"Request B<br/>same prefix\"] --> T\n  F[(Free block pool)] -.->|allocate on demand| T\n  T -->|A0 and B0| P7[\"Physical block 7<br/>shared prefix\"]\n  T -->|A1| P2[Physical block 2]\n  T -->|A2| P4[Physical block 4]\n  T -->|B1| P9[\"Physical block 9<br/>copy-on-write\"]\n  P7 --> K[\"Attention kernel<br/>gathers blocks\"]\n  P2 --> K\n  P4 --> K\n  P9 --> K",
     "caption": {

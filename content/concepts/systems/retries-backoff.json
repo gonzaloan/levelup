@@ -16,6 +16,28 @@
     "en": "A **retry** turns a transient failure into a success; a bad retry policy turns a small outage into a big one.\n\n**Classify first.** Retry *transient* errors: timeouts, connection resets, 429, 500/502/503/504 and the LLM-specific **529 overloaded**. Never retry *permanent* ones (400, 401, 403, context too long): they fail the same way every time. Retry writes only if they are idempotent ([[idempotency]]).\n\n**Back off with jitter.** Wait `base × 2^attempt`, capped, and randomize it (*full jitter*: a uniform draw between 0 and that value). Without jitter, clients that failed together retry together, in waves. If the server sends **Retry-After**, obey it.\n\n**Bound everything.**\n\n- A **timeout** on every network call and a total deadline per request. For streaming LLM calls, time out on the first token and on idle gaps, not on total duration.\n- A **retry budget**: ~3 attempts per request, retries ≤ 10% of traffic. Retry at *one* layer: 3 layers × 4 attempts = 64 calls on the bottom service.\n\n**Stop calling a dead dependency.** A **circuit breaker** is *closed* (normal), trips *open* after N failures (fail fast, or [[model-routing]] to a fallback model, for e.g. 30 s), then goes *half-open* and lets a few probes test recovery. **Bulkheads** give each dependency its own concurrency pool, so one slow LLM provider cannot exhaust every worker.",
     "es": "Un **reintento** convierte una falla transitoria en un éxito; una mala política de reintentos convierte una caída pequeña en una grande.\n\n**Primero clasifica.** Reintenta errores *transitorios*: timeouts, conexiones reiniciadas, 429, 500/502/503/504 y el **529 overloaded** propio de las APIs de LLM. Nunca reintentes los *permanentes* (400, 401, 403, contexto demasiado largo): fallan igual cada vez. Reintenta escrituras solo si son idempotentes ([[idempotency]]).\n\n**Espera con backoff y jitter.** Espera `base × 2^intento`, con un tope, y aleatorízalo (*full jitter*: un valor uniforme entre 0 y ese tope). Sin jitter, los clientes que fallaron juntos reintentan juntos, en oleadas. Si el servidor envía **Retry-After**, respétalo.\n\n**Acota todo.**\n\n- Un **timeout** en cada llamada de red y un deadline total por request. En llamadas de LLM con streaming, pon timeout al primer token y a los silencios entre tokens, no a la duración total.\n- Un **presupuesto de reintentos**: ~3 intentos por request y reintentos ≤ 10% del tráfico. Reintenta en *una sola* capa: 3 capas × 4 intentos = 64 llamadas al servicio de abajo.\n\n**Deja de llamar a una dependencia caída.** Un **circuit breaker** está *cerrado* (normal), pasa a *abierto* tras N fallas (falla rápido o usa [[model-routing]] hacia un modelo de respaldo durante, por ejemplo, 30 s) y luego a *semiabierto*, donde deja pasar unas pocas pruebas para confirmar la recuperación. Los **bulkheads** dan a cada dependencia su propio pool de concurrencia, para que un proveedor de LLM lento no agote todos tus workers."
   },
+  "keyPoints": [
+    {
+      "en": "Retry **transient** errors like timeouts, 429 and 503; permanent ones (400, 401, 403) fail the same every time.",
+      "es": "Reintenta errores **transitorios** como timeouts, 429 y 503; los permanentes (400, 401, 403) fallan igual cada vez."
+    },
+    {
+      "en": "**Full jitter** waits a random time from 0 to `base × 2^attempt`, so failed clients don't retry in waves.",
+      "es": "El **full jitter** espera un tiempo aleatorio entre 0 y `base × 2^intento`, así los clientes que fallaron juntos no reintentan en oleadas."
+    },
+    {
+      "en": "Retry at **one layer** only: 3 layers × 4 attempts put 64 calls on the bottom service.",
+      "es": "Reintenta en **una sola capa**: 3 capas × 4 intentos ponen 64 llamadas sobre el servicio de abajo."
+    },
+    {
+      "en": "For streaming LLM calls, time out on the **first token** and idle gaps, not total duration.",
+      "es": "En llamadas LLM con streaming, pon el timeout al **primer token** y a las pausas, no a la duración total."
+    },
+    {
+      "en": "A **circuit breaker** opens after N failures, fails fast or falls back, then half-opens to probe recovery.",
+      "es": "Un **circuit breaker** se abre tras N fallas, falla rápido o usa un fallback, y luego pasa a half-open para probar si se recuperó."
+    }
+  ],
   "diagram": {
     "code": "flowchart TD\n  A[LLM call] --> B{\"Breaker open?\"}\n  B -->|yes| F[\"Fallback model<br/>or cached answer\"]\n  B -->|no| C[Call with timeout]\n  C -->|2xx| OK[Return response]\n  C -->|error| D{\"Transient?<br/>429, 5xx, 529\"}\n  D -->|permanent 4xx| X[Fail fast]\n  D -->|yes| E{\"Attempts and<br/>budget left?\"}\n  E -->|no| F\n  E -->|yes| W[\"Wait Retry-After<br/>or backoff + jitter\"]\n  W --> C\n  C -.->|failures counted| B",
     "caption": {

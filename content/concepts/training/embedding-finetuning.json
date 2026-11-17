@@ -16,6 +16,28 @@
     "en": "General embedding models learn what \"similar\" means from web data, so they miss your jargon: *\"PTO\"* vs *\"leave of absence\"*, SKU codes, internal product names. Fine-tuning re-teaches similarity with your own examples.\n\n**The signal is contrastive.** Each example is a (query, positive) pair, optionally plus a **hard negative**: a passage that looks relevant but isn't. With **MultipleNegativesRankingLoss** (InfoNCE), every other positive in the batch is a free negative, so a batch of 64 gives each query 63 negatives; bigger batches help.\n\n**Where the data comes from:**\n\n1. **Synthetic queries**: an LLM writes 1–3 questions each chunk answers ([[synthetic-data]]). Keep a pair only if its chunk ranks near the top for that query (a round-trip filter) to drop vague questions.\n2. **Hard negatives**: retrieve with the base model or BM25 and sample from ranks ~10–50. Skip the very top: unlabeled true positives hide there and would teach the model to push away right answers.\n3. **Real signals**: passages users clicked or the LLM cited are the best positives you'll get.\n\n**Rerankers** ([[reranking]]) train as cross-encoders on the same data with a classification or listwise loss, and swapping one in needs **no re-index**, so it's often the cheaper first move.\n\nAn embedding fine-tune changes every vector: you must re-embed the whole corpus ([[index-lifecycle]]). Judge it only on real, held-out queries ([[rag-evaluation]]).",
     "es": "Los modelos de embeddings generales aprenden qué significa \"parecido\" a partir de datos de la web, así que no entienden tu jerga: *\"PTO\"* frente a *\"permiso con goce de sueldo\"*, códigos de SKU, nombres internos de productos. El fine-tuning les vuelve a enseñar qué es similar con tus propios ejemplos.\n\n**La señal es contrastiva.** Cada ejemplo es un par (consulta, positivo), opcionalmente con un **hard negative**: un pasaje que parece relevante pero no lo es. Con **MultipleNegativesRankingLoss** (InfoNCE), cada uno de los otros positivos del batch funciona como negativo gratis, así que un batch de 64 le da a cada consulta 63 negativos; los batches más grandes ayudan.\n\n**De dónde salen los datos:**\n\n1. **Consultas sintéticas**: un LLM escribe 1–3 preguntas que cada chunk responde ([[synthetic-data]]). Conserva un par solo si su chunk queda arriba para esa consulta (un filtro de ida y vuelta), para descartar preguntas vagas.\n2. **Hard negatives**: recupera con el modelo base o con BM25 y muestrea de los puestos ~10–50. Evita los primeros: ahí se esconden positivos reales sin etiquetar, que le enseñarían al modelo a alejar respuestas correctas.\n3. **Señales reales**: los pasajes en los que los usuarios hicieron clic o que el LLM citó son los mejores positivos que vas a conseguir.\n\nLos **rerankers** ([[reranking]]) se entrenan como cross-encoders con los mismos datos y una pérdida de clasificación o listwise, y cambiar uno **no requiere reindexar**, así que suele ser el primer paso más barato.\n\nUn fine-tuning de embeddings cambia todos los vectores: tienes que regenerar los embeddings de todo el corpus ([[index-lifecycle]]). Júzgalo solo con consultas reales y reservadas ([[rag-evaluation]])."
   },
+  "keyPoints": [
+    {
+      "en": "General embedders learn similarity from web data, so they miss your **jargon**: SKU codes, internal product names.",
+      "es": "Los embedders generales aprenden similitud de datos web, así que no captan tu **jerga**: códigos SKU, nombres internos de productos."
+    },
+    {
+      "en": "With **in-batch negatives** (MNRL), every other positive in the batch is a free negative, so bigger batches help.",
+      "es": "Con **negativos in-batch** (MNRL), cada otro positivo del batch es un negativo gratis, así que batches más grandes ayudan."
+    },
+    {
+      "en": "Keep a synthetic pair only if its chunk ranks near the top for that query (**round-trip filter**).",
+      "es": "Conserva un par sintético solo si su chunk sale cerca del top para esa consulta (**filtro round-trip**)."
+    },
+    {
+      "en": "Sample hard negatives from ranks ~10–50; the very top hides **unlabeled true positives**.",
+      "es": "Toma los hard negatives de los puestos ~10–50; el top esconde **positivos reales sin etiquetar**."
+    },
+    {
+      "en": "Judge the result only on **real**, held-out queries, such as labelled questions from actual users.",
+      "es": "Evalúa el resultado solo con consultas **reales** reservadas, como preguntas etiquetadas de usuarios de verdad."
+    }
+  ],
   "diagram": {
     "code": "flowchart LR\n  C[(Your chunks)] --> L[\"LLM writes<br/>queries per chunk\"]\n  L --> F[\"Round-trip filter\"]\n  F --> P[\"(query, positive)<br/>pairs\"]\n  P --> H[\"Mine hard negatives<br/>ranks 10-50\"]\n  H --> T[\"Train with MNRL<br/>in-batch negatives\"]\n  T --> E{\"Beats base on<br/>real queries?\"}\n  Q[(Held-out real queries)] --> E\n  E -->|yes| R[\"Re-embed corpus,<br/>swap index\"]\n  E -->|no| X[Keep base model]",
     "caption": {
