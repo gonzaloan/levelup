@@ -1,0 +1,65 @@
+{
+  "concept": "realtime-delivery",
+  "items": [
+    {
+      "id": "realtime-delivery.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "You ship a live order-status feed over SSE, served on HTTP/1.1. It works with one or two tabs, but users with many tabs open say new tabs never receive updates. Most likely cause?",
+        "es": "Lanzas un feed en vivo del estado de pedidos con SSE, servido sobre HTTP/1.1. Funciona con una o dos pestañas, pero los usuarios con muchas pestañas abiertas dicen que las nuevas nunca reciben cambios. ¿Causa más probable?"
+      },
+      "options": [
+        { "text": { "en": "The browser's 6-connection limit per domain; serve over HTTP/2 or share one stream", "es": "El límite de 6 conexiones por dominio del navegador; sirve sobre HTTP/2 o comparte un solo stream" },
+          "why": { "en": "Over HTTP/1.1 the limit is per browser and domain, shared by all tabs; HTTP/2 multiplexes streams on one connection.", "es": "Sobre HTTP/1.1 el límite es por navegador y dominio, compartido por todas las pestañas; HTTP/2 multiplexa streams en una conexión." } },
+        { "text": { "en": "The load balancer's 60 s idle timeout is cutting the streams", "es": "El timeout de inactividad de 60 s del load balancer corta los streams" },
+          "why": { "en": "That would hit the first tab too, and EventSource reconnects by itself.", "es": "Eso afectaría también a la primera pestaña, y EventSource se reconecta solo." } },
+        { "text": { "en": "The server ignores Last-Event-ID, so updates get lost", "es": "El servidor ignora Last-Event-ID, así que se pierden cambios" },
+          "why": { "en": "That loses events across reconnects, but it doesn't depend on how many tabs are open.", "es": "Eso pierde eventos entre reconexiones, pero no depende de cuántas pestañas haya abiertas." } },
+        { "text": { "en": "Too many events per second are overwhelming the browser", "es": "Demasiados eventos por segundo saturan el navegador" },
+          "why": { "en": "A few status changes per order is tiny traffic; the symptom scales with tabs, not volume.", "es": "Unos pocos cambios de estado por pedido es muy poco tráfico; el síntoma crece con las pestañas, no con el volumen." } }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Each SSE stream holds an HTTP connection open. Over HTTP/1.1 browsers cap connections per domain at 6, shared across tabs, so the seventh stream waits forever. HTTP/2 negotiates many streams over one connection.",
+        "es": "Cada stream SSE mantiene abierta una conexión HTTP. Sobre HTTP/1.1 los navegadores limitan a 6 las conexiones por dominio, compartidas entre pestañas, así que el séptimo stream espera para siempre. HTTP/2 negocia muchos streams sobre una sola conexión."
+      }
+    },
+    {
+      "id": "realtime-delivery.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Assume 20M concurrent WebSocket connections at peak and 100k connections per gateway node. Gateways are spread evenly over 4 zones, and the fleet must still carry the peak after losing one zone. How many gateway nodes do you need?",
+        "es": "Supón 20M conexiones WebSocket concurrentes en el pico y 100k conexiones por nodo gateway. Los gateways están repartidos por igual en 4 zonas, y la flota debe soportar el pico aun perdiendo una zona. ¿Cuántos nodos gateway necesitas?"
+      },
+      "answer": 267,
+      "tolerance": 0.1,
+      "unit": "nodes",
+      "explain": {
+        "en": "Base: 20M ÷ 100k = 200 nodes. Losing 1 of 4 zones leaves 3/4 of the fleet, so 200 ÷ 0.75 ≈ 267 nodes. Those reconnecting clients also arrive at once, so add jitter to reconnects.",
+        "es": "Base: 20M ÷ 100k = 200 nodos. Perder 1 de 4 zonas deja 3/4 de la flota, así que 200 ÷ 0,75 ≈ 267 nodos. Además, esos clientes se reconectan todos juntos, así que agrega jitter a las reconexiones."
+      }
+    },
+    {
+      "id": "realtime-delivery.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about real-time delivery are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la entrega en tiempo real son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        { "text": { "en": "Long polling holds the request until data arrives or it times out", "es": "El long polling retiene la petición hasta que hay datos o vence el timeout" } },
+        { "text": { "en": "An open WebSocket guarantees every message reaches the client", "es": "Un WebSocket abierto garantiza que cada mensaje llegue al cliente" },
+          "why": { "en": "Messages sent while the connection was dead are lost; persist first and let clients resume from a cursor.", "es": "Los mensajes enviados mientras la conexión estaba caída se pierden; persiste primero y deja que los clientes retomen desde un cursor." } },
+        { "text": { "en": "SSE needs a WebSocket upgrade to get through proxies", "es": "SSE necesita un upgrade a WebSocket para atravesar proxies" },
+          "why": { "en": "SSE is a plain long HTTP response, which is why it passes proxies and CDNs easily.", "es": "SSE es una respuesta HTTP larga común; por eso atraviesa proxies y CDNs sin problema." } },
+        { "text": { "en": "Gateways should hold sockets, not business logic", "es": "Los gateways deben guardar sockets, no lógica de negocio" } },
+        { "text": { "en": "The browser's EventSource reconnects by itself and sends Last-Event-ID", "es": "El EventSource del navegador se reconecta solo y envía Last-Event-ID" } }
+      ],
+      "answers": [0, 3, 4],
+      "explain": {
+        "en": "The socket is a fast path, not the source of truth. Persist messages before pushing, keep gateways thin so they can be drained and replaced, and let clients resume from the last event id after any disconnect.",
+        "es": "El socket es el camino rápido, no la fuente de verdad. Persiste los mensajes antes de enviarlos, mantén los gateways livianos para poder drenarlos y reemplazarlos, y deja que los clientes retomen desde el último event id tras cualquier desconexión."
+      }
+    }
+  ]
+}

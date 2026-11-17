@@ -1,0 +1,136 @@
+{
+  "id": "case-news-feed",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": { "en": "Design: news feed", "es": "Diseño: news feed" },
+  "aliases": ["home timeline", "Twitter timeline design", "fan-out on write", "fan-out on read", "push vs pull feed", "celebrity problem", "activity feed"],
+  "tldr": {
+    "en": "Precompute each user's feed by pushing new post IDs into followers' cached lists, but pull posts from high-follower accounts at read time and merge; hydrate, rank, and page with cursors.",
+    "es": "Precalcula el feed de cada usuario empujando los IDs de los posts nuevos a las listas en cache de sus seguidores, pero trae los posts de cuentas con muchos seguidores al leer y mézclalos; hidrata, rankea y pagina con cursores."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: publish posts, follow accounts, and load a home feed of followed accounts' posts (newest or ranked) with infinite scroll. **Non-functional**: feed loads in ~200 ms p99 (assumed); a new post reaches followers within seconds; reads far outnumber writes; a stale feed beats an error.\n\nScale (assumed): 300M DAU × 10 loads/day ≈ 35k feed reads/s; 150M posts/day × 200 followers ≈ 350k feed inserts/s if every post is pushed.\n\nQuestions I'd ask:\n\n1. Chronological or ranked? Ranking changes pagination.\n2. What does the follower distribution look like? A few accounts with tens of millions decide the design.\n3. How fresh must a celebrity's post be: seconds or a minute?\n\n### API and data model\n\n`POST /posts` and `GET /feed?cursor=…&limit=20 → {items, next_cursor}`. `posts(post_id, author_id, body, created_at)` with time-sortable IDs; `follows(follower_id, followee_id)` indexed both ways; `feed:{user_id}` holds only the newest ~800 post IDs with scores, in Redis.\n\n### Architecture\n\n**Write**: the post service stores the post and emits an event; fan-out workers page through the author's followers and push the post ID into each follower's feed list ([[queues-streams]]). **Read**: the feed service reads the user's list, merges recent posts from the few high-follower accounts they follow, hydrates bodies, authors and counts from caches, ranks ([[case-feed-ranking]]) and returns a page with a cursor.\n\n### The hard parts\n\n1. **Fan-out strategy**: push makes reads cheap but writes scale with followers; pull is the reverse. The hybrid pushes for most authors and pulls for celebrities.\n2. **Pagination** on a feed that changes every second: cursors, never offsets.",
+    "es": "### Requisitos\n\n**Funcionales**: publicar posts, seguir cuentas y cargar un feed con los posts de las cuentas seguidas (por fecha o rankeado) con scroll infinito. **No funcionales**: el feed carga en ~200 ms p99 (supuesto); un post nuevo llega a los seguidores en segundos; las lecturas superan por mucho a las escrituras; un feed algo viejo es mejor que un error.\n\nEscala (supuesta): 300M de DAU × 10 cargas/día ≈ 35k lecturas de feed/s; 150M de posts/día × 200 seguidores ≈ 350k inserciones en feeds/s si se empuja cada post.\n\nPreguntas que haría:\n\n1. ¿Por fecha o rankeado? El ranking cambia la paginación.\n2. ¿Cómo es la distribución de seguidores? Unas pocas cuentas con decenas de millones deciden el diseño.\n3. ¿Qué tan fresco debe llegar el post de una celebridad: segundos o un minuto?\n\n### API y modelo de datos\n\n`POST /posts` y `GET /feed?cursor=…&limit=20 → {items, next_cursor}`. `posts(post_id, author_id, body, created_at)` con IDs ordenables por tiempo; `follows(follower_id, followee_id)` indexada en ambos sentidos; `feed:{user_id}` guarda solo los ~800 IDs de posts más recientes con su puntaje, en Redis.\n\n### Arquitectura\n\n**Escritura**: el servicio de posts guarda el post y emite un evento; los workers de fan-out recorren por páginas a los seguidores del autor y empujan el ID del post a la lista de cada uno ([[queues-streams]]). **Lectura**: el servicio de feed lee la lista del usuario, mezcla los posts recientes de las pocas cuentas con muchos seguidores que sigue, hidrata cuerpos, autores y contadores desde caches, rankea ([[case-feed-ranking]]) y devuelve una página con un cursor.\n\n### Las partes difíciles\n\n1. **Estrategia de fan-out**: push abarata las lecturas, pero las escrituras crecen con los seguidores; pull es al revés. El híbrido empuja para la mayoría de los autores y trae al leer los de las celebridades.\n2. **Paginar** un feed que cambia cada segundo: cursores, nunca offsets."
+  },
+  "keyPoints": [
+    {
+      "en": "**Fan-out on write** pushes each new post ID into every follower's cached feed, so a read is one lookup.",
+      "es": "**Fan-out on write** empuja el ID de cada post nuevo al feed en cache de cada seguidor, así una lectura es una sola consulta."
+    },
+    {
+      "en": "**Fan-out on read** merges followees' recent posts at request time: cheap writes, expensive reads.",
+      "es": "**Fan-out on read** mezcla los posts recientes de las cuentas seguidas al momento de leer: escrituras baratas, lecturas caras."
+    },
+    {
+      "en": "Celebrities break push: one post means millions of writes. Pull their posts at read time and merge.",
+      "es": "Las celebridades rompen el push: un post son millones de escrituras. Trae sus posts al leer y mézclalos."
+    },
+    {
+      "en": "Feeds hold only post IDs (~800 per user); bodies and counts are hydrated from caches at read time.",
+      "es": "Los feeds guardan solo IDs de posts (~800 por usuario); los cuerpos y contadores se hidratan desde caches al leer."
+    },
+    {
+      "en": "Page with a **cursor** (last score and ID), never an offset, so new posts don't shift pages.",
+      "es": "Pagina con un **cursor** (último puntaje e ID), nunca con offset, para que los posts nuevos no corran las páginas."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  P[New post] --> PS[(Post store)]\n  PS --> Q[Fan-out queue]\n  Q --> W{\"Author above<br/>follower threshold?\"}\n  W -->|no| F[\"Push post ID to<br/>each follower feed\"]\n  W -->|yes| C[(\"Celebrity recent posts\")]\n  F --> R[(\"Feed cache per user\")]\n  U[Feed request] --> M[Feed service]\n  R --> M\n  C -->|pull at read| M\n  M --> H[\"Hydrate, rank,<br/>slice by cursor\"]\n  H --> O[\"Page plus next cursor\"]",
+    "caption": {
+      "en": "Push for most authors, pull for the few with huge followings, and merge both lists at read time.",
+      "es": "Push para la mayoría de los autores, pull para los pocos con audiencias enormes, y las dos listas se mezclan al leer."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Hybrid fan-out and cursor reads with Redis sorted sets", "es": "Fan-out híbrido y lectura con cursor en sorted sets de Redis" },
+    "source": "import heapq\nimport redis\n\nr = redis.Redis()\nFEED_LEN = 800        # IDs only, newest 800 (Twitter's 2013 cap)\nCELEB = 100_000       # follower threshold: pull instead of push (tunable)\n\ndef on_post(author: int, post_id: int, ts: float):        # fan-out worker\n    r.zadd(f\"posts:{author}\", {post_id: ts})                # author timeline\n    if follower_count(author) >= CELEB:\n        return                                              # no fan-out\n    for batch in followers_in_batches(author, 1_000):\n        pipe = r.pipeline()\n        for uid in batch:\n            pipe.zadd(f\"feed:{uid}\", {post_id: ts})\n            pipe.zremrangebyrank(f\"feed:{uid}\", 0, -FEED_LEN - 1)  # trim\n        pipe.execute()\n\ndef read_feed(uid: int, cursor: float | None = None, limit: int = 20):\n    # Cursor = score of the last item seen (exclusive): new posts don't\n    # shift pages. Production uses (ts, post_id) to break ties.\n    top = f\"({cursor}\" if cursor else \"+inf\"\n    def newest(key):\n        return r.zrevrangebyscore(key, top, \"-inf\", start=0, num=limit,\n                                  withscores=True)\n    pushed = newest(f\"feed:{uid}\")\n    pulled = [newest(f\"posts:{c}\") for c in celebrities_followed(uid)]\n    merged = heapq.merge(pushed, *pulled, key=lambda x: -x[1])\n    page = [item for _, item in zip(range(limit), merged)]\n    next_cursor = page[-1][1] if page else None\n    return hydrate([pid for pid, _ in page]), next_cursor  # bodies, authors"
+  },
+  "example": {
+    "en": "Twitter in 2013 (Raffi Krikorian, *Timelines at Scale*): ~300k QPS of timeline reads against ~5k tweets/s on average. Home timelines lived in Redis, capped at 800 entries and replicated on 3 machines. Fan-out on write made reads cheap, but a tweet from Lady Gaga to ~31M followers could take up to 5 minutes to reach everyone. The fix they described is the hybrid: stop fanning out for the biggest accounts and merge their tweets in at read time.",
+    "es": "Twitter en 2013 (Raffi Krikorian, *Timelines at Scale*): ~300k QPS de lecturas de timeline contra ~5k tweets/s en promedio. Los home timelines vivían en Redis, con un tope de 800 entradas y replicados en 3 máquinas. El fan-out on write hacía baratas las lecturas, pero un tweet de Lady Gaga a ~31M de seguidores podía tardar hasta 5 minutos en llegar a todos. La solución que describieron es el híbrido: dejar de hacer fan-out para las cuentas más grandes y mezclar sus tweets al momento de leer."
+  },
+  "deepDive": [
+    {
+      "title": { "en": "Push, pull and the hybrid", "es": "Push, pull y el híbrido" },
+      "body": {
+        "en": "**Push (fan-out on write)**: a post costs one write per follower; a feed load is one list read. Followers who never open the app waste that work, so fan out only to recently active users and rebuild the rest on login. **Pull (fan-out on read)**: a post costs one write; a feed load queries every followee and merges. Facebook's Multifeed (2015) works this way: aggregators query leaf servers that keep recent actions in memory, then rank. **Hybrid**: push for normal authors, pull for accounts above a follower threshold, as Twitter described in 2013. Tune the threshold on fan-out lag and read cost.",
+        "es": "**Push (fan-out on write)**: un post cuesta una escritura por seguidor; cargar el feed es leer una lista. Los seguidores que nunca abren la app desperdician ese trabajo, así que haz fan-out solo a usuarios activos recientes y reconstruye el resto al iniciar sesión. **Pull (fan-out on read)**: un post cuesta una escritura; cargar el feed consulta a cada cuenta seguida y mezcla. Multifeed de Facebook (2015) funciona así: los agregadores consultan servidores hoja que guardan las acciones recientes en memoria y luego rankean. **Híbrido**: push para autores normales y pull para cuentas sobre un umbral de seguidores, como describió Twitter en 2013. Ajusta el umbral según el retraso del fan-out y el costo de lectura."
+      }
+    },
+    {
+      "title": { "en": "Hydration, ranking and pagination", "es": "Hidratación, ranking y paginación" },
+      "body": {
+        "en": "Feeds store IDs and scores, never bodies: a delete or an edit changes one row, not millions of copies. At read time, take ~500 candidate IDs (pushed plus pulled), drop blocked, muted and deleted posts, batch-fetch bodies, authors and counts from caches, then rank. Ranking is a hook: start with recency, then plug in a model ([[case-feed-ranking]]). Page with an opaque cursor: `(ts, post_id)` for chronological feeds; for ranked feeds, snapshot the ordered list per session with a short TTL and page through it, so a re-rank never duplicates or skips items.",
+        "es": "Los feeds guardan IDs y puntajes, nunca cuerpos: borrar o editar cambia una fila, no millones de copias. Al leer, toma ~500 IDs candidatos (empujados más traídos), descarta posts bloqueados, silenciados y borrados, trae en lote cuerpos, autores y contadores desde caches, y luego rankea. El ranking es un punto de extensión: empieza por recencia y después conecta un modelo ([[case-feed-ranking]]). Pagina con un cursor opaco: `(ts, post_id)` para feeds por fecha; para feeds rankeados, guarda una foto de la lista ordenada por sesión con un TTL corto y pagina sobre ella, así un re-ranking nunca duplica ni salta posts."
+      }
+    },
+    {
+      "title": { "en": "Deletes, new follows and cold users", "es": "Borrados, nuevos follows y usuarios inactivos" },
+      "body": {
+        "en": "**Deletes and unfollows**: don't chase entries across millions of feeds; filter at hydration and let trimming age them out. **New follow**: backfill the followee's recent posts, or the account looks silent until it posts again. **Cold users**: their cached feed expired; rebuild it on login from the pull path and resume pushing. **Monitoring**: post-to-feed latency p99, fan-out queue age and feed-cache hit rate. A fan-out backlog never shows up in error rates; users just see stale feeds.",
+        "es": "**Borrados y unfollows**: no persigas entradas en millones de feeds; filtra al hidratar y deja que el recorte las saque con el tiempo. **Nuevo follow**: rellena con los posts recientes de la cuenta seguida, o parecerá muda hasta que publique de nuevo. **Usuarios inactivos**: su feed en cache expiró; reconstrúyelo al iniciar sesión desde el camino de pull y vuelve a empujar. **Monitoreo**: p99 de la latencia de post a feed, antigüedad de la cola de fan-out y hit rate de la cache de feeds. Un atraso de fan-out nunca aparece en la tasa de errores; los usuarios solo ven feeds viejos."
+      }
+    }
+  ],
+  "pros": [
+    { "en": "A feed read is one cached list plus a batched hydrate: the fast path serves the dominant traffic.", "es": "Leer el feed es una lista en cache más una hidratación en lote: el camino rápido atiende el tráfico dominante." },
+    { "en": "The hybrid caps write amplification at the follower threshold; a celebrity post costs one write.", "es": "El híbrido acota la amplificación de escrituras en el umbral de seguidores; el post de una celebridad cuesta una escritura." },
+    { "en": "ID-only feeds keep memory small and turn deletes and edits into a hydration-time filter.", "es": "Los feeds con solo IDs ocupan poca memoria y convierten borrados y ediciones en un filtro al hidratar." }
+  ],
+  "cons": [
+    { "en": "Fan-out lag: followers of large-but-not-celebrity accounts may see posts seconds to minutes late.", "es": "Retraso de fan-out: los seguidores de cuentas grandes, pero no celebridades, pueden ver los posts segundos o minutos tarde." },
+    { "en": "Two read paths (cached list and pulled celebrities) to merge, test and keep consistent.", "es": "Dos caminos de lectura (lista en cache y celebridades traídas al leer) que mezclar, probar y mantener consistentes." },
+    { "en": "Precomputed feeds for inactive users waste writes and memory unless you skip or expire them.", "es": "Los feeds precalculados de usuarios inactivos desperdician escrituras y memoria si no los saltas o los haces expirar." }
+  ],
+  "whenToUse": {
+    "en": "Follow-graph products where reads far outnumber posts and a few seconds of staleness is fine: social feeds, activity streams, team updates.",
+    "es": "Productos basados en un grafo de seguimiento, donde las lecturas superan por mucho a los posts y unos segundos de atraso no importan: redes sociales, streams de actividad, novedades de equipos."
+  },
+  "whenNotToUse": {
+    "en": "When the feed is mostly recommendations from unfollowed accounts: candidate retrieval and ranking dominate, not fan-out. Strictly ordered, consistent views (a ledger) don't fit either.",
+    "es": "Cuando el feed es sobre todo recomendaciones de cuentas que no sigues: dominan la recuperación de candidatos y el ranking, no el fan-out. Tampoco encaja en vistas estrictamente ordenadas y consistentes (un libro contable)."
+  },
+  "numbers": [
+    { "en": "Reads: 300M DAU × 10 loads/day (assumed) = 3B/day ≈ 35k/s average, ~70k at a 2× peak.", "es": "Lecturas: 300M de DAU × 10 cargas/día (supuesto) = 3 mil millones/día ≈ 35k/s en promedio, ~70k en un pico de 2×." },
+    { "en": "Push: 150M posts/day × 200 followers (assumed) = 30B feed inserts/day ≈ 350k/s, 10× the read rate.", "es": "Push: 150M de posts/día × 200 seguidores (supuesto) = 30 mil millones de inserciones/día ≈ 350k/s, 10× la tasa de lectura." },
+    { "en": "Feed cache: 300M users × 800 IDs × 8 B ≈ 1.9 TB before replication; IDs only, never bodies.", "es": "Cache de feeds: 300M de usuarios × 800 IDs × 8 B ≈ 1.9 TB antes de replicar; solo IDs, nunca cuerpos." },
+    { "en": "Twitter (2013): ~300k QPS timeline reads, ~5k tweets/s average, 800-entry Redis timelines, 3 replicas.", "es": "Twitter (2013): ~300k QPS de lecturas de timeline, ~5k tweets/s en promedio, timelines de 800 entradas en Redis, 3 réplicas." },
+    { "en": "Celebrity push at Twitter (2013): one tweet to ~31M followers took up to 5 minutes.", "es": "Push de celebridades en Twitter (2013): un tweet a ~31M de seguidores tardaba hasta 5 minutos." }
+  ],
+  "pitfalls": [
+    { "en": "Offset pagination (`?page=3`): new posts shift every page, so users see duplicates and gaps.", "es": "Paginar con offset (`?page=3`): los posts nuevos corren cada página y el usuario ve duplicados y huecos." },
+    { "en": "Fanning out full post bodies: every edit or delete must touch millions of copies.", "es": "Hacer fan-out del post completo: cada edición o borrado tiene que tocar millones de copias." },
+    { "en": "Pushing to every follower, including users inactive for months: most writes are never read.", "es": "Empujar a todos los seguidores, incluso a usuarios inactivos hace meses: la mayoría de las escrituras nunca se leen." },
+    { "en": "No backfill on follow: a newly followed account stays invisible until its next post.", "es": "No rellenar al seguir: una cuenta recién seguida queda invisible hasta su próximo post." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "A user with 50M followers posts. Walk me through what happens.", "es": "Un usuario con 50M de seguidores publica. Explícame qué pasa." },
+      "a": {
+        "en": "We store the post once and skip fan-out: 50M feed writes would take minutes and starve everyone else's fan-out. Twitter saw exactly that in 2013, up to 5 minutes for a ~31M-follower account. At read time, each follower's feed service pulls the recent posts of the few celebrities they follow, hot in cache because millions read them, and merges them with the precomputed list. The cost moves to one cached read per celebrity followed.",
+        "es": "Guardamos el post una vez y no hacemos fan-out: 50M de escrituras en feeds tardarían minutos y dejarían sin capacidad el fan-out de todos los demás. Twitter vio justo eso en 2013: hasta 5 minutos para una cuenta con ~31M de seguidores. Al leer, el servicio de feed de cada seguidor trae los posts recientes de las pocas celebridades que sigue, calientes en cache porque millones los leen, y los mezcla con la lista precalculada. El costo pasa a ser una lectura en cache por celebridad seguida."
+      }
+    },
+    {
+      "q": { "en": "How do you paginate a ranked feed that changes every second?", "es": "¿Cómo paginas un feed rankeado que cambia cada segundo?" },
+      "a": {
+        "en": "Never with offsets: new posts shift every page and users see duplicates. For a chronological feed the cursor is the `(timestamp, post_id)` of the last item, and the next page asks for strictly older items. For a ranked feed I snapshot: the first request ranks ~500 candidates and stores the ordered IDs for the session with a short TTL; the cursor is `(snapshot_id, position)`. New posts appear behind a \"new posts\" pill on refresh.",
+        "es": "Nunca con offsets: los posts nuevos corren cada página y el usuario ve duplicados. En un feed por fecha, el cursor es el `(timestamp, post_id)` del último ítem, y la página siguiente pide ítems estrictamente más viejos. En un feed rankeado guardo una foto: la primera petición rankea ~500 candidatos y guarda los IDs ordenados de la sesión con un TTL corto; el cursor es `(snapshot_id, position)`. Los posts nuevos aparecen detrás de un botón de \"posts nuevos\" al refrescar."
+      }
+    },
+    {
+      "q": { "en": "Fan-out workers fall 10 minutes behind. What do you do?", "es": "Los workers de fan-out se atrasan 10 minutos. ¿Qué haces?" },
+      "a": {
+        "en": "First protect the users who will look: fan out to recently active followers first and skip users inactive for weeks, who get rebuilt on login. Then cut work: lower the celebrity threshold so more big accounts switch to pull. Then add workers, partitioned so one author can't block a partition. I'd alert on post-to-feed latency, not just queue depth, because a backlog never shows up as errors.",
+        "es": "Primero protejo a los usuarios que van a mirar: hago fan-out primero a los seguidores activos recientes y salto a los inactivos hace semanas, cuyos feeds se reconstruyen al iniciar sesión. Después recorto trabajo: bajo el umbral de celebridad para que más cuentas grandes pasen a pull. Luego sumo workers, particionados para que un autor no bloquee una partición. Alertaría sobre la latencia de post a feed, no solo la profundidad de la cola, porque un atraso nunca aparece como errores."
+      }
+    }
+  ],
+  "related": ["case-feed-ranking", "caching", "queues-streams", "sharding", "api-design", "back-of-envelope"],
+  "sources": [
+    { "title": "InfoQ — Raffi Krikorian, Timelines at Scale (Twitter, 2013)", "url": "https://www.infoq.com/presentations/Twitter-Timeline-Scalability/" },
+    { "title": "High Scalability — The architecture Twitter uses to deal with 150M active users (2013)", "url": "https://highscalability.com/the-architecture-twitter-uses-to-deal-with-150m-active-users/" },
+    { "title": "Meta Engineering — Serving Facebook Multifeed: efficiency, performance gains through redesign (2015)", "url": "https://engineering.fb.com/2015/03/10/production-engineering/serving-facebook-multifeed-efficiency-performance-gains-through-redesign/" }
+  ]
+}

@@ -1,0 +1,157 @@
+{
+  "concept": "case-collaborative-editing",
+  "items": [
+    {
+      "id": "case-collaborative-editing.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your editor autosaves the **full document text** every 2 s to one DB row. Users report paragraphs vanishing when two people type at once. What's the right redesign?",
+        "es": "Tu editor guarda automáticamente el **texto completo** cada 2 s en una fila de la base. Los usuarios reportan párrafos que desaparecen cuando dos personas escriben a la vez. ¿Cuál es el rediseño correcto?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Send small ops with a base revision to one per-doc server that orders and transforms them",
+            "es": "Enviar ops pequeñas con su revisión base a un servidor por documento que las ordena y transforma"
+          }
+        },
+        {
+          "text": {
+            "en": "Autosave every 200 ms so the overwrite window shrinks",
+            "es": "Guardar cada 200 ms para achicar la ventana en que se pisan"
+          },
+          "why": {
+            "en": "Still last-write-wins on the whole text: a smaller window, the same lost edits.",
+            "es": "Sigue siendo last-write-wins sobre todo el texto: una ventana más chica, las mismas ediciones perdidas."
+          }
+        },
+        {
+          "text": {
+            "en": "Add a version column and reject saves made from a stale version",
+            "es": "Agregar una columna de versión y rechazar los guardados hechos sobre una versión vieja"
+          },
+          "why": {
+            "en": "Optimistic locking stops silent loss, but now one typist's save fails and they must reload: not live collaboration.",
+            "es": "El bloqueo optimista evita la pérdida silenciosa, pero ahora falla el guardado de alguien y tiene que recargar: no es colaboración en vivo."
+          }
+        },
+        {
+          "text": {
+            "en": "Lock the document while anyone is typing in it",
+            "es": "Bloquear el documento mientras alguien escribe en él"
+          },
+          "why": {
+            "en": "Correct but no longer collaborative: everyone else waits their turn.",
+            "es": "Es correcto, pero deja de ser colaborativo: todos los demás esperan su turno."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Concurrent editing needs edits expressed as operations, a single place that orders them (`rev`), and a rule to reconcile concurrent ones (OT or CRDT). Whole-document saves can only pick a winner.",
+        "es": "La edición concurrente necesita expresar las ediciones como operaciones, un único lugar que las ordene (`rev`) y una regla para reconciliar las concurrentes (OT o CRDT). Guardar el documento completo solo puede elegir un ganador."
+      }
+    },
+    {
+      "id": "case-collaborative-editing.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Two inserts were made from the same revision. Fill the gap so `op` still lands where its author meant after `prior` is applied.",
+        "es": "Se hicieron dos inserts desde la misma revisión. Completa el hueco para que `op` caiga donde su autor quería después de aplicar `prior`."
+      },
+      "lang": "python",
+      "code": "def transform_ins(op, prior):\n    # both are inserts made from the same rev\n    if prior.pos < op.pos or (prior.pos == op.pos and prior.site < op.site):\n        ____\n    return op",
+      "options": [
+        {
+          "text": "return replace(op, pos=op.pos + len(prior.text))"
+        },
+        {
+          "text": "return replace(op, pos=op.pos - len(prior.text))",
+          "why": {
+            "en": "Wrong direction: text inserted before `op` pushes it right, not left.",
+            "es": "Dirección equivocada: el texto insertado antes de `op` lo empuja a la derecha, no a la izquierda."
+          }
+        },
+        {
+          "text": "return replace(op, pos=prior.pos + len(op.text))",
+          "why": {
+            "en": "Mixes up the two ops: the shift depends on the prior's length and op's own position.",
+            "es": "Confunde las dos ops: el desplazamiento depende del largo de `prior` y de la posición propia de `op`."
+          }
+        },
+        {
+          "text": "return replace(prior, pos=op.pos)",
+          "why": {
+            "en": "Returns the other user's op and drops this one: an edit silently disappears.",
+            "es": "Devuelve la op del otro usuario y descarta esta: una edición desaparece en silencio."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "If the other insert lands before yours, your position shifts right by its length. The `site` tie-break makes every replica order same-position inserts identically, which is what makes them converge.",
+        "es": "Si el otro insert cae antes que el tuyo, tu posición se corre a la derecha según su largo. El desempate por `site` hace que todas las réplicas ordenen igual los inserts en la misma posición, y por eso convergen."
+      }
+    },
+    {
+      "id": "case-collaborative-editing.a3",
+      "type": "multi",
+      "prompt": {
+        "en": "Which statements about collaborative editing are true? Select all that apply.",
+        "es": "¿Qué afirmaciones sobre la edición colaborativa son verdaderas? Marca todas las que correspondan."
+      },
+      "options": [
+        {
+          "text": {
+            "en": "CRDT replicas can converge without a central server",
+            "es": "Las réplicas CRDT pueden converger sin un servidor central"
+          }
+        },
+        {
+          "text": {
+            "en": "OT is obsolete: no major product still relies on it",
+            "es": "OT está obsoleto: ningún producto importante sigue usándolo"
+          },
+          "why": {
+            "en": "Google Docs is built on operational transformation.",
+            "es": "Google Docs está construido sobre operational transformation."
+          }
+        },
+        {
+          "text": {
+            "en": "Figma uses a central server with last-writer-wins per property",
+            "es": "Figma usa un servidor central con last-writer-wins por propiedad"
+          }
+        },
+        {
+          "text": {
+            "en": "A CRDT guarantees the merged text is what both authors meant",
+            "es": "Un CRDT garantiza que el texto fusionado es lo que ambos autores querían"
+          },
+          "why": {
+            "en": "Convergence is syntactic: replicas agree, but two different typo fixes can both land.",
+            "es": "La convergencia es sintáctica: las réplicas coinciden, pero dos correcciones distintas pueden quedar ambas."
+          }
+        },
+        {
+          "text": {
+            "en": "Cursor positions belong in the op log so history can replay them",
+            "es": "Las posiciones de los cursores van en el log de ops para que el historial las reproduzca"
+          },
+          "why": {
+            "en": "Presence is ephemeral; logging it bloats history and write load for nothing.",
+            "es": "La presencia es efímera; registrarla infla el historial y la carga de escritura sin ningún beneficio."
+          }
+        }
+      ],
+      "answers": [
+        0,
+        2
+      ],
+      "explain": {
+        "en": "OT and CRDTs both ship in production. They differ in where ordering lives: OT leans on a central orderer, CRDTs make ops commute. Neither understands intent, and neither should store cursors.",
+        "es": "OT y los CRDTs están ambos en producción. Difieren en dónde vive el orden: OT se apoya en un ordenador central y los CRDTs hacen que las ops conmuten. Ninguno entiende la intención, y ninguno debería guardar cursores."
+      }
+    }
+  ]
+}

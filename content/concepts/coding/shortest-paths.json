@@ -1,0 +1,197 @@
+{
+  "id": "shortest-paths",
+  "domain": "coding",
+  "level": "core",
+  "title": {
+    "en": "Shortest Paths (BFS, Dijkstra, Bellman-Ford)",
+    "es": "Caminos más cortos (BFS, Dijkstra, Bellman-Ford)"
+  },
+  "aliases": [
+    "Dijkstra",
+    "Bellman-Ford",
+    "BFS shortest path",
+    "0-1 BFS",
+    "single-source shortest path",
+    "SSSP",
+    "network delay time",
+    "negative cycle"
+  ],
+  "tldr": {
+    "en": "Choose by edge weights: BFS when all edges cost the same, Dijkstra with a min-heap when weights are non-negative, Bellman-Ford when some are negative or you must detect a negative cycle.",
+    "es": "Elige según los pesos: BFS si todas las aristas cuestan lo mismo, Dijkstra con un min-heap si los pesos no son negativos, y Bellman-Ford si hay negativos o debes detectar un ciclo negativo."
+  },
+  "explain": {
+    "en": "All three compute distances from one source by **relaxing** edges: if `dist[u] + w < dist[v]`, then `dist[v] = dist[u] + w`. They differ in which weights they tolerate.\n\n- **BFS**: every edge costs 1. A queue visits nodes in hop order, so the first visit is the shortest. O(V + E).\n- **Dijkstra**: weights ≥ 0. Pop the closest unsettled node from a min-heap and relax its edges. With no negative edge, nothing found later can be cheaper, so a popped distance is final. O((V + E) log V) with a binary heap.\n- **Bellman-Ford**: any weights. Relax every edge V − 1 times (a shortest path has at most V − 1 edges). If one more pass still improves something, a negative cycle is reachable. O(V·E).\n\n**Signals:** \"minimum cost, time or steps from A\", grids with move costs, network delay, cheapest route with at most k stops. Shortcuts: only 0/1 weights → **0-1 BFS** with a deque; a DAG → relax in [[topological-sort]] order, O(V + E).",
+    "es": "Los tres calculan distancias desde un origen **relajando** aristas: si `dist[u] + w < dist[v]`, entonces `dist[v] = dist[u] + w`. Se diferencian en qué pesos toleran.\n\n- **BFS**: cada arista cuesta 1. Una cola visita los nodos por número de saltos, así que la primera visita es la más corta. O(V + E).\n- **Dijkstra**: pesos ≥ 0. Saca del min-heap el nodo no asentado más cercano y relaja sus aristas. Sin aristas negativas, nada que aparezca después puede ser más barato, así que una distancia extraída es definitiva. O((V + E) log V) con un heap binario.\n- **Bellman-Ford**: cualquier peso. Relaja todas las aristas V − 1 veces (un camino mínimo tiene a lo sumo V − 1 aristas). Si una pasada más todavía mejora algo, hay un ciclo negativo alcanzable. O(V·E).\n\n**Señales:** \"costo, tiempo o pasos mínimos desde A\", grillas con costo por movimiento, demora de red, ruta más barata con a lo sumo k escalas. Atajos: pesos solo 0/1 → **0-1 BFS** con un deque; un DAG → relaja en orden de [[topological-sort]], O(V + E)."
+  },
+  "keyPoints": [
+    {
+      "en": "Choose by weights: **BFS** if unweighted, Dijkstra if non-negative, Bellman-Ford if any are negative.",
+      "es": "Elige por pesos: **BFS** si no hay pesos, Dijkstra si no son negativos, Bellman-Ford si hay negativos."
+    },
+    {
+      "en": "**Relax** an edge: if `dist[u] + w < dist[v]`, lower `dist[v]` and record u as its parent.",
+      "es": "**Relajar** una arista: si `dist[u] + w < dist[v]`, baja `dist[v]` y guarda u como su padre."
+    },
+    {
+      "en": "Dijkstra pops the closest node from a min-heap; with no negative edges, that distance is final.",
+      "es": "Dijkstra saca el nodo más cercano del min-heap; sin aristas negativas, esa distancia es definitiva."
+    },
+    {
+      "en": "Bellman-Ford relaxes every edge V − 1 times; any further improvement means a negative cycle.",
+      "es": "Bellman-Ford relaja todas las aristas V − 1 veces; si algo mejora después, hay un ciclo negativo."
+    },
+    {
+      "en": "Only 0/1 weights: **0-1 BFS** with a deque. A DAG: relax in topological order.",
+      "es": "Pesos solo 0/1: **0-1 BFS** con un deque. Un DAG: relaja en orden topológico."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  W{\"Edge weights?\"} -->|all equal| B[\"BFS with a queue\"]\n  W -->|non-negative| P[\"Push (0, source)\"]\n  W -->|some negative| BF[\"Bellman-Ford:<br/>V-1 relax rounds\"]\n  P --> M[\"Pop closest (d, u)\"]\n  M --> S{\"Stale entry?\"}\n  S -->|\"yes, skip\"| M\n  S -->|no| R[\"Relax edges of u\"]\n  R -->|improved v| H[\"Push (dist[v], v)\"]\n  H --> M\n  M -->|heap empty| D[\"Distances final\"]\n  B --> D\n  BF --> N{\"Round V improves?\"}\n  N -->|no| D\n  N -->|yes| C[\"Negative cycle\"]",
+    "caption": {
+      "en": "Pick the algorithm by edge weights. Dijkstra's loop pops the closest node, skips stale heap entries and relaxes its edges.",
+      "es": "Elige el algoritmo según los pesos. El ciclo de Dijkstra saca el nodo más cercano, descarta entradas viejas del heap y relaja sus aristas."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Dijkstra (lazy heap) and Bellman-Ford",
+      "es": "Dijkstra (heap perezoso) y Bellman-Ford"
+    },
+    "source": "import heapq\n\ndef dijkstra(adj, src):                # adj[u] = [(v, w), ...], all w >= 0\n    dist = {src: 0}\n    heap = [(0, src)]\n    while heap:\n        d, u = heapq.heappop(heap)\n        if d > dist[u]:\n            continue                   # stale entry: heapq has no decrease-key\n        for v, w in adj.get(u, []):\n            nd = d + w\n            if nd < dist.get(v, float(\"inf\")):\n                dist[v] = nd           # relax\n                heapq.heappush(heap, (nd, v))\n    return dist\n\ndef bellman_ford(n, edges, src):       # edges = [(u, v, w)], w may be < 0\n    dist = [float(\"inf\")] * n\n    dist[src] = 0\n    for _ in range(n - 1):             # a shortest path has at most n-1 edges\n        for u, v, w in edges:\n            if dist[u] + w < dist[v]:\n                dist[v] = dist[u] + w\n    for u, v, w in edges:              # still improving? negative cycle\n        if dist[u] + w < dist[v]:\n            raise ValueError(\"negative cycle reachable from src\")\n    return dist\n\n# Unweighted graph? BFS with collections.deque gives the same answer in O(V + E)."
+  },
+  "example": {
+    "en": "**Network delay time.** n servers, directed links (u, v, ms) with non-negative latency; a signal starts at server k. When has every server received it? Run Dijkstra from k; the answer is the largest distance, or −1 if some server is unreachable. Links 2→1, 2→3 and 3→4 at 1 ms each, source 2: distances 1, 1 and 2, so the answer is 2 ms. O((V + E) log V).",
+    "es": "**Tiempo de demora de red.** n servidores, enlaces dirigidos (u, v, ms) con latencia no negativa; una señal parte del servidor k. ¿Cuándo la recibieron todos? Corre Dijkstra desde k; la respuesta es la mayor distancia, o −1 si algún servidor es inalcanzable. Enlaces 2→1, 2→3 y 3→4 de 1 ms cada uno, origen 2: distancias 1, 1 y 2, así que la respuesta es 2 ms. O((V + E) log V)."
+  },
+  "pros": [
+    {
+      "en": "One idea, relaxation, covers most \"minimum cost\" problems.",
+      "es": "Una sola idea, la relajación, cubre la mayoría de los problemas de \"costo mínimo\"."
+    },
+    {
+      "en": "Dijkstra scales to large sparse graphs: O((V + E) log V).",
+      "es": "Dijkstra escala a grafos grandes y dispersos: O((V + E) log V)."
+    },
+    {
+      "en": "Bellman-Ford handles negative weights and detects negative cycles.",
+      "es": "Bellman-Ford tolera pesos negativos y detecta ciclos negativos."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Dijkstra with a negative edge can return wrong distances without any error.",
+      "es": "Dijkstra con una arista negativa puede devolver distancias incorrectas sin ningún error."
+    },
+    {
+      "en": "Bellman-Ford's O(V·E) is too slow for large graphs.",
+      "es": "El O(V·E) de Bellman-Ford es demasiado lento para grafos grandes."
+    },
+    {
+      "en": "Python's `heapq` has no decrease-key, so the heap carries stale entries.",
+      "es": "El `heapq` de Python no tiene decrease-key, así que el heap arrastra entradas viejas."
+    }
+  ],
+  "whenToUse": {
+    "en": "\"Minimum total cost, time or steps\" from a source: routing, network delay, grids with move costs, cheapest route with at most k hops (Bellman-Ford for k + 1 rounds).",
+    "es": "\"Costo, tiempo o pasos totales mínimos\" desde un origen: ruteo, demora de red, grillas con costo por movimiento, ruta más barata con a lo sumo k saltos (Bellman-Ford con k + 1 rondas)."
+  },
+  "whenNotToUse": {
+    "en": "You only need reachability or connectivity (BFS/DFS or [[union-find]]), or all-pairs distances on a big graph. On a DAG, skip the heap and relax in topological order.",
+    "es": "Solo necesitas alcanzabilidad o conectividad (BFS/DFS o [[union-find]]), o distancias entre todos los pares en un grafo grande. En un DAG, evita el heap y relaja en orden topológico."
+  },
+  "numbers": [
+    {
+      "en": "BFS: O(V + E). Dijkstra with a binary heap: O((V + E) log V).",
+      "es": "BFS: O(V + E). Dijkstra con heap binario: O((V + E) log V)."
+    },
+    {
+      "en": "Bellman-Ford: O(V·E), V − 1 rounds plus one round to detect a negative cycle.",
+      "es": "Bellman-Ford: O(V·E), V − 1 rondas más una ronda para detectar un ciclo negativo."
+    },
+    {
+      "en": "DAG shortest paths: O(V + E) in topological order, negative weights allowed.",
+      "es": "Caminos mínimos en un DAG: O(V + E) en orden topológico, con pesos negativos permitidos."
+    },
+    {
+      "en": "0-1 BFS: O(V + E), pushing 0-cost edges to the front of the deque.",
+      "es": "0-1 BFS: O(V + E), con las aristas de costo 0 al frente del deque."
+    },
+    {
+      "en": "Floyd-Warshall, all pairs: O(V³) time, O(V²) space.",
+      "es": "Floyd-Warshall, todos los pares: O(V³) de tiempo, O(V²) de espacio."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Dijkstra with negative edges: a settled node can later get cheaper, and the result is wrong.",
+      "es": "Dijkstra con aristas negativas: un nodo ya asentado puede abaratarse después y el resultado es incorrecto."
+    },
+    {
+      "en": "No stale check (`if d > dist[u]: continue`): old heap entries get re-expanded and time balloons.",
+      "es": "Sin chequeo de entradas viejas (`if d > dist[u]: continue`): se vuelven a expandir entradas antiguas del heap y el tiempo se dispara."
+    },
+    {
+      "en": "Marking nodes visited when pushed instead of when popped: locks in a non-optimal distance.",
+      "es": "Marcar nodos como visitados al insertarlos en vez de al extraerlos: fija una distancia que no es la óptima."
+    },
+    {
+      "en": "BFS with `list.pop(0)`: O(n) per pop. Use `collections.deque`.",
+      "es": "BFS con `list.pop(0)`: O(n) por extracción. Usa `collections.deque`."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "How do you choose between BFS, Dijkstra and Bellman-Ford?",
+        "es": "¿Cómo eliges entre BFS, Dijkstra y Bellman-Ford?"
+      },
+      "a": {
+        "en": "By the weights. All edges equal: BFS, O(V + E), because hop count is the distance. Non-negative weights: Dijkstra with a min-heap, O((V + E) log V). Any negative edge: Bellman-Ford, O(V·E), which also detects negative cycles. Two shortcuts I check first: only 0/1 weights → 0-1 BFS with a deque; a DAG → relax in topological order, linear time, negatives allowed.",
+        "es": "Por los pesos. Todas las aristas iguales: BFS, O(V + E), porque el número de saltos es la distancia. Pesos no negativos: Dijkstra con min-heap, O((V + E) log V). Alguna arista negativa: Bellman-Ford, O(V·E), que además detecta ciclos negativos. Antes reviso dos atajos: pesos solo 0/1 → 0-1 BFS con un deque; un DAG → relajar en orden topológico, en tiempo lineal y con negativos permitidos."
+      }
+    },
+    {
+      "q": {
+        "en": "Why does Dijkstra break with negative edges?",
+        "es": "¿Por qué Dijkstra falla con aristas negativas?"
+      },
+      "a": {
+        "en": "Its proof says the closest unsettled node is final: any other route passes through a node that is already at least as far, and non-negative edges only add. A negative edge breaks that. A→C = 2, A→B = 5, B→C = −4: C is settled at 2, but A→B→C costs 1. The lazy-heap version can re-push C, but then it loses its O((V + E) log V) bound. With negatives, I use Bellman-Ford.",
+        "es": "Su demostración dice que el nodo no asentado más cercano es definitivo: cualquier otra ruta pasa por un nodo que ya está igual o más lejos, y las aristas no negativas solo suman. Una arista negativa rompe eso. A→C = 2, A→B = 5, B→C = −4: C queda asentado en 2, pero A→B→C cuesta 1. La versión con heap perezoso puede volver a insertar C, pero pierde su cota O((V + E) log V). Con negativos, uso Bellman-Ford."
+      }
+    },
+    {
+      "q": {
+        "en": "Cheapest flight with at most k stops: what changes?",
+        "es": "Vuelo más barato con a lo sumo k escalas: ¿qué cambia?"
+      },
+      "a": {
+        "en": "The hop limit breaks plain Dijkstra: a cheap path with too many stops can block a pricier valid one, because dist is kept per node only. I run Bellman-Ford for exactly k + 1 rounds, relaxing from a copy of the previous round's distances so each round adds at most one edge: O(k·E). The alternative is Dijkstra over (node, stops) states.",
+        "es": "El límite de saltos rompe el Dijkstra simple: un camino barato con demasiadas escalas puede bloquear otro más caro pero válido, porque dist se guarda solo por nodo. Corro Bellman-Ford exactamente k + 1 rondas, relajando desde una copia de las distancias de la ronda anterior para que cada ronda agregue a lo sumo una arista: O(k·E). La alternativa es Dijkstra sobre estados (nodo, escalas)."
+      }
+    }
+  ],
+  "related": [
+    "graph-traversal",
+    "heaps-top-k",
+    "topological-sort",
+    "union-find",
+    "dynamic-programming"
+  ],
+  "sources": [
+    {
+      "title": "Sedgewick & Wayne, Algorithms 4th ed. — 4.4 Shortest Paths",
+      "url": "https://algs4.cs.princeton.edu/44sp/"
+    },
+    {
+      "title": "cp-algorithms — Dijkstra on sparse graphs",
+      "url": "https://cp-algorithms.com/graph/dijkstra_sparse.html"
+    },
+    {
+      "title": "cp-algorithms — Bellman-Ford",
+      "url": "https://cp-algorithms.com/graph/bellman_ford.html"
+    }
+  ]
+}

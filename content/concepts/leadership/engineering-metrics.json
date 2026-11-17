@@ -1,0 +1,106 @@
+{
+  "id": "engineering-metrics",
+  "domain": "leadership",
+  "level": "advanced",
+  "title": { "en": "Engineering metrics (DORA)", "es": "Métricas de ingeniería (DORA)" },
+  "aliases": ["DORA metrics", "four keys", "deployment frequency", "lead time for changes", "change failure rate", "MTTR", "SPACE framework", "Goodhart's law"],
+  "tldr": {
+    "en": "Measure the delivery system, not individuals: DORA's throughput and instability metrics per service, read together as trends, plus surveys and outcomes. A metric that becomes a target gets gamed (Goodhart's law).",
+    "es": "Mide el sistema de entrega, no a las personas: las métricas de throughput e inestabilidad de DORA por servicio, leídas juntas como tendencias, más encuestas y resultados. Una métrica que se vuelve objetivo se manipula (ley de Goodhart)."
+  },
+  "explain": {
+    "en": "**DORA** (DevOps Research and Assessment) has studied software delivery since 2014 and found that top performers are fast *and* stable. It measures delivery per application or service with five metrics:\n\n- **Throughput**: change lead time (commit to production), deployment frequency, and failed deployment recovery time.\n- **Instability**: change fail rate (deploys needing a rollback or hotfix) and deployment rework rate (unplanned deploys caused by a production incident), added in 2024.\n\nRead them **together**: deploying twice as often while failures climb is not progress.\n\nDORA measures the pipeline, not productivity or value. **SPACE** (Forsgren et al., 2021) widens the view: satisfaction and well-being, performance, activity, communication and collaboration, efficiency and flow, mixing surveys with system data.\n\n**Goodhart's law**: when a measure becomes a target, it stops being a good measure. Target lines of code and you get verbose code; target deploy count and you get empty deploys. So use metrics as team-level trends that start conversations, pair every speed metric with a quality one, and never rank individuals by commits, PRs or lines of code.",
+    "es": "**DORA** (DevOps Research and Assessment) estudia la entrega de software desde 2014 y encontró que los mejores equipos son rápidos *y* estables a la vez. Mide la entrega por aplicación o servicio con cinco métricas:\n\n- **Throughput**: change lead time (del commit a producción), frecuencia de deploy y tiempo de recuperación de un deploy fallido.\n- **Inestabilidad**: change fail rate (deploys que requieren rollback o hotfix) y deployment rework rate (deploys no planificados causados por un incidente en producción), agregada en 2024.\n\nLéelas **juntas**: hacer el doble de deploys mientras suben las fallas no es progreso.\n\nDORA mide el pipeline, no la productividad ni el valor. **SPACE** (Forsgren et al., 2021) amplía la mirada: satisfacción y bienestar, desempeño, actividad, comunicación y colaboración, eficiencia y flujo, combinando encuestas con datos del sistema.\n\n**Ley de Goodhart**: cuando una medida se vuelve objetivo, deja de ser una buena medida. Pon como meta las líneas de código y obtendrás código inflado; pon como meta la cantidad de deploys y obtendrás deploys vacíos. Por eso usa las métricas como tendencias de equipo que abren conversaciones, combina cada métrica de velocidad con una de calidad y nunca hagas rankings de personas por commits, PRs o líneas de código."
+  },
+  "keyPoints": [
+    {
+      "en": "**DORA** measures delivery per service: lead time, deploy frequency, recovery time, change fail rate, rework rate.",
+      "es": "**DORA** mide la entrega por servicio: lead time, frecuencia de deploy, tiempo de recuperación, change fail rate y rework rate."
+    },
+    {
+      "en": "Read **throughput and instability together**: more deploys with rising failures is not progress.",
+      "es": "Lee **throughput e inestabilidad juntos**: más deploys con fallas en aumento no es progreso."
+    },
+    {
+      "en": "**SPACE** adds satisfaction, collaboration and flow: mix surveys with system data, never one number.",
+      "es": "**SPACE** suma satisfacción, colaboración y flujo: combina encuestas con datos del sistema, nunca un solo número."
+    },
+    {
+      "en": "**Goodhart's law**: a metric that becomes a target gets gamed, so use trends to start team conversations.",
+      "es": "**Ley de Goodhart**: una métrica que se vuelve objetivo se manipula; usa tendencias para abrir conversaciones de equipo."
+    },
+    {
+      "en": "Never rank people by commits, PRs or lines of code; measure the system and its outcomes.",
+      "es": "Nunca hagas rankings de personas por commits, PRs o líneas de código; mide el sistema y sus resultados."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  C[Commit merged] -->|change lead time| D[\"Deploy to prod<br/>(deploy frequency)\"]\n  D --> F{\"Needs rollback<br/>or hotfix?\"}\n  F -->|no| H[Change delivered]\n  F -->|\"yes: change fail rate\"| I[Failed deployment]\n  I -->|recovery time| R[Service recovered]\n  I --> U[\"Unplanned fix deploy<br/>(rework rate)\"]\n  H --> T[\"Team reviews<br/>monthly trends\"]\n  R --> T\n  U --> T\n  T --> B[\"Fix the bottleneck,<br/>not the people\"]",
+    "caption": {
+      "en": "Every metric reads off the same pipeline; the team reviews trends to fix the system, never to rank people.",
+      "es": "Todas las métricas salen del mismo pipeline; el equipo revisa tendencias para arreglar el sistema, nunca para rankear personas."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "The five DORA metrics from deploy records", "es": "Las cinco métricas DORA a partir de registros de deploy" },
+    "source": "from dataclasses import dataclass\nfrom datetime import datetime, timedelta\nfrom statistics import median\n\n@dataclass\nclass Deploy:\n    service: str\n    committed_at: datetime     # when the shipped change was committed\n    deployed_at: datetime\n    failed: bool               # needed immediate rollback or hotfix\n    recovered_at: datetime | None = None\n    unplanned: bool = False    # shipped to fix a production incident\n\ndef hours(delta: timedelta) -> float:\n    return delta / timedelta(hours=1)\n\ndef dora(deploys: list[Deploy], days: int) -> dict:\n    # Input: ONE service over a period. Never group by author.\n    failed = [d for d in deploys if d.failed]\n    return {\n        \"deploys_per_day\": len(deploys) / days,\n        \"lead_time_h\": median(hours(d.deployed_at - d.committed_at) for d in deploys),\n        \"change_fail_rate\": len(failed) / len(deploys),\n        \"recovery_h\": median(hours(d.recovered_at - d.deployed_at) for d in failed) if failed else 0.0,\n        \"rework_rate\": sum(d.unplanned for d in deploys) / len(deploys),\n    }"
+  },
+  "example": {
+    "en": "A VP wants a dashboard ranking engineers by PRs merged. You propose DORA per service, a quarterly developer survey and incident counts instead. In this illustrative case, the data shows a 6-day lead time, 4 days of it waiting for code review. The team adds a review rotation and smaller PRs; lead time falls to 2 days while change fail rate stays flat. A PR leaderboard would have rewarded splitting work into trivial PRs and penalized the engineer who spent the week unblocking three others.",
+    "es": "Un VP quiere un dashboard que rankee a los ingenieros por PRs mergeados. Tú propones en cambio DORA por servicio, una encuesta trimestral a los desarrolladores y el conteo de incidentes. En este caso ilustrativo, los datos muestran un lead time de 6 días, 4 de ellos esperando code review. El equipo agrega una rotación de revisión y PRs más chicos; el lead time baja a 2 días mientras el change fail rate se mantiene. Un ranking de PRs habría premiado dividir el trabajo en PRs triviales y castigado a la ingeniera que pasó la semana desbloqueando a otros tres."
+  },
+  "pros": [
+    { "en": "Five well-defined metrics that most CI/CD and incident tools can compute.", "es": "Cinco métricas bien definidas que la mayoría de las herramientas de CI/CD e incidentes pueden calcular." },
+    { "en": "Pairs speed with stability, so one can't quietly improve at the other's expense.", "es": "Combina velocidad con estabilidad, así una no puede mejorar en silencio a costa de la otra." },
+    { "en": "Gives Staff engineers evidence for CI, code review or tech-debt investments.", "es": "Le da a un Staff engineer evidencia para invertir en CI, en code review o en deuda técnica." }
+  ],
+  "cons": [
+    { "en": "Measures delivery, not whether you built the right thing; add product outcomes.", "es": "Mide la entrega, no si construiste lo correcto; suma resultados de producto." },
+    { "en": "Gamed quickly once tied to targets, bonuses or rankings.", "es": "Se manipula rápido en cuanto se ata a metas, bonos o rankings." },
+    { "en": "Definitions vary by tool (when lead time starts, what counts as failed), so compare like with like.", "es": "Las definiciones varían según la herramienta (cuándo empieza el lead time, qué cuenta como falla), así que compara solo lo comparable." }
+  ],
+  "whenToUse": {
+    "en": "To find the bottleneck in a team's delivery system, justify platform or debt work, and check whether a change (new CI, AI tools, a reorg) helped, as per-service trends over months.",
+    "es": "Para encontrar el cuello de botella en el sistema de entrega de un equipo, justificar trabajo de plataforma o de deuda, y verificar si un cambio (nuevo CI, herramientas de IA, una reorganización) ayudó, como tendencias por servicio a lo largo de meses."
+  },
+  "whenNotToUse": {
+    "en": "Performance reviews, ranking individuals, or comparing very different systems such as a mobile app and a mainframe. Never set a speed target without its paired quality metric.",
+    "es": "Evaluaciones de desempeño, rankings de personas o comparar sistemas muy distintos, como una app móvil y un mainframe. Nunca fijes una meta de velocidad sin su métrica de calidad asociada."
+  },
+  "numbers": [
+    { "en": "DORA 2024 elite cluster: on-demand deploys, lead time < 1 day, change fail rate ~5%, recovery < 1 hour.", "es": "Clúster elite de DORA 2024: deploys a demanda, lead time < 1 día, change fail rate ~5%, recuperación < 1 hora." },
+    { "en": "Clusters were re-derived from survey data each year; DORA 2025 replaced them with seven team archetypes.", "es": "Los clústeres se recalculaban cada año con los datos de la encuesta; DORA 2025 los reemplazó por siete arquetipos de equipo." },
+    { "en": "Five metrics since 2024 (rework rate added); in 2023, MTTR became failed deployment recovery time.", "es": "Cinco métricas desde 2024 (se agregó rework rate); en 2023, el MTTR pasó a ser failed deployment recovery time." },
+    { "en": "SPACE (Forsgren et al., 2021): five dimensions; combine several and never read activity alone.", "es": "SPACE (Forsgren et al., 2021): cinco dimensiones; combina varias y nunca leas la actividad sola." }
+  ],
+  "pitfalls": [
+    { "en": "Ranking engineers by commits, PRs or lines of code: people optimize the count, not the outcome.", "es": "Rankear ingenieros por commits, PRs o líneas de código: la gente optimiza el conteo, no el resultado." },
+    { "en": "Celebrating deploy frequency while change fail rate quietly doubles.", "es": "Celebrar la frecuencia de deploy mientras el change fail rate se duplica en silencio." },
+    { "en": "Comparing teams whose tools define lead time or failure differently.", "es": "Comparar equipos cuyas herramientas definen el lead time o la falla de forma distinta." },
+    { "en": "Measuring without acting: a dashboard nobody discusses changes nothing.", "es": "Medir sin actuar: un dashboard que nadie discute no cambia nada." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Your CEO asks how productive engineering is. How do you answer?", "es": "Tu CEO pregunta qué tan productiva es ingeniería. ¿Cómo respondes?" },
+      "a": {
+        "en": "I separate delivery from impact. For delivery I report DORA per service as trends: lead time, deploy frequency, change fail rate, recovery time. For developer experience, a short quarterly survey on friction, because activity counts alone mislead. For impact, the product outcomes engineering moved. I'd refuse a per-engineer leaderboard: it gets gamed fast and punishes the people who unblock others. I lose some precision, but the numbers stay honest.",
+        "es": "Separo entrega de impacto. Para la entrega, reporto DORA por servicio como tendencias: lead time, frecuencia de deploy, change fail rate y tiempo de recuperación. Para la experiencia de los desarrolladores, una encuesta trimestral corta sobre fricción, porque los conteos de actividad por sí solos engañan. Para el impacto, los resultados de producto que movió ingeniería. Me negaría a un ranking por ingeniero: se manipula rápido y castiga a quienes desbloquean a otros. Pierdo algo de precisión, pero los números siguen siendo honestos."
+      }
+    },
+    {
+      "q": { "en": "A team doubled its deploy frequency, but incidents went up. How do you read that?", "es": "Un equipo duplicó su frecuencia de deploy, pero subieron los incidentes. ¿Cómo lo interpretas?" },
+      "a": {
+        "en": "Throughput improved and stability got worse, so I don't call it progress yet. I check change fail rate and rework rate per service: are failures concentrated in one area, and did PR size or review depth change when deploys sped up? The fix is usually in the safety net, not the speed: tests, canaries, feature flags, faster rollback. DORA's data says top performers are strong on both, so the goal is regaining stability without giving the speed back.",
+        "es": "El throughput mejoró y la estabilidad empeoró, así que todavía no lo llamo progreso. Reviso change fail rate y rework rate por servicio: ¿las fallas se concentran en un área?, ¿cambió el tamaño de los PRs o la profundidad de la revisión cuando se aceleraron los deploys? La solución suele estar en la red de seguridad, no en la velocidad: tests, canaries, feature flags, rollback más rápido. Los datos de DORA dicen que los mejores equipos son fuertes en ambas cosas, así que el objetivo es recuperar la estabilidad sin devolver la velocidad."
+      }
+    }
+  ],
+  "related": ["tech-debt", "slos", "deployment-strategies", "ai-assisted-engineering", "incident-leadership", "planning-estimation"],
+  "sources": [
+    { "title": "DORA — Software delivery performance metrics (five metrics and pitfalls)", "url": "https://dora.dev/guides/dora-metrics/" },
+    { "title": "DORA — A history of DORA's software delivery metrics", "url": "https://dora.dev/guides/dora-metrics/history/" },
+    { "title": "Gergely Orosz & Kent Beck — Measuring developer productivity? A response to McKinsey (2023)", "url": "https://newsletter.pragmaticengineer.com/p/measuring-developer-productivity" },
+    { "title": "Martin Fowler — Cannot Measure Productivity (2003)", "url": "https://martinfowler.com/bliki/CannotMeasureProductivity.html" }
+  ]
+}

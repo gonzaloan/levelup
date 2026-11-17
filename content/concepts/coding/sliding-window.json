@@ -1,0 +1,104 @@
+{
+  "id": "sliding-window",
+  "domain": "coding",
+  "level": "core",
+  "title": { "en": "Sliding window", "es": "Sliding window (ventana deslizante)" },
+  "aliases": ["sliding window", "fixed-size window", "variable-size window", "caterpillar method", "longest substring without repeating characters", "minimum window substring", "ventana deslizante"],
+  "tldr": {
+    "en": "Keep a contiguous window over an array or string and update its state as the edges move. Each element enters and leaves once, so subarray and substring scans drop from O(n²) to O(n).",
+    "es": "Mantén una ventana contigua sobre un arreglo o string y actualiza su estado cuando se mueven los bordes. Cada elemento entra y sale una vez, así que recorrer subarreglos y substrings baja de O(n²) a O(n)."
+  },
+  "explain": {
+    "en": "A window is a contiguous range `a[left..right]` plus a small **state** (sum, counts, distinct characters) that you update in O(1) as the edges move, instead of recomputing every subarray.\n\n- **Fixed size k**: add `a[right]`, remove `a[right − k]`. Max sum of k consecutive elements, moving averages, finding anagrams of a pattern in a string.\n- **Variable size**: expand `right` every step; while the window breaks the rule, shrink `left`. Record the answer where the window is valid: longest substring without repeats, minimum window containing a pattern, shortest subarray with sum ≥ target.\n\nBoth edges only move forward, so each element enters and leaves at most once: **O(n)**.\n\nIt only works when validity is **monotonic**: growing an invalid window keeps it invalid, and shrinking is what fixes it. Negative numbers break that for sums; use prefix sums with [[hash-maps]] instead. For the max or min of each window, keep a [[monotonic-stack]]-style deque.",
+    "es": "Una ventana es un rango contiguo `a[left..right]` más un **estado** pequeño (suma, conteos, caracteres distintos) que actualizas en O(1) cuando se mueven los bordes, en vez de recalcular cada subarreglo.\n\n- **Tamaño fijo k**: suma `a[right]` y quita `a[right − k]`. Suma máxima de k elementos consecutivos, promedios móviles, encontrar anagramas de un patrón en un string.\n- **Tamaño variable**: expande `right` en cada paso; mientras la ventana rompa la regla, achica `left`. Registra la respuesta donde la ventana es válida: el substring más largo sin repetidos, la ventana mínima que contiene un patrón, el subarreglo más corto con suma ≥ target.\n\nLos dos bordes solo avanzan, así que cada elemento entra y sale como máximo una vez: **O(n)**.\n\nSolo funciona cuando la validez es **monótona**: agrandar una ventana inválida la mantiene inválida, y achicarla es lo que la arregla. Los números negativos rompen eso en las sumas; usa prefix sums con [[hash-maps]]. Para el máximo o mínimo de cada ventana, mantén un deque al estilo [[monotonic-stack]]."
+  },
+  "keyPoints": [
+    {
+      "en": "Keep `left`, `right` and a small **state** (sum, counts) updated in O(1) per move.",
+      "es": "Mantén `left`, `right` y un **estado** pequeño (suma, conteos) que se actualiza en O(1) por movimiento."
+    },
+    {
+      "en": "**Fixed size k**: add the entering element, remove the one k steps back.",
+      "es": "**Tamaño fijo k**: suma el elemento que entra y quita el que quedó k pasos atrás."
+    },
+    {
+      "en": "**Variable size**: always expand right; shrink left while the window breaks the rule.",
+      "es": "**Tamaño variable**: siempre expande a la derecha; achica por la izquierda mientras la ventana rompa la regla."
+    },
+    {
+      "en": "Each element enters and leaves once, so the whole scan is **O(n)**.",
+      "es": "Cada elemento entra y sale una vez, así que todo el recorrido es **O(n)**."
+    },
+    {
+      "en": "Needs **monotonic** validity; negative numbers break sum windows, so switch to prefix sums.",
+      "es": "Necesita una validez **monótona**; los negativos rompen las ventanas de suma, así que cambia a prefix sums."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  S[\"left = 0, empty state\"] --> R{\"right < n?\"}\n  R -->|no| D[Return best]\n  R -->|yes| A[\"Add a[right] to state\"]\n  A --> V{\"Window invalid?\"}\n  V -->|yes| L[\"Remove a[left]<br/>left += 1\"]\n  L --> V\n  V -->|no| B[\"Update best\"]\n  B --> N[\"right += 1\"]\n  N --> R",
+    "caption": {
+      "en": "Variable window: expand on every step, shrink only while invalid, record the answer when valid. Both edges only move forward.",
+      "es": "Ventana variable: expande en cada paso, achica solo mientras sea inválida y registra la respuesta cuando es válida. Los dos bordes solo avanzan."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Variable and fixed window templates", "es": "Plantillas de ventana variable y fija" },
+    "source": "def longest_unique_substring(s: str) -> int:\n    count: dict[str, int] = {}\n    left = best = 0\n    for right, ch in enumerate(s):\n        count[ch] = count.get(ch, 0) + 1\n        while count[ch] > 1:              # invalid: shrink until the repeat leaves\n            count[s[left]] -= 1\n            left += 1\n        best = max(best, right - left + 1) # longest: record after shrinking\n    return best\n\ndef shortest_subarray_at_least(target: int, a: list[int]) -> int:\n    # Values must be non-negative, or shrinking could raise the sum\n    left = total = 0\n    best = float(\"inf\")\n    for right, x in enumerate(a):\n        total += x\n        while total >= target:            # shortest: record while valid, then shrink\n            best = min(best, right - left + 1)\n            total -= a[left]\n            left += 1\n    return 0 if best == float(\"inf\") else best\n\ndef max_sum_k(a: list[int], k: int) -> int:\n    window = best = sum(a[:k])\n    for right in range(k, len(a)):\n        window += a[right] - a[right - k]  # one in, one out\n        best = max(best, window)\n    return best"
+  },
+  "example": {
+    "en": "**Longest substring without repeating characters** on `\"abcabcbb\"`: the window grows to `abc` (3). The second `a` makes it invalid, so `left` moves past the first `a` → `bca`, still 3. It never beats 3, so the answer is 3: `right` moves 8 times and `left` at most 8, instead of testing all 36 substrings.",
+    "es": "**Substring más largo sin caracteres repetidos** en `\"abcabcbb\"`: la ventana crece hasta `abc` (3). La segunda `a` la vuelve inválida, así que `left` pasa la primera `a` → `bca`, sigue en 3. Nunca supera 3, así que la respuesta es 3: `right` avanza 8 veces y `left` como máximo 8, en vez de probar los 36 substrings."
+  },
+  "pros": [
+    { "en": "O(n) time with O(1) or O(alphabet) extra space.", "es": "O(n) en tiempo con O(1) u O(alfabeto) de espacio extra." },
+    { "en": "One template covers fixed and variable windows over arrays and strings.", "es": "Una plantilla cubre ventanas fijas y variables sobre arreglos y strings." },
+    { "en": "Works on streams: you only keep the window, not the whole input.", "es": "Funciona sobre streams: solo guardas la ventana, no toda la entrada." }
+  ],
+  "cons": [
+    { "en": "Only for contiguous ranges with a monotonic validity rule.", "es": "Solo sirve para rangos contiguos con una regla de validez monótona." },
+    { "en": "Sum constraints break with negative numbers.", "es": "Las restricciones de suma fallan con números negativos." },
+    { "en": "The shrink condition and where to record the answer are easy to get wrong.", "es": "Es fácil equivocarse en la condición para achicar y en dónde registrar la respuesta." }
+  ],
+  "whenToUse": {
+    "en": "\"Longest, shortest or number of contiguous subarrays or substrings such that…\", fixed-length windows (moving sums, averages, anagram search), and counts over a stream.",
+    "es": "\"El más largo, el más corto o la cantidad de subarreglos o substrings contiguos tales que…\", ventanas de largo fijo (sumas móviles, promedios, búsqueda de anagramas) y conteos sobre un stream."
+  },
+  "whenNotToUse": {
+    "en": "Non-contiguous choices (subsequences: think DP), sum targets with negative numbers (prefix sums with a hash map), or rules where shrinking doesn't restore validity.",
+    "es": "Elecciones no contiguas (subsecuencias: piensa en DP), sumas objetivo con números negativos (prefix sums con un hash map) o reglas donde achicar no devuelve la validez."
+  },
+  "numbers": [
+    { "en": "O(n) time: `right` moves n times and `left` at most n times in total.", "es": "O(n) en tiempo: `right` avanza n veces y `left` como máximo n veces en total." },
+    { "en": "Space O(k) for window counts, k = alphabet size or distinct values (26 for lowercase letters).", "es": "Espacio O(k) para los conteos de la ventana, con k = tamaño del alfabeto o de valores distintos (26 para minúsculas)." },
+    { "en": "Brute force: O(n²) windows, O(n³) if each is rescanned.", "es": "Fuerza bruta: O(n²) ventanas, O(n³) si recorres cada una de nuevo." },
+    { "en": "Sliding-window minimum with a monotonic deque: O(n) total, versus O(n·k) rescanning each window.", "es": "Mínimo de ventana deslizante con un deque monótono: O(n) en total, contra O(n·k) si recorres cada ventana." }
+  ],
+  "pitfalls": [
+    { "en": "Recording the answer before shrinking, so invalid windows count.", "es": "Registrar la respuesta antes de achicar, así cuentan ventanas inválidas." },
+    { "en": "`if` instead of `while` to shrink: one step may not restore validity.", "es": "Usar `if` en vez de `while` para achicar: un paso puede no devolver la validez." },
+    { "en": "Jumping `left` with a last-seen map without `max(left, last[ch] + 1)`: the window moves backward.", "es": "Saltar `left` con un map de última posición sin `max(left, last[ch] + 1)`: la ventana retrocede." },
+    { "en": "Applying it to sums with negative numbers: shrinking can raise the sum.", "es": "Aplicarla a sumas con números negativos: achicar puede subir la suma." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you spot a sliding window problem?", "es": "¿Cómo detectas un problema de sliding window?" },
+      "a": {
+        "en": "The question asks for the longest, shortest or number of contiguous subarrays or substrings that meet a condition, and brute force would examine all O(n²) of them. Then I check monotonicity: if a window is invalid, does every larger window containing it stay invalid? If yes, a variable window gives O(n). If the size is given, it's a fixed window. If not monotonic, say with negative numbers, I switch to prefix sums.",
+        "es": "La pregunta pide el más largo, el más corto o la cantidad de subarreglos o substrings contiguos que cumplen una condición, y la fuerza bruta revisaría los O(n²). Luego reviso la monotonía: si una ventana es inválida, ¿toda ventana más grande que la contiene sigue inválida? Si sí, una ventana variable da O(n). Si me dan el tamaño, es una ventana fija. Si no es monótona, por ejemplo con negativos, cambio a prefix sums."
+      }
+    },
+    {
+      "q": { "en": "Count subarrays with at most K distinct values. Now exactly K.", "es": "Cuenta los subarreglos con como máximo K valores distintos. Ahora, exactamente K." },
+      "a": {
+        "en": "At most K is a direct variable window: for each right, shrink while distinct > K, then add right − left + 1, the number of valid subarrays ending at right. Exactly K isn't monotonic, so I use exactly(K) = atMost(K) − atMost(K − 1). Two O(n) passes and O(K) space for the counts.",
+        "es": "Como máximo K es una ventana variable directa: para cada right, achico mientras haya más de K distintos y sumo right − left + 1, la cantidad de subarreglos válidos que terminan en right. Exactamente K no es monótono, así que uso exactly(K) = atMost(K) − atMost(K − 1). Dos pasadas O(n) y O(K) de espacio para los conteos."
+      }
+    }
+  ],
+  "related": ["two-pointers", "hash-maps", "monotonic-stack", "big-o", "rate-limiting"],
+  "sources": [
+    { "title": "Laaksonen — Competitive Programmer's Handbook (8.1 Two pointers, 8.3 Sliding window minimum)", "url": "https://cses.fi/book/book.pdf" },
+    { "title": "Tech Interview Handbook — Array cheatsheet (sliding window)", "url": "https://www.techinterviewhandbook.org/algorithms/array/" }
+  ]
+}

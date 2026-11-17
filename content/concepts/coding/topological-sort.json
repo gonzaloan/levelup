@@ -1,0 +1,185 @@
+{
+  "id": "topological-sort",
+  "domain": "coding",
+  "level": "core",
+  "title": {
+    "en": "Topological sort",
+    "es": "Orden topológico (topological sort)"
+  },
+  "aliases": [
+    "topo sort",
+    "Kahn's algorithm",
+    "DAG",
+    "course schedule",
+    "dependency resolution",
+    "in-degree",
+    "graphlib",
+    "build order"
+  ],
+  "tldr": {
+    "en": "Order a directed graph so every edge points forward: repeatedly take a node with no remaining prerequisites (Kahn), or reverse the DFS finish order. Nodes left over mean a cycle.",
+    "es": "Ordena un grafo dirigido para que cada arista apunte hacia adelante: toma una y otra vez un nodo sin prerrequisitos pendientes (Kahn) o invierte el orden de término del DFS. Si sobran nodos, hay un ciclo."
+  },
+  "explain": {
+    "en": "A **topological order** lists a directed graph's nodes so that every edge `u → v` puts `u` before `v`: prerequisites first. It exists only for a **DAG** (directed acyclic graph) and is usually not unique.\n\n**Kahn's algorithm** (BFS-style):\n\n1. Count each node's **in-degree** (incoming edges).\n2. Queue every node with in-degree 0.\n3. Pop a node, append it to the order, decrement each neighbor's in-degree, and queue the ones that reach 0.\n4. If the order has fewer than V nodes, the rest are on a **cycle** or depend on one.\n\n**DFS order**: append each node when its DFS *finishes*, then reverse the list. Detect cycles with three colors: reaching a gray node (still on the current path) is a back edge.\n\nBoth are O(V + E). I default to Kahn: it is iterative, the cycle check is a count, and its queue shows what can run **in parallel**. Python ships it as `graphlib.TopologicalSorter` (3.9+).",
+    "es": "Un **orden topológico** lista los nodos de un grafo dirigido de modo que cada arista `u → v` ponga a `u` antes que a `v`: primero los prerrequisitos. Solo existe en un **DAG** (grafo dirigido acíclico) y casi nunca es único.\n\n**Algoritmo de Kahn** (estilo BFS):\n\n1. Cuenta el **in-degree** de cada nodo (aristas que le llegan).\n2. Encola cada nodo con in-degree 0.\n3. Saca un nodo, agrégalo al orden, decrementa el in-degree de cada vecino y encola los que lleguen a 0.\n4. Si el orden tiene menos de V nodos, el resto está en un **ciclo** o depende de uno.\n\n**Orden por DFS**: agrega cada nodo cuando su DFS *termina* y luego invierte la lista. Detecta ciclos con tres colores: llegar a un nodo gris (todavía en el camino actual) es una arista de retroceso.\n\nAmbos son O(V + E). Por defecto uso Kahn: es iterativo, el chequeo de ciclos es un conteo y su queue muestra qué puede correr **en paralelo**. Python lo trae como `graphlib.TopologicalSorter` (3.9+)."
+  },
+  "keyPoints": [
+    {
+      "en": "Every edge's source comes before its target: **prerequisites first**. Only a DAG has such an order.",
+      "es": "El origen de cada arista va antes que su destino: **primero los prerrequisitos**. Solo un DAG tiene ese orden."
+    },
+    {
+      "en": "**Kahn**: queue in-degree-0 nodes; pop one, decrement its neighbors, queue those that reach 0.",
+      "es": "**Kahn**: encola los nodos con in-degree 0; saca uno, decrementa sus vecinos y encola los que lleguen a 0."
+    },
+    {
+      "en": "Fewer than V nodes out means a **cycle**: the leftovers are on it or depend on it.",
+      "es": "Si salen menos de V nodos, hay un **ciclo**: los que sobran están en él o dependen de él."
+    },
+    {
+      "en": "**DFS** alternative: append each node when it finishes, then reverse; a gray neighbor means a cycle.",
+      "es": "Alternativa con **DFS**: agrega cada nodo cuando termina y luego invierte; un vecino gris significa un ciclo."
+    },
+    {
+      "en": "Both are O(V + E); Kahn's queue shows which tasks can run in parallel.",
+      "es": "Ambos son O(V + E); la queue de Kahn muestra qué tareas pueden correr en paralelo."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  A[Build adjacency and in-degrees] --> B[Queue in-degree 0 nodes]\n  B --> C{Queue empty?}\n  C -->|no| D[\"Pop node,<br/>append to order\"]\n  D --> E[Decrement each neighbor]\n  E --> F{Neighbor reached 0?}\n  F -->|yes| G[Queue that neighbor]\n  F -->|no| C\n  G --> C\n  C -->|yes| H{All V nodes ordered?}\n  H -->|yes| I[Valid order]\n  H -->|no| J[Cycle detected]",
+    "caption": {
+      "en": "Kahn's algorithm: a node is ready when its last prerequisite is done. If the queue empties early, the remaining nodes are blocked by a cycle.",
+      "es": "Algoritmo de Kahn: un nodo está listo cuando termina su último prerrequisito. Si la queue se vacía antes, los nodos que quedan están bloqueados por un ciclo."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Kahn's algorithm for course schedule, plus graphlib",
+      "es": "Algoritmo de Kahn para course schedule, más graphlib"
+    },
+    "source": "from collections import deque\nfrom graphlib import TopologicalSorter\n\ndef course_order(n, prereqs):\n    \"\"\"prereqs: (course, needs) pairs. Returns an order, or [] on a cycle.\"\"\"\n    adj, indeg = [[] for _ in range(n)], [0] * n\n    for course, needs in prereqs:\n        adj[needs].append(course)              # edge: needs -> course\n        indeg[course] += 1\n    q = deque(i for i in range(n) if indeg[i] == 0)\n    order = []\n    while q:\n        u = q.popleft()\n        order.append(u)\n        for v in adj[u]:\n            indeg[v] -= 1\n            if indeg[v] == 0:                  # its last prerequisite is done\n                q.append(v)\n    return order if len(order) == n else []    # leftovers: on or behind a cycle\n\n# Standard library (Python 3.9+): node -> its predecessors; raises CycleError\ndeps = {\"app\": {\"lib\", \"config\"}, \"lib\": {\"config\"}}\nprint(list(TopologicalSorter(deps).static_order()))  # ['config', 'lib', 'app']"
+  },
+  "example": {
+    "en": "**Course schedule**: 4 courses; 1 and 2 need 0, and 3 needs both 1 and 2. In-degrees: 0→0, 1→1, 2→1, 3→2. The queue starts with 0. Popping 0 drops 1 and 2 to zero; popping 1 drops 3 to one; popping 2 drops it to zero. Order: `[0, 1, 2, 3]`. Now add 'course 0 needs 3': no node starts at in-degree 0, the order is empty, so the plan is impossible.",
+    "es": "**Course schedule**: 4 cursos; 1 y 2 necesitan a 0, y 3 necesita a 1 y a 2. In-degrees: 0→0, 1→1, 2→1, 3→2. La queue empieza con 0. Sacar 0 baja a 1 y 2 a cero; sacar 1 baja a 3 a uno; sacar 2 lo baja a cero. Orden: `[0, 1, 2, 3]`. Ahora agrega 'el curso 0 necesita a 3': ningún nodo empieza con in-degree 0, el orden queda vacío y el plan es imposible."
+  },
+  "pros": [
+    {
+      "en": "Linear, O(V + E), and detects cycles as a by-product.",
+      "es": "Lineal, O(V + E), y detecta ciclos de paso."
+    },
+    {
+      "en": "Kahn's queue gives parallel waves: everything in it is ready at once.",
+      "es": "La queue de Kahn da olas paralelas: todo lo que está en ella está listo a la vez."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Only for DAGs: with cycles you must report them or break them first.",
+      "es": "Solo sirve para DAGs: si hay ciclos, debes reportarlos o romperlos primero."
+    },
+    {
+      "en": "Many valid orders: tests that expect one exact order fail unless you fix tie-breaking.",
+      "es": "Muchos órdenes válidos: los tests que esperan un orden exacto fallan si no fijas el desempate."
+    }
+  ],
+  "whenToUse": {
+    "en": "Anything with 'depends on' or 'must happen before': build and task order, course prerequisites, package installs, spreadsheet recalculation, DAG schedulers, deriving a letter order from a sorted alien dictionary.",
+    "es": "Todo lo que tenga 'depende de' o 'debe ocurrir antes': orden de build y de tareas, prerrequisitos de cursos, instalación de paquetes, recálculo de hojas de cálculo, schedulers de DAGs, deducir el orden de letras de un diccionario alienígena."
+  },
+  "whenNotToUse": {
+    "en": "Undirected graphs, or directed graphs where cycles are legitimate (social graphs): use plain [[graph-traversal]] or strongly connected components instead.",
+    "es": "Grafos no dirigidos, o dirigidos donde los ciclos son legítimos (grafos sociales): usa [[graph-traversal]] simple o componentes fuertemente conexas."
+  },
+  "numbers": [
+    {
+      "en": "Time O(V + E); space O(V) for in-degrees and the queue.",
+      "es": "Tiempo O(V + E); espacio O(V) para los in-degrees y la queue."
+    },
+    {
+      "en": "Course schedule with n courses and p prerequisite pairs: O(n + p).",
+      "es": "Course schedule con n cursos y p pares de prerrequisitos: O(n + p)."
+    },
+    {
+      "en": "Longest path: O(V + E) on a DAG via topological order plus DP; NP-hard on general graphs.",
+      "es": "Camino más largo: O(V + E) en un DAG con orden topológico más DP; NP-hard en grafos generales."
+    },
+    {
+      "en": "`graphlib.TopologicalSorter`: in Python's standard library since 3.9.",
+      "es": "`graphlib.TopologicalSorter`: en la biblioteca estándar de Python desde la 3.9."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Edges backwards: the pair `(course, prereq)` must become `prereq → course`, or the order comes out reversed.",
+      "es": "Aristas al revés: el par `(course, prereq)` debe ser `prereq → course`, o el orden sale invertido."
+    },
+    {
+      "en": "Dropping nodes with no edges: include every node, not just those that appear in pairs.",
+      "es": "Perder los nodos sin aristas: incluye todos los nodos, no solo los que aparecen en los pares."
+    },
+    {
+      "en": "Directed cycle check with a plain visited set: a diamond (two paths to one node) looks like a cycle. Track 'on current path'.",
+      "es": "Detectar ciclos dirigidos con un simple conjunto de visitados: un diamante (dos caminos a un nodo) parece un ciclo. Registra 'en el camino actual'."
+    },
+    {
+      "en": "Returning a partial order without checking `len(order) == n`.",
+      "es": "Devolver un orden parcial sin revisar `len(order) == n`."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Kahn or DFS: which do you use and why?",
+        "es": "Kahn o DFS: ¿cuál usas y por qué?"
+      },
+      "a": {
+        "en": "Kahn by default. It's iterative, so no recursion limit; the cycle check is just 'did every node come out?'; and the queue holds exactly the tasks that are ready together, which maps to a parallel scheduler. DFS order is natural if I'm already writing a DFS, but it needs three colors for cycles and a reverse at the end. Both are O(V + E).",
+        "es": "Kahn por defecto. Es iterativo, así que no hay límite de recursión; el chequeo de ciclos es solo '¿salieron todos los nodos?'; y la queue contiene justo las tareas que están listas a la vez, lo que se traduce directo a un scheduler paralelo. El orden por DFS es natural si ya estoy escribiendo un DFS, pero necesita tres colores para los ciclos e invertir al final. Ambos son O(V + E)."
+      }
+    },
+    {
+      "q": {
+        "en": "How do you recognize it, and what are the variants?",
+        "es": "¿Cómo lo reconoces y cuáles son las variantes?"
+      },
+      "a": {
+        "en": "Signals: prerequisites, dependencies, 'must happen before', build order, or an order hidden in constraints. Variants: return any valid order; report impossibility when there's a cycle; the lexicographically smallest order, by swapping the queue for a min-heap; the minimum number of semesters, by counting Kahn levels; and the alien dictionary, where edges come from the first differing letter of adjacent words.",
+        "es": "Señales: prerrequisitos, dependencias, 'debe ocurrir antes', orden de build o un orden escondido en restricciones. Variantes: devolver cualquier orden válido; reportar que es imposible cuando hay un ciclo; el orden lexicográficamente menor, cambiando la queue por un min-heap; el mínimo de semestres, contando los niveles de Kahn; y el diccionario alienígena, donde las aristas salen de la primera letra distinta entre palabras vecinas."
+      }
+    },
+    {
+      "q": {
+        "en": "How does this apply to running a DAG of jobs on a cluster?",
+        "es": "¿Cómo se aplica a correr un DAG de jobs en un cluster?"
+      },
+      "a": {
+        "en": "Kahn's algorithm is the scheduler. Jobs with in-degree 0 are ready; when one finishes, I decrement its children and dispatch any that reach zero. Python's `graphlib` exposes exactly that as `get_ready()` and `done()`. For production I'd add persisted in-degrees so a restart resumes, idempotent jobs so retries are safe, and a cycle check at submit time so a bad DAG fails fast instead of hanging.",
+        "es": "El algoritmo de Kahn es el scheduler. Los jobs con in-degree 0 están listos; cuando uno termina, decremento a sus hijos y despacho los que llegan a cero. `graphlib` de Python expone justo eso con `get_ready()` y `done()`. Para producción agregaría in-degrees persistidos para que un reinicio continúe, jobs idempotentes para que los reintentos sean seguros, y un chequeo de ciclos al enviar el DAG para que uno inválido falle rápido en vez de quedarse colgado."
+      }
+    }
+  ],
+  "related": [
+    "graph-traversal",
+    "heaps-top-k",
+    "dynamic-programming",
+    "case-job-scheduler",
+    "idempotency"
+  ],
+  "sources": [
+    {
+      "title": "Wikipedia — Topological sorting (Kahn 1962, DFS, Tarjan 1976)",
+      "url": "https://en.wikipedia.org/wiki/Topological_sorting"
+    },
+    {
+      "title": "Python docs — graphlib.TopologicalSorter",
+      "url": "https://docs.python.org/3/library/graphlib.html"
+    },
+    {
+      "title": "cp-algorithms — Topological sorting",
+      "url": "https://cp-algorithms.com/graph/topological-sort.html"
+    }
+  ]
+}

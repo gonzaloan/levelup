@@ -1,0 +1,111 @@
+{
+  "id": "realtime-delivery",
+  "domain": "systems",
+  "level": "core",
+  "title": { "en": "Real-time delivery: polling, SSE, WebSockets", "es": "Entrega en tiempo real: polling, SSE, WebSockets" },
+  "aliases": ["WebSocket", "SSE", "Server-Sent Events", "long polling", "EventSource", "server push", "connection gateway", "pub/sub fan-out"],
+  "tldr": {
+    "en": "Push server events to clients over the simplest channel that fits: polling for rare updates, SSE for one-way streams, WebSockets for two-way. At scale, the hard part is the stateful gateway tier and fan-out.",
+    "es": "Envía eventos del servidor a los clientes por el canal más simple que sirva: polling para cambios poco frecuentes, SSE para streams en un sentido y WebSockets para ida y vuelta. A escala, lo difícil es la capa de gateways con estado y el fan-out."
+  },
+  "analogy": {
+    "en": "Polling is checking your mailbox every hour; long polling is waiting at the mailbox until the carrier comes; SSE is a radio broadcast; a WebSocket is a phone call.",
+    "es": "El polling es revisar el buzón cada hora; el long polling es esperar junto al buzón hasta que pase el cartero; SSE es una transmisión de radio; un WebSocket es una llamada telefónica."
+  },
+  "explain": {
+    "en": "Four ways to get server events to a client:\n\n- **Short polling**: the client asks every N seconds. Simple, but latency is up to N and most responses are empty.\n- **Long polling**: the server holds each request open until there is data or a timeout, then the client asks again. Near real time over plain HTTP.\n- **SSE** (Server-Sent Events): one long HTTP response of `text/event-stream`, server to client only. The browser reconnects by itself and sends `Last-Event-ID` so you can resume. LLM APIs stream tokens this way ([[streaming]]).\n- **WebSocket** (RFC 6455): an HTTP upgrade to a full-duplex, message-framed TCP connection. For chat, games and collaboration; you own heartbeats, reconnects and auth.\n\n**At scale the problem is state.** Each connection pins to one **gateway** server, and a message for user X must reach the gateway holding X. The usual design: services persist the message, then publish it on a **pub/sub** bus (Redis, Kafka, NATS); each gateway subscribes for the rooms or users it holds and pushes to its local sockets. Gateways hold sockets, not business logic. Deploys drop connections, so clients reconnect with jitter and resume from the last event id.",
+    "es": "Cuatro formas de llevar eventos del servidor a un cliente:\n\n- **Short polling**: el cliente pregunta cada N segundos. Simple, pero la latencia llega a N y la mayoría de las respuestas viene vacía.\n- **Long polling**: el servidor mantiene abierta cada petición hasta que hay datos o vence un timeout, y el cliente vuelve a preguntar. Casi en tiempo real sobre HTTP común.\n- **SSE** (Server-Sent Events): una respuesta HTTP larga de tipo `text/event-stream`, solo del servidor al cliente. El navegador se reconecta solo y envía `Last-Event-ID` para que puedas retomar. Las APIs de LLMs transmiten tokens así ([[streaming]]).\n- **WebSocket** (RFC 6455): un upgrade de HTTP a una conexión TCP full-duplex con mensajes delimitados. Para chat, juegos y colaboración; los heartbeats, las reconexiones y la autenticación quedan a tu cargo.\n\n**A escala, el problema es el estado.** Cada conexión queda fija en un servidor **gateway**, y un mensaje para el usuario X tiene que llegar al gateway que lo tiene. El diseño habitual: los servicios persisten el mensaje y luego lo publican en un bus **pub/sub** (Redis, Kafka, NATS); cada gateway se suscribe a las salas o usuarios que tiene y lo envía a sus sockets locales. Los gateways guardan sockets, no lógica de negocio. Los deploys cortan conexiones, así que los clientes se reconectan con jitter y retoman desde el último event id."
+  },
+  "keyPoints": [
+    {
+      "en": "**Short polling** is simplest but mostly empty; **long polling** holds each request until data arrives.",
+      "es": "El **short polling** es lo más simple pero casi siempre vuelve vacío; el **long polling** retiene cada petición hasta que hay datos."
+    },
+    {
+      "en": "**SSE**: one long HTTP response, server to client, with built-in reconnect and `Last-Event-ID` resume.",
+      "es": "**SSE**: una respuesta HTTP larga, del servidor al cliente, con reconexión incluida y reanudación por `Last-Event-ID`."
+    },
+    {
+      "en": "**WebSocket**: full-duplex over one upgraded TCP connection; you own heartbeats, reconnects and auth.",
+      "es": "**WebSocket**: full-duplex sobre una conexión TCP con upgrade; los heartbeats, reconexiones y la autenticación son tuyos."
+    },
+    {
+      "en": "At scale, stateful **gateways** hold sockets, and a pub/sub bus routes each message to the right gateways.",
+      "es": "A escala, **gateways** con estado guardan los sockets, y un bus pub/sub lleva cada mensaje a los gateways correctos."
+    },
+    {
+      "en": "Persist first, push second: clients reconnect with jitter and fetch what they missed from the last event id.",
+      "es": "Primero persiste, después envía: los clientes se reconectan con jitter y piden lo que se perdieron desde el último event id."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  A[Client A] -->|\"POST message\"| API[Chat service]\n  API --> DB[(Message store)]\n  API -->|\"publish room:42\"| PS[(Pub/sub bus)]\n  PS -->|room:42| G1[Gateway 1]\n  PS -->|room:42| G2[Gateway 2]\n  G1 -->|WebSocket push| A\n  G1 -->|WebSocket push| B[Client B]\n  G2 -->|WebSocket push| C[Client C]",
+    "caption": {
+      "en": "Gateways only hold sockets. The chat service persists each message, then publishes it once; every gateway with a member of the room pushes it to its local clients.",
+      "es": "Los gateways solo guardan sockets. El servicio de chat persiste cada mensaje y lo publica una vez; cada gateway con un miembro de la sala lo envía a sus clientes locales."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "A WebSocket gateway fanning out from Redis pub/sub", "es": "Un gateway WebSocket que hace fan-out desde Redis pub/sub" },
+    "source": "import asyncio\nimport redis.asyncio as redis\nfrom fastapi import FastAPI, WebSocket, WebSocketDisconnect\n\napp = FastAPI()\nbus = redis.Redis(decode_responses=True)\nrooms: dict[str, set[WebSocket]] = {}         # sockets held by THIS gateway only\n\n@app.websocket(\"/ws/{room}\")\nasync def connect(ws: WebSocket, room: str):\n    await ws.accept()                             # authenticate before accepting in real life\n    if room not in rooms:                         # first local member: subscribe once\n        rooms[room] = set()\n        asyncio.create_task(relay(room))\n    rooms[room].add(ws)\n    try:\n        while True:\n            await ws.receive_text()               # client heartbeats keep proxies from idling out\n    except WebSocketDisconnect:\n        rooms[room].discard(ws)\n\nasync def relay(room: str):\n    pubsub = bus.pubsub()\n    await pubsub.subscribe(f\"room:{room}\")        # one subscription per room per gateway\n    async for msg in pubsub.listen():\n        if msg[\"type\"] != \"message\":\n            continue\n        for ws in list(rooms.get(room, ())):      # 1 bus message -> N local sockets\n            try:\n                await ws.send_text(msg[\"data\"])\n            except Exception:\n                rooms[room].discard(ws)           # dead socket: the client will reconnect\n\n# The chat service persists a message, then: await bus.publish(f\"room:{room}\", payload)"
+  },
+  "example": {
+    "en": "A team chat app: assume 10M concurrent clients and 100k WebSockets per gateway node, so ~100 gateways. A message to a 30,000-member channel is published once; each gateway delivers to its own members, so no single process sends 30k messages. Discord hit exactly this in 2017: publishing to its largest guilds took 900 ms–2.1 s until it batched sends per node (Manifold). On deploys, drain gateways gradually: 100k clients reconnecting at once is a thundering herd.",
+    "es": "Una app de chat para equipos: supón 10M clientes conectados a la vez y 100k WebSockets por nodo gateway, o sea ~100 gateways. Un mensaje a un canal de 30.000 miembros se publica una vez; cada gateway lo entrega a sus propios miembros, así que ningún proceso envía 30k mensajes. Discord se topó justo con esto en 2017: publicar en sus guilds más grandes tardaba 900 ms–2,1 s hasta que agrupó los envíos por nodo (Manifold). En los deploys, drena los gateways de a poco: 100k clientes reconectándose a la vez es un thundering herd."
+  },
+  "pros": [
+    { "en": "Polling and SSE are plain HTTP: they pass proxies, CDNs and firewalls and are easy to debug.", "es": "El polling y SSE son HTTP común: atraviesan proxies, CDNs y firewalls, y son fáciles de depurar." },
+    { "en": "SSE gets reconnect and resume for free in the browser.", "es": "SSE trae reconexión y reanudación gratis en el navegador." },
+    { "en": "WebSockets give low per-message overhead and true two-way messaging.", "es": "Los WebSockets dan poco overhead por mensaje y mensajería real en ambos sentidos." }
+  ],
+  "cons": [
+    { "en": "Long-lived connections make servers stateful: deploys, autoscaling and load balancing get harder.", "es": "Las conexiones largas vuelven stateful a los servidores: los deploys, el autoscaling y el balanceo se complican." },
+    { "en": "Over HTTP/1.1, browsers allow only 6 SSE connections per domain, across all tabs.", "es": "Sobre HTTP/1.1, los navegadores permiten solo 6 conexiones SSE por dominio, sumando todas las pestañas." },
+    { "en": "WebSockets sidestep HTTP tooling: caching, retries and auth need custom work.", "es": "Los WebSockets quedan fuera de las herramientas HTTP: caché, reintentos y autenticación requieren trabajo propio." }
+  ],
+  "whenToUse": {
+    "en": "Polling: updates every minute or slower, or tiny scale. SSE: server-to-client feeds, notifications, LLM token streams. WebSocket: chat, multiplayer, collaborative editing, frequent client messages.",
+    "es": "Polling: cambios cada minuto o menos frecuentes, o escala mínima. SSE: feeds del servidor al cliente, notificaciones, streams de tokens de LLMs. WebSocket: chat, multijugador, edición colaborativa, mensajes frecuentes del cliente."
+  },
+  "whenNotToUse": {
+    "en": "Don't hold sockets open for data that changes hourly; polling or mobile push is cheaper. Don't pick WebSockets when SSE suffices: you inherit custom auth, proxies and protocol work for nothing.",
+    "es": "No mantengas sockets abiertos para datos que cambian cada hora; el polling o las notificaciones push salen más baratos. No elijas WebSockets si SSE alcanza: heredas autenticación, proxies y protocolo propios a cambio de nada."
+  },
+  "numbers": [
+    { "en": "Browsers: 6 SSE connections per domain over HTTP/1.1, shared by all tabs; HTTP/2 negotiates streams (default 100) (MDN).", "es": "Navegadores: 6 conexiones SSE por dominio sobre HTTP/1.1, compartidas por todas las pestañas; HTTP/2 negocia streams (100 por defecto) (MDN)." },
+    { "en": "AWS ALB default idle timeout: 60 s. Send heartbeats more often or idle connections get cut.", "es": "Timeout de inactividad por defecto de AWS ALB: 60 s. Envía heartbeats más seguido o se cortan las conexiones inactivas." },
+    { "en": "Discord (2017): ~5M concurrent users; guilds up to 30k concurrent users; big-guild publishes took 900 ms–2.1 s before Manifold.", "es": "Discord (2017): ~5M usuarios concurrentes; guilds de hasta 30k usuarios concurrentes; publicar en guilds grandes tardaba 900 ms–2,1 s antes de Manifold." },
+    { "en": "Slack (2023): tens of millions of connected clients; messages delivered worldwide in ~500 ms.", "es": "Slack (2023): decenas de millones de clientes conectados; mensajes entregados en todo el mundo en ~500 ms." },
+    { "en": "Gateway sizing (assumption): 10M connections ÷ 100k per node ≈ 100 nodes, plus headroom to lose a zone.", "es": "Dimensionamiento de gateways (supuesto): 10M conexiones ÷ 100k por nodo ≈ 100 nodos, más margen para perder una zona." }
+  ],
+  "pitfalls": [
+    { "en": "No heartbeats: proxies and load balancers drop idle connections, and neither side notices.", "es": "Sin heartbeats: proxies y load balancers cortan conexiones inactivas, y ninguno de los dos lados se entera." },
+    { "en": "Synchronized reconnects after a deploy: every client hits the gateways at once. Add jitter and drain slowly.", "es": "Reconexiones sincronizadas tras un deploy: todos los clientes golpean los gateways a la vez. Agrega jitter y drena de a poco." },
+    { "en": "Sending to each socket inline: one slow client stalls the whole room. Use per-connection buffers and drop slow consumers.", "es": "Enviar a cada socket en línea: un cliente lento frena toda la sala. Usa buffers por conexión y desconecta a los consumidores lentos." },
+    { "en": "Treating the socket as the delivery guarantee: messages sent while a client was offline are lost unless it resumes from a stored cursor.", "es": "Tratar el socket como garantía de entrega: los mensajes enviados mientras el cliente estaba desconectado se pierden si no retoma desde un cursor guardado." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "SSE or WebSockets for an LLM chat UI?", "es": "¿SSE o WebSockets para la interfaz de un chat con LLM?" },
+      "a": {
+        "en": "SSE. The heavy traffic is one-way: tokens streaming down. The user's prompt is a normal POST, so auth, retries and rate limiting stay in standard HTTP tooling. SSE passes proxies and CDNs, reconnects by itself and resumes with Last-Event-ID; that's why the major LLM APIs use it. I'd serve it over HTTP/2 to avoid the 6-connection limit, and pick WebSockets only for constant two-way traffic like collaborative editing.",
+        "es": "SSE. El tráfico pesado va en un solo sentido: los tokens que bajan. El prompt del usuario es un POST normal, así que la autenticación, los reintentos y el rate limiting siguen en las herramientas HTTP de siempre. SSE atraviesa proxies y CDNs, se reconecta solo y retoma con Last-Event-ID; por eso lo usan las principales APIs de LLMs. Lo serviría sobre HTTP/2 para evitar el límite de 6 conexiones, y elegiría WebSockets solo para tráfico constante en ambos sentidos, como la edición colaborativa."
+      }
+    },
+    {
+      "q": { "en": "How do you deliver a message to a user connected to one of 100 gateways?", "es": "¿Cómo entregas un mensaje a un usuario conectado a uno de 100 gateways?" },
+      "a": {
+        "en": "Two options. Pub/sub: each gateway subscribes to the rooms or users it holds and the service publishes once; simple, but every gateway with a member receives that room's traffic. Or a connection registry: user to gateway in Redis, refreshed by heartbeats with a TTL, and the service sends directly. Either way I persist first, and clients fetch missed messages by cursor on reconnect: the socket is the fast path, not the source of truth.",
+        "es": "Hay dos opciones. Pub/sub: cada gateway se suscribe a las salas o usuarios que tiene y el servicio publica una vez; es simple, pero todo gateway con un miembro recibe el tráfico de esa sala. O un registro de conexiones: usuario a gateway en Redis, renovado por heartbeats con un TTL, y el servicio envía directo. En ambos casos persisto primero, y los clientes piden lo que se perdieron por cursor al reconectarse: el socket es el camino rápido, no la fuente de verdad."
+      }
+    }
+  ],
+  "related": ["streaming", "load-balancing", "queues-streams", "case-chat-system", "case-notification-system", "consistent-hashing"],
+  "sources": [
+    { "title": "RFC 6455 — The WebSocket Protocol", "url": "https://datatracker.ietf.org/doc/html/rfc6455" },
+    { "title": "MDN — Using server-sent events", "url": "https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events" },
+    { "title": "Slack Engineering — Real-time Messaging (2023)", "url": "https://slack.engineering/real-time-messaging/" },
+    { "title": "Discord — How Discord Scaled Elixir to 5,000,000 Concurrent Users (2017)", "url": "https://discord.com/blog/how-discord-scaled-elixir-to-5-000-000-concurrent-users" }
+  ]
+}

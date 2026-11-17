@@ -1,0 +1,82 @@
+{
+  "concept": "case-news-feed",
+  "items": [
+    {
+      "id": "case-news-feed.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your feed uses fan-out on write for every author. A creator with **40M followers** posts, and post-to-feed lag jumps to 6 minutes for everyone, including users who follow only friends. Best fix?",
+        "es": "Tu feed usa fan-out on write para todos los autores. Una creadora con **40M de seguidores** publica y el retraso de post a feed sube a 6 minutos para todos, incluso para quienes solo siguen a amigos. ¿Cuál es la mejor solución?"
+      },
+      "options": [
+        {
+          "text": { "en": "Skip fan-out above a follower threshold and merge those posts at read time", "es": "No hacer fan-out sobre un umbral de seguidores y mezclar esos posts al leer" },
+          "why": { "en": "One celebrity post becomes one write; followers pull it from a hot cache.", "es": "El post de una celebridad pasa a ser una escritura; los seguidores lo traen de una cache caliente." }
+        },
+        {
+          "text": { "en": "Add fan-out workers until the queue drains within seconds", "es": "Sumar workers de fan-out hasta que la cola se vacíe en segundos" },
+          "why": { "en": "Every celebrity post is still 40M writes; the backlog returns with each post and starves normal authors.", "es": "Cada post de la celebridad sigue siendo 40M de escrituras; el atraso vuelve con cada post y frena a los autores normales." }
+        },
+        {
+          "text": { "en": "Switch every author to fan-out on read", "es": "Pasar a todos los autores a fan-out on read" },
+          "why": { "en": "Moves the cost onto every feed load, the dominant traffic, for a problem only a few authors cause.", "es": "Pasa el costo a cada carga del feed, que es el tráfico dominante, por un problema que causan unos pocos autores." }
+        },
+        {
+          "text": { "en": "Shard the follows table by follower ID", "es": "Particionar la tabla de follows por ID de seguidor" },
+          "why": { "en": "Sharding spreads storage; it doesn't reduce the 40M writes one post triggers.", "es": "Particionar reparte el almacenamiento; no reduce las 40M de escrituras que dispara un post." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Push cost scales with followers, so a few huge accounts dominate write load. The hybrid pushes for normal authors and pulls for accounts above a threshold, merging at read time. Twitter described exactly this in 2013, after a ~31M-follower account took up to 5 minutes to fan out.",
+        "es": "El costo del push crece con los seguidores, así que unas pocas cuentas enormes dominan la carga de escritura. El híbrido empuja para autores normales y trae al leer los de cuentas sobre un umbral. Twitter describió justo esto en 2013, cuando una cuenta con ~31M de seguidores tardaba hasta 5 minutos en hacer fan-out."
+      }
+    },
+    {
+      "id": "case-news-feed.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size pure fan-out on write: **300M DAU**, each posts **0.5 times/day**, average **200 followers** (all assumed). How many feed inserts per second on average, in **thousands**?",
+        "es": "Dimensiona un fan-out on write puro: **300M de DAU**, cada uno publica **0.5 veces al día**, con **200 seguidores** en promedio (todo supuesto). ¿Cuántas inserciones en feeds por segundo hay en promedio, en **miles**?"
+      },
+      "answer": 347,
+      "tolerance": 0.15,
+      "unit": "k inserts/s",
+      "explain": {
+        "en": "300M × 0.5 = 150M posts/day; × 200 followers = 30B inserts/day; ÷ 86,400 s ≈ 347k/s. Feed reads at 10 loads/day are only ~35k/s, so pushing everything makes writes 10× the reads, before celebrity spikes.",
+        "es": "300M × 0.5 = 150M de posts/día; × 200 seguidores = 30 mil millones de inserciones/día; ÷ 86,400 s ≈ 347k/s. Las lecturas, a 10 cargas por día, son solo ~35k/s, así que empujar todo hace que las escrituras sean 10× las lecturas, antes de los picos de celebridades."
+      }
+    },
+    {
+      "id": "case-news-feed.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "Users report seeing the same posts twice while scrolling. The client loads pages with `GET /feed?offset=20&limit=20`. What's the cause?",
+        "es": "Los usuarios reportan que ven los mismos posts dos veces al hacer scroll. El cliente carga páginas con `GET /feed?offset=20&limit=20`. ¿Cuál es la causa?"
+      },
+      "options": [
+        {
+          "text": { "en": "New posts arrive at the top and shift every offset down", "es": "Los posts nuevos llegan arriba y corren hacia abajo cada offset" },
+          "why": { "en": "Offsets count from a moving head; a cursor on the last item seen doesn't move.", "es": "Los offsets cuentan desde una cabeza que se mueve; un cursor sobre el último ítem visto no se mueve." }
+        },
+        {
+          "text": { "en": "The feed cache is stale and must be invalidated", "es": "La cache del feed está desactualizada y hay que invalidarla" },
+          "why": { "en": "A fresher cache shifts offsets even more; staleness isn't what duplicates items.", "es": "Una cache más fresca corre aún más los offsets; lo viejo no es lo que duplica ítems." }
+        },
+        {
+          "text": { "en": "Fan-out writes the same post ID into the feed twice", "es": "El fan-out escribe dos veces el mismo ID de post en el feed" },
+          "why": { "en": "A sorted set keyed by post ID can't hold duplicates; the repeat comes from paging.", "es": "Un sorted set con el ID del post como clave no admite duplicados; la repetición viene de la paginación." }
+        },
+        {
+          "text": { "en": "The page size is too small for a fast feed", "es": "El tamaño de página es demasiado chico para un feed rápido" },
+          "why": { "en": "Bigger pages make it rarer, not gone; the shift still happens between requests.", "es": "Páginas más grandes lo hacen menos frecuente, pero no desaparece; el corrimiento sigue entre peticiones." }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Feeds grow at the head while users read toward the tail, so offsets point at different items on every request. Page with an opaque cursor: `(ts, post_id)` of the last item for chronological feeds, or a per-session snapshot of the ranked list for ranked feeds.",
+        "es": "Los feeds crecen por la cabeza mientras el usuario lee hacia la cola, así que los offsets apuntan a ítems distintos en cada petición. Pagina con un cursor opaco: `(ts, post_id)` del último ítem en feeds por fecha, o una foto por sesión de la lista rankeada en feeds rankeados."
+      }
+    }
+  ]
+}

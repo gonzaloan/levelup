@@ -1,0 +1,230 @@
+{
+  "id": "case-collaborative-editing",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": {
+    "en": "Design: collaborative editor",
+    "es": "Diseño: editor colaborativo"
+  },
+  "aliases": [
+    "Google Docs",
+    "real-time collaboration",
+    "operational transformation",
+    "OT",
+    "CRDT",
+    "Yjs",
+    "multiplayer editing",
+    "presence"
+  ],
+  "tldr": {
+    "en": "One session server per document orders every edit, transforms or merges concurrent edits (OT or CRDT), appends them to an operation log and broadcasts them; cursors travel on a separate, ephemeral presence channel.",
+    "es": "Un servidor de sesión por documento ordena cada edición, transforma o fusiona las ediciones concurrentes (OT o CRDT), las agrega a un log de operaciones y las difunde; los cursores viajan por un canal de presencia aparte y efímero."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: several people edit one rich-text document at once, see each other's edits and cursors live, browse version history, and keep typing offline. **Non-functional**: every replica converges to the same text; no acknowledged keystroke is lost; typing never waits on the network. Assume 1M concurrent editors, most documents with 1–5 at a time (Google Docs lets up to 100 people work in a file at once).\n\n### Data model and API\n\n- A document = latest **snapshot** + an append-only **operation log** `(doc_id, rev, client_id, seq, op)`, where `op` is `insert(pos, text)` or `delete(pos, len)`.\n- WebSocket: the client sends `{base_rev, op}`; the server acks with the new `rev` and broadcasts `{rev, op}` to the others.\n\n### Architecture\n\nClients apply edits locally at once, then send them. A router pins each `doc_id` to one **session server** ([[consistent-hashing]]) that holds the document in memory, gives every op a total order (`rev`), appends it durably, then acks and fans out. A snapshot every ~1,000 ops (assumed) keeps load time bounded. Presence (cursors, selections) shares the socket but is never logged.\n\n### The hard part: concurrent edits\n\nAlice inserts at position 11 while Bob deletes positions 0–5, both from rev 41. Applied naively, Alice's text lands in the wrong place.\n\n- **OT** (Google Docs): the server transforms an incoming op against every op committed since its `base_rev` (Alice's 11 becomes 5); clients do the same with their pending ops. Simple with a central server, but transform rules multiply with each op type and are easy to get subtly wrong.\n- **CRDT** (Yjs, Automerge): each character gets a unique id and positions refer to neighbours' ids, so concurrent ops commute without a server. Great offline and peer-to-peer; costs per-character metadata.\n\nFigma uses neither classic OT nor a true CRDT: its server is the authority, with CRDT-inspired last-writer-wins per property.",
+    "es": "### Requisitos\n\n**Funcionales**: varias personas editan a la vez un documento de texto enriquecido, ven en vivo las ediciones y los cursores de las demás, consultan el historial de versiones y siguen escribiendo sin conexión. **No funcionales**: todas las réplicas convergen al mismo texto; ninguna tecla confirmada se pierde; escribir nunca espera a la red. Supón 1M de editores concurrentes, con la mayoría de los documentos entre 1 y 5 a la vez (Google Docs permite hasta 100 personas trabajando en un archivo a la vez).\n\n### Modelo de datos y API\n\n- Un documento = el último **snapshot** + un **log de operaciones** de solo agregado `(doc_id, rev, client_id, seq, op)`, donde `op` es `insert(pos, text)` o `delete(pos, len)`.\n- WebSocket: el cliente envía `{base_rev, op}`; el servidor confirma con el nuevo `rev` y difunde `{rev, op}` a los demás.\n\n### Arquitectura\n\nLos clientes aplican las ediciones localmente al instante y después las envían. Un router fija cada `doc_id` a un **servidor de sesión** ([[consistent-hashing]]) que mantiene el documento en memoria, le da a cada op un orden total (`rev`), la guarda de forma durable y luego confirma y difunde. Un snapshot cada ~1,000 ops (supuesto) acota el tiempo de carga. La presencia (cursores, selecciones) comparte el socket pero nunca entra al log.\n\n### La parte difícil: ediciones concurrentes\n\nAlice inserta en la posición 11 mientras Bob borra las posiciones 0–5, ambos desde el rev 41. Si se aplican tal cual, el texto de Alice cae en el lugar equivocado.\n\n- **OT** (Google Docs): el servidor transforma cada op entrante contra todas las ops confirmadas desde su `base_rev` (el 11 de Alice pasa a 5); los clientes hacen lo mismo con sus ops pendientes. Es simple con un servidor central, pero las reglas de transformación se multiplican con cada tipo de op y es fácil equivocarse de forma sutil.\n- **CRDT** (Yjs, Automerge): cada carácter recibe un id único y las posiciones se refieren a los ids vecinos, así las ops concurrentes conmutan sin servidor. Ideal offline y peer-to-peer; cuesta metadatos por carácter.\n\nFigma no usa ni OT clásico ni un CRDT puro: su servidor es la autoridad, con last-writer-wins por propiedad inspirado en CRDTs."
+  },
+  "keyPoints": [
+    {
+      "en": "One **session server per document** orders every edit with a revision number and appends it to an op log.",
+      "es": "Un **servidor de sesión por documento** ordena cada edición con un número de revisión y la agrega a un log de ops."
+    },
+    {
+      "en": "Clients apply edits locally first, then send `{base_rev, op}`; the server acks and broadcasts.",
+      "es": "Los clientes aplican las ediciones localmente primero y luego envían `{base_rev, op}`; el servidor confirma y difunde."
+    },
+    {
+      "en": "**OT** shifts an op past the ops it missed: simple with a central server, tricky to get right.",
+      "es": "**OT** desplaza una op sobre las ops que no vio: simple con un servidor central, difícil de hacer bien."
+    },
+    {
+      "en": "**CRDTs** give each character a unique id so edits commute: great offline, but heavier metadata.",
+      "es": "Los **CRDTs** le dan a cada carácter un id único para que las ediciones conmuten: ideales offline, pero con más metadatos."
+    },
+    {
+      "en": "Presence (cursors) is ephemeral and throttled; never write it to the op log.",
+      "es": "La presencia (cursores) es efímera y se limita en frecuencia; nunca la escribas en el log de ops."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  A[\"Client A<br/>applies locally\"] -->|\"op + base_rev<br/>WebSocket\"| R[\"Router<br/>doc_id to server\"]\n  B[\"Client B<br/>applies locally\"] -->|\"op + base_rev\"| R\n  R --> S[\"Doc session server<br/>one per doc\"]\n  S --> T[\"Transform vs<br/>ops since base_rev\"]\n  T -->|\"append rev\"| L[(\"Op log\")]\n  L --> N[Snapshotter]\n  N --> SS[(\"Snapshots\")]\n  T -->|\"ack rev\"| A\n  T -->|\"broadcast rev + op\"| B\n  A -.->|\"cursor, throttled\"| S\n  S -.->|\"presence, not logged\"| B",
+    "caption": {
+      "en": "One server per document orders, transforms and logs every op before acking; cursors take the same socket but skip the log.",
+      "es": "Un servidor por documento ordena, transforma y registra cada op antes de confirmarla; los cursores usan el mismo socket pero no pasan por el log."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "OT core: transform, order, append, broadcast",
+      "es": "Núcleo de OT: transformar, ordenar, guardar, difundir"
+    },
+    "source": "from dataclasses import dataclass, replace\n\n@dataclass(frozen=True)\nclass Op:\n    kind: str       # \"ins\" or \"del\"\n    pos: int\n    text: str = \"\"  # inserted text\n    n: int = 0      # chars deleted\n    site: str = \"\"  # client id: breaks ties so every replica decides the same way\n\ndef transform(op: Op, prior: Op) -> Op:\n    \"\"\"Shift `op` so it applies after `prior`; both were made from the same rev.\"\"\"\n    if prior.kind == \"ins\":\n        if prior.pos < op.pos or (prior.pos == op.pos and prior.site < op.site):\n            return replace(op, pos=op.pos + len(prior.text))\n        return op\n    if prior.pos + prior.n <= op.pos:     # deletion entirely before op\n        return replace(op, pos=op.pos - prior.n)\n    if prior.pos >= op.pos:               # deletion after op: unaffected\n        return op\n    return replace(op, pos=prior.pos)     # op inside the deleted range (overlap cases elided)\n\nclass DocSession:                         # one per doc_id, pinned to one server\n    def __init__(self, log):\n        self.log = log                    # durable, append-only; rev = len(log)\n\n    def submit(self, base_rev: int, op: Op) -> int:\n        for prior in self.log[base_rev:]: # every op this client hadn't seen\n            op = transform(op, prior)\n        self.log.append(op)               # durable append BEFORE the ack\n        broadcast(rev=len(self.log), op=op)\n        return len(self.log)              # ack: the client's op is now this rev"
+  },
+  "example": {
+    "en": "Alice and Bob share \"Hello world\" at rev 41. Alice types \"!\" at the end (insert at 11); Bob deletes \"Hello \" (delete 6 chars at 0). Both apply locally and send with `base_rev` 41. Bob's op arrives first and becomes rev 42. Alice's insert is transformed against it: 11 − 6 = 5, committed as rev 43. Alice receives rev 42 and transforms it against her pending insert (no change, it's before); Bob receives rev 43 as insert at 5. Both read \"world!\". Their cursors moved on the presence channel and were never logged.",
+    "es": "Alice y Bob comparten \"Hello world\" en el rev 41. Alice escribe \"!\" al final (insert en 11); Bob borra \"Hello \" (delete de 6 caracteres en 0). Ambos aplican localmente y envían con `base_rev` 41. La op de Bob llega primero y queda como rev 42. El insert de Alice se transforma contra ella: 11 − 6 = 5, y se confirma como rev 43. Alice recibe el rev 42 y lo transforma contra su insert pendiente (sin cambio, está antes); Bob recibe el rev 43 como insert en 5. Ambos leen \"world!\". Sus cursores se movieron por el canal de presencia y nunca se registraron."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "OT or CRDT: what I'd pick",
+        "es": "OT o CRDT: qué elegiría"
+      },
+      "body": {
+        "en": "With a central server already doing auth, persistence and access control, both work. **OT** keeps ops and history compact, but every new op type (formatting, tables, comments) needs transform rules against every other, and a bug shows up as silent divergence between users. **CRDT** libraries such as Yjs and Automerge make merges commutative, so offline and peer-to-peer sync come for free; the price is ids and tombstones per character, which grow with edit history. Either way, convergence is syntactic: two people fixing the same typo differently both land. For a new product I'd use a mature CRDT behind a server that orders, persists and authorizes.",
+        "es": "Con un servidor central que ya hace autenticación, persistencia y control de acceso, ambos funcionan. **OT** mantiene compactas las ops y el historial, pero cada tipo nuevo de op (formato, tablas, comentarios) necesita reglas de transformación contra todos los demás, y un bug aparece como una divergencia silenciosa entre usuarios. Las librerías **CRDT** como Yjs y Automerge hacen que las fusiones conmuten, así que la sincronización offline y peer-to-peer viene incluida; el precio son ids y tombstones por carácter, que crecen con el historial de edición. En ambos casos la convergencia es sintáctica: si dos personas corrigen el mismo error de distinta forma, quedan las dos. Para un producto nuevo usaría un CRDT maduro detrás de un servidor que ordena, persiste y autoriza."
+      }
+    },
+    {
+      "title": {
+        "en": "Op log, snapshots and recovery",
+        "es": "Log de ops, snapshots y recuperación"
+      },
+      "body": {
+        "en": "The log is the source of truth and the session server is a cache. Ops are keyed `(doc_id, rev)` in a store partitioned by `doc_id`; replaying them rebuilds any version, which gives version history. Every ~1,000 ops (assumed) a snapshot goes to object storage, so opening a doc means snapshot plus a short tail. Each op also carries `(client_id, seq)`: after a reconnect the client resends unacked ops, and the server drops ones it already committed. If a session server dies, the router reassigns the doc; the new owner loads snapshot plus tail. Only ops acked after a durable append were promised, so nothing acknowledged is lost.",
+        "es": "El log es la fuente de verdad y el servidor de sesión es una cache. Las ops se guardan con clave `(doc_id, rev)` en un almacén particionado por `doc_id`; reproducirlas reconstruye cualquier versión, y eso da el historial de versiones. Cada ~1,000 ops (supuesto) se guarda un snapshot en object storage, así que abrir un documento es snapshot más una cola corta. Cada op lleva también `(client_id, seq)`: tras reconectarse, el cliente reenvía las ops sin confirmar y el servidor descarta las que ya había confirmado. Si un servidor de sesión muere, el router reasigna el documento; el nuevo dueño carga snapshot más cola. Solo se prometieron las ops confirmadas tras un guardado durable, así que nada confirmado se pierde."
+      }
+    },
+    {
+      "title": {
+        "en": "Offline and reconnect",
+        "es": "Offline y reconexión"
+      },
+      "body": {
+        "en": "The client queues ops locally (IndexedDB) with the `base_rev` they were made on. With **OT**, on reconnect it sends them and the server transforms them against everything committed since, possibly thousands of ops; cap offline time, or rebase on a fresh snapshot. Figma's approach: download a fresh copy of the document and reapply the offline edits on top. With a **CRDT**, peers exchange what each is missing and merge automatically. Either way, show an \"offline\" badge, and surface large divergent edits in version history so users can review what merged.",
+        "es": "El cliente encola las ops localmente (IndexedDB) con el `base_rev` sobre el que se hicieron. Con **OT**, al reconectarse las envía y el servidor las transforma contra todo lo confirmado desde entonces, que pueden ser miles de ops; limita el tiempo offline o rebasa sobre un snapshot nuevo. El enfoque de Figma: descargar una copia nueva del documento y volver a aplicar encima las ediciones hechas offline. Con un **CRDT**, los pares intercambian lo que le falta a cada uno y fusionan automáticamente. En cualquier caso, muestra un indicador de \"sin conexión\" y deja visibles en el historial las ediciones grandes que divergieron, para que la gente revise qué se fusionó."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Typing feels instant: edits apply locally and the network catches up behind the UI.",
+      "es": "Escribir se siente instantáneo: las ediciones se aplican localmente y la red se pone al día detrás de la UI."
+    },
+    {
+      "en": "One server per document gives a single total order, which keeps OT, auth and history simple.",
+      "es": "Un servidor por documento da un único orden total, y eso mantiene simples el OT, la autorización y el historial."
+    },
+    {
+      "en": "The op log plus snapshots give version history and crash recovery almost for free.",
+      "es": "El log de ops más los snapshots dan historial de versiones y recuperación ante caídas casi gratis."
+    }
+  ],
+  "cons": [
+    {
+      "en": "A very popular document is a hot spot on its one server; live editors must be capped.",
+      "es": "Un documento muy popular es un punto caliente en su único servidor; hay que limitar los editores en vivo."
+    },
+    {
+      "en": "OT transform rules grow with every op type, and their bugs cause silent divergence.",
+      "es": "Las reglas de transformación de OT crecen con cada tipo de op, y sus bugs causan divergencias silenciosas."
+    },
+    {
+      "en": "CRDT metadata and tombstones grow with edit history, inflating memory and document size.",
+      "es": "Los metadatos y tombstones de un CRDT crecen con el historial de edición e inflan la memoria y el tamaño del documento."
+    }
+  ],
+  "whenToUse": {
+    "en": "Text, slides, whiteboards or design files where several people edit the same object at once and expect to see each other live.",
+    "es": "Texto, presentaciones, pizarras o archivos de diseño donde varias personas editan el mismo objeto a la vez y esperan verse en vivo."
+  },
+  "whenNotToUse": {
+    "en": "Single-writer content or form-like records: optimistic locking with a version number and a \"changed by someone else, reload\" message is far simpler.",
+    "es": "Contenido de un solo escritor o registros tipo formulario: el bloqueo optimista con número de versión y un mensaje de \"otra persona lo cambió, recarga\" es mucho más simple."
+  },
+  "numbers": [
+    {
+      "en": "Load (assumed): 1M concurrent editors × ~1 batched op/s ≈ 1M ops/s in; at ~3 editors per doc, ~2M broadcasts/s out.",
+      "es": "Carga (supuesta): 1M de editores concurrentes × ~1 op agrupada/s ≈ 1M ops/s de entrada; con ~3 editores por documento, ~2M difusiones/s de salida."
+    },
+    {
+      "en": "Log volume (assumed ~100 B per op): 1M ops/s ≈ 100 MB/s at peak; compact old ops into snapshots.",
+      "es": "Volumen del log (supuesto ~100 B por op): 1M ops/s ≈ 100 MB/s en el pico; compacta las ops viejas en snapshots."
+    },
+    {
+      "en": "Snapshot every ~1,000 ops (assumed): opening a doc replays at most ~1,000 ops on top of it.",
+      "es": "Snapshot cada ~1,000 ops (supuesto): abrir un documento reproduce como máximo ~1,000 ops encima."
+    },
+    {
+      "en": "Google Docs: up to 100 people with view, edit or comment access can work in a file at once (checked Nov 2026).",
+      "es": "Google Docs: hasta 100 personas con permiso de ver, editar o comentar pueden trabajar en un archivo a la vez (revisado en nov 2026)."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Saving the whole document with last-write-wins: concurrent typists silently overwrite each other.",
+      "es": "Guardar el documento completo con last-write-wins: quienes escriben a la vez se pisan en silencio."
+    },
+    {
+      "en": "Writing cursor positions to the op log: history and write load bloat with data nobody replays.",
+      "es": "Escribir las posiciones de los cursores en el log de ops: el historial y la carga de escritura se inflan con datos que nadie reproduce."
+    },
+    {
+      "en": "Resending unacked ops after a reconnect without `(client_id, seq)` dedup: text appears twice.",
+      "es": "Reenviar ops sin confirmar tras una reconexión sin deduplicar por `(client_id, seq)`: el texto aparece dos veces."
+    },
+    {
+      "en": "Letting a doc's editors land on different servers with no single orderer: replicas diverge.",
+      "es": "Dejar que los editores de un documento caigan en servidores distintos sin un único ordenador: las réplicas divergen."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "OT or CRDT? Defend your choice.",
+        "es": "¿OT o CRDT? Defiende tu elección."
+      },
+      "a": {
+        "en": "It hinges on offline and peer-to-peer. With a central server already enforcing auth and persistence, both converge. OT keeps ops and history compact, but every new op type needs transform rules, and those bugs surface as silent divergence. A mature CRDT such as Yjs gives commutative merges and offline for free, at the cost of per-character metadata. For a new product I'd pick the CRDT, behind a server that orders, persists and authorizes.",
+        "es": "Depende de si necesito offline y peer-to-peer. Con un servidor central que ya aplica autorización y persistencia, ambos convergen. OT mantiene compactas las ops y el historial, pero cada tipo nuevo de op necesita reglas de transformación, y esos bugs aparecen como divergencias silenciosas. Un CRDT maduro como Yjs da fusiones conmutativas y offline sin esfuerzo, a cambio de metadatos por carácter. Para un producto nuevo elegiría el CRDT, detrás de un servidor que ordena, persiste y autoriza."
+      }
+    },
+    {
+      "q": {
+        "en": "A document goes viral and 5,000 people open it. What breaks, and what do you do?",
+        "es": "Un documento se vuelve viral y lo abren 5,000 personas. ¿Qué se rompe y qué haces?"
+      },
+      "a": {
+        "en": "Its one session server: every keystroke fans out to 5,000 sockets, and every transform runs in one process. I'd cap live editors, as Google Docs does at 100, and serve everyone else read-only: a snapshot plus committed ops through a separate fan-out tier, batched about once a second. Presence becomes an aggregate count instead of 5,000 cursors. Editing stays fast for the people actually writing.",
+        "es": "Su único servidor de sesión: cada tecla se difunde a 5,000 sockets y cada transformación corre en un solo proceso. Limitaría los editores en vivo, como Google Docs lo hace en 100, y serviría al resto en solo lectura: un snapshot más las ops confirmadas por una capa de difusión aparte, agrupadas más o menos una vez por segundo. La presencia pasa a ser un conteo agregado en lugar de 5,000 cursores. La edición sigue rápida para quienes sí escriben."
+      }
+    },
+    {
+      "q": {
+        "en": "A session server dies mid-edit. How do you recover without losing text?",
+        "es": "Un servidor de sesión muere a mitad de una edición. ¿Cómo recuperas sin perder texto?"
+      },
+      "a": {
+        "en": "The log is the truth; the server is a cache. The router reassigns the document, and the new owner loads the latest snapshot plus the log tail. Clients reconnect, report their last acked rev and resend pending ops tagged with `(client_id, seq)`, so the server drops anything it had already committed. Since I only ack after a durable append, no acknowledged edit is lost; unacked ones are simply resent.",
+        "es": "El log es la verdad; el servidor es una cache. El router reasigna el documento y el nuevo dueño carga el último snapshot más la cola del log. Los clientes se reconectan, informan su último rev confirmado y reenvían las ops pendientes marcadas con `(client_id, seq)`, así el servidor descarta lo que ya había confirmado. Como solo confirmo después de un guardado durable, ninguna edición confirmada se pierde; las no confirmadas simplemente se reenvían."
+      }
+    }
+  ],
+  "related": [
+    "realtime-delivery",
+    "clocks-ordering",
+    "consistency-models",
+    "consistent-hashing",
+    "replication",
+    "case-chat-system"
+  ],
+  "sources": [
+    {
+      "title": "Google Drive Blog — What's different about the new Google Docs: Conflict resolution (2010)",
+      "url": "https://drive.googleblog.com/2010/09/whats-different-about-new-google-docs_22.html"
+    },
+    {
+      "title": "Figma — How Figma's multiplayer technology works (2019)",
+      "url": "https://www.figma.com/blog/how-figmas-multiplayer-technology-works/"
+    },
+    {
+      "title": "Kleppmann et al. — Local-first software (Ink & Switch, 2019)",
+      "url": "https://www.inkandswitch.com/essay/local-first/"
+    },
+    {
+      "title": "Yjs docs — Awareness and presence",
+      "url": "https://docs.yjs.dev/getting-started/adding-awareness"
+    }
+  ]
+}
