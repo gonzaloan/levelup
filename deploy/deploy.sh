@@ -165,16 +165,28 @@ JSON
 fi
 
 # 6) Upload the out/ tree with correct content-types + cache headers.
-#    HTML no-cache (so redeploys show immediately); hashed _next assets long-cache.
+#    Only _next/ is content-hashed, so only it may be cached as immutable; everything else
+#    (diagrams, illustrations, the Python worker, Pyodide) keeps its name across deploys and
+#    gets one day. Module workers and WebAssembly need exact MIME types, so .mjs and .wasm are
+#    uploaded with them explicitly (the CLI's guess is not guaranteed).
 if [[ "$DRYRUN" != "1" ]]; then
   echo "▶ Syncing $OUT -> s3://$BUCKET"
-  # Pass 1: immutable hashed assets (Next puts content hashes in _next/) long cache.
+  DAY="public,max-age=86400"
+  # Pass 1: hashed Next.js assets, cached for a year.
   aws s3 sync "$OUT" "s3://$BUCKET" --region "$REGION" \
-    --exclude "*.html" --cache-control "public,max-age=31536000,immutable"
-  # Pass 2: HTML no-cache.
+    --exclude "*" --include "_next/*" --cache-control "public,max-age=31536000,immutable"
+  # Pass 2: other static files (not HTML, .mjs or .wasm), one day.
+  aws s3 sync "$OUT" "s3://$BUCKET" --region "$REGION" \
+    --exclude "_next/*" --exclude "*.html" --exclude "*.mjs" --exclude "*.wasm" --cache-control "$DAY"
+  # Pass 3: ES modules and WebAssembly with exact types (cp always rewrites the metadata).
+  aws s3 cp "$OUT" "s3://$BUCKET" --region "$REGION" --recursive \
+    --exclude "*" --include "*.mjs" --content-type "text/javascript" --cache-control "$DAY"
+  aws s3 cp "$OUT" "s3://$BUCKET" --region "$REGION" --recursive \
+    --exclude "*" --include "*.wasm" --content-type "application/wasm" --cache-control "$DAY"
+  # Pass 4: HTML no-cache, so a deploy shows immediately.
   aws s3 sync "$OUT" "s3://$BUCKET" --region "$REGION" \
     --exclude "*" --include "*.html" --content-type "text/html" --cache-control "no-cache"
-  # Pass 3: prune orphans (everything else already matches, only deletes removed files).
+  # Pass 5: prune orphans (everything else already matches, only deletes removed files).
   aws s3 sync "$OUT" "s3://$BUCKET" --region "$REGION" --delete
 fi
 

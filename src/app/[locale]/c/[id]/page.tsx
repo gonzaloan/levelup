@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
 import { LOCALES, m, t } from "@/lib/i18n";
-import { allConcepts, checkItemsFor, conceptsOf, domainIndex, getConcept, getDomain, labsFor, neighbors, pathPosition } from "@/lib/content";
+import { allConcepts, checkItemsFor, conceptsOf, domainIndex, getConcept, getDomain, labsFor, neighbors, pathPosition, problemsFor } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
 import { Markdown } from "@/components/Markdown";
@@ -43,6 +43,7 @@ export default async function ConceptPage({ params }: P) {
   const hue = hueFor(domainIndex(d.id));
   const checks = checkItemsFor(id, locale);
   const labs = labsFor(id);
+  const problems = problemsFor(id);
   const pos = pathPosition(id);
   // Design cases lead with the building blocks they use (their related concepts), like a course.
   const isCase = c.domain === "design" || c.domain === "sysdesign";
@@ -145,6 +146,18 @@ export default async function ConceptPage({ params }: P) {
               <Link key={l.id} href={`/${locale}/labs/${l.id}/`} className="lab-promo-card">
                 <Emoji name={l.art} size={34} />
                 <span><small>{L("tryLab")}</small><strong>{t(l.title, locale)}</strong><span>{t(l.blurb, locale)}</span></span>
+                <Icon name="right" size={18} />
+              </Link>
+            ))}
+          </section>
+        )}
+
+        {problems.length > 0 && (
+          <section className="lab-promo" aria-label={L("solveIt")}>
+            {problems.map((p) => (
+              <Link key={p.id} href={`/${locale}/practice/code/${p.id}/`} className="lab-promo-card">
+                <Emoji name="laptop" size={34} />
+                <span><small>{L("solveIt")}</small><strong>{t(p.title, locale)}</strong><span>{p.complexity.time} · {p.difficulty}</span></span>
                 <Icon name="right" size={18} />
               </Link>
             ))}

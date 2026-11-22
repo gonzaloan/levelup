@@ -228,3 +228,46 @@ export function validateExercises(x, file, domains) {
   });
   return { errors, warnings };
 }
+
+
+/* ------------------------------------------------------------------ coding problems
+ * content/problems/<id>.json: an original problem for a coding pattern, run in the browser with
+ * Pyodide. tools/check-problems.mjs runs every reference solution (must pass) and starter (must
+ * fail) with the same harness the learner gets. */
+export const PROBLEM_COMPARE = ["exact", "unordered", "unordered-nested", "float"];
+export function validateProblem(p, ids) {
+  const errors = [];
+  const E = (m) => errors.push(m);
+  const both = (f, v, min, max) => {
+    if (!v || typeof v.en !== "string" || typeof v.es !== "string") return E(`${f}: needs en and es`);
+    const n = words(v.en);
+    if (n < min || n > max) E(`${f}: ${n} words, want ${min}-${max}`);
+    if (v.en.trim() === v.es.trim() && n > 3) E(`${f}: es is identical to en`);
+  };
+  if (!/^[a-z0-9-]+$/.test(p.id ?? "")) E("id must be kebab-case");
+  if (!ids.has(p.concept)) E(`concept "${p.concept}" is not a concept id`);
+  if (!["easy", "medium", "hard"].includes(p.difficulty)) E("difficulty must be easy, medium or hard");
+  both("title", p.title, 1, 8);
+  both("prompt", p.prompt, 15, 180);
+  both("explain", p.explain, 12, 90);
+  if (!/^[a-z_][a-z0-9_]*$/.test(p.fn ?? "")) E("fn must be a Python identifier");
+  for (const k of ["starter", "solution"]) if (typeof p[k] !== "string" || !p[k].includes(`def ${p.fn}(`)) E(`${k} must define def ${p.fn}(`);
+  if (!Array.isArray(p.tests) || p.tests.length < 6 || p.tests.length > 20) E("tests: want 6-20");
+  else {
+    p.tests.forEach((t, i) => { if (!Array.isArray(t.args) || !("expected" in t)) E(`tests[${i}]: needs args[] and expected`); });
+    const vis = p.tests.filter((t) => t.visible).length;
+    if (vis < 2 || vis > 4) E(`tests: ${vis} visible, want 2-4 (the rest are hidden checks)`);
+  }
+  if (!PROBLEM_COMPARE.includes(p.compare ?? "exact")) E(`compare must be one of ${PROBLEM_COMPARE}`);
+  if (!Array.isArray(p.hints) || p.hints.length < 1 || p.hints.length > 3) E("hints: want 1-3");
+  else p.hints.forEach((h, i) => both(`hints[${i}]`, h, 4, 40));
+  if (!p.complexity?.time || !p.complexity?.space) E("complexity needs time and space");
+  const known = new Set(["id", "concept", "difficulty", "title", "prompt", "fn", "starter", "tests", "compare", "hints", "solution", "complexity", "explain"]);
+  for (const k of Object.keys(p)) if (!known.has(k)) E(`unknown field "${k}"`);
+  return errors;
+}
+
+export function listProblemFiles() {
+  const dir = path.join(CONTENT, "problems");
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => path.join(dir, f)) : [];
+}

@@ -100,3 +100,24 @@ export function pathPosition(id: string) {
   }
   return null;
 }
+
+/* Coding problems (content/problems/*.json), run in the browser with Pyodide. */
+export interface Problem {
+  id: string; concept: string; difficulty: "easy" | "medium" | "hard"; title: I18n; prompt: I18n; fn: string; starter: string;
+  tests: { args: unknown[]; expected: unknown; visible?: boolean }[]; compare?: string; hints: I18n[]; solution: string;
+  complexity: { time: string; space: string }; explain: I18n;
+}
+let problems: Problem[] | null = null;
+export function getProblems(): Problem[] {
+  if (problems) return problems;
+  const dir = path.join(CONTENT, "problems");
+  const order = new Map(load().domains.flatMap((d) => d.concepts).map((id, i) => [id, i]));
+  const rank = { easy: 0, medium: 1, hard: 2 };
+  problems = fs.existsSync(dir)
+    ? fs.readdirSync(dir).filter((f) => f.endsWith(".json")).map((f) => JSON.parse(fs.readFileSync(path.join(dir, f), "utf8")) as Problem)
+      .sort((a, b) => (order.get(a.concept) ?? 0) - (order.get(b.concept) ?? 0) || rank[a.difficulty] - rank[b.difficulty] || a.id.localeCompare(b.id))
+    : [];
+  return problems;
+}
+export const getProblem = (id: string) => getProblems().find((p) => p.id === id);
+export const problemsFor = (conceptId: string) => getProblems().filter((p) => p.concept === conceptId);

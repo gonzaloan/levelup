@@ -4,7 +4,7 @@
 // Usage: node tools/build-content.mjs [--allow-missing]   (runs automatically before dev/build)
 import fs from "node:fs";
 import path from "node:path";
-import { loadDomains, listConceptFiles, validateConcept, conceptPath, diagramHash, readDiagramHash, DIAGRAMS, ROOT, listExerciseFiles, validateExercises } from "./content-lib.mjs";
+import { loadDomains, listConceptFiles, validateConcept, conceptPath, diagramHash, readDiagramHash, DIAGRAMS, ROOT, listExerciseFiles, validateExercises, listProblemFiles, validateProblem } from "./content-lib.mjs";
 
 const allowMissing = process.argv.includes("--allow-missing");
 const domains = loadDomains();
@@ -73,6 +73,29 @@ if (fs.existsSync(labsFile)) {
       if (!["tech", "company"].includes(x.kind)) errors.push(`tech: "${x.id}" kind must be tech or company`);
       if (!logos.has(String(x.icon).replace(/^logos:/, ""))) errors.push(`tech: "${x.id}" icon ${x.icon} not in the logos set`);
       if (!Array.isArray(x.match) || !x.match.length) errors.push(`tech: "${x.id}" needs match terms`);
+    }
+  }
+}
+
+// Coding problems: schema here (fast); tools/check-problems.mjs also runs every solution in Pyodide.
+{
+  const ids = new Set(domains.flatMap((d) => d.concepts));
+  for (const f of listProblemFiles()) {
+    let p;
+    try { p = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) { errors.push(`${path.relative(ROOT, f)}: invalid JSON (${e.message})`); continue; }
+    validateProblem(p, ids).forEach((e) => errors.push(`problem ${p.id}: ${e}`));
+  }
+}
+
+// Pyodide (MPL-2.0) is served from our own origin, unmodified, only to the coding pages.
+{
+  const src = path.join(ROOT, "node_modules", "pyodide");
+  const dst = path.join(ROOT, "public", "pyodide");
+  if (fs.existsSync(src)) {
+    fs.mkdirSync(dst, { recursive: true });
+    for (const f of ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "python_stdlib.zip", "pyodide-lock.json", "package.json"]) {
+      const from = path.join(src, f), to = path.join(dst, f);
+      if (fs.existsSync(from) && (!fs.existsSync(to) || fs.statSync(to).size !== fs.statSync(from).size)) fs.copyFileSync(from, to);
     }
   }
 }
