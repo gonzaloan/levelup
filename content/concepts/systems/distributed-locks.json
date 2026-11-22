@@ -5,8 +5,8 @@
   "title": { "en": "Distributed locks and fencing tokens", "es": "Locks distribuidos y fencing tokens" },
   "aliases": ["distributed lock", "lease", "fencing token", "Redlock", "advisory lock", "lock service", "mutual exclusion", "sequencer"],
   "tldr": {
-    "en": "A distributed lock is really a lease that expires, so a paused holder can outlive it. For correctness, take the lease from a consensus store or database and have storage reject stale fencing tokens.",
-    "es": "Un lock distribuido es en realidad un lease que expira, así que un dueño pausado puede sobrevivirlo. Para la correctitud, toma el lease de un almacén con consenso o de la base de datos y haz que el almacenamiento rechace fencing tokens viejos."
+    "en": "A distributed lock is really a lease that expires, so a paused holder can outlive it; for correctness, take the lease from a consensus store or database and have storage reject stale fencing tokens.",
+    "es": "Un lock distribuido es en realidad un lease que expira, así que un dueño pausado puede sobrevivirlo; para la correctitud, toma el lease de un almacén con consenso o de la base de datos y haz que el almacenamiento rechace fencing tokens viejos."
   },
   "analogy": {
     "en": "A hotel key card works until checkout. When the next guest checks in, their new card tells the door to reject every older card, even if you overslept and are still inside.",
@@ -14,16 +14,12 @@
   },
   "explain": {
     "en": "A **distributed lock** lets one process at a time act on a shared resource across machines. The holder can crash, so every real lock is a **lease**: it expires after a TTL unless renewed.\n\nThat creates the core problem. A holder can **pause** (GC, VM migration, a slow disk) longer than the TTL, lose the lease without knowing, then wake up and write while a new holder also writes. No lock service can prevent this on its own.\n\n**Fencing tokens** fix it: every grant returns a number that only grows (etcd revision, ZooKeeper zxid, a database counter; Chubby calls them *sequencers*). Each write carries the token, and the **storage rejects** anything older than the highest it has seen.\n\nFirst ask what the lock protects (Kleppmann's split):\n- **Efficiency**, where a rare double run only wastes work: one Redis `SET key value NX PX 30000` is fine.\n- **Correctness**, where a double run corrupts data: a lease from **etcd, ZooKeeper or the database**, plus fencing. Redlock depends on timing assumptions and issues no tokens.\n\nOften the best lock is none: a **conditional write** on the resource itself ([[idempotency]]).",
-    "es": "Un **lock distribuido** deja que un solo proceso a la vez actúe sobre un recurso compartido entre máquinas. El dueño puede caerse, así que todo lock real es un **lease**: expira tras un TTL si no se renueva.\n\nAhí está el problema de fondo. El dueño puede **pausarse** (GC, migración de VM, un disco lento) más que el TTL, perder el lease sin enterarse y luego despertar y escribir mientras un nuevo dueño también escribe. Ningún servicio de locks lo evita por sí solo.\n\nLos **fencing tokens** lo resuelven: cada concesión devuelve un número que solo crece (la revisión de etcd, el zxid de ZooKeeper, un contador en la base de datos; Chubby los llama *sequencers*). Cada escritura lleva el token, y el **almacenamiento rechaza** cualquiera menor que el más alto que ya vio.\n\nPrimero pregúntate qué protege el lock (la división de Kleppmann):\n- **Eficiencia**, cuando una doble ejecución ocasional solo desperdicia trabajo: alcanza con un `SET key value NX PX 30000` en Redis.\n- **Correctitud**, cuando una doble ejecución corrompe datos: un lease de **etcd, ZooKeeper o la base de datos**, más fencing. Redlock depende de supuestos de tiempo y no emite tokens.\n\nMuchas veces el mejor lock es ninguno: una **escritura condicional** sobre el propio recurso ([[idempotency]])."
+    "es": "Un **lock distribuido** deja que un solo proceso a la vez actúe sobre un recurso compartido entre máquinas. El dueño puede caerse, así que todo lock real es un **lease**: expira tras un TTL si no se renueva.\n\nAhí está el problema de fondo. El dueño puede **pausarse** (GC, migración de VM, un disco lento) más que el TTL, perder el lease sin enterarse y luego despertar y escribir mientras un nuevo dueño también escribe. Ningún servicio de locks lo evita por sí solo.\n\nLos **fencing tokens** lo resuelven: cada concesión devuelve un número que solo crece (la revisión de etcd, el zxid de ZooKeeper, un contador en la base de datos; Chubby los llama *sequencers*). Cada escritura lleva el token, y el **almacenamiento rechaza** cualquiera menor que el más alto que ya vio.\n\nPrimero pregúntate qué protege el lock (la división de Kleppmann):\n- **Eficiencia**, cuando una doble ejecución ocasional solo desperdicia trabajo: basta con un `SET key value NX PX 30000` en Redis.\n- **Correctitud**, cuando una doble ejecución corrompe datos: un lease de **etcd, ZooKeeper o la base de datos**, más fencing. Redlock depende de supuestos de tiempo y no emite tokens.\n\nMuchas veces el mejor lock es ninguno: una **escritura condicional** sobre el propio recurso ([[idempotency]])."
   },
   "keyPoints": [
     {
-      "en": "Every distributed lock is a **lease** with a TTL, so a paused holder can lose it unknowingly.",
-      "es": "Todo lock distribuido es un **lease** con TTL, así que un dueño pausado puede perderlo sin enterarse."
-    },
-    {
-      "en": "A GC pause, VM migration or slow disk can outlast the TTL; then two holders write.",
-      "es": "Una pausa de GC, una migración de VM o un disco lento pueden durar más que el TTL; entonces escriben dos dueños."
+      "en": "A GC pause, VM migration or slow disk can outlast the **TTL**; the old holder wakes and still writes.",
+      "es": "Una pausa de GC, una migración de VM o un disco lento pueden durar más que el **TTL**; el dueño anterior despierta y sigue escribiendo."
     },
     {
       "en": "**Fencing tokens**: each grant returns a growing number, and storage rejects writes carrying an older one.",
@@ -31,7 +27,7 @@
     },
     {
       "en": "Efficiency lock: one Redis `SET NX PX` is fine. Correctness lock: etcd, ZooKeeper or the database, plus fencing.",
-      "es": "Lock de eficiencia: alcanza con un `SET NX PX` en Redis. Lock de correctitud: etcd, ZooKeeper o la base de datos, más fencing."
+      "es": "Lock de eficiencia: basta con un `SET NX PX` en Redis. Lock de correctitud: etcd, ZooKeeper o la base de datos, más fencing."
     },
     {
       "en": "Often the best lock is none: a **conditional write** on the resource itself.",

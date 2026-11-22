@@ -50,6 +50,14 @@ detail one tap away. The study path answers one question first: "what do I do ne
 - `content/illustrations.json` (one Fluent Emoji Flat name per concept, MIT) and `content/tech.json`
   (logos, CC0, for tools/companies a concept mentions) — rendered as static SVG at build time by
   `src/lib/visuals.ts`. Find emoji names with `node tools/emoji-search.mjs <word>`.
+- `content/problems/<id>.json` — original coding problems per pattern (rules: `docs/PROBLEMS.md`),
+  solved in the browser at `/practice/code`: Pyodide (MPL-2.0, self-hosted from node_modules into
+  `public/pyodide/` by the build) runs in a module Web Worker (`public/py/worker.mjs`) with a 5 s
+  limit; `public/py/runner.mjs` is the harness, shared with `tools/check-problems.mjs` (part of
+  `npm run verify`): every reference solution must pass and every starter must fail.
+- `/practice/design/<case>` — 45-minute system design round (`src/lib/design-round.ts` phases +
+  rubric; references come from the case's own file). `/interview/stories` — STAR story bank
+  (`src/lib/stories.ts`: Amazon's 16 LPs, checked 2026-11-22, + Staff themes). Both local-only.
 - `src/lib/sync.ts` — optional login + sync, reusing get-certified's Cognito user pool. Inert
   without `NEXT_PUBLIC_*` config (see `.env.example`, `deploy/sync-config.sh`). The browser writes
   its own item in a PROVISIONED DynamoDB table via an identity pool (no API, no Lambda): the

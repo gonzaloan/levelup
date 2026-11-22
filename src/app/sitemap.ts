@@ -7,7 +7,7 @@ const ORIGIN = "https://levelup.skillrealm.dev";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const paths = ["", "path/", "map/", "cheatsheet/", "interview/", "questions/", "practice/", "labs/", "graph/",
-    ...getLabs().map((l) => `labs/${l.id}/`), "practice/code/", ...getProblems().map((p) => `practice/code/${p.id}/`),
+    ...getLabs().map((l) => `labs/${l.id}/`), "practice/code/", ...getProblems().map((p) => `practice/code/${p.id}/`), "practice/design/", "interview/stories/",
     ...getDomains().map((d) => `d/${d.id}/`), ...allConcepts().map((c) => `c/${c.id}/`)];
   return LOCALES.flatMap((l) => paths.map((p) => ({ url: `${ORIGIN}/${l}/${p}` })));
 }

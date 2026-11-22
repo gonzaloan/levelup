@@ -34,6 +34,9 @@ export default async function Interview({ params }: P) {
           <p className="page-sub">{L("interviewSub")}</p>
           <div className="hero-ctas">
             <a className="btn btn-primary" href={`/${locale}/practice/play/?mode=mock`}><Icon name="mic" size={16} /> {L("pMock")}</a>
+            <a className="btn" href={`/${locale}/practice/design/`}><Icon name="server" size={16} /> {L("pDesign")}</a>
+            <a className="btn" href={`/${locale}/practice/code/`}><Icon name="code" size={16} /> {L("pCode")}</a>
+            <a className="btn" href={`/${locale}/interview/stories/`}><Icon name="book" size={16} /> {L("pStories")}</a>
             <Link className="btn" href={`/${locale}/practice/`}><Icon name="cards" size={16} /> {L("practiceQuestions")}</Link>
             <Link className="btn" href={`/${locale}/questions/`}><Icon name="list" size={16} /> {L("questionBank")} ({totalQ})</Link>
           </div>

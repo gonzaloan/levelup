@@ -177,3 +177,31 @@ test("knowledge map has one linked dot per concept", async ({ page }) => {
   await expect(page.locator("a.gn")).toHaveCount(total);
   await expect(page.locator("a.gn").first()).toHaveAttribute("href", /\/en\/c\/[a-z0-9-]+\/$/);
 });
+
+test("python coding: a correct solution passes every test in the browser", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto("/en/practice/code/longest-run-without-repeats/");
+  await page.locator(".code-runner textarea").fill("def longest_unique(s):\n    last, left, best = {}, 0, 0\n    for r, ch in enumerate(s):\n        if ch in last and last[ch] >= left:\n            left = last[ch] + 1\n        last[ch] = r\n        best = max(best, r - left + 1)\n    return best\n");
+  await page.getByRole("button", { name: "Run tests" }).click();
+  await expect(page.locator(".cr-summary")).toHaveText(/All tests pass/, { timeout: 60_000 });
+});
+
+test("system design round: phases, rubric and a saved attempt", async ({ page }) => {
+  await page.goto("/en/practice/design/case-url-shortener/");
+  await page.getByRole("button", { name: "Start the round" }).click();
+  for (let i = 0; i < 5; i++) await page.getByRole("button", { name: /Next phase/ }).click();
+  await page.getByRole("button", { name: "Finish and assess" }).click();
+  for (const fs of await page.locator(".dr-rubric fieldset").all()) await fs.locator("button").nth(2).click();
+  await page.getByRole("button", { name: "Save attempt" }).click();
+  await expect(page.locator(".dr-history tbody tr")).toHaveCount(1);
+});
+
+test("story bank: a tagged story fills its competency in coverage", async ({ page }) => {
+  await page.goto("/en/interview/stories/");
+  await page.getByRole("button", { name: "+ New story" }).click();
+  await page.getByLabel(/Action/).fill("I split the migration into reversible steps and ran it with two teams.");
+  await page.getByRole("button", { name: "Influence without authority" }).click();
+  await page.getByRole("button", { name: "Save" }).click();
+  await page.getByRole("tab", { name: "Coverage" }).click();
+  await expect(page.locator(".sb-cov li.ok")).toHaveCount(1);
+});

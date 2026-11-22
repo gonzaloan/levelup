@@ -30,8 +30,8 @@
       "es": "**Consistent hashing** con vnodes elige N réplicas por clave; cualquier nodo puede coordinar una petición."
     },
     {
-      "en": "Write to N, wait for W acks, read R replies: **R + W > N** makes read and write sets overlap.",
-      "es": "Escribe en N, espera W confirmaciones y lee R respuestas: **R + W > N** hace que lecturas y escrituras se superpongan."
+      "en": "Write to N, wait for W acks, read R replies: **R + W > N** makes the two sets overlap.",
+      "es": "Escribe en N, espera W confirmaciones y lee R respuestas: **R + W > N** hace que ambos conjuntos se superpongan."
     },
     {
       "en": "Concurrent writes need a rule: **vector clocks** keep both versions to merge; last-write-wins silently drops one.",
@@ -62,8 +62,8 @@
     "source": "from concurrent.futures import ThreadPoolExecutor, as_completed\n\nN, R, W = 3, 2, 2            # Dynamo's common setting: R + W > N\n\ndef descends(a: dict, b: dict) -> bool:\n    \"\"\"Vector clock a has seen every event that b has.\"\"\"\n    return all(a.get(node, 0) >= n for node, n in b.items())\n\ndef reconcile(versions: list[tuple[dict, bytes]]) -> list[tuple[dict, bytes]]:\n    # Drop versions that another version descends from; the rest are siblings\n    uniq = list({tuple(sorted(c.items())): (c, v) for c, v in versions}.values())\n    return [(c, v) for c, v in uniq\n            if not any(o != c and descends(o, c) for o, _ in uniq)]\n\ndef put(key, value, clock: dict, ring, pool: ThreadPoolExecutor) -> dict:\n    replicas = ring.preference_list(key, N)       # first N healthy nodes clockwise\n    clock = {**clock, ring.me: clock.get(ring.me, 0) + 1}\n    futures = [pool.submit(r.write, key, value, clock) for r in replicas]\n    acks = 0\n    for f in as_completed(futures, timeout=0.3):\n        acks += f.result() is True\n        if acks >= W:\n            return clock                          # stragglers finish in the background\n    raise TimeoutError(\"write quorum not reached\")\n\ndef get(key, ring, pool: ThreadPoolExecutor) -> list[tuple[dict, bytes]]:\n    futures = [pool.submit(r.read, key) for r in ring.preference_list(key, N)]\n    replies = [f.result() for _, f in zip(range(R), as_completed(futures, timeout=0.3))]\n    return reconcile([v for reply in replies for v in reply])  # >1 = siblings to merge"
   },
   "example": {
-    "en": "`cart:42` has version `{A:2}`. During a partition, the phone adds *book* through node A, giving `{A:3}`; the laptop adds *pen* through node B, giving `{A:2, B:1}`. Both writes reach W = 2 thanks to the sloppy quorum. Neither clock descends from the other, so the next read returns two siblings. The cart service merges them into {book, pen} and writes back `{A:3, B:1}`. Had the laptop *removed* a mug, the union would bring it back: Dynamo's documented trade-off.",
-    "es": "`cart:42` tiene la versión `{A:2}`. Durante una partición, el celular agrega *libro* a través del nodo A, lo que da `{A:3}`; la laptop agrega *lápiz* a través del nodo B, lo que da `{A:2, B:1}`. Ambas escrituras llegan a W = 2 gracias al sloppy quorum. Ningún reloj desciende del otro, así que la siguiente lectura devuelve dos versiones hermanas. El servicio de carrito las fusiona en {libro, lápiz} y escribe `{A:3, B:1}`. Si la laptop hubiera *quitado* una taza, la unión la traería de vuelta: el trade-off que documenta Dynamo."
+    "en": "`cart:42` has version `{A:2}`. During a partition, the phone adds *book* through node A, giving `{A:3}`; the laptop adds *pen* through node B, giving `{A:2, B:1}`. Both writes reach W = 2 thanks to the sloppy quorum. Neither clock descends from the other, so the next read returns two siblings. The cart service merges them into {book, pen} and writes back with the merged context `{A:3, B:1}`. Had the laptop *removed* a mug, the union would bring it back: Dynamo's documented trade-off.",
+    "es": "`cart:42` tiene la versión `{A:2}`. Durante una partición, el celular agrega *libro* a través del nodo A, lo que da `{A:3}`; la laptop agrega *lápiz* a través del nodo B, lo que da `{A:2, B:1}`. Ambas escrituras llegan a W = 2 gracias al sloppy quorum. Ningún reloj desciende del otro, así que la siguiente lectura devuelve dos versiones hermanas. El servicio de carrito las fusiona en {libro, lápiz} y escribe con el contexto fusionado `{A:3, B:1}`. Si la laptop hubiera *quitado* una taza, la unión la traería de vuelta: el trade-off que documenta Dynamo."
   },
   "deepDive": [
     {
@@ -92,8 +92,8 @@
         "es": "Manejo de fallas y reparación"
       },
       "body": {
-        "en": "Gossip lets every node learn membership and suspicions within seconds, without a central coordinator. A sloppy quorum writes to the first N *healthy* nodes; the stand-in stores a hint and replays it when the owner returns. Hints are best effort: Cassandra keeps them for 3 h by default, so a longer outage needs anti-entropy repair. There, replicas exchange Merkle-tree roots per key range and descend only into branches whose hashes differ, streaming just the divergent keys. Deletes are tombstones; purge them only after repair has run, or a stale replica resurrects deleted data.",
-        "es": "Gossip hace que cada nodo conozca la membresía y las sospechas en segundos, sin un coordinador central. Un sloppy quorum escribe en los primeros N nodos *sanos*; el suplente guarda una pista y la reenvía cuando vuelve el dueño. Las pistas son best effort: Cassandra las guarda 3 h por defecto, así que una caída más larga necesita reparación anti-entropía. Ahí las réplicas intercambian las raíces de los árboles de Merkle por rango de claves y bajan solo por las ramas cuyos hashes difieren, transfiriendo únicamente las claves divergentes. Los borrados son tombstones; púrgalos solo después de reparar, o una réplica atrasada resucita datos borrados."
+        "en": "Gossip lets every node learn membership and suspicions within seconds, without a central coordinator. A sloppy quorum writes to the first N *healthy* nodes; the stand-in stores a hint and replays it when the owner returns. Hints are best effort: by default Cassandra stores them only for a node's first 3 h of downtime, so a longer outage needs anti-entropy repair. There, replicas exchange Merkle-tree roots per key range and descend only into branches whose hashes differ, streaming just the divergent keys. Deletes are tombstones; purge them only after repair has run, or a stale replica resurrects deleted data.",
+        "es": "Gossip hace que cada nodo conozca la membresía y las sospechas en segundos, sin un coordinador central. Un sloppy quorum escribe en los primeros N nodos *sanos*; el suplente guarda una pista y la reenvía cuando vuelve el dueño. Las pistas son best effort: por defecto, Cassandra solo las genera durante las primeras 3 h de caída de un nodo, así que una caída más larga necesita reparación anti-entropía. Ahí las réplicas intercambian las raíces de los árboles de Merkle por rango de claves y bajan solo por las ramas cuyos hashes difieren, transfiriendo únicamente las claves divergentes. Los borrados son tombstones; púrgalos solo después de reparar, o una réplica atrasada resucita datos borrados."
       }
     }
   ],
@@ -143,8 +143,8 @@
       "es": "La divergencia es rara: el 99.94% de las lecturas del carrito vio exactamente una versión en 24 h."
     },
     {
-      "en": "Dynamo truncates vector clocks at ~10 (node, counter) pairs; Cassandra keeps hints for 3 h by default.",
-      "es": "Dynamo trunca los vector clocks en ~10 pares (nodo, contador); Cassandra guarda las pistas 3 h por defecto."
+      "en": "Dynamo truncates vector clocks at ~10 (node, counter) pairs; Cassandra stores hints only for a node's first 3 h down (default).",
+      "es": "Dynamo trunca los vector clocks en ~10 pares (nodo, contador); Cassandra solo guarda pistas durante las primeras 3 h de caída de un nodo (por defecto)."
     },
     {
       "en": "Sizing: assume 10B keys × 1 KB × 3 replicas = 30 TB; at ~1 TB per node (assumed), ~30 nodes plus headroom.",
@@ -186,8 +186,8 @@
         "es": "Un nodo está caído durante seis horas. Explícame qué pasa."
       },
       "a": {
-        "en": "Gossip marks it suspect within seconds. Writes for its ranges go to the next healthy node with a hint, so W is still met, and reads use the other replicas. Hints are kept for a window, 3 h by default in Cassandra, so after six hours they stop and the node falls behind. On return, hints replay and a Merkle-tree repair streams only the differing ranges. If it never returns, I replace it and stream its ranges from replicas.",
-        "es": "Gossip lo marca como sospechoso en segundos. Las escrituras de sus rangos van al siguiente nodo sano con una pista, así W se cumple, y las lecturas usan las otras réplicas. Las pistas se guardan durante una ventana, 3 h por defecto en Cassandra, así que pasadas seis horas se dejan de guardar y el nodo se atrasa. Al volver, se reenvían las pistas y una reparación con árboles de Merkle transfiere solo los rangos distintos. Si no vuelve, lo reemplazo y transfiero sus rangos desde las réplicas."
+        "en": "Gossip marks it suspect within seconds. Writes for its ranges go to the next healthy node with a hint, so W is still met, and reads use the other replicas. Cassandra stores hints only for the first 3 h of downtime by default, so this node misses writes that hints never captured. On return, hints replay and a Merkle-tree repair streams only the differing ranges. If it never returns, I replace it and stream its ranges from replicas.",
+        "es": "Gossip lo marca como sospechoso en segundos. Las escrituras de sus rangos van al siguiente nodo sano con una pista, así W se cumple, y las lecturas usan las otras réplicas. Por defecto, Cassandra solo guarda pistas durante las primeras 3 h de caída, así que a este nodo le faltan escrituras que ninguna pista capturó. Al volver, se reenvían las pistas y una reparación con árboles de Merkle transfiere solo los rangos distintos. Si no vuelve, lo reemplazo y transfiero sus rangos desde las réplicas."
       }
     },
     {

@@ -17,6 +17,9 @@ Live: https://levelup.skillrealm.dev
   sliding window stepper, consistent hashing ring, rate limiters, quorums (N/R/W), cache hit ratio
   (LRU + Zipf), utilization vs latency (M/M/c), Bloom filter calculator, GPU memory (weights + KV
   cache) and a sampling playground. Each concept links its lab.
+- **Interview practice beyond reading:** Python coding problems you solve and test in the browser
+  (Pyodide, no server), a timed 45-minute system design round with a rubric, and a STAR story bank
+  with coverage of Amazon's Leadership Principles and Staff themes.
 - **Knowledge map:** every concept as a territory by topic, with the bridges between ideas.
 - **Visual:** a color illustration per concept and the logos of the tools and companies it mentions.
 - **Architecture map:** the reference architecture of a production AI system, layer by layer;

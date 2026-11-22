@@ -152,6 +152,20 @@ export default async function ConceptPage({ params }: P) {
           </section>
         )}
 
+        {(isCase || id === "behavioral-star") && (
+          <section className="lab-promo" aria-label="Practice">
+            <Link href={isCase ? `/${locale}/practice/design/${id}/` : `/${locale}/interview/stories/`} className="lab-promo-card">
+              <Emoji name={isCase ? "stopwatch" : "open-book"} size={34} />
+              <span>
+                <small>{isCase ? L("pDesign") : L("pStories")}</small>
+                <strong>{isCase ? (locale === "es" ? "Haz esta ronda en 45 minutos" : "Do this round in 45 minutes") : (locale === "es" ? "Escribe y practica tus historias" : "Write and practice your stories")}</strong>
+                <span>{isCase ? L("pDesignSub") : L("pStoriesSub")}</span>
+              </span>
+              <Icon name="right" size={18} />
+            </Link>
+          </section>
+        )}
+
         {problems.length > 0 && (
           <section className="lab-promo" aria-label={L("solveIt")}>
             {problems.map((p) => (

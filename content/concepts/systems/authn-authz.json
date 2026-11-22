@@ -5,8 +5,8 @@
   "title": { "en": "AuthN vs AuthZ: sessions, JWT, OAuth", "es": "AuthN vs AuthZ: sesiones, JWT, OAuth" },
   "aliases": ["authentication", "authorization", "OAuth 2.0", "OIDC", "PKCE", "JWT", "RBAC", "ABAC", "ReBAC", "SSO"],
   "tldr": {
-    "en": "Authentication proves who you are; authorization decides what you may do. Use OIDC (auth code + PKCE) to log in, short-lived tokens or sessions to carry identity, and server-side checks on every request.",
-    "es": "La autenticación prueba quién eres; la autorización decide qué puedes hacer. Usa OIDC (auth code + PKCE) para el login, tokens de vida corta o sesiones para llevar la identidad y validaciones en el servidor en cada request."
+    "en": "Authentication proves who you are and authorization decides what you may do: log in with OIDC (auth code + PKCE), carry identity in short-lived tokens or sessions, and check permissions server-side on every request.",
+    "es": "La autenticación prueba quién eres y la autorización decide qué puedes hacer: haz el login con OIDC (auth code + PKCE), lleva la identidad en tokens de vida corta o sesiones y valida los permisos en el servidor en cada request."
   },
   "analogy": {
     "en": "A hotel desk checks your passport once and hands you a key card. The card opens your room and the gym, not the kitchen, and dies at checkout.",
@@ -18,16 +18,16 @@
   },
   "keyPoints": [
     {
-      "en": "**AuthN** proves who you are (fails with 401); **authZ** decides what you may do (fails with 403).",
-      "es": "**AuthN** prueba quién eres (falla con 401); **authZ** decide qué puedes hacer (falla con 403)."
+      "en": "A failed authN is `401` (who are you?); a failed **authZ** is `403` (known, but not allowed).",
+      "es": "Un authN fallido es `401` (¿quién eres?); un **authZ** fallido es `403` (te conozco, pero no tienes permiso)."
     },
     {
       "en": "**Sessions** revoke instantly but need a lookup; **JWTs** verify locally but stay valid until `exp`.",
       "es": "Las **sesiones** se revocan al instante pero requieren una consulta; los **JWT** se verifican localmente pero valen hasta `exp`."
     },
     {
-      "en": "OAuth delegates access; **OIDC** adds an ID token for login. Sign users in with auth code + **PKCE**.",
-      "es": "OAuth delega acceso; **OIDC** agrega un ID token para el login. Haz el login con auth code + **PKCE**."
+      "en": "OAuth delegates access to an API; **OIDC** adds a signed ID token that says who signed in.",
+      "es": "OAuth delega el acceso a una API; **OIDC** agrega un ID token firmado que dice quién inició sesión."
     },
     {
       "en": "PKCE sends a hash of a secret, then the secret at code exchange: a stolen code is useless.",
@@ -48,7 +48,7 @@
   "code": {
     "lang": "python",
     "title": { "en": "Verify a JWT, then authorize the action", "es": "Verificar un JWT y luego autorizar la acción" },
-    "source": "import jwt\nfrom jwt import PyJWKClient\n\nISSUER = \"https://idp.example.com\"   # your OIDC provider\nAUDIENCE = \"orders-api\"              # this API, not any API\njwks = PyJWKClient(f\"{ISSUER}/.well-known/jwks.json\")  # caches keys by kid\n\ndef authenticate(token: str) -> dict:\n    key = jwks.get_signing_key_from_jwt(token)\n    return jwt.decode(                 # raises on bad signature, aud, iss, exp\n        token, key,\n        algorithms=[\"RS256\"],          # pinned: never trust the token's own alg\n        audience=AUDIENCE, issuer=ISSUER,\n        options={\"require\": [\"exp\", \"iss\", \"aud\", \"sub\"]},\n    )\n\ndef authorize(claims: dict, action: str, order: dict) -> bool:\n    if claims.get(\"tenant_id\") != order[\"tenant_id\"]:\n        return False                   # ABAC: tenant is a hard rule\n    roles = set(claims.get(\"roles\", []))\n    if action == \"read\":\n        return \"viewer\" in roles or claims[\"sub\"] == order[\"owner_id\"]\n    if action == \"refund\":\n        return \"support_admin\" in roles and order[\"amount\"] <= 500\n    return False                       # deny by default\n\ndef get_order(token: str, order_id: str) -> dict:\n    claims = authenticate(token)       # failure -> 401\n    order = load_order(order_id)\n    if not authorize(claims, \"read\", order):\n        raise PermissionError(\"forbidden\")  # -> 403\n    return order"
+    "source": "import jwt\nfrom jwt import PyJWKClient\n\nISSUER = \"https://idp.example.com\"   # your OIDC provider\nAUDIENCE = \"orders-api\"              # this API, not any API\njwks = PyJWKClient(f\"{ISSUER}/.well-known/jwks.json\")  # caches the key set (5 min)\n\ndef authenticate(token: str) -> dict:\n    key = jwks.get_signing_key_from_jwt(token)\n    return jwt.decode(                 # raises on bad signature, aud, iss, exp\n        token, key,\n        algorithms=[\"RS256\"],          # pinned: never trust the token's own alg\n        audience=AUDIENCE, issuer=ISSUER,\n        options={\"require\": [\"exp\", \"iss\", \"aud\", \"sub\"]},\n    )\n\ndef authorize(claims: dict, action: str, order: dict) -> bool:\n    if claims.get(\"tenant_id\") != order[\"tenant_id\"]:\n        return False                   # ABAC: tenant is a hard rule\n    roles = set(claims.get(\"roles\", []))\n    if action == \"read\":\n        return \"viewer\" in roles or claims[\"sub\"] == order[\"owner_id\"]\n    if action == \"refund\":\n        return \"support_admin\" in roles and order[\"amount\"] <= 500\n    return False                       # deny by default\n\ndef get_order(token: str, order_id: str) -> dict:\n    claims = authenticate(token)       # failure -> 401\n    order = load_order(order_id)\n    if not authorize(claims, \"read\", order):\n        raise PermissionError(\"forbidden\")  # -> 403\n    return order"
   },
   "example": {
     "en": "A B2B SaaS on Amazon Cognito keeps the defaults: 1-hour access tokens, 30-day refresh tokens. An employee is fired at 10:00; disabling the user stops new refreshes, but the APIs verify JWTs locally and accept the old token until it expires. The fix: 5-minute access tokens, revoked refresh tokens, and a `jti` deny-list checked only on sensitive calls (refunds, exports). A separate audit finds the classic bug: changing `/orders/123` to `/orders/124` returned another tenant's order. A tenant check in every query closed it.",
@@ -74,8 +74,8 @@
   },
   "numbers": [
     { "en": "PKCE (RFC 7636, 2015): verifier of 43–128 chars; challenge = base64url(SHA-256(verifier)).", "es": "PKCE (RFC 7636, 2015): verifier de 43–128 caracteres; challenge = base64url(SHA-256(verifier))." },
-    { "en": "RFC 9700 (OAuth security BCP, Jan 2025): public clients MUST use PKCE; the password grant MUST NOT be used.", "es": "RFC 9700 (BCP de seguridad de OAuth, ene 2025): los clientes públicos DEBEN usar PKCE; el password grant NO DEBE usarse." },
-    { "en": "Amazon Cognito defaults (checked Nov 2026): access and ID tokens 1 hour, refresh tokens 30 days.", "es": "Valores por defecto de Amazon Cognito (revisados en nov 2026): access e ID tokens de 1 hora, refresh tokens de 30 días." },
+    { "en": "RFC 9700 (OAuth security BCP, Jan 2025): public clients MUST use PKCE; the password grant MUST NOT be used.", "es": "RFC 9700 (BCP de seguridad de OAuth, ene. 2025): los clientes públicos DEBEN usar PKCE; el password grant NO DEBE usarse." },
+    { "en": "Amazon Cognito defaults (checked Nov 2026): access and ID tokens 1 hour, refresh tokens 30 days.", "es": "Valores por defecto de Amazon Cognito (revisados en nov. 2026): access e ID tokens de 1 hora, refresh tokens de 30 días." },
     { "en": "Google Zanzibar (2019): trillions of ACLs, millions of checks/s, p95 under 10 ms.", "es": "Google Zanzibar (2019): billones de ACLs, millones de validaciones/s, p95 bajo 10 ms." }
   ],
   "pitfalls": [
