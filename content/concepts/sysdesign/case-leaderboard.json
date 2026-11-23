@@ -1,0 +1,243 @@
+{
+  "id": "case-leaderboard",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": {
+    "en": "Design: real-time leaderboard",
+    "es": "Diseño: leaderboard en tiempo real"
+  },
+  "aliases": [
+    "game leaderboard",
+    "ranking system",
+    "Redis sorted set",
+    "ZSET",
+    "ZREVRANK",
+    "skip list",
+    "top 10 players"
+  ],
+  "tldr": {
+    "en": "Keep scores in a Redis sorted set: score updates and rank lookups are O(log N), the top 10 is one range read, and the set is a view rebuilt from the durable score store.",
+    "es": "Guarda los puntajes en un sorted set de Redis: actualizar un puntaje y consultar un rank cuestan O(log N), el top 10 es una sola lectura de rango y el set es una vista que se reconstruye desde el store durable de puntajes."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: update a player's score when a match ends; show the **top 10**; show **my rank** with the players just above and below; daily, weekly and all-time boards. **Non-functional**: a new score is visible within about a second; reads take a few ms; no score is lost if the cache dies.\n\nScale (assumed): 50M players; 5M DAU × 10 matches ≈ 50M updates/day ≈ 580/s average, ~3k/s at peak.\n\nQuestions I'd ask:\n\n1. Does every player need an exact rank, or is \"top 12%\" enough beyond the first pages?\n2. One global board, or also per region, per season, per friend group?\n3. How are ties ordered?\n\n### API and data model\n\n`POST /scores {match_id, player_id, points}` comes from the game server, never from the client. `GET /leaderboard?top=10`, `GET /leaderboard/me?around=5`. Source of truth: a `scores(player_id, season, score)` table and the log of match results. Serving copy: one Redis **sorted set** per board, member = player id, score = points.\n\n### Architecture\n\n1. The game service validates the match, writes the result to the database and publishes an event.\n2. A worker applies each event to Redis with `ZINCRBY`, deduplicated by `match_id` ([[idempotency]]).\n3. Reads: `ZRANGE board 0 9 REV WITHSCORES` for the top 10; `ZREVRANK` for my rank, then a range around it. Names and avatars come from a profile cache.\n\n### The hard parts\n\n1. **Rank at scale**: counting the players above me in SQL scans all of them; a sorted set answers in O(log N).\n2. **Ties**, and what the score encodes.\n3. **A board too big for one node**, and **rebuilding** it when Redis loses it.",
+    "es": "### Requisitos\n\n**Funcionales**: actualizar el puntaje de un jugador cuando termina una partida; mostrar el **top 10**; mostrar **mi rank** con los jugadores justo arriba y abajo; tablas diarias, semanales e históricas. **No funcionales**: un puntaje nuevo se ve en cerca de un segundo; las lecturas tardan pocos ms; no se pierde ningún puntaje si muere la cache.\n\nEscala (supuesta): 50M de jugadores; 5M de DAU × 10 partidas ≈ 50M de actualizaciones/día ≈ 580/s en promedio, ~3k/s en el pico.\n\nPreguntas que haría:\n\n1. ¿Cada jugador necesita un rank exacto, o basta con \"top 12%\" después de las primeras páginas?\n2. ¿Una sola tabla global, o también por región, por temporada y por grupo de amigos?\n3. ¿Cómo se ordenan los empates?\n\n### API y modelo de datos\n\n`POST /scores {match_id, player_id, points}` lo llama el servidor del juego, nunca el cliente. `GET /leaderboard?top=10`, `GET /leaderboard/me?around=5`. Fuente de verdad: una tabla `scores(player_id, season, score)` y el log de resultados de partidas. Copia de consulta: un **sorted set** de Redis por tabla, con miembro = id del jugador y score = puntos.\n\n### Arquitectura\n\n1. El servicio del juego valida la partida, escribe el resultado en la base de datos y publica un evento.\n2. Un worker aplica cada evento en Redis con `ZINCRBY`, deduplicado por `match_id` ([[idempotency]]).\n3. Lecturas: `ZRANGE board 0 9 REV WITHSCORES` para el top 10; `ZREVRANK` para mi rank y luego un rango alrededor. Los nombres y avatares salen de una cache de perfiles.\n\n### Las partes difíciles\n\n1. **El rank a escala**: contar en SQL a los jugadores que están arriba de mí los recorre a todos; un sorted set responde en O(log N).\n2. **Los empates**, y qué codifica el score.\n3. **Una tabla demasiado grande para un nodo**, y cómo **reconstruirla** cuando Redis la pierde."
+  },
+  "keyPoints": [
+    {
+      "en": "A Redis **sorted set** is a skip list plus a hash: update and rank in O(log N).",
+      "es": "Un **sorted set** de Redis es una skip list más un hash: actualizar y obtener el rank cuestan O(log N)."
+    },
+    {
+      "en": "Top 10 is one range read; my rank is `ZREVRANK`, then a range around it.",
+      "es": "El top 10 es una lectura de rango; mi rank es `ZREVRANK` y luego un rango alrededor."
+    },
+    {
+      "en": "Equal scores sort by member bytes; pack a timestamp into the score to rank the earlier player first.",
+      "es": "Los scores iguales se ordenan por los bytes del miembro; mete un timestamp en el score para que gane quien llegó antes."
+    },
+    {
+      "en": "Redis is a rebuildable view: scores live in a database and replay from the match log.",
+      "es": "Redis es una vista reconstruible: los puntajes viven en una base de datos y se reprocesan desde el log de partidas."
+    },
+    {
+      "en": "Past one node, shard by player and scatter-gather, or bucket by score range.",
+      "es": "Más allá de un nodo, particiona por jugador con scatter-gather, o usa buckets por rango de score."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  G[Game service] -->|match result| DB[(\"Scores DB<br/>source of truth\")]\n  G --> K[(Match event log)]\n  K --> W[\"Score worker<br/>dedupe by match_id\"]\n  W -->|ZINCRBY| R[(\"Redis sorted set<br/>skip list + hash\")]\n  C[Client] --> A[Leaderboard API]\n  A -->|\"ZRANGE 0 9 REV\"| R\n  A -->|\"ZREVRANK + range\"| R\n  A --> P[(\"Profile cache<br/>names, avatars\")]\n  DB -.->|rebuild after loss| R",
+    "caption": {
+      "en": "Match results are stored durably first; a worker applies them to the sorted set, which serves the top 10 and each player's rank and can be rebuilt from the database.",
+      "es": "Los resultados de las partidas se guardan primero de forma durable; un worker los aplica al sorted set, que sirve el top 10 y el rank de cada jugador y se puede reconstruir desde la base de datos."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Leaderboard on a Redis sorted set (redis-py)",
+      "es": "Leaderboard sobre un sorted set de Redis (redis-py)"
+    },
+    "source": "import redis\n\nr = redis.Redis(decode_responses=True)\nBOARD = \"lb:2026-W48\"                      # one sorted set per board and period\n\n# Atomic: mark the match as applied and add its points; a redelivery does nothing\nAPPLY = r.register_script(\"\"\"\nif redis.call('SET', KEYS[2], 1, 'NX', 'EX', 604800) then\n  return redis.call('ZINCRBY', KEYS[1], ARGV[1], ARGV[2])\nend\"\"\")\n\ndef record_match(match_id: str, player: str, points: int) -> None:\n    APPLY(keys=[BOARD, f\"applied:{match_id}:{player}\"], args=[points, player])  # O(log N)\n\ndef top(n: int = 10):\n    return r.zrange(BOARD, 0, n - 1, desc=True, withscores=True)   # O(log N + n)\n\ndef around_me(player: str, span: int = 5):\n    rank = r.zrevrank(BOARD, player)       # 0-based, O(log N); None if unranked\n    if rank is None:\n        return None, []\n    rows = r.zrange(BOARD, max(0, rank - span), rank + span, desc=True, withscores=True)\n    return rank + 1, rows                  # 1-based rank plus neighbours\n\ndef rebuild(scores_db) -> None:\n    \"\"\"Redis lost the board: reload it from the source of truth, then swap.\"\"\"\n    tmp = BOARD + \":rebuild\"\n    r.delete(tmp)\n    for batch in scores_db.iter_scores(batch_size=10_000):   # [(player, score), ...]\n        r.zadd(tmp, dict(batch))\n    r.rename(tmp, BOARD)                   # atomic switch; then replay newer matches"
+  },
+  "example": {
+    "en": "Weekly board `lb:2026-W48` with 50M players (assumed). Ana finishes a match worth 120 points: `ZINCRBY lb:2026-W48 120 ana` is one O(log N) update, and log₂(50M) ≈ 26. Her client asks for her position: `ZREVRANK` returns 1,204,551 (0-based), then `ZRANGE lb:2026-W48 1204546 1204556 REV WITHSCORES` returns the five players above and below her. The home screen's top 10 is `ZRANGE … 0 9 REV`, cached for a second because everyone requests it. At ~100 B per member (assumed) the set takes ~5 GB: one node plus a replica.",
+    "es": "Tabla semanal `lb:2026-W48` con 50M de jugadores (supuesto). Ana termina una partida de 120 puntos: `ZINCRBY lb:2026-W48 120 ana` es una actualización O(log N), y log₂(50M) ≈ 26. Su cliente pide su posición: `ZREVRANK` devuelve 1,204,551 (base 0) y luego `ZRANGE lb:2026-W48 1204546 1204556 REV WITHSCORES` devuelve los cinco jugadores de arriba y los cinco de abajo. El top 10 de la pantalla de inicio es `ZRANGE … 0 9 REV`, cacheado un segundo porque todos lo piden. Con ~100 B por miembro (supuesto), el set ocupa ~5 GB: un nodo más una réplica."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Why a sorted set, not SQL",
+        "es": "Por qué un sorted set y no SQL"
+      },
+      "body": {
+        "en": "`ORDER BY score DESC LIMIT 10` on an indexed column is cheap. The rank is the problem: `SELECT COUNT(*) FROM scores WHERE score > :mine` walks the index entry of every better player, O(rank) per request, so a mid-table player among 50M reads ~25M entries. A sorted set keeps two structures: a hash from member to score, and a **skip list** ordered by score in which every link records how many nodes it skips. Summing those spans on the way down gives the rank in O(log N). So `ZADD`, `ZINCRBY`, `ZREVRANK` and `ZCOUNT` are O(log N), `ZSCORE` is O(1), and a range of M items is O(log N + M). For a few thousand players, SQL with a window function is fine.",
+        "es": "`ORDER BY score DESC LIMIT 10` sobre una columna indexada es barato. El problema es el rank: `SELECT COUNT(*) FROM scores WHERE score > :mine` recorre la entrada de índice de cada jugador mejor, O(rank) por petición, así que un jugador de mitad de tabla entre 50M lee ~25M de entradas. Un sorted set mantiene dos estructuras: un hash de miembro a score y una **skip list** ordenada por score donde cada enlace guarda cuántos nodos salta. Sumar esos saltos al bajar da el rank en O(log N). Por eso `ZADD`, `ZINCRBY`, `ZREVRANK` y `ZCOUNT` cuestan O(log N), `ZSCORE` cuesta O(1) y un rango de M elementos cuesta O(log N + M). Para unos pocos miles de jugadores, SQL con una window function alcanza."
+      }
+    },
+    {
+      "title": {
+        "en": "Ties and composite scores",
+        "es": "Empates y scores compuestos"
+      },
+      "body": {
+        "en": "Redis orders members with equal scores lexicographically by member bytes, which looks arbitrary to players. The usual rule is \"whoever reached the score first ranks higher\". Encode it in the score: `points × 10¹⁰ + (10¹⁰ − 1 − unix_seconds)`, so more points win and, at equal points, the earlier timestamp is larger. Scores are 64-bit doubles, exact only for integers up to 2⁵³ ≈ 9 × 10¹⁵, so this leaves room for ~900k points; beyond that, ranks silently collide. A composite score can't be incremented with `ZINCRBY`: read the new total from the source of truth and `ZADD` it. For best-score boards, `ZADD GT` only updates when the new score is higher. If equal scores must share a rank, compute it as `ZCOUNT board (score +inf` plus one.",
+        "es": "Redis ordena los miembros con el mismo score de forma lexicográfica por los bytes del miembro, algo que a los jugadores les parece arbitrario. La regla habitual es \"quien llegó primero al puntaje queda más arriba\". Codifícala en el score: `points × 10¹⁰ + (10¹⁰ − 1 − unix_seconds)`, así ganan más puntos y, a igual puntaje, el timestamp más temprano da un valor mayor. Los scores son doubles de 64 bits, exactos solo para enteros hasta 2⁵³ ≈ 9 × 10¹⁵, así que esto deja espacio para ~900k puntos; más allá, los ranks chocan en silencio. Un score compuesto no se puede incrementar con `ZINCRBY`: lee el total nuevo desde la fuente de verdad y haz `ZADD`. Para tablas de mejor puntaje, `ZADD GT` solo actualiza cuando el score nuevo es más alto. Si los scores iguales deben compartir rank, calcúlalo como `ZCOUNT board (score +inf` más uno."
+      }
+    },
+    {
+      "title": {
+        "en": "Sharding a huge board",
+        "es": "Particionar una tabla enorme"
+      },
+      "body": {
+        "en": "A sorted set is one key, and a key lives on one node: Redis Cluster's 16,384 hash slots spread keys, not the members of a key. First check you need more: 50M members × ~100 B is ~5 GB. If you do, there are three patterns. **Hash by player** into S sets: the top K is a scatter-gather of each shard's top K, merged, and exact because a player lives on one shard ([[case-top-k]]); my rank is the sum over shards of `ZCOUNT` above my score. **Score-range buckets**: each shard owns a range, so rank = players in higher buckets + local rank and the top 10 is one read; but scores cluster, and a player crossing buckets is two non-atomic writes. **Approximate tail**: exact ranks for the top ~100k, a score histogram for everyone else (\"top 12%\").",
+        "es": "Un sorted set es una sola key, y una key vive en un solo nodo: los 16,384 hash slots de Redis Cluster reparten keys, no los miembros de una key. Primero verifica que necesitas más: 50M de miembros × ~100 B son ~5 GB. Si hace falta, hay tres patrones. **Hash por jugador** en S sets: el top K es un scatter-gather del top K de cada shard, combinado, y es exacto porque un jugador vive en un solo shard ([[case-top-k]]); mi rank es la suma, entre shards, del `ZCOUNT` por encima de mi score. **Buckets por rango de score**: cada shard es dueño de un rango, así que rank = jugadores en buckets más altos + rank local, y el top 10 es una sola lectura; pero los scores se amontonan, y un jugador que cruza de bucket son dos escrituras no atómicas. **Cola aproximada**: ranks exactos para el top ~100k y un histograma de scores para el resto (\"top 12%\")."
+      }
+    },
+    {
+      "title": {
+        "en": "Persistence and rebuild",
+        "es": "Persistencia y reconstrucción"
+      },
+      "body": {
+        "en": "Treat the board as a materialized view. A replica covers node failure, but replication is asynchronous, and AOF with `appendfsync everysec` can lose about a second of writes, so Redis alone cannot be the record. Keep scores in a durable database and match results in a log ([[case-message-queue]]). To rebuild: bulk-load `ZADD` from the database into a new key, `RENAME` it into place, then replay match events newer than the snapshot; the `match_id` dedupe makes the replay safe. Period boards are just keys (`lb:2026-W48`): write the final standings to the database, then expire the key. A friends board needs no set of its own: `ZMSCORE` for the friend ids and sort in the app.",
+        "es": "Trata la tabla como una vista materializada. Una réplica cubre la falla de un nodo, pero la replicación es asíncrona, y el AOF con `appendfsync everysec` puede perder cerca de un segundo de escrituras, así que Redis solo no puede ser el registro oficial. Guarda los puntajes en una base de datos durable y los resultados de partidas en un log ([[case-message-queue]]). Para reconstruir: carga masiva con `ZADD` desde la base de datos hacia una key nueva, `RENAME` para ponerla en su lugar y luego reprocesa los eventos de partidas posteriores al snapshot; la deduplicación por `match_id` hace seguro ese replay. Las tablas por período son simples keys (`lb:2026-W48`): escribe la clasificación final en la base de datos y luego expira la key. Una tabla de amigos no necesita un set propio: `ZMSCORE` para los ids de los amigos y ordenas en la app."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Update, rank and top-N are O(log N) commands on one structure: no custom ranking code.",
+      "es": "Actualizar, obtener el rank y leer el top-N son comandos O(log N) sobre una sola estructura: sin código de ranking propio."
+    },
+    {
+      "en": "A board per season, region or game mode is just another key.",
+      "es": "Una tabla por temporada, región o modo de juego es solo otra key."
+    },
+    {
+      "en": "The serving copy is disposable: rebuild it from the score table and the match log.",
+      "es": "La copia de consulta es descartable: la reconstruyes desde la tabla de puntajes y el log de partidas."
+    }
+  ],
+  "cons": [
+    {
+      "en": "One sorted set lives on one node: that node's memory and CPU bound the board.",
+      "es": "Un sorted set vive en un solo nodo: la memoria y la CPU de ese nodo limitan la tabla."
+    },
+    {
+      "en": "In-memory with asynchronous replication: a failover can drop the last writes.",
+      "es": "En memoria y con replicación asíncrona: un failover puede perder las últimas escrituras."
+    },
+    {
+      "en": "Tie-breaks and shared ranks need composite scores or extra commands.",
+      "es": "Los desempates y los ranks compartidos necesitan scores compuestos o comandos extra."
+    }
+  ],
+  "whenToUse": {
+    "en": "Ranked lists with frequent score updates and rank-by-member reads: game leaderboards, contest standings, top sellers or contributors.",
+    "es": "Listas rankeadas con actualizaciones frecuentes de score y lecturas de rank por miembro: leaderboards de juegos, clasificaciones de concursos, mejores vendedores o contribuidores."
+  },
+  "whenNotToUse": {
+    "en": "A few thousand rows read occasionally: `ORDER BY` with a window function in SQL. If only the top N matters and nobody asks \"what is my rank\", a cached query or a heap is enough.",
+    "es": "Unos pocos miles de filas que se leen de vez en cuando: `ORDER BY` con una window function en SQL. Si solo importa el top N y nadie pregunta \"cuál es mi rank\", basta una consulta cacheada o un heap."
+  },
+  "numbers": [
+    {
+      "en": "`ZADD`, `ZINCRBY`, `ZREVRANK`, `ZCOUNT`: O(log N). `ZSCORE`: O(1). A range of M: O(log N + M).",
+      "es": "`ZADD`, `ZINCRBY`, `ZREVRANK`, `ZCOUNT`: O(log N). `ZSCORE`: O(1). Un rango de M: O(log N + M)."
+    },
+    {
+      "en": "Assumed load: 5M DAU × 10 matches = 50M updates/day ≈ 580/s average, ~3k/s at peak.",
+      "es": "Carga supuesta: 5M de DAU × 10 partidas = 50M de actualizaciones/día ≈ 580/s en promedio, ~3k/s en el pico."
+    },
+    {
+      "en": "Memory: 50M members × ~100 B (assumed) ≈ 5 GB, which fits one node.",
+      "es": "Memoria: 50M de miembros × ~100 B (supuesto) ≈ 5 GB, que entran en un nodo."
+    },
+    {
+      "en": "Scores are doubles: integers are exact only up to 2⁵³ ≈ 9 × 10¹⁵.",
+      "es": "Los scores son doubles: los enteros son exactos solo hasta 2⁵³ ≈ 9 × 10¹⁵."
+    },
+    {
+      "en": "`ZREVRANGE` is deprecated since Redis 6.2; use `ZRANGE … REV` (checked Nov 2026).",
+      "es": "`ZREVRANGE` está deprecado desde Redis 6.2; usa `ZRANGE … REV` (revisado en nov. 2026)."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Ranking in SQL with `COUNT(*) WHERE score > mine`: every request scans all the better players.",
+      "es": "Calcular el rank en SQL con `COUNT(*) WHERE score > mine`: cada petición recorre a todos los jugadores mejores."
+    },
+    {
+      "en": "Accepting scores from the client: validate matches on the server, or the top 10 belongs to cheaters.",
+      "es": "Aceptar puntajes del cliente: valida las partidas en el servidor, o el top 10 será de los tramposos."
+    },
+    {
+      "en": "Treating Redis as the source of truth: a failover drops recent updates and there is nothing to rebuild from.",
+      "es": "Tratar a Redis como la fuente de verdad: un failover pierde las últimas actualizaciones y no hay desde dónde reconstruir."
+    },
+    {
+      "en": "Composite scores above 2⁵³: the double loses precision and ranks silently collide.",
+      "es": "Scores compuestos por encima de 2⁵³: el double pierde precisión y los ranks chocan en silencio."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "How do you get one player's rank among 50M?",
+        "es": "¿Cómo obtienes el rank de un jugador entre 50M?"
+      },
+      "a": {
+        "en": "With a sorted set, `ZREVRANK` is O(log N): Redis keeps a skip list ordered by score where each link records how many nodes it skips, and sums those on the way down. A hash beside it maps member to score in O(1). The naive SQL, counting players with a higher score, reads millions of index entries per request. Beyond the first pages I'd also ask whether a percentile from a score histogram is enough.",
+        "es": "Con un sorted set, `ZREVRANK` cuesta O(log N): Redis mantiene una skip list ordenada por score donde cada enlace guarda cuántos nodos salta, y los suma al bajar. Un hash al lado lleva de miembro a score en O(1). El SQL ingenuo, que cuenta a los jugadores con score más alto, lee millones de entradas de índice por petición. Después de las primeras páginas también preguntaría si alcanza con un percentil sacado de un histograma de scores."
+      }
+    },
+    {
+      "q": {
+        "en": "The board outgrows one Redis node. What do you do?",
+        "es": "La tabla ya no entra en un nodo de Redis. ¿Qué haces?"
+      },
+      "a": {
+        "en": "First I check that it really does: 50M entries is a few GB. If so, I hash players into S sorted sets. The top 10 is a scatter-gather of each shard's top 10, merged; that is exact because a player lives on one shard. My rank is the sum of `ZCOUNT` above my score across shards. Score-range buckets make the top 10 a single read, but skew and cross-bucket moves make them harder to run.",
+        "es": "Primero verifico que de verdad no entra: 50M de entradas son unos pocos GB. Si es así, reparto a los jugadores por hash en S sorted sets. El top 10 es un scatter-gather del top 10 de cada shard, combinado; es exacto porque un jugador vive en un solo shard. Mi rank es la suma del `ZCOUNT` por encima de mi score en todos los shards. Los buckets por rango de score dejan el top 10 en una sola lectura, pero el sesgo y los cruces de bucket los hacen más difíciles de operar."
+      }
+    },
+    {
+      "q": {
+        "en": "Redis crashes and the leaderboard is gone. How do you recover?",
+        "es": "Redis se cae y el leaderboard desaparece. ¿Cómo te recuperas?"
+      },
+      "a": {
+        "en": "It's a derived view, so I rebuild it. A replica takes over first. If the data is gone, a job bulk-loads scores from the database into a new key and renames it into place, then the worker replays match events since that snapshot. Applying an event is deduplicated by match id, so the replay can't double count. Meanwhile the API serves the last cached top 10 and hides ranks.",
+        "es": "Es una vista derivada, así que la reconstruyo. Primero toma el control una réplica. Si los datos se perdieron, un job carga los puntajes desde la base de datos en una key nueva y la renombra a su lugar, y después el worker reprocesa los eventos de partidas posteriores a ese snapshot. Aplicar un evento está deduplicado por id de partida, así que el replay no puede contar doble. Mientras tanto, la API sirve el último top 10 cacheado y oculta los ranks."
+      }
+    }
+  ],
+  "related": [
+    "caching",
+    "sharding",
+    "idempotency",
+    "indexes",
+    "case-top-k",
+    "heaps-top-k"
+  ],
+  "sources": [
+    {
+      "title": "Redis docs — Sorted sets (skip list + hash table, leaderboards)",
+      "url": "https://redis.io/docs/latest/develop/data-types/sorted-sets/"
+    },
+    {
+      "title": "Redis docs — ZADD (score precision, equal scores, GT)",
+      "url": "https://redis.io/docs/latest/commands/zadd/"
+    },
+    {
+      "title": "Redis docs — ZREVRANK",
+      "url": "https://redis.io/docs/latest/commands/zrevrank/"
+    },
+    {
+      "title": "Redis docs — Persistence (RDB, AOF)",
+      "url": "https://redis.io/docs/latest/operate/oss_and_stack/management/persistence/"
+    }
+  ]
+}

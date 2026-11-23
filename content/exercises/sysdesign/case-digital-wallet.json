@@ -1,0 +1,130 @@
+{
+  "concept": "case-digital-wallet",
+  "items": [
+    {
+      "id": "case-digital-wallet.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A transfer debited Ana on shard 3. The credit to Luis on shard 11 timed out, then the orchestrator crashed. On restart it finds the transfer in `DEBITED`. What should it do?",
+        "es": "Una transferencia debitó a Ana en el shard 3. El crédito a Luis en el shard 11 dio timeout y después el orquestador se cayó. Al reiniciar encuentra la transferencia en `DEBITED`. ¿Qué debe hacer?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Retry the credit with the same transfer id until it succeeds",
+            "es": "Reintentar el crédito con el mismo id de transferencia hasta que salga bien"
+          },
+          "why": {
+            "en": "The timeout is ambiguous, but the step is idempotent on the transfer id, so retrying is safe either way.",
+            "es": "El timeout es ambiguo, pero el paso es idempotente por el id de transferencia, así que reintentar es seguro en ambos casos."
+          }
+        },
+        {
+          "text": {
+            "en": "Refund Ana right away, because the credit failed",
+            "es": "Reembolsar a Ana de inmediato, porque el crédito falló"
+          },
+          "why": {
+            "en": "A timeout means unknown, not failed: Luis may already have the money, and a refund would create $40.",
+            "es": "Un timeout significa desconocido, no fallido: Luis quizá ya tiene el dinero, y un reembolso crearía $40."
+          }
+        },
+        {
+          "text": {
+            "en": "Start a new transfer with a fresh id for the same amount",
+            "es": "Iniciar una transferencia nueva, con otro id, por el mismo monto"
+          },
+          "why": {
+            "en": "A fresh id defeats deduplication: Ana would be debited a second time.",
+            "es": "Un id nuevo anula la deduplicación: a Ana se le debitaría por segunda vez."
+          }
+        },
+        {
+          "text": {
+            "en": "Mark it FAILED and let tomorrow's reconciliation fix it",
+            "es": "Marcarla como FAILED y dejar que la conciliación de mañana la arregle"
+          },
+          "why": {
+            "en": "The money would sit in transit for a day; reconciliation is a safety net, not the delivery path.",
+            "es": "El dinero quedaría un día en tránsito; la conciliación es una red de seguridad, no el camino de entrega."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "After the debit commits, the saga only moves forward. The credit cannot be refused for business reasons, so the orchestrator retries it; the unique `(transfer_id, step)` record makes a duplicate a no-op. The durable `DEBITED` state is what lets a restarted orchestrator know exactly where to resume.",
+        "es": "Una vez confirmado el débito, la saga solo avanza. El crédito no puede ser rechazado por razones de negocio, así que el orquestador lo reintenta; el registro único `(transfer_id, step)` hace que un duplicado no tenga efecto. El estado durable `DEBITED` es lo que le permite a un orquestador reiniciado saber exactamente dónde retomar."
+      }
+    },
+    {
+      "id": "case-digital-wallet.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Wallets are hash-partitioned by account id over **50 shards**, and sender and receiver are independent of each other. What **percentage** of transfers touch two different shards?",
+        "es": "Las billeteras se particionan por hash del id de cuenta en **50 shards**, y el emisor y el receptor son independientes entre sí. ¿Qué **porcentaje** de las transferencias toca dos shards distintos?"
+      },
+      "answer": 98,
+      "tolerance": 0.02,
+      "unit": "%",
+      "explain": {
+        "en": "The receiver lands on the sender's shard with probability 1/50 = 2%, so 98% of transfers cross shards. Cross-shard is the normal case, not an edge case: the design has to make the two-step transfer cheap and safe instead of hoping accounts are co-located.",
+        "es": "El receptor cae en el shard del emisor con probabilidad 1/50 = 2%, así que el 98% de las transferencias cruza shards. Cruzar shards es el caso normal, no un caso borde: el diseño tiene que hacer barata y segura la transferencia en dos pasos, en vez de esperar que las cuentas coincidan en un shard."
+      }
+    },
+    {
+      "id": "case-digital-wallet.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: \"We read the balance and check `balance >= amount` in the service before running `UPDATE accounts SET balance = balance - amount`, so an overdraft is impossible.\" Yet balances go negative under load. What is the fix?",
+        "es": "Alguien del equipo dice: \"Leemos el saldo y verificamos `balance >= amount` en el servicio antes de ejecutar `UPDATE accounts SET balance = balance - amount`, así que un sobregiro es imposible.\" Aun así, bajo carga aparecen saldos negativos. ¿Cuál es la solución?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Move the check into the UPDATE: `... AND balance >= amount`",
+            "es": "Llevar la verificación al UPDATE: `... AND balance >= amount`"
+          },
+          "why": {
+            "en": "Check and write become one atomic statement under the row lock; zero rows updated means insufficient funds.",
+            "es": "La verificación y la escritura pasan a ser una sola sentencia atómica bajo el lock de la fila; cero filas actualizadas significa fondos insuficientes."
+          }
+        },
+        {
+          "text": {
+            "en": "Read the balance from the primary, not a replica",
+            "es": "Leer el saldo desde el primario, no desde una réplica"
+          },
+          "why": {
+            "en": "A fresher read narrows the window, but two concurrent transfers still both pass the check.",
+            "es": "Una lectura más fresca achica la ventana, pero dos transferencias concurrentes igual pasan la verificación."
+          }
+        },
+        {
+          "text": {
+            "en": "Require an idempotency key on every transfer request",
+            "es": "Exigir una clave de idempotencia en cada solicitud de transferencia"
+          },
+          "why": {
+            "en": "That dedupes retries of one transfer; here two different transfers race for the same money.",
+            "es": "Eso deduplica los reintentos de una misma transferencia; aquí dos transferencias distintas compiten por el mismo dinero."
+          }
+        },
+        {
+          "text": {
+            "en": "Run reconciliation every hour instead of every day",
+            "es": "Correr la conciliación cada hora en vez de cada día"
+          },
+          "why": {
+            "en": "It finds the overdraft sooner but does nothing to prevent it.",
+            "es": "Encuentra el sobregiro antes, pero no hace nada para evitarlo."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Check-then-act in the application is a race: two transfers read the same balance and both pass. Put the condition inside the write, so the database evaluates it under the row lock. Idempotency and reconciliation solve different problems: duplicate requests and undetected bugs.",
+        "es": "Verificar y luego actuar en la aplicación es una carrera: dos transferencias leen el mismo saldo y ambas pasan. Pon la condición dentro de la escritura, así la base de datos la evalúa bajo el lock de la fila. La idempotencia y la conciliación resuelven otros problemas: solicitudes duplicadas y bugs no detectados."
+      }
+    }
+  ]
+}

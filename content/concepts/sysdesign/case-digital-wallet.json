@@ -1,0 +1,244 @@
+{
+  "id": "case-digital-wallet",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": {
+    "en": "Design: digital wallet",
+    "es": "Diseño: billetera digital"
+  },
+  "aliases": [
+    "wallet design",
+    "P2P transfers",
+    "balance transfer",
+    "money transfer",
+    "double-entry ledger",
+    "TCC",
+    "Try-Confirm-Cancel",
+    "event sourcing"
+  ],
+  "tldr": {
+    "en": "Move money between accounts on different shards as an idempotent debit-then-credit saga recorded in a double-entry ledger; the append-only log makes every balance reproducible, and reconciliation proves no money was created or lost.",
+    "es": "Mueve dinero entre cuentas de shards distintos con una saga idempotente, primero débito y luego crédito, registrada en un ledger de partida doble; el log de solo agregado permite reproducir cada saldo, y la conciliación prueba que no se creó ni se perdió dinero."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: move a balance from one user's wallet to another's, and show balance and history. Top-ups and withdrawals go through a PSP, which is [[case-payment-system]]. **Non-functional**: money is never created or lost, a transfer happens once however often it is retried, a balance never goes negative, and any past balance can be reproduced for an auditor.\n\nScale (assumed): 100M wallets and 10k transfers/s at peak. At ~1k write transactions/s per database node (assumed) and two writes per transfer, that is at least 20 shards.\n\nQuestions I'd ask:\n\n1. Must the receiver see the money at once, or within seconds?\n2. One currency or several?\n3. What must auditors be able to reproduce?\n\n### API and data model\n\n`POST /transfers {from, to, amount, currency}` with an `Idempotency-Key` returns `{transfer_id, status}`. Accounts are sharded by `account_id`. Each shard holds `accounts(id, balance)` and an append-only `entries(transfer_id, account_id, amount)`; a `transfers` table holds the state machine `PENDING → DEBITED → COMPLETED`, or `FAILED`. Amounts are integers in minor units.\n\n### Architecture\n\nThe transfer service claims the idempotency key and creates the transfer. A durable orchestrator then drives two local transactions: **debit the sender** on its shard, **credit the receiver** on theirs. In between, the money sits in a **transit account**, so the ledger balances at every step. Each step is idempotent on `(transfer_id, step)`.\n\n### The hard parts\n\n1. **Two shards, one transfer.** With 20 shards, ~95% of transfers cross shards, so no single local transaction covers both accounts. The options are 2PC, TCC or a saga ([[sagas-outbox]]).\n2. **Proving correctness.** \"The balance column says 40\" is not evidence. An append-only double-entry ledger, where each transfer's entries sum to zero, lets you rebuild every balance and compare.",
+    "es": "### Requisitos\n\n**Funcionales**: mover saldo de la billetera de un usuario a la de otro, y mostrar el saldo y el historial. Las recargas y los retiros pasan por un PSP, y eso es [[case-payment-system]]. **No funcionales**: nunca se crea ni se pierde dinero, una transferencia ocurre una sola vez por más que se reintente, un saldo nunca queda negativo y cualquier saldo pasado se puede reproducir para una auditoría.\n\nEscala (supuesta): 100M de billeteras y 10k transferencias/s en el pico. Con ~1k transacciones de escritura/s por nodo de base de datos (supuesto) y dos escrituras por transferencia, son al menos 20 shards.\n\nPreguntas que haría:\n\n1. ¿El receptor debe ver el dinero al instante o en unos segundos?\n2. ¿Una moneda o varias?\n3. ¿Qué debe poder reproducir una auditoría?\n\n### API y modelo de datos\n\n`POST /transfers {from, to, amount, currency}` con un `Idempotency-Key` devuelve `{transfer_id, status}`. Las cuentas se particionan por `account_id`. Cada shard tiene `accounts(id, balance)` y una tabla de solo agregado `entries(transfer_id, account_id, amount)`; una tabla `transfers` guarda la máquina de estados `PENDING → DEBITED → COMPLETED`, o `FAILED`. Los montos son enteros en unidades menores.\n\n### Arquitectura\n\nEl servicio de transferencias reserva la clave de idempotencia y crea la transferencia. Luego un orquestador durable conduce dos transacciones locales: **debitar al emisor** en su shard y **acreditar al receptor** en el suyo. Entre ambas, el dinero queda en una **cuenta de tránsito**, así el ledger cuadra en cada paso. Cada paso es idempotente por `(transfer_id, step)`.\n\n### Las partes difíciles\n\n1. **Dos shards, una transferencia.** Con 20 shards, ~95% de las transferencias cruzan shards, así que ninguna transacción local cubre las dos cuentas. Las opciones son 2PC, TCC o una saga ([[sagas-outbox]]).\n2. **Probar que está bien.** \"La columna de saldo dice 40\" no es evidencia. Un ledger de partida doble y solo de agregado, donde las entradas de cada transferencia suman cero, permite reconstruir cada saldo y comparar."
+  },
+  "keyPoints": [
+    {
+      "en": "With 20 shards, ~95% of transfers span two shards: no local transaction covers both accounts.",
+      "es": "Con 20 shards, ~95% de las transferencias tocan dos shards: ninguna transacción local cubre las dos cuentas."
+    },
+    {
+      "en": "Run a **saga**: debit the sender first, then credit the receiver, retrying until it succeeds.",
+      "es": "Usa una **saga**: primero debita al emisor y luego acredita al receptor, reintentando hasta que salga bien."
+    },
+    {
+      "en": "The debit is **conditional** on the balance: the only step allowed to fail for business reasons.",
+      "es": "El débito es **condicional** al saldo: es el único paso que puede fallar por una razón de negocio."
+    },
+    {
+      "en": "Between steps the money sits in a **transit account**, so the entries always sum to zero.",
+      "es": "Entre los pasos el dinero queda en una **cuenta de tránsito**, así las entradas siempre suman cero."
+    },
+    {
+      "en": "Balances are derived from an **append-only** ledger: replay it to reproduce or audit any balance.",
+      "es": "Los saldos se derivan de un ledger de **solo agregado**: reprodúcelo para reconstruir o auditar cualquier saldo."
+    }
+  ],
+  "diagram": {
+    "code": "sequenceDiagram\n  participant C as Client\n  participant T as Transfer service\n  participant A as Shard A (sender)\n  participant B as Shard B (receiver)\n  C->>T: POST /transfers, Idempotency-Key k1\n  T->>T: Claim key, transfer PENDING\n  T->>A: Debit sender if funds suffice\n  A-->>T: OK, money now in transit\n  T->>T: Transfer DEBITED\n  T->>B: Credit receiver from transit\n  B--xT: Timeout\n  T->>B: Retry with same transfer id\n  B-->>T: OK, applied once\n  T-->>C: 200 COMPLETED",
+    "caption": {
+      "en": "Two local transactions on two shards, tied together by a durable state machine; a retried step with the same transfer id is applied once.",
+      "es": "Dos transacciones locales en dos shards, unidas por una máquina de estados durable; un paso reintentado con el mismo id de transferencia se aplica una sola vez."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Cross-shard transfer as an idempotent saga",
+      "es": "Transferencia entre shards como saga idempotente"
+    },
+    "source": "# Each step is ONE local transaction on ONE shard. UNIQUE(transfer_id, step) on `steps`\n# makes a retried or duplicated step a no-op. Amounts are integers in minor units.\ndef debit_sender(shard, t) -> bool:\n    with shard.tx() as tx:\n        if not claim_step(tx, t.id, \"debit\"):\n            return True                          # retry: the debit already happened\n        n = tx.run(\"UPDATE accounts SET balance = balance - %s \"\n                   \"WHERE id = %s AND balance >= %s\", t.amount, t.sender, t.amount)\n        if n == 0:\n            tx.rollback()                        # insufficient funds: nothing changed\n            return False\n        post(tx, t.id, [(t.sender, -t.amount), (TRANSIT, +t.amount)])  # entries sum to zero\n        return True\n\ndef credit_receiver(shard, t) -> None:\n    with shard.tx() as tx:\n        if claim_step(tx, t.id, \"credit\"):       # False on a retry: already credited\n            tx.run(\"UPDATE accounts SET balance = balance + %s WHERE id = %s\",\n                   t.amount, t.receiver)\n            post(tx, t.id, [(TRANSIT, -t.amount), (t.receiver, +t.amount)])\n\ndef claim_step(tx, transfer_id: str, step: str) -> bool:\n    return tx.run(\"INSERT INTO steps (transfer_id, step) VALUES (%s, %s) \"\n                  \"ON CONFLICT DO NOTHING\", transfer_id, step) == 1\n\ndef run_transfer(t) -> str:                      # driven by a durable orchestrator\n    if not debit_sender(shard_of(t.sender), t):\n        return mark(t, \"FAILED\")\n    mark(t, \"DEBITED\")                           # past this point, only forward\n    retry_until_ok(lambda: credit_receiver(shard_of(t.receiver), t))\n    return mark(t, \"COMPLETED\")"
+  },
+  "example": {
+    "en": "Ana sends $40 to Luis; her wallet is on shard 3, his on shard 11. The app sends key `tr_77`. Step 1 on shard 3, one local transaction: check her balance, Ana −4000, transit +4000. Step 2 on shard 11 times out, so the orchestrator retries with the same transfer id; the `steps` table shows the credit was already applied, so Luis is credited exactly once: transit −4000, Luis +4000.\n\nFor ~300 ms the money was in neither wallet, but the ledger showed it in transit, and the transfer's four entries sum to zero.",
+    "es": "Ana le envía $40 a Luis; su billetera está en el shard 3 y la de él en el shard 11. La app envía la clave `tr_77`. Paso 1 en el shard 3, una sola transacción local: verifica el saldo, Ana −4000, tránsito +4000. El paso 2 en el shard 11 da timeout, así que el orquestador reintenta con el mismo id de transferencia; la tabla `steps` muestra que el crédito ya se aplicó, y Luis recibe el dinero exactamente una vez: tránsito −4000, Luis +4000.\n\nDurante ~300 ms el dinero no estuvo en ninguna de las dos billeteras, pero el ledger lo mostraba en tránsito, y las cuatro entradas de la transferencia suman cero."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "2PC vs TCC vs saga",
+        "es": "2PC vs TCC vs saga"
+      },
+      "body": {
+        "en": "**2PC**: both shards prepare and hold their locks until a coordinator says commit. Atomic and isolated, but a coordinator crash leaves rows locked, and locks held across two round trips cut throughput. PostgreSQL supports it with `PREPARE TRANSACTION`, off by default (`max_prepared_transactions = 0`). **TCC** (Try-Confirm-Cancel): the same idea in application code. *Try* reserves the amount on the sender as a hold, *Confirm* turns the hold into the transfer, *Cancel* releases it. No database locks between phases, but every participant needs three idempotent operations. **Saga**: no reservation phase; run the steps in order and compensate on failure. For a transfer I order the steps so compensation is almost never needed: the debit is the only step that can be refused, and it goes first. After it, the credit can fail only for technical reasons, so I retry it.",
+        "es": "**2PC**: los dos shards preparan y mantienen sus locks hasta que un coordinador ordena el commit. Es atómico y aislado, pero si el coordinador se cae las filas quedan bloqueadas, y el throughput baja porque los locks duran dos viajes de red. PostgreSQL lo soporta con `PREPARE TRANSACTION`, desactivado por defecto (`max_prepared_transactions = 0`). **TCC** (Try-Confirm-Cancel): la misma idea en código de aplicación. *Try* reserva el monto del emisor como una retención, *Confirm* convierte la retención en la transferencia y *Cancel* la libera. No hay locks de base de datos entre las fases, pero cada participante necesita tres operaciones idempotentes. **Saga**: no hay fase de reserva; ejecutas los pasos en orden y compensas si algo falla. En una transferencia ordeno los pasos para que casi nunca haga falta compensar: el débito es el único paso que puede ser rechazado, y va primero. Después, el crédito solo puede fallar por razones técnicas, así que reintento hasta que entre."
+      }
+    },
+    {
+      "title": {
+        "en": "Never negative, effectively once",
+        "es": "Nunca negativo, efectivamente una vez"
+      },
+      "body": {
+        "en": "Two invariants, both enforced inside a shard's local transaction. **No overdraft**: `UPDATE accounts SET balance = balance - x WHERE id = ? AND balance >= x`; zero rows updated means insufficient funds. The row lock serializes concurrent debits on one account, so two transfers can't both spend the last $40. **Effectively once**: the client's idempotency key maps to one transfer id ([[idempotency]]), and each step inserts `(transfer_id, step)` under a unique constraint in the same transaction as the balance change, so a retried or duplicated step is a no-op. The orchestrator must be durable too: a workflow engine such as Temporal, or workers scanning the `transfers` table, so a crash after the debit resumes at the credit instead of forgetting it. A transfer stuck in `DEBITED` is the alert that matters most.",
+        "es": "Dos invariantes, ambas garantizadas dentro de la transacción local de un shard. **Sin sobregiro**: `UPDATE accounts SET balance = balance - x WHERE id = ? AND balance >= x`; cero filas actualizadas significa fondos insuficientes. El lock de la fila serializa los débitos concurrentes sobre una cuenta, así dos transferencias no pueden gastar los mismos últimos $40. **Efectivamente una vez**: la clave de idempotencia del cliente corresponde a un solo id de transferencia ([[idempotency]]), y cada paso inserta `(transfer_id, step)` bajo una restricción única en la misma transacción que el cambio de saldo, así un paso reintentado o duplicado no hace nada. El orquestador también debe ser durable: un motor de workflows como Temporal, o workers que recorren la tabla `transfers`, para que una caída después del débito retome en el crédito en vez de olvidarlo. Una transferencia atascada en `DEBITED` es la alerta que más importa."
+      }
+    },
+    {
+      "title": {
+        "en": "Event sourcing: audit and reproducibility",
+        "es": "Event sourcing: auditoría y reproducibilidad"
+      },
+      "body": {
+        "en": "Store what happened, not just the result. The source of truth is an append-only log of events per account (`TransferDebited`, `TransferCredited`); the balance is a fold over them. That gives auditors three things a balance column can't: rebuild the state from scratch, ask what a balance was at any past moment, and replay after fixing a bug. Replaying from zero is slow, so keep **snapshots** (the balance as of entry N) and replay only the tail. Reads use a materialized balance, updated in the same transaction as the entry, or asynchronously if you accept lag (CQRS). The rules: events are immutable, corrections are new reversing events, and the code that applies events must be deterministic, with no clock and no randomness, or a replay won't reproduce the same balances.",
+        "es": "Guarda lo que pasó, no solo el resultado. La fuente de verdad es un log de solo agregado con los eventos de cada cuenta (`TransferDebited`, `TransferCredited`); el saldo es la acumulación de esos eventos. Eso le da a una auditoría tres cosas que una columna de saldo no puede: reconstruir el estado desde cero, preguntar cuánto era un saldo en cualquier momento pasado y reproducir todo después de corregir un bug. Reproducir desde cero es lento, así que guarda **snapshots** (el saldo a la altura de la entrada N) y reproduce solo la cola. Las lecturas usan un saldo materializado, actualizado en la misma transacción que la entrada, o de forma asíncrona si aceptas retraso (CQRS). Las reglas: los eventos son inmutables, las correcciones son eventos nuevos de reverso, y el código que aplica los eventos debe ser determinista, sin reloj ni azar, o una reproducción no dará los mismos saldos."
+      }
+    },
+    {
+      "title": {
+        "en": "Reconciliation and hot accounts",
+        "es": "Conciliación y cuentas calientes"
+      },
+      "body": {
+        "en": "Reconciliation is how you find the bug the design said was impossible. Continuously: every transfer's entries sum to zero; the transit accounts, summed across shards, equal the transfers currently in `DEBITED`; and each stored balance equals the sum of that account's entries. Daily: total wallet balances equal the money actually held in the bank accounts behind them. Stripe tracks the share of its ledger that clears to zero as a quality metric. **Hot accounts** are the scaling limit: a merchant receiving thousands of payments per second serializes on one row. Append its entries without touching the balance row and fold them in batches, or split the merchant into sub-accounts. Debits still need the strict balance check; credits don't.",
+        "es": "La conciliación es la forma de encontrar el bug que el diseño decía que era imposible. De forma continua: las entradas de cada transferencia suman cero; las cuentas de tránsito, sumadas entre shards, equivalen a las transferencias que están en `DEBITED`; y cada saldo guardado es igual a la suma de las entradas de esa cuenta. A diario: el total de los saldos de las billeteras es igual al dinero que hay de verdad en las cuentas bancarias que los respaldan. Stripe mide como métrica de calidad qué parte de su ledger queda en cero. Las **cuentas calientes** son el límite de escala: un comercio que recibe miles de pagos por segundo serializa todo en una fila. Agrega sus entradas sin tocar la fila del saldo y acumúlalas por lotes, o divide al comercio en subcuentas. Los débitos siguen necesitando la verificación estricta del saldo; los créditos no."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "No distributed locks: each step is a short local transaction on one shard.",
+      "es": "Sin locks distribuidos: cada paso es una transacción local corta en un solo shard."
+    },
+    {
+      "en": "Money is always somewhere, sender, transit or receiver, and the entries prove it.",
+      "es": "El dinero siempre está en algún lado, emisor, tránsito o receptor, y las entradas lo prueban."
+    },
+    {
+      "en": "Any balance at any time can be rebuilt from the log: audits and bug fixes become replays.",
+      "es": "Cualquier saldo de cualquier momento se reconstruye desde el log: las auditorías y las correcciones se vuelven reproducciones."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Not isolated: for a moment the sender is debited and the receiver is not yet credited.",
+      "es": "No hay aislamiento: por un momento el emisor ya fue debitado y el receptor todavía no recibió el crédito."
+    },
+    {
+      "en": "Needs a durable orchestrator and a monitor for transfers stuck halfway.",
+      "es": "Necesita un orquestador durable y un monitor de transferencias atascadas a mitad de camino."
+    },
+    {
+      "en": "Hot accounts serialize on one row: high-volume receivers need batching or sub-accounts.",
+      "es": "Las cuentas calientes serializan todo en una fila: los receptores de alto volumen necesitan lotes o subcuentas."
+    }
+  ],
+  "whenToUse": {
+    "en": "Balances you hold and move between your own accounts: wallets, in-app credits, marketplace balances, loyalty points with real value.",
+    "es": "Saldos que tú custodias y mueves entre tus propias cuentas: billeteras, créditos dentro de la app, saldos de un marketplace o puntos de lealtad con valor real."
+  },
+  "whenNotToUse": {
+    "en": "When every account fits one database: use one ACID transaction. When a distributed SQL database such as Spanner or CockroachDB is available, let it run the cross-shard commit for you.",
+    "es": "Cuando todas las cuentas caben en una base de datos: usa una sola transacción ACID. Cuando tienes una base SQL distribuida como Spanner o CockroachDB, deja que ella haga el commit entre shards por ti."
+  },
+  "numbers": [
+    {
+      "en": "Sizing (assumed): 10k transfers/s × 2 local writes ÷ ~1k writes/s per node ≈ 20 shards.",
+      "es": "Dimensionamiento (supuesto): 10k transferencias/s × 2 escrituras locales ÷ ~1k escrituras/s por nodo ≈ 20 shards."
+    },
+    {
+      "en": "With S shards, a transfer stays on one shard with probability 1/S: 20 shards means ~95% cross-shard.",
+      "es": "Con S shards, una transferencia queda en un solo shard con probabilidad 1/S: con 20 shards, ~95% cruza shards."
+    },
+    {
+      "en": "Ledger volume: 4 entries per transfer, so 10k transfers/s ≈ 40k entries/s at peak.",
+      "es": "Volumen del ledger: 4 entradas por transferencia, así que 10k transferencias/s ≈ 40k entradas/s en el pico."
+    },
+    {
+      "en": "PostgreSQL ships with 2PC off: `max_prepared_transactions` defaults to 0.",
+      "es": "PostgreSQL trae 2PC desactivado: `max_prepared_transactions` vale 0 por defecto."
+    },
+    {
+      "en": "Stripe's Ledger (2024): ~5 billion events a day; 99.99% of dollar volume ingested and verified within four days.",
+      "es": "Ledger de Stripe (2024): ~5 mil millones de eventos al día; 99.99% del volumen en dólares ingerido y verificado en cuatro días."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Crediting the receiver first: if the debit then fails, the money is already spent and must be clawed back.",
+      "es": "Acreditar primero al receptor: si después falla el débito, el dinero ya se gastó y hay que recuperarlo."
+    },
+    {
+      "en": "Reading the balance, checking it in the app, then writing: two concurrent transfers both pass and overdraw.",
+      "es": "Leer el saldo, verificarlo en la app y luego escribir: dos transferencias concurrentes pasan la verificación y sobregiran."
+    },
+    {
+      "en": "A new idempotency key on each retry: every timeout becomes a second transfer.",
+      "es": "Una clave de idempotencia nueva en cada reintento: cada timeout se convierte en una segunda transferencia."
+    },
+    {
+      "en": "Updating balances with no ledger entries: when totals disagree, there is nothing to replay.",
+      "es": "Actualizar saldos sin entradas en el ledger: cuando los totales no coinciden, no hay nada que reproducir."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Sender and receiver are on different shards. How do you keep the transfer atomic?",
+        "es": "El emisor y el receptor están en shards distintos. ¿Cómo mantienes atómica la transferencia?"
+      },
+      "a": {
+        "en": "I don't make it atomic; I make it always completable. First a local transaction debits the sender, checking the balance, and moves the money to transit. Then I credit the receiver, retrying with the same transfer id until it succeeds. Each step is idempotent and a durable orchestrator resumes after crashes. 2PC would give atomicity, but it holds locks across shards and blocks if the coordinator dies; I'd only take that from a database built for it, like Spanner.",
+        "es": "No la hago atómica; hago que siempre se pueda completar. Primero una transacción local debita al emisor, verificando el saldo, y mueve el dinero a tránsito. Luego acredito al receptor, reintentando con el mismo id de transferencia hasta que salga bien. Cada paso es idempotente y un orquestador durable retoma después de una caída. 2PC daría atomicidad, pero mantiene locks entre shards y se bloquea si muere el coordinador; solo lo aceptaría de una base de datos hecha para eso, como Spanner."
+      }
+    },
+    {
+      "q": {
+        "en": "Why event sourcing? Isn't a ledger table enough?",
+        "es": "¿Por qué event sourcing? ¿No alcanza con una tabla de ledger?"
+      },
+      "a": {
+        "en": "An append-only ledger already is the event log. Event sourcing means I treat it as the source of truth and the balance as a cache of it. That buys reproducibility: I can rebuild every balance, say what it was last Tuesday, and replay after fixing a bug. The costs are snapshots to keep replays fast, deterministic code and a read model that may lag. For money I accept those; for a profile page I wouldn't.",
+        "es": "Un ledger de solo agregado ya es el log de eventos. Event sourcing significa que lo trato como la fuente de verdad y al saldo como una cache de él. Eso da reproducibilidad: puedo reconstruir cada saldo, decir cuánto era el martes pasado y reproducir todo después de corregir un bug. Los costos son los snapshots para que reproducir sea rápido, código determinista y un modelo de lectura que puede ir atrasado. Para dinero los acepto; para una página de perfil, no."
+      }
+    },
+    {
+      "q": {
+        "en": "The credit step keeps failing. What now?",
+        "es": "El paso de crédito sigue fallando. ¿Y ahora?"
+      },
+      "a": {
+        "en": "First, why. Technical failures, a shard down or a timeout, are retried with backoff for as long as it takes: the money is safe in transit, and an alert fires when a transfer stays DEBITED past a threshold. A business failure, such as a closed receiver account, is the one case that needs compensation: a new transfer from transit back to the sender, with its own entries. I never edit or delete the original debit.",
+        "es": "Primero, por qué. Las fallas técnicas, un shard caído o un timeout, se reintentan con backoff el tiempo que haga falta: el dinero está seguro en tránsito, y una alerta se dispara cuando una transferencia sigue en DEBITED más allá de un umbral. Una falla de negocio, como una cuenta receptora cerrada, es el único caso que pide compensación: una transferencia nueva desde tránsito de vuelta al emisor, con sus propias entradas. Nunca edito ni borro el débito original."
+      }
+    }
+  ],
+  "related": [
+    "case-payment-system",
+    "sagas-outbox",
+    "idempotency",
+    "sharding",
+    "consistency-models",
+    "event-driven"
+  ],
+  "sources": [
+    {
+      "title": "Stripe — Ledger: Stripe's system for tracking and validating money movement (2024)",
+      "url": "https://stripe.dev/blog/ledger-stripe-system-for-tracking-and-validating-money-movement"
+    },
+    {
+      "title": "Martin Fowler — Event Sourcing (2005)",
+      "url": "https://martinfowler.com/eaaDev/EventSourcing.html"
+    },
+    {
+      "title": "PostgreSQL — PREPARE TRANSACTION (two-phase commit)",
+      "url": "https://www.postgresql.org/docs/current/sql-prepare-transaction.html"
+    },
+    {
+      "title": "Apache Seata — TCC mode (Try, Confirm, Cancel)",
+      "url": "https://seata.apache.org/docs/user/mode/tcc/"
+    }
+  ]
+}

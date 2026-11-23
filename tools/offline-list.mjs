@@ -11,7 +11,8 @@ const OUT = path.join(ROOT, "out");
 if (!fs.existsSync(OUT)) { console.log("offline-list: no out/ (run next build first)"); process.exit(1); }
 const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
 const gz = (f) => zlib.gzipSync(fs.readFileSync(f), { level: 6 }).length;
-const url = (f) => "/" + path.relative(OUT, f).split(path.sep).join("/");
+// Percent-encoded the way Next writes its own URLs ("app/%5Blocale%5D/…"): the worker's cache key.
+const url = (f) => encodeURI("/" + path.relative(OUT, f).split(path.sep).join("/"));
 
 const assetFiles = [...walk(path.join(OUT, "_next", "static")), ...walk(path.join(OUT, "ill")), path.join(OUT, "icon.svg")].filter((f) => fs.existsSync(f));
 const assets = assetFiles.map(url);

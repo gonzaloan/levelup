@@ -1,0 +1,156 @@
+{
+  "concept": "case-leaderboard",
+  "items": [
+    {
+      "id": "case-leaderboard.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "A game with 30M players keeps scores in Postgres with an index on `score`. \"My rank\" runs `SELECT COUNT(*) FROM scores WHERE score > $1`. The top 10 is fast, but \"my rank\" takes seconds for mid-table players, and ranks must be current within a second. What do you do?",
+        "es": "Un juego con 30M de jugadores guarda los puntajes en Postgres con un índice sobre `score`. \"Mi rank\" ejecuta `SELECT COUNT(*) FROM scores WHERE score > $1`. El top 10 es rápido, pero \"mi rank\" tarda segundos para jugadores de mitad de tabla, y los ranks deben estar al día en un segundo. ¿Qué haces?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Serve ranks from a Redis sorted set with `ZREVRANK`, fed from the scores table",
+            "es": "Servir los ranks desde un sorted set de Redis con `ZREVRANK`, alimentado desde la tabla de puntajes"
+          },
+          "why": {
+            "en": "The skip list stores how many nodes each link skips, so a rank costs O(log N) instead of O(rank).",
+            "es": "La skip list guarda cuántos nodos salta cada enlace, así que un rank cuesta O(log N) en vez de O(rank)."
+          }
+        },
+        {
+          "text": {
+            "en": "Add a covering index on `(score, player_id)` so the count never touches the table",
+            "es": "Agregar un índice covering sobre `(score, player_id)` para que el conteo nunca toque la tabla"
+          },
+          "why": {
+            "en": "An index-only scan still walks one entry per better player: millions for a mid-table rank.",
+            "es": "Un index-only scan igual recorre una entrada por cada jugador mejor: millones para un rank de mitad de tabla."
+          }
+        },
+        {
+          "text": {
+            "en": "Add read replicas and spread the rank queries across them",
+            "es": "Agregar réplicas de lectura y repartir entre ellas las consultas de rank"
+          },
+          "why": {
+            "en": "Each query stays O(rank); replicas add capacity, not a faster algorithm.",
+            "es": "Cada consulta sigue siendo O(rank); las réplicas agregan capacidad, no un algoritmo más rápido."
+          }
+        },
+        {
+          "text": {
+            "en": "Cache every player's rank for an hour and refresh it in the background",
+            "es": "Cachear el rank de cada jugador por una hora y refrescarlo en segundo plano"
+          },
+          "why": {
+            "en": "Ranks shift with every score update, so an hour-old rank breaks the freshness requirement.",
+            "es": "Los ranks cambian con cada actualización de puntaje, así que un rank de hace una hora rompe el requisito de frescura."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A B-tree finds a score fast, but it doesn't know how many entries come before it, so counting them is a scan proportional to the rank. A rank needs an order-statistic structure: Redis's sorted set keeps skip counts on each link and answers in O(log N). The database stays the source of truth.",
+        "es": "Un B-tree encuentra un score rápido, pero no sabe cuántas entradas hay antes, así que contarlas es un scan proporcional al rank. Un rank necesita una estructura con estadísticas de orden: el sorted set de Redis guarda cuántos nodos salta cada enlace y responde en O(log N). La base de datos sigue siendo la fuente de verdad."
+      }
+    },
+    {
+      "id": "case-leaderboard.a2",
+      "type": "code",
+      "prompt": {
+        "en": "Complete `around_me` so it returns the player's rank and the `span` players **above and below**, highest score first.",
+        "es": "Completa `around_me` para que devuelva el rank del jugador y los `span` jugadores de **arriba y de abajo**, con el score más alto primero."
+      },
+      "lang": "python",
+      "code": "def around_me(player, span=5):\n    rank = r.zrevrank(BOARD, player)   # 0-based; None if unranked\n    if rank is None:\n        return None, []\n    ____\n    return rank + 1, rows",
+      "options": [
+        {
+          "text": "rows = r.zrange(BOARD, max(0, rank - span), rank + span, desc=True, withscores=True)"
+        },
+        {
+          "text": "rows = r.zrange(BOARD, rank - span, rank + span, desc=True, withscores=True)",
+          "why": {
+            "en": "For the top players the start goes negative, and a negative index counts from the other end of the set: the range comes back empty or wrong.",
+            "es": "Para los primeros jugadores el inicio queda negativo, y un índice negativo cuenta desde el otro extremo del set: el rango vuelve vacío o equivocado."
+          }
+        },
+        {
+          "text": "rows = r.zrange(BOARD, max(0, rank - span), rank + span, withscores=True)",
+          "why": {
+            "en": "Without `desc`, indexes count from the lowest score: you get players near the bottom of the board.",
+            "es": "Sin `desc`, los índices cuentan desde el score más bajo: obtienes jugadores del fondo de la tabla."
+          }
+        },
+        {
+          "text": "rows = r.zrangebyscore(BOARD, rank - span, rank + span, withscores=True)",
+          "why": {
+            "en": "This treats rank positions as score values: it returns players whose points are near that number.",
+            "es": "Esto trata las posiciones de rank como valores de score: devuelve jugadores cuyos puntos están cerca de ese número."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "`ZREVRANK` gives a 0-based position in high-to-low order, so the neighbours are the index range around it, read in the same order. Clamp the start at 0, and keep rank indexes and score values apart: range-by-index and range-by-score are different queries.",
+        "es": "`ZREVRANK` da una posición en base 0 en orden de mayor a menor, así que los vecinos son el rango de índices alrededor, leído en ese mismo orden. Limita el inicio a 0 y no mezcles índices de rank con valores de score: el rango por índice y el rango por score son consultas distintas."
+      }
+    },
+    {
+      "id": "case-leaderboard.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "The global board is one sorted set that no longer fits in a node's memory. A teammate says: \"Move it to Redis Cluster; the cluster will spread the set across shards.\" What is wrong?",
+        "es": "La tabla global es un sorted set que ya no entra en la memoria de un nodo. Alguien del equipo dice: \"Pasémosla a Redis Cluster; el cluster va a repartir el set entre shards.\" ¿Qué está mal?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "A sorted set is one key on one node; split players into several sets and merge",
+            "es": "Un sorted set es una key en un nodo; divide a los jugadores en varios sets y combina"
+          },
+          "why": {
+            "en": "Hash slots distribute keys, never the members inside a key.",
+            "es": "Los hash slots reparten keys, nunca los miembros dentro de una key."
+          }
+        },
+        {
+          "text": {
+            "en": "Redis Cluster does not support sorted sets, only strings and hashes",
+            "es": "Redis Cluster no soporta sorted sets, solo strings y hashes"
+          },
+          "why": {
+            "en": "Every data type works in a cluster; the limit is that one key stays on one node.",
+            "es": "Todos los tipos de datos funcionan en un cluster; el límite es que una key se queda en un nodo."
+          }
+        },
+        {
+          "text": {
+            "en": "The cluster would split it, but `ZREVRANK` would become O(N) per shard",
+            "es": "El cluster lo dividiría, pero `ZREVRANK` pasaría a costar O(N) por shard"
+          },
+          "why": {
+            "en": "It never splits the key, so there is no per-shard rank to compute.",
+            "es": "Nunca divide la key, así que no hay un rank por shard que calcular."
+          }
+        },
+        {
+          "text": {
+            "en": "Nothing: the cluster rebalances big keys automatically as nodes are added",
+            "es": "Nada: el cluster rebalancea las keys grandes automáticamente al agregar nodos"
+          },
+          "why": {
+            "en": "Rebalancing moves whole slots between nodes; a single big key moves in one piece.",
+            "es": "El rebalanceo mueve slots completos entre nodos; una key grande se mueve en una sola pieza."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Redis Cluster maps each key to one of 16,384 hash slots, and a key's whole value lives where its slot lives. To scale one logical board you shard it yourself: hash players into S sets, merge each shard's top K for the top list, and sum `ZCOUNT` across shards for a rank.",
+        "es": "Redis Cluster asigna cada key a uno de 16,384 hash slots, y todo el valor de una key vive donde vive su slot. Para escalar una tabla lógica la particionas tú: reparte a los jugadores por hash en S sets, combina el top K de cada shard para la lista top y suma el `ZCOUNT` entre shards para obtener un rank."
+      }
+    }
+  ]
+}

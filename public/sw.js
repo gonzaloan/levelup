@@ -17,8 +17,11 @@ self.addEventListener("activate", (e) => e.waitUntil((async () => {
   await self.clients.claim();
 })()));
 
-// One entry per path: "?_rsc=…" and other query strings do not create copies.
-const keyOf = (url) => url.origin + url.pathname;
+// One entry per path: "?_rsc=…" and other query strings do not create copies, and
+// "/app/[locale]/x.js" and "/app/%5Blocale%5D/x.js" (how Next writes it) are the same entry.
+const keyOf = (url) => {
+  try { return url.origin + encodeURI(decodeURI(url.pathname)); } catch { return url.origin + url.pathname; }
+};
 
 function pack(res) {
   const type = res.headers.get("content-type") || "";

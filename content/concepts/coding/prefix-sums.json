@@ -5,8 +5,8 @@
   "title": { "en": "Prefix sums and difference arrays", "es": "Prefix sums y arreglos de diferencias" },
   "aliases": ["prefix sum", "cumulative sum", "running total", "difference array", "2D prefix sum", "summed-area table", "range sum query", "sumas de prefijos"],
   "tldr": {
-    "en": "Precompute running totals once in O(n); any range sum is then one subtraction, O(1). The mirror trick, a difference array, makes each range update O(1).",
-    "es": "Precalcula los totales acumulados una vez en O(n); después cualquier suma de rango es una resta, O(1). El truco espejo, un arreglo de diferencias, hace cada actualización de rango en O(1)."
+    "en": "Precompute running totals once in O(n) and any range sum is one subtraction, O(1); the mirror trick, a difference array, makes each range update O(1).",
+    "es": "Precalcula los totales acumulados una vez en O(n) y cualquier suma de rango es una resta, O(1); el truco inverso, un arreglo de diferencias, hace cada actualización de rango en O(1)."
   },
   "analogy": {
     "en": "A car odometer: to know the distance between two stops you subtract two readings; you don't add up every kilometer again.",
@@ -22,8 +22,8 @@
       "es": "`P[i]` es la suma de los primeros `i` elementos; `P[0] = 0` elimina los casos borde."
     },
     {
-      "en": "The sum of `a[i:j]` is `P[j] − P[i]`: O(n) to build, O(1) per query.",
-      "es": "La suma de `a[i:j]` es `P[j] − P[i]`: O(n) para construir, O(1) por consulta."
+      "en": "The sum of `a[i:j]` is `P[j] − P[i]`; an inclusive `[l..r]` is `P[r+1] − P[l]`.",
+      "es": "La suma de `a[i:j]` es `P[j] − P[i]`; un `[l..r]` inclusivo es `P[r+1] − P[l]`."
     },
     {
       "en": "**2D**: four lookups per rectangle: the big corner, minus two strips, plus the overlap.",
@@ -48,7 +48,7 @@
   "code": {
     "lang": "python",
     "title": { "en": "Prefix sums in 1D and 2D, and a difference array", "es": "Prefix sums en 1D y 2D, y un arreglo de diferencias" },
-    "source": "from itertools import accumulate\n\ndef build_prefix(a: list[int]) -> list[int]:\n    return list(accumulate(a, initial=0))        # P[i] = sum(a[:i]), so P[0] = 0\n\ndef range_sum(P: list[int], i: int, j: int) -> int:\n    return P[j] - P[i]                           # sum of a[i:j], half-open\n\ndef build_prefix_2d(g: list[list[int]]) -> list[list[int]]:\n    rows, cols = len(g), len(g[0])\n    P = [[0] * (cols + 1) for _ in range(rows + 1)]   # extra zero row and column\n    for r in range(rows):\n        for c in range(cols):                    # top + left - overlap counted twice\n            P[r + 1][c + 1] = g[r][c] + P[r][c + 1] + P[r + 1][c] - P[r][c]\n    return P\n\ndef region_sum(P, r1: int, c1: int, r2: int, c2: int) -> int:\n    # rows r1..r2-1 and columns c1..c2-1 (half-open, like the 1D version)\n    return P[r2][c2] - P[r1][c2] - P[r2][c1] + P[r1][c1]\n\ndef apply_range_adds(n: int, updates: list[tuple[int, int, int]]) -> list[int]:\n    diff = [0] * (n + 1)                         # spare slot for r + 1 == n\n    for l, r, x in updates:                      # add x to a[l..r], inclusive\n        diff[l] += x\n        diff[r + 1] -= x\n    return list(accumulate(diff[:n]))            # prefix sum of diff = final array"
+    "source": "from itertools import accumulate\n\ndef build_prefix(a: list[int]) -> list[int]:\n    return list(accumulate(a, initial=0))        # P[i] = sum(a[:i]), so P[0] = 0\n\ndef range_sum(P: list[int], i: int, j: int) -> int:\n    return P[j] - P[i]                           # sum of a[i:j], half-open\n\ndef build_prefix_2d(g: list[list[int]]) -> list[list[int]]:\n    rows, cols = len(g), len(g[0]) if g else 0        # an empty grid has no g[0]\n    P = [[0] * (cols + 1) for _ in range(rows + 1)]   # extra zero row and column\n    for r in range(rows):\n        for c in range(cols):                    # top + left - overlap counted twice\n            P[r + 1][c + 1] = g[r][c] + P[r][c + 1] + P[r + 1][c] - P[r][c]\n    return P\n\ndef region_sum(P, r1: int, c1: int, r2: int, c2: int) -> int:\n    # rows r1..r2-1 and columns c1..c2-1 (half-open, like the 1D version)\n    return P[r2][c2] - P[r1][c2] - P[r2][c1] + P[r1][c1]\n\ndef apply_range_adds(n: int, updates: list[tuple[int, int, int]]) -> list[int]:\n    diff = [0] * (n + 1)                         # spare slot for r + 1 == n\n    for l, r, x in updates:                      # add x to a[l..r], inclusive\n        diff[l] += x\n        diff[r + 1] -= x\n    return list(accumulate(diff[:n]))            # prefix sum of diff = final array"
   },
   "example": {
     "en": "**Range sum query**: `a = [1, 3, 4, 8, 6, 1, 4, 2]` gives `P = [0, 1, 4, 8, 16, 22, 23, 27, 29]`. The sum of `a[3:7]` (8 + 6 + 1 + 4) is `P[7] − P[3] = 27 − 8 = 19`. Assume n = 10⁵ and 10⁵ queries: rescanning costs up to 10¹⁰ additions; prefix sums cost ~2×10⁵ steps.\n\n**Range updates** on five zeros: add 2 to `[1..3]` and 3 to `[2..4]`. `diff = [0, 2, 3, 0, −2]` (plus a spare slot), and its prefix sum is `[0, 2, 5, 5, 3]`.",
@@ -83,7 +83,7 @@
     { "en": "Mixing conventions: `P[j] − P[i]` is the half-open `a[i:j]`; an inclusive `[l..r]` is `P[r+1] − P[l]`.", "es": "Mezclar convenciones: `P[j] − P[i]` es el rango semiabierto `a[i:j]`; un `[l..r]` inclusivo es `P[r+1] − P[l]`." },
     { "en": "A difference array of size n: `diff[r+1]` is out of range when `r = n − 1`. Allocate n + 1.", "es": "Un arreglo de diferencias de tamaño n: `diff[r+1]` se sale del rango cuando `r = n − 1`. Reserva n + 1." },
     { "en": "2D: forgetting to add back the top-left corner, which was subtracted twice.", "es": "2D: olvidar volver a sumar la esquina superior izquierda, que se restó dos veces." },
-    { "en": "In Java or C++, sums overflow a 32-bit `int`: use `long`.", "es": "En Java o C++, las sumas desbordan un `int` de 32 bits: usa `long`." }
+    { "en": "In Java or C++, sums can overflow a 32-bit `int`: use `long` (`long long` in C++).", "es": "En Java o C++, las sumas pueden desbordar un `int` de 32 bits: usa `long` (`long long` en C++)." }
   ],
   "interview": [
     {
@@ -103,7 +103,7 @@
   ],
   "related": ["hash-maps", "sliding-window", "intervals", "big-o"],
   "sources": [
-    { "title": "Laaksonen — Competitive Programmer's Handbook (9.1 Static array queries, 9.4 Range updates)", "url": "https://cses.fi/book/book.pdf" },
+    { "title": "Laaksonen — Competitive Programmer's Handbook (9.1 Static array queries; 9.4 Additional techniques: range updates)", "url": "https://cses.fi/book/book.pdf" },
     { "title": "Wikipedia — Summed-area table (2D prefix sums)", "url": "https://en.wikipedia.org/wiki/Summed-area_table" },
     { "title": "cp-algorithms — Fenwick tree", "url": "https://cp-algorithms.com/data_structures/fenwick.html" },
     { "title": "Python docs — itertools.accumulate", "url": "https://docs.python.org/3/library/itertools.html#itertools.accumulate" }
