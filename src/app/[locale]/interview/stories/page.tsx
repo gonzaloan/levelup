@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { t } from "@/lib/i18n";
 import { getConcept } from "@/lib/content";
 import { LPS_SOURCE } from "@/lib/stories";
@@ -9,7 +10,7 @@ import { StoryBank } from "@/components/StoryBank";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return { title: locale === "es" ? "Banco de historias STAR" : "STAR story bank", description: locale === "es" ? "Tus historias conductuales, etiquetadas por competencia, con cobertura y práctica cronometrada." : "Your behavioral stories, tagged by competency, with coverage and timed practice." };
+  return pageMeta(locale, "/interview/stories/", locale === "es" ? "Banco de historias STAR" : "STAR story bank", locale === "es" ? "Tus historias conductuales, etiquetadas por competencia, con cobertura y práctica cronometrada." : "Your behavioral stories, tagged by competency, with coverage and a timed drill.");
 }
 
 export default async function StoriesPage({ params }: P) {

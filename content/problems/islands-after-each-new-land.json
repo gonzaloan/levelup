@@ -1,0 +1,40 @@
+{
+  "id": "islands-after-each-new-land",
+  "concept": "union-find",
+  "difficulty": "hard",
+  "title": { "en": "Islands after each new land cell", "es": "Islas tras cada nueva celda de tierra" },
+  "prompt": {
+    "en": "A map with `rows` × `cols` cells starts as all water. Each `[r, c]` in `cells` turns that cell into land, in order. An island is a group of land cells joined up, down, left or right. Return a list with the number of islands after each addition.\n\nThe same cell may appear more than once; adding it again changes nothing. Aim for near-constant time per addition instead of recounting the whole map.",
+    "es": "Un mapa de `rows` × `cols` celdas empieza siendo solo agua. Cada `[r, c]` en `cells` convierte esa celda en tierra, en orden. Una isla es un grupo de celdas de tierra unidas hacia arriba, abajo, izquierda o derecha. Devuelve una lista con la cantidad de islas después de cada adición.\n\nLa misma celda puede aparecer más de una vez; agregarla de nuevo no cambia nada. Apunta a un tiempo casi constante por adición en vez de recontar todo el mapa."
+  },
+  "fn": "islands_after_each",
+  "starter": "def islands_after_each(rows: int, cols: int, cells: list[list[int]]) -> list[int]:\n    # A new land cell is a new island; each union with a neighbor of another island removes one.\n    return []\n",
+  "tests": [
+    { "args": [3, 3, [[0, 0], [0, 1], [1, 2], [2, 1]]], "expected": [1, 1, 2, 3], "visible": true },
+    { "args": [2, 3, [[0, 0], [0, 2], [0, 1]]], "expected": [1, 2, 1], "visible": true },
+    { "args": [1, 1, [[0, 0], [0, 0]]], "expected": [1, 1], "visible": true },
+    { "args": [2, 2, []], "expected": [] },
+    { "args": [3, 3, [[0, 1], [1, 0], [1, 2], [2, 1], [1, 1]]], "expected": [1, 2, 3, 4, 1] },
+    { "args": [2, 2, [[0, 0], [1, 1], [0, 1]]], "expected": [1, 2, 1] },
+    { "args": [1, 3, [[0, 0], [0, 2], [0, 1], [0, 1], [0, 0]]], "expected": [1, 2, 1, 1, 1] },
+    { "args": [2, 3, [[0, 2], [1, 0]]], "expected": [1, 2] },
+    { "args": [3, 3, [[0, 0], [2, 2], [0, 2], [2, 0], [0, 1], [1, 2], [2, 1], [1, 0]]], "expected": [1, 2, 3, 4, 3, 2, 1, 1] },
+    { "args": [4, 1, [[3, 0], [1, 0], [2, 0], [0, 0]]], "expected": [1, 2, 1, 1] },
+    { "args": [2, 4, [[0, 3], [1, 1], [1, 3]]], "expected": [1, 2, 2] },
+    { "args": [3, 2, [[1, 1], [2, 0], [0, 0], [1, 1], [1, 0]]], "expected": [1, 2, 3, 3, 1] },
+    { "args": [3, 4, [[1, 1], [0, 3], [2, 0], [1, 2], [1, 3], [1, 0], [2, 3], [0, 0]]], "expected": [1, 2, 3, 3, 2, 1, 1, 1] },
+    { "args": [2, 2, [[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]]], "expected": [1, 1, 1, 1, 1] }
+  ],
+  "compare": "exact",
+  "hints": [
+    { "en": "Recounting the islands after every addition costs a full flood fill each time. Union-find keeps the groups up to date as land arrives.", "es": "Recontar las islas después de cada adición cuesta un flood fill completo cada vez. Union-find mantiene los grupos al día a medida que llega la tierra." },
+    { "en": "A new land cell starts as its own island: count + 1. Then look at its four neighbors: every union that joins two different roots takes one island away.", "es": "Una celda de tierra nueva nace como su propia isla: cuenta + 1. Luego mira sus cuatro vecinos: cada unión que junta dos raíces distintas quita una isla." },
+    { "en": "Two traps: a cell added twice must not count again, and two neighbors that already share a root merge only once. Compare roots before you decrement.", "es": "Dos trampas: una celda agregada dos veces no debe contarse de nuevo, y dos vecinos que ya comparten raíz se fusionan una sola vez. Compara las raíces antes de restar." }
+  ],
+  "solution": "def islands_after_each(rows: int, cols: int, cells: list[list[int]]) -> list[int]:\n    parent, size = [-1] * (rows * cols), [1] * (rows * cols)    # parent -1 = water\n\n    def find(x: int) -> int:\n        while parent[x] != x:\n            parent[x] = parent[parent[x]]    # path halving\n            x = parent[x]\n        return x\n\n    counts, islands = [], 0\n    for r, c in cells:\n        cell = r * cols + c\n        if parent[cell] == -1:               # a repeated cell changes nothing\n            parent[cell] = cell\n            islands += 1\n            for nr, nc in ((r + 1, c), (r - 1, c), (r, c + 1), (r, c - 1)):\n                if not (0 <= nr < rows and 0 <= nc < cols) or parent[nr * cols + nc] == -1:\n                    continue\n                a, b = find(cell), find(nr * cols + nc)\n                if a != b:                   # two different islands become one\n                    if size[a] < size[b]:\n                        a, b = b, a\n                    parent[b] = a            # smaller tree under the larger root\n                    size[a] += size[b]\n                    islands -= 1\n        counts.append(islands)\n    return counts\n",
+  "complexity": { "time": "O(R·C + k·α(R·C)), k = additions", "space": "O(R·C)" },
+  "explain": {
+    "en": "Each new land cell is born as its own island, and every union that joins two different roots removes one, so the count is updated in near-constant time instead of re-flooding the map. Check roots, not neighbors: a cell that touches the same island on two sides must subtract only once, and a repeated cell must not add a new island. Mapping `(r, c)` to `r * cols + c` lets plain lists hold the forest; path halving plus union by size keep `find` near-constant.",
+    "es": "Cada celda de tierra nueva nace como su propia isla, y cada unión que junta dos raíces distintas quita una, así que la cuenta se actualiza en tiempo casi constante en vez de volver a inundar el mapa. Compara raíces, no vecinos: una celda que toca la misma isla por dos lados debe restar una sola vez, y una celda repetida no debe sumar una isla nueva. Mapear `(r, c)` a `r * cols + c` permite guardar el bosque en listas simples; path halving más union by size mantienen `find` casi constante."
+  }
+}

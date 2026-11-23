@@ -1,0 +1,113 @@
+{
+  "id": "greedy",
+  "domain": "coding",
+  "level": "core",
+  "title": { "en": "Greedy algorithms", "es": "Algoritmos greedy" },
+  "aliases": ["greedy", "greedy choice", "exchange argument", "activity selection", "jump game", "coin change", "algoritmo voraz"],
+  "tldr": {
+    "en": "Take the locally best choice at each step and never undo it; it is correct only when you can prove, usually with an exchange argument, that the choice never rules out an optimal solution.",
+    "es": "Toma la mejor opción local en cada paso y nunca la deshagas; solo es correcto cuando puedes probar, casi siempre con un exchange argument, que esa elección nunca descarta una solución óptima."
+  },
+  "explain": {
+    "en": "A **greedy algorithm** builds the answer one choice at a time: sort (or keep a heap), take the best candidate by one rule, never reconsider. That makes it fast, O(n log n) or O(n), and easy to get wrong: several rules sound right and only one is.\n\n**Prove it with an exchange argument.** Take any optimal solution that differs from yours. Show that swapping its first different choice for the greedy one doesn't make it worse. Repeat, and the optimal solution turns into the greedy one. Interval scheduling ([[intervals]]): the meeting that ends first leaves at least as much room as any other first pick.\n\n**Disprove it with one counterexample.** Coins {1, 3, 4}, amount 6: largest-first gives 4 + 1 + 1, three coins; the best is 3 + 3. When no rule survives, compare every choice with [[dynamic-programming]].\n\n**Furthest reach**: in jump problems, keep the furthest index reachable so far. Every index before it is reachable too, so one number summarizes all the options.",
+    "es": "Un **algoritmo greedy** arma la respuesta una elección a la vez: ordena (o mantén un heap), toma el mejor candidato según una regla y nunca reconsideres. Eso lo hace rápido, O(n log n) u O(n), y fácil de hacer mal: varias reglas suenan bien y solo una es correcta.\n\n**Pruébalo con un exchange argument.** Toma cualquier solución óptima que difiera de la tuya. Muestra que cambiar su primera elección distinta por la elección greedy no la empeora. Repite, y la solución óptima se convierte en la greedy. Interval scheduling ([[intervals]]): la reunión que termina primero deja al menos tanto espacio como cualquier otra primera elección.\n\n**Refútalo con un contraejemplo.** Monedas {1, 3, 4}, monto 6: la más grande primero da 4 + 1 + 1, tres monedas; lo mejor es 3 + 3. Cuando ninguna regla sobrevive, compara todas las opciones con [[dynamic-programming]].\n\n**Furthest reach**: en los problemas de saltos, guarda el índice más lejano alcanzable hasta ahora. Todo índice anterior también es alcanzable, así que un solo número resume todas las opciones."
+  },
+  "keyPoints": [
+    {
+      "en": "Sort or keep a heap, take the best candidate by one rule, never undo it.",
+      "es": "Ordena o mantén un heap, toma el mejor candidato según una regla y nunca lo deshagas."
+    },
+    {
+      "en": "**Exchange argument**: swap the greedy choice into any optimal solution without making it worse.",
+      "es": "**Exchange argument**: cambia una elección de cualquier solución óptima por la greedy sin empeorarla."
+    },
+    {
+      "en": "One counterexample kills a rule: coins {1, 3, 4} for 6 give 4 + 1 + 1; DP finds 3 + 3.",
+      "es": "Un contraejemplo descarta una regla: las monedas {1, 3, 4} para 6 dan 4 + 1 + 1; DP encuentra 3 + 3."
+    },
+    {
+      "en": "Interval scheduling: the earliest finish wins because it leaves the most room for the rest.",
+      "es": "Interval scheduling: gana el que termina primero porque deja más espacio para el resto."
+    },
+    {
+      "en": "**Furthest reach**: one number, the furthest reachable index, summarizes every jump option so far.",
+      "es": "**Furthest reach**: un solo número, el índice más lejano alcanzable, resume todas las opciones de salto hasta ahora."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  P[\"Optimization problem\"] --> R[\"Pick a greedy rule\"]\n  R --> X{\"Small counterexample?\"}\n  X -->|found| D[\"Another rule, or DP\"]\n  X -->|none| E{\"Exchange argument holds?\"}\n  E -->|no| D\n  E -->|yes| S[\"Sort or heap by rule\"]\n  S --> T[\"Take best, never undo\"]",
+    "caption": {
+      "en": "Greedy is a claim to test: hunt for a small counterexample first, then prove the rule with an exchange argument. Only then is the sort-and-take loop safe.",
+      "es": "Greedy es una afirmación que hay que probar: primero busca un contraejemplo pequeño y luego demuestra la regla con un exchange argument. Solo entonces es seguro el loop de ordenar y tomar."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Furthest reach, and greedy vs DP on coins", "es": "Furthest reach, y greedy contra DP con monedas" },
+    "source": "def can_reach_end(jumps: list[int]) -> bool:\n    reach = 0                                # furthest index reachable so far\n    for i, j in enumerate(jumps):\n        if i > reach:                        # no earlier jump gets here: stuck\n            return False\n        reach = max(reach, i + j)\n    return True\n\ndef min_jumps(jumps: list[int]) -> int:      # assumes the end is reachable\n    hops = end = reach = 0\n    for i in range(len(jumps) - 1):          # never jump FROM the last index\n        reach = max(reach, i + jumps[i])\n        if i == end:                         # this hop's range is used up: must jump\n            hops, end = hops + 1, reach      # commit to the furthest reach\n    return hops\n\ndef greedy_coins(coins: list[int], amount: int) -> int:\n    used = 0\n    for c in sorted(coins, reverse=True):    # largest coin first, never undone\n        used, amount = used + amount // c, amount % c\n    return used if amount == 0 else -1       # optimal only for canonical coin systems\n\ndef dp_coins(coins: list[int], amount: int) -> int:\n    INF = float(\"inf\")\n    best = [0] + [INF] * amount              # best[a] = fewest coins that make a\n    for a in range(1, amount + 1):\n        best[a] = min((best[a - c] + 1 for c in coins if c <= a), default=INF)\n    return best[amount] if best[amount] < INF else -1\n\nassert greedy_coins([1, 3, 4], 6) == 3 and dp_coins([1, 3, 4], 6) == 2   # 4+1+1 vs 3+3"
+  },
+  "example": {
+    "en": "**Jump game**: each value is the longest jump allowed from that index. `[2, 3, 1, 1, 4]`: reach is 2 after index 0 and 1 + 3 = 4 after index 1, the last index, so the end is reachable (in 2 jumps: 0 → 1 → 4). `[3, 2, 1, 0, 4]`: reach stays at 3 through indexes 0–3, and index 4 > 3, so you are stuck. One O(n) pass and one variable, versus an O(n²) DP that marks every reachable index.",
+    "es": "**Jump game**: cada valor es el salto más largo permitido desde ese índice. `[2, 3, 1, 1, 4]`: el alcance es 2 tras el índice 0 y 1 + 3 = 4 tras el índice 1, el último índice, así que el final es alcanzable (en 2 saltos: 0 → 1 → 4). `[3, 2, 1, 0, 4]`: el alcance se queda en 3 en los índices 0–3, y el índice 4 > 3, así que te quedas atascado. Una pasada O(n) y una variable, contra un DP O(n²) que marca cada índice alcanzable."
+  },
+  "pros": [
+    { "en": "Fast and small: usually one sort plus one pass, with O(1) extra state.", "es": "Rápido y pequeño: casi siempre un sort más una pasada, con O(1) de estado extra." },
+    { "en": "Exact when proven, not a heuristic: Dijkstra, Kruskal and Huffman coding are greedy.", "es": "Exacto cuando está probado, no una heurística: Dijkstra, Kruskal y Huffman coding son greedy." },
+    { "en": "Short code once you have the right rule.", "es": "Código corto una vez que tienes la regla correcta." }
+  ],
+  "cons": [
+    { "en": "Correct only for some problems; a plausible rule can be silently wrong.", "es": "Solo es correcto en algunos problemas; una regla plausible puede fallar en silencio." },
+    { "en": "The proof is the hard part, and interviewers ask for it.", "es": "La demostración es la parte difícil, y los entrevistadores la piden." },
+    { "en": "Fragile: add weights to the intervals and earliest-finish stops working; that version needs DP.", "es": "Frágil: agrega pesos a los intervalos y elegir el que termina primero deja de funcionar; esa versión requiere DP." }
+  ],
+  "whenToUse": {
+    "en": "\"Maximum number of…\" or \"minimum number of…\" where sorting by one key (end time, deadline, ratio) or always taking the current best from a heap is provably safe: scheduling, jump reach, Huffman-style merging.",
+    "es": "\"Máxima cantidad de…\" o \"mínima cantidad de…\" donde ordenar por una clave (hora de término, deadline, ratio) o tomar siempre el mejor actual desde un heap es demostrablemente seguro: scheduling, alcance de saltos, mezclas al estilo Huffman."
+  },
+  "whenNotToUse": {
+    "en": "A small counterexample breaks every rule you try, or choices interact: 0/1 knapsack, arbitrary coin sets, weighted intervals. Use DP; if you need every solution, backtracking.",
+    "es": "Un contraejemplo pequeño rompe cada regla que pruebas, o las elecciones interactúan: 0/1 knapsack, conjuntos arbitrarios de monedas, intervalos con peso. Usa DP; si necesitas todas las soluciones, backtracking."
+  },
+  "numbers": [
+    { "en": "Typical cost: O(n log n) for the sort, then O(n). Jump game: O(n) time, O(1) space.", "es": "Costo típico: O(n log n) por el sort y luego O(n). Jump game: O(n) en tiempo, O(1) en espacio." },
+    { "en": "Coins {1, 3, 4}, amount 6: greedy uses 3 coins (4 + 1 + 1); the optimum is 2 (3 + 3).", "es": "Monedas {1, 3, 4}, monto 6: greedy usa 3 monedas (4 + 1 + 1); el óptimo es 2 (3 + 3)." },
+    { "en": "US coins without the nickel, {25, 10, 1}, for 40¢: greedy uses 7 coins; the optimum is 4 (4 × 10).", "es": "Monedas de EE. UU. sin la de 5¢, {25, 10, 1}, para 40¢: greedy usa 7 monedas; el óptimo es 4 (4 × 10)." },
+    { "en": "Coin change by DP: O(amount × number of coin values).", "es": "Coin change con DP: O(monto × cantidad de denominaciones)." }
+  ],
+  "pitfalls": [
+    { "en": "Coding the first rule that sounds right without trying a small counterexample.", "es": "Programar la primera regla que suena bien sin probar un contraejemplo pequeño." },
+    { "en": "Interval scheduling sorted by start time or by duration instead of by end time.", "es": "Interval scheduling ordenado por hora de inicio o por duración en vez de por hora de término." },
+    { "en": "Greedy on 0/1 knapsack or arbitrary coins. Value-per-weight is only optimal when items can be split.", "es": "Greedy en 0/1 knapsack o con monedas arbitrarias. Valor por peso solo es óptimo cuando los ítems se pueden fraccionar." },
+    { "en": "Jump game without the `i > reach` check: unreachable indexes extend the reach.", "es": "Jump game sin la revisión `i > reach`: índices inalcanzables extienden el alcance." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you know a greedy solution is correct?", "es": "¿Cómo sabes que una solución greedy es correcta?" },
+      "a": {
+        "en": "I don't trust it until I've done two things. First I try to break it with tiny inputs: ties, one long item against two short ones. If it survives, I sketch an exchange argument: take an optimal solution, swap its first different choice for mine and show the result is no worse. If I can't make the swap work, I say so and move to DP, which is slower but safe.",
+        "es": "No confío en ella hasta hacer dos cosas. Primero intento romperla con entradas mínimas: empates, un ítem largo contra dos cortos. Si sobrevive, esbozo un exchange argument: tomo una solución óptima, cambio su primera elección distinta por la mía y muestro que el resultado no es peor. Si no logro que el cambio funcione, lo digo y paso a DP, que es más lento pero seguro."
+      }
+    },
+    {
+      "q": { "en": "Minimum number of jumps to reach the last index?", "es": "¿Cuál es la cantidad mínima de saltos para llegar al último índice?" },
+      "a": {
+        "en": "It's BFS by levels, done greedily. I keep the end of the current jump's range and the furthest index reachable from anywhere inside it. When I reach the end of the range I have to jump, so I count one and extend the range to that furthest reach. Each index is visited once: O(n) time, O(1) space. It's safe because the furthest reach covers every index a shorter jump could land on.",
+        "es": "Es un BFS por niveles hecho de forma greedy. Guardo el final del rango del salto actual y el índice más lejano alcanzable desde cualquier punto dentro de él. Cuando llego al final del rango tengo que saltar, así que cuento uno y extiendo el rango hasta ese alcance máximo. Cada índice se visita una vez: O(n) en tiempo, O(1) en espacio. Es seguro porque el alcance máximo cubre todo índice donde podría caer un salto más corto."
+      }
+    },
+    {
+      "q": { "en": "Coin change: greedy or DP?", "es": "Coin change: ¿greedy o DP?" },
+      "a": {
+        "en": "It depends on the coin set. For canonical systems, like US or euro coins, largest-first is optimal. For arbitrary coins it isn't: {1, 3, 4} for 6 gives three coins instead of two. An interview problem with arbitrary denominations means DP over amounts, O(amount × coins). I'd mention greedy only as an optimization when the system is known to be canonical.",
+        "es": "Depende del conjunto de monedas. En sistemas canónicos, como las monedas de EE. UU. o del euro, tomar la más grande primero es óptimo. Con monedas arbitrarias no lo es: {1, 3, 4} para 6 da tres monedas en vez de dos. Un problema de entrevista con denominaciones arbitrarias significa DP sobre los montos, O(monto × monedas). Mencionaría greedy solo como optimización cuando se sabe que el sistema es canónico."
+      }
+    }
+  ],
+  "related": ["intervals", "dynamic-programming", "heaps-top-k", "shortest-paths", "binary-search"],
+  "sources": [
+    { "title": "Laaksonen — Competitive Programmer's Handbook (6 Greedy algorithms: coin problem, scheduling)", "url": "https://cses.fi/book/book.pdf" },
+    { "title": "Erickson — Algorithms, ch. 4: Greedy Algorithms (exchange arguments)", "url": "https://jeffe.cs.illinois.edu/teaching/algorithms/book/04-greedy.pdf" },
+    { "title": "Wikipedia — Change-making problem (canonical coin systems)", "url": "https://en.wikipedia.org/wiki/Change-making_problem" },
+    { "title": "Wikipedia — Greedy algorithm", "url": "https://en.wikipedia.org/wiki/Greedy_algorithm" }
+  ]
+}

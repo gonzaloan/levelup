@@ -26,3 +26,14 @@ Validate: `node tools/check-problems.mjs [files]` — it checks the schema, runs
 - **Complexity.** `{ "time": "O(…)", "space": "O(…)" }` of the reference solution.
 - **Difficulty.** `easy` | `medium` | `hard`, honest.
 - **Spanish** authored, neutral LatAm, `tú`; code identifiers stay in English.
+
+## Linked lists, trees and class design
+The harness passes JSON, so problems about node structures use a **provided wrapper**: the starter
+defines the node class and a driver (`fn`) that builds the structure from JSON, calls the function
+or class the learner writes, and converts the result back. Mark the two parts with comments
+(`# --- provided: do not edit ---` / `# --- your code ---`); the learner's part comes first.
+- Linked list: values as a list (`[1, 2, 3]`); cycles as a list plus the index the tail points to.
+- Binary tree: level-order list with `null` for a missing child (`[3, 9, 20, null, null, 15, 7]`).
+- Class design: a list of operations (`[["put", 1, 1], ["get", 1]]`); the driver returns the list
+  of results (`null` for operations that return nothing).
+The 25-line limit applies to the learner's part of the solution.

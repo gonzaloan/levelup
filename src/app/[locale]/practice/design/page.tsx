@@ -1,9 +1,10 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { t } from "@/lib/i18n";
 import { conceptsOf, getDomain } from "@/lib/content";
-import { TOTAL_MINUTES } from "@/lib/design-round";
+import { DESIGN_DOMAINS, TOTAL_MINUTES } from "@/lib/design-round";
 import { Illustration } from "@/components/Visual";
 import { LevelBadge } from "@/components/Bits";
 import { BestScore } from "@/components/practice/DesignRound";
@@ -12,10 +13,9 @@ import { RandomCase } from "@/components/practice/RandomCase";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return { title: locale === "es" ? "Ronda de system design" : "System design round", description: locale === "es" ? "Simulacro cronometrado con rúbrica sobre casos reales de entrevista." : "A timed mock with a rubric over real interview cases." };
+  return pageMeta(locale, "/practice/design/", locale === "es" ? "Ronda de system design" : "System design round", locale === "es" ? "Simulacro cronometrado con rúbrica sobre casos reales de entrevista." : "A timed mock with a rubric on real interview cases.");
 }
 
-export const DESIGN_DOMAINS = ["sysdesign", "design"];
 
 export default async function DesignIndex({ params }: P) {
   const { locale } = await params;

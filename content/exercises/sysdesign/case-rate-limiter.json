@@ -1,0 +1,130 @@
+{
+  "concept": "case-rate-limiter",
+  "items": [
+    {
+      "id": "case-rate-limiter.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "Your limit is 100 requests/min per API key. During bursts, logs show keys getting 130+ requests through in one minute. Each of the 20 gateway pods runs `GET counter`, compares it with 100, then `INCR`. What is the best fix?",
+        "es": "Tu límite es de 100 requests/min por API key. En las ráfagas, los logs muestran keys que logran pasar más de 130 requests en un minuto. Cada uno de los 20 pods del gateway ejecuta `GET counter`, lo compara con 100 y luego hace `INCR`. ¿Cuál es la mejor solución?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Count and decide in one atomic Redis step",
+            "es": "Contar y decidir en un solo paso atómico de Redis"
+          },
+          "why": {
+            "en": "Several pods read the same value before any of them writes; an atomic `INCR` or Lua script removes that gap.",
+            "es": "Varios pods leen el mismo valor antes de que alguno escriba; un `INCR` atómico o un script Lua elimina ese hueco."
+          }
+        },
+        {
+          "text": {
+            "en": "Read the counter from Redis replicas instead",
+            "es": "Leer el contador desde las réplicas de Redis"
+          },
+          "why": {
+            "en": "Replica reads lag the primary, so even more requests see an old count.",
+            "es": "Las réplicas van atrasadas respecto del primario, así que aún más requests ven un valor viejo."
+          }
+        },
+        {
+          "text": {
+            "en": "Shorten the window from a minute to ten seconds",
+            "es": "Acortar la ventana de un minuto a diez segundos"
+          },
+          "why": {
+            "en": "The race sits between the read and the write; it happens in a window of any length.",
+            "es": "La carrera está entre la lectura y la escritura; ocurre con una ventana de cualquier tamaño."
+          }
+        },
+        {
+          "text": {
+            "en": "Take a distributed lock per key around the check",
+            "es": "Tomar un lock distribuido por key alrededor de la verificación"
+          },
+          "why": {
+            "en": "It works, but adds a lock and two more round trips to every request; one atomic call gives the same guarantee.",
+            "es": "Funciona, pero suma un lock y dos viajes de red más a cada request; una sola llamada atómica da la misma garantía."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Check-then-act across nodes is a race: between one pod's read and its write, others read the same count. Make the count and the decision a single atomic operation in the store, either by deciding on the value `INCR` returns or with a Lua script.",
+        "es": "Verificar y luego actuar entre varios nodos es una carrera: entre la lectura y la escritura de un pod, otros leen el mismo valor. Haz que el conteo y la decisión sean una sola operación atómica en el almacén: decide con el valor que devuelve `INCR` o usa un script Lua."
+      }
+    },
+    {
+      "id": "case-rate-limiter.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Size the counter store. Peak traffic is **400k requests/s**, and each request makes one Redis script call. Assume one Redis shard handles **~100k simple ops/s** and you run shards at **50%** of that. How many shards do you need?",
+        "es": "Dimensiona el almacén de contadores. El pico es de **400k requests/s** y cada request hace una llamada a un script de Redis. Supón que un shard de Redis rinde **~100k ops simples/s** y que los operas al **50%** de eso. ¿Cuántos shards necesitas?"
+      },
+      "answer": 8,
+      "tolerance": 0.15,
+      "unit": "shards",
+      "explain": {
+        "en": "400k ÷ (100k × 0.5) = 8 shards. Shard by client key, so each counter lives on exactly one node; the headroom absorbs bursts and a failover. Memory is rarely the constraint: 10M keys at ~100 B each is only ~1 GB.",
+        "es": "400k ÷ (100k × 0.5) = 8 shards. Particiona por la key del cliente, así cada contador vive en un solo nodo; el margen absorbe las ráfagas y un failover. La memoria rara vez es el límite: 10M de keys a ~100 B cada una son apenas ~1 GB."
+      }
+    },
+    {
+      "id": "case-rate-limiter.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: \"The limiter protects us, so when its Redis is unreachable it must reject requests until Redis is back.\" For a general per-key API limit, what do you answer?",
+        "es": "Alguien del equipo dice: \"El limiter nos protege, así que cuando su Redis no responde debe rechazar los requests hasta que Redis vuelva.\" Para un límite general por key de la API, ¿qué respondes?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Fail open to a conservative local limit, and alert",
+            "es": "Hacer fail open con un límite local conservador, y alertar"
+          },
+          "why": {
+            "en": "The limiter is a guard, not the product: rejecting every customer because the guard is blind is a self-inflicted outage.",
+            "es": "El limiter es un guardia, no el producto: rechazar a todos los clientes porque el guardia quedó ciego es una caída autoinfligida."
+          }
+        },
+        {
+          "text": {
+            "en": "Agree: unmetered traffic is worse than an outage",
+            "es": "De acuerdo: el tráfico sin medir es peor que una caída"
+          },
+          "why": {
+            "en": "True for login or paid operations; for a general limit, a short unmetered window costs far less than rejecting everyone.",
+            "es": "Es cierto para login u operaciones pagadas; en un límite general, una ventana corta sin medir cuesta mucho menos que rechazar a todos."
+          }
+        },
+        {
+          "text": {
+            "en": "Queue requests in the gateway until Redis returns",
+            "es": "Encolar los requests en el gateway hasta que Redis vuelva"
+          },
+          "why": {
+            "en": "At API traffic rates the queue fills in seconds; then everyone times out and there is still no decision.",
+            "es": "Con el tráfico de una API la cola se llena en segundos; luego todos dan timeout y sigue sin haber decisión."
+          }
+        },
+        {
+          "text": {
+            "en": "Keep retrying the Redis call until it answers",
+            "es": "Reintentar la llamada a Redis hasta que responda"
+          },
+          "why": {
+            "en": "Retries hold the request open and pile load onto a struggling Redis; the budget is a few ms.",
+            "es": "Los reintentos dejan el request abierto y cargan más a un Redis en problemas; el presupuesto es de pocos ms."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Decide the failure mode per rule, before the incident. General limits fail open with a local fallback, as Stripe does; security-sensitive limits such as login and OTP fail closed. Either way, alert on it: a limiter that silently allows everything looks healthy.",
+        "es": "Decide el modo de falla por regla, antes del incidente. Los límites generales hacen fail open con un respaldo local, como hace Stripe; los límites sensibles de seguridad, como login y OTP, hacen fail closed. En ambos casos, pon una alerta: un limiter que deja pasar todo en silencio parece sano."
+      }
+    }
+  ]
+}

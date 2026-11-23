@@ -8,10 +8,10 @@ export function Diagram({ id, caption, zoomLabel, closeLabel }: { id: string; ca
   // into unreadable text.
   const w = Number(svg.dark.match(/viewBox="[\d.-]+ [\d.-]+ ([\d.]+)/)?.[1] ?? 0);
   return (
-    <figure className="diagram" role="img" aria-label={caption} style={w ? { ["--dw" as string]: `${Math.round(w)}px` } : undefined}>
+    <figure className="diagram" style={w ? { ["--dw" as string]: `${Math.round(w)}px` } : undefined}>
       <Zoomable label={zoomLabel} closeLabel={closeLabel}>
-        <div className="dg dg-dark" dangerouslySetInnerHTML={{ __html: svg.dark }} />
-        <div className="dg dg-light" dangerouslySetInnerHTML={{ __html: svg.light }} />
+        <div className="dg dg-dark" role="img" aria-label={caption} dangerouslySetInnerHTML={{ __html: svg.dark }} />
+        <div className="dg dg-light" role="img" aria-label={caption} dangerouslySetInnerHTML={{ __html: svg.light }} />
       </Zoomable>
       <figcaption>{caption}</figcaption>
     </figure>

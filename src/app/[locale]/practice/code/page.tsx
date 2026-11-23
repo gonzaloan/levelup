@@ -1,18 +1,18 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
-import { t } from "@/lib/i18n";
+import { pageMeta } from "@/lib/meta";
+import { DIFF, t } from "@/lib/i18n";
 import { getConcept, getProblems } from "@/lib/content";
-import { Illustration } from "@/components/Visual";
-import { SolvedMark } from "@/components/practice/CodeRunner";
+import { Emoji, Illustration } from "@/components/Visual";
+import { Icon } from "@/components/Icon";
+import { SolvedMark } from "@/components/practice/SolvedMark";
 
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return { title: locale === "es" ? "Coding en Python" : "Python coding", description: locale === "es" ? "Problemas de entrevista por patrón: escribe la función y córrela contra tests en tu navegador." : "Interview problems by pattern: write the function and run it against tests in your browser." };
+  return pageMeta(locale, "/practice/code/", locale === "es" ? "Coding en Python" : "Python coding", locale === "es" ? "Problemas de entrevista por patrón: escribe la función y córrela contra tests en tu navegador." : "Interview problems by pattern: write the function and run it against tests in your browser.");
 }
-
-export const DIFF = { easy: { en: "easy", es: "fácil" }, medium: { en: "medium", es: "media" }, hard: { en: "hard", es: "difícil" } } as const;
 
 export default async function CodeIndex({ params }: P) {
   const { locale } = await params;
@@ -30,6 +30,15 @@ export default async function CodeIndex({ params }: P) {
             : `${problems.length} interview problems by pattern. Write the function and run it against the tests right here: Python runs in your browser.`}</p>
         </div>
       </header>
+      <Link href={`/${locale}/practice/code/mock/`} className="lab-promo-card code-mock-promo">
+        <Emoji name="stopwatch" size={34} />
+        <span>
+          <small>{es ? "Simulacro" : "Mock interview"}</small>
+          <strong>{es ? "Dos problemas en 45 minutos, sin pistas" : "Two problems in 45 minutes, no hints"}</strong>
+          <span>{es ? "Como una ronda real: un problema más fácil y uno más difícil, de patrones distintos." : "Like a real round: an easier and a harder problem, from different patterns."}</span>
+        </span>
+        <Icon name="right" size={18} />
+      </Link>
       {[...byConcept.entries()].map(([cid, list]) => {
         const c = getConcept(cid);
         return (

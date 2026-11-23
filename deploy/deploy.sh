@@ -186,6 +186,17 @@ if [[ "$DRYRUN" != "1" ]]; then
   # Pass 4: HTML no-cache, so a deploy shows immediately.
   aws s3 sync "$OUT" "s3://$BUCKET" --region "$REGION" \
     --exclude "*" --include "*.html" --content-type "text/html" --cache-control "no-cache"
+  # Pass 4b: files that must never be served stale. The service worker and its file list (a
+  #    stale worker keeps serving old pages), and the RSC payloads (index.txt) that client-side
+  #    navigation reads: cached for a day they could point at chunks a later deploy removed.
+  aws s3 cp "$OUT" "s3://$BUCKET" --region "$REGION" --recursive \
+    --exclude "*" --include "sw.js" --content-type "text/javascript" --cache-control "no-cache"
+  aws s3 cp "$OUT" "s3://$BUCKET" --region "$REGION" --recursive \
+    --exclude "*" --include "offline-*.json" --content-type "application/json" --cache-control "no-cache"
+  aws s3 cp "$OUT" "s3://$BUCKET" --region "$REGION" --recursive \
+    --exclude "*" --include "*.webmanifest" --content-type "application/manifest+json" --cache-control "no-cache"
+  aws s3 cp "$OUT" "s3://$BUCKET" --region "$REGION" --recursive \
+    --exclude "*" --include "*.txt" --content-type "text/plain; charset=utf-8" --cache-control "no-cache"
   # Pass 5: prune orphans (everything else already matches, only deletes removed files).
   aws s3 sync "$OUT" "s3://$BUCKET" --region "$REGION" --delete
 fi

@@ -1,0 +1,118 @@
+{
+  "id": "backpressure-load-shedding",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Backpressure & load shedding", "es": "Backpressure y load shedding" },
+  "aliases": ["overload protection", "admission control", "bounded queue", "goodput", "graceful degradation", "metastable failure", "503 Service Unavailable"],
+  "tldr": {
+    "en": "When demand exceeds capacity, bound every queue, push the slowdown back to callers that can wait, and reject the rest early and cheaply so the work you accept still finishes in time.",
+    "es": "Cuando la demanda supera la capacidad, limita cada cola, traslada la espera a quienes pueden esperar y rechaza el resto temprano y barato, para que el trabajo que aceptas igual termine a tiempo."
+  },
+  "analogy": {
+    "en": "A restaurant with a full dining room stops seating people at the door. It does not take every order and let the kitchen fall hours behind until all the diners walk out.",
+    "es": "Un restaurante con el salón lleno deja de sentar gente en la puerta. No toma todos los pedidos para que la cocina se atrase horas y al final todos los clientes se vayan."
+  },
+  "explain": {
+    "en": "A server past capacity keeps accepting work, and the extra waits in a queue. With an **unbounded queue**, the wait grows until it passes the client's timeout. From then on the server spends its capacity on requests nobody is waiting for: throughput stays high, **goodput** (answers that are correct and on time) falls toward zero, and timed-out clients retry ([[retries-backoff]]), adding load.\n\nThree defenses:\n\n- **Bound the queue.** Wait ≈ depth ÷ service rate, so size it from the latency budget.\n- **Backpressure**: when the queue is full, make the producer slow down (block it or stop pulling). It only works when the source can wait: internal pipelines, consumers of a log ([[queues-streams]]).\n- **Load shedding**: when the source can't wait (users, the open internet), reject at the door with a cheap **503 + Retry-After**, before parsing or database work. Shed by **priority**: batch and crawlers first, never the load balancer's health checks. Drop requests whose **deadline** already passed.\n\n[[rate-limiting]] caps each client; shedding protects the server when everyone is within quota. Overload can outlive its cause: in a **metastable failure**, retries keep the system saturated until you cut load hard.",
+    "es": "Un servidor que supera su capacidad sigue aceptando trabajo, y el exceso espera en una cola. Con una **cola sin límite**, la espera crece hasta superar el timeout del cliente. Desde ahí el servidor gasta su capacidad en solicitudes que ya nadie espera: el throughput sigue alto, el **goodput** (respuestas correctas y a tiempo) cae hacia cero, y los clientes que vencieron por timeout reintentan ([[retries-backoff]]), lo que suma carga.\n\nTres defensas:\n\n- **Limita la cola.** Espera ≈ profundidad ÷ tasa de servicio, así que dimensiónala según el presupuesto de latencia.\n- **Backpressure**: cuando la cola está llena, haz que el productor baje el ritmo (bloquéalo o deja de consumir). Solo funciona si el origen puede esperar: pipelines internos, consumidores de un log ([[queues-streams]]).\n- **Load shedding**: cuando el origen no puede esperar (usuarios, internet abierto), rechaza en la puerta con un **503 + Retry-After** barato, antes de parsear o tocar la base de datos. Descarta por **prioridad**: primero batch y crawlers, nunca los health checks del load balancer. Descarta las solicitudes cuyo **deadline** ya pasó.\n\n[[rate-limiting]] limita a cada cliente; el shedding protege al servidor cuando todos están dentro de su cuota. La sobrecarga puede sobrevivir a su causa: en una **falla metaestable**, los reintentos mantienen el sistema saturado hasta que recortas la carga con fuerza."
+  },
+  "keyPoints": [
+    {
+      "en": "An **unbounded queue** turns overload into latency, then timeouts: the server works on requests nobody is waiting for.",
+      "es": "Una **cola sin límite** convierte la sobrecarga en latencia y luego en timeouts: el servidor trabaja en solicitudes que ya nadie espera."
+    },
+    {
+      "en": "**Bound the queue**: wait ≈ depth ÷ service rate, so size it from the latency budget.",
+      "es": "**Limita la cola**: espera ≈ profundidad ÷ tasa de servicio; dimensiónala según el presupuesto de latencia."
+    },
+    {
+      "en": "**Backpressure** slows the producer; it only works when the source can wait, like an internal pipeline.",
+      "es": "El **backpressure** frena al productor; solo funciona si el origen puede esperar, como un pipeline interno."
+    },
+    {
+      "en": "**Load shedding** rejects early and cheaply with a 503, lowest priority first; never shed health checks.",
+      "es": "El **load shedding** rechaza temprano y barato con un 503, primero la prioridad más baja; nunca descartes los health checks."
+    },
+    {
+      "en": "Retries can keep an overload alive after its cause is gone: a **metastable failure**.",
+      "es": "Los reintentos pueden mantener viva una sobrecarga cuando su causa ya pasó: una **falla metaestable**."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  C[Callers] --> A{\"Admission check<br/>depth and priority\"}\n  A -->|over limit| R[\"Reject fast<br/>503 + Retry-After\"]\n  A -->|admitted| Q[Bounded queue]\n  Q --> D{\"Deadline<br/>already passed?\"}\n  D -->|yes| X[Drop stale request]\n  D -->|no| W[Workers]\n  W --> O[Response on time]\n  Q -.->|\"full: producer waits\"| C\n  R -.->|\"backoff + jitter\"| C",
+    "caption": {
+      "en": "Admission control keeps the queue short: excess work is rejected at the door or pushed back to the producer, never parked.",
+      "es": "El control de admisión mantiene corta la cola: el exceso se rechaza en la puerta o se devuelve al productor, nunca se deja estacionado."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Bounded queue: shed at the door, backpressure inside", "es": "Cola acotada: shedding en la puerta, backpressure adentro" },
+    "source": "import asyncio, time\n\nMAX_DEPTH = 200   # ~0.2 s of work at 1,000 req/s: sized from the latency budget\nqueue: asyncio.Queue = asyncio.Queue(maxsize=MAX_DEPTH)\n\nclass Overloaded(Exception): ...   # map to HTTP 503 + Retry-After\n\ndef admit(req) -> None:\n    # Shed at the door, before parsing or touching the database\n    limit = MAX_DEPTH if req.critical else MAX_DEPTH // 2   # batch goes first\n    if queue.qsize() >= limit:\n        raise Overloaded()\n    queue.put_nowait(req)\n\nasync def produce(job) -> None:\n    await queue.put(job)   # backpressure: an internal producer blocks while full\n\nasync def worker() -> None:\n    while True:\n        req = await queue.get()\n        if time.monotonic() > req.deadline:\n            continue       # the caller already timed out: don't waste capacity\n        await handle(req)"
+  },
+  "example": {
+    "en": "Assume a service handles 1,000 req/s, clients time out at 1 s, and load jumps to 1,300 req/s.\n\n- **Unbounded queue**: the backlog grows by 300 req/s. After ~3.3 s it holds 1,000 requests, a 1 s wait, so every new request times out before a worker reaches it. CPUs stay busy, goodput is ~0, and retries push load higher.\n- **Bounded queue of 200 + shedding**: the wait stays under 0.2 s. 1,000 req/s succeed and 300 get an instant 503.",
+    "es": "Supón un servicio que atiende 1.000 req/s, clientes con timeout de 1 s y una carga que salta a 1.300 req/s.\n\n- **Cola sin límite**: el atraso crece 300 req/s. A los ~3,3 s acumula 1.000 solicitudes, 1 s de espera, así que cada solicitud nueva vence por timeout antes de llegar a un worker. Las CPU siguen ocupadas, el goodput es ~0 y los reintentos suben la carga.\n- **Cola acotada de 200 + shedding**: la espera queda bajo 0,2 s. 1.000 req/s terminan bien y 300 reciben un 503 inmediato."
+  },
+  "pros": [
+    { "en": "Accepted requests keep meeting their latency target during overload; goodput stays near capacity.", "es": "Las solicitudes aceptadas siguen cumpliendo su latencia durante la sobrecarga; el goodput se mantiene cerca de la capacidad." },
+    { "en": "A fast rejection is a clear signal: clients back off and load balancers try another server.", "es": "Un rechazo rápido es una señal clara: los clientes esperan y los load balancers prueban otro servidor." },
+    { "en": "Priorities protect what matters: checkout and health checks survive, batch waits.", "es": "Las prioridades protegen lo importante: el checkout y los health checks sobreviven, el batch espera." }
+  ],
+  "cons": [
+    { "en": "Some users get errors by design, and someone must decide which traffic is sheddable.", "es": "Algunos usuarios reciben errores por diseño, y alguien debe decidir qué tráfico se puede descartar." },
+    { "en": "Rejecting is not free: a server can saturate just returning errors (Google SRE).", "es": "Rechazar no es gratis: un servidor puede saturarse solo devolviendo errores (Google SRE)." },
+    { "en": "Thresholds need load tests: too tight wastes capacity, too loose sheds too late.", "es": "Los umbrales necesitan pruebas de carga: muy estrictos desperdician capacidad, muy holgados descartan demasiado tarde." }
+  ],
+  "whenToUse": {
+    "en": "Every service that can receive more work than it can finish: bounded queues and deadlines everywhere, backpressure between internal stages, priority shedding at the edge of user-facing systems.",
+    "es": "Todo servicio que pueda recibir más trabajo del que alcanza a terminar: colas acotadas y deadlines en todas partes, backpressure entre etapas internas y shedding por prioridad en el borde de los sistemas de cara al usuario."
+  },
+  "whenNotToUse": {
+    "en": "Don't block callers that can't wait (interactive users): shed instead. Don't shed work that must not be lost (payments, events): buffer it in a durable queue and scale the consumers.",
+    "es": "No bloquees a quien no puede esperar (usuarios interactivos): descarta. No descartes trabajo que no se puede perder (pagos, eventos): guárdalo en una cola durable y escala los consumidores."
+  },
+  "numbers": [
+    { "en": "Queue wait ≈ depth ÷ service rate: 200 queued at 1,000 req/s is a 0.2 s wait.", "es": "Espera en cola ≈ profundidad ÷ tasa de servicio: 200 en cola a 1.000 req/s son 0,2 s de espera." },
+    { "en": "Google SRE: for steady traffic, keep the queue at 50% or less of the thread pool size.", "es": "Google SRE: con tráfico estable, mantén la cola en 50% o menos del tamaño del thread pool." },
+    { "en": "Google tags every request with one of four criticality levels: CRITICAL_PLUS, CRITICAL, SHEDDABLE_PLUS, SHEDDABLE.", "es": "Google etiqueta cada solicitud con uno de cuatro niveles de criticidad: CRITICAL_PLUS, CRITICAL, SHEDDABLE_PLUS, SHEDDABLE." },
+    { "en": "Google clients throttle themselves once their requests exceed K × the accepted ones; K = 2 is the usual choice.", "es": "Los clientes de Google se frenan solos cuando sus solicitudes superan K × las aceptadas; K = 2 es el valor habitual." },
+    { "en": "Metastable failures were named by Bronson et al. at HotOS 2021.", "es": "Las fallas metaestables fueron bautizadas por Bronson et al. en HotOS 2021." }
+  ],
+  "pitfalls": [
+    { "en": "Raising the queue size or the client timeout to \"absorb\" overload: it adds latency and wastes more work.", "es": "Subir el tamaño de la cola o el timeout del cliente para \"absorber\" la sobrecarga: agrega latencia y desperdicia más trabajo." },
+    { "en": "Shedding after the expensive part (auth, parsing, queries): a rejection must cost far less than the request.", "es": "Descartar después de la parte cara (auth, parseo, consultas): un rechazo debe costar mucho menos que la solicitud." },
+    { "en": "Shedding health checks like normal traffic: the load balancer removes servers and the rest get more load.", "es": "Descartar los health checks como tráfico normal: el load balancer saca servidores y el resto recibe más carga." },
+    { "en": "FIFO under overload serves the oldest request, the one most likely abandoned; LIFO or dropping by age favors fresh ones.", "es": "FIFO bajo sobrecarga atiende la solicitud más vieja, la que más probablemente ya fue abandonada; LIFO o descartar por antigüedad favorece a las nuevas." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why does a bigger queue make overload worse?", "es": "¿Por qué una cola más grande empeora la sobrecarga?" },
+      "a": {
+        "en": "A queue only absorbs a burst shorter than its drain time. Under sustained overload it fills anyway, and its depth becomes pure latency: wait is depth over service rate. Once the wait passes the client timeout, I'm serving requests nobody is waiting for, and their retries add load. So I size queues from the latency budget, a fraction of the timeout, and reject beyond that.",
+        "es": "Una cola solo absorbe una ráfaga más corta que su tiempo de vaciado. Con sobrecarga sostenida se llena igual, y su profundidad se vuelve latencia pura: la espera es profundidad sobre tasa de servicio. Cuando la espera supera el timeout del cliente, atiendo solicitudes que ya nadie espera, y sus reintentos suman carga. Por eso dimensiono las colas según el presupuesto de latencia, una fracción del timeout, y rechazo lo que excede."
+      }
+    },
+    {
+      "q": { "en": "When do you use backpressure and when load shedding?", "es": "¿Cuándo usas backpressure y cuándo load shedding?" },
+      "a": {
+        "en": "Backpressure when the producer can slow down without harm: a batch job, a stream consumer, an internal stage. I block or stop pulling, and the backlog stays in a durable log. Shedding when it can't: a user won't wait and the internet won't slow down, so I reject early with a 503, lowest priority first. Most systems need both: shed at the edge, backpressure inside.",
+        "es": "Backpressure cuando el productor puede bajar el ritmo sin daño: un job batch, un consumidor de un stream, una etapa interna. Bloqueo o dejo de consumir, y el atraso queda en un log durable. Shedding cuando no puede: un usuario no espera e internet no se frena, así que rechazo temprano con un 503, primero la prioridad más baja. La mayoría de los sistemas necesita ambos: shedding en el borde y backpressure adentro."
+      }
+    },
+    {
+      "q": { "en": "Load is back to normal but the service is still down. What is happening?", "es": "La carga volvió a lo normal, pero el servicio sigue caído. ¿Qué está pasando?" },
+      "a": {
+        "en": "That's a metastable failure. A trigger, like a brief capacity dip, pushed us into overload, and a feedback loop keeps us there: timeouts cause retries, and retries keep the queues full. Removing the trigger isn't enough. I break the loop: shed most traffic at the edge, let queues drain, then ramp back up gradually. Long term I add retry budgets, bounded queues and capacity headroom.",
+        "es": "Es una falla metaestable. Un disparador, como una baja breve de capacidad, nos empujó a la sobrecarga, y un ciclo de retroalimentación nos mantiene ahí: los timeouts causan reintentos, y los reintentos mantienen llenas las colas. Quitar el disparador no alcanza. Rompo el ciclo: descarto la mayor parte del tráfico en el borde, dejo que las colas se vacíen y vuelvo a subir de a poco. A largo plazo agrego presupuestos de reintentos, colas acotadas y holgura de capacidad."
+      }
+    }
+  ],
+  "related": ["rate-limiting", "retries-backoff", "queues-streams", "load-balancing", "slos"],
+  "sources": [
+    { "title": "Amazon Builders' Library — Using load shedding to avoid overload", "url": "https://aws.amazon.com/builders-library/using-load-shedding-to-avoid-overload/" },
+    { "title": "Google SRE Book — Handling Overload", "url": "https://sre.google/sre-book/handling-overload/" },
+    { "title": "Google SRE Book — Addressing Cascading Failures", "url": "https://sre.google/sre-book/addressing-cascading-failures/" },
+    { "title": "Bronson et al. — Metastable Failures in Distributed Systems (HotOS 2021)", "url": "https://sigops.org/s/conferences/hotos/2021/papers/hotos21-s11-bronson.pdf" }
+  ]
+}

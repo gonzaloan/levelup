@@ -1,0 +1,244 @@
+{
+  "id": "case-distributed-cache",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": {
+    "en": "Design: distributed cache",
+    "es": "Diseño: cache distribuida"
+  },
+  "aliases": [
+    "Memcached design",
+    "Redis Cluster design",
+    "distributed cache design",
+    "hash slots",
+    "mcrouter",
+    "hot key",
+    "cache eviction",
+    "LRU"
+  ],
+  "tldr": {
+    "en": "Partition keys across memory-only nodes by hash slot or consistent hashing, evict by LRU or LFU at a memory limit, replicate asynchronously for failover, and protect the database from hot keys and cold nodes.",
+    "es": "Reparte las keys entre nodos en memoria por hash slot o consistent hashing, desaloja por LRU o LFU al llegar al límite de memoria, replica de forma asíncrona para el failover y protege la base de datos de las keys calientes y los nodos fríos."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: `get`, `set` with a TTL, and `delete` on string keys, with values up to ~1 MB. **Non-functional**: sub-millisecond server time, capacity that grows by adding nodes, and no durability promise: it is a cache, so a lost entry is just a miss. What it must never do is fail in a way that sends all traffic to the database at once.\n\nScale (assumed): 240 GB of hot data and 500k operations/s at peak.\n\nQuestions I'd ask:\n\n1. Can every entry be rebuilt from a source of truth, or is this a store in disguise?\n2. What does a miss cost the backend?\n3. Do clients need multi-key operations?\n\n### Node design\n\nEach node is a hash table in RAM with a **memory limit**. When it is full, a write evicts another entry: usually **LRU**, or **LFU** when a few keys dominate and a scan would flush them. TTLs expire lazily on read, plus a background sweep. How applications *use* a cache is in [[caching]].\n\n### Architecture\n\n**Partitioning** maps a key to a node. Memcached servers know nothing about each other: the client hashes keys onto a ring ([[consistent-hashing]]). Redis Cluster hashes every key into one of **16,384 slots** and assigns slots to nodes. **Routing** is done by a smart client that holds the map, or by a proxy that hides it. **Replication** is asynchronous, primary to replica, and a replica is promoted when its primary dies.\n\n### The hard parts\n\n1. **Hot keys.** Hashing spreads keys, not load: one celebrity key still lands on one node.\n2. **A node dies or restarts cold.** Its share of the keys now misses, and the database receives that traffic in one burst.",
+    "es": "### Requisitos\n\n**Funcionales**: `get`, `set` con TTL y `delete` sobre keys de texto, con valores de hasta ~1 MB. **No funcionales**: tiempo de servidor por debajo del milisegundo, capacidad que crece agregando nodos y ninguna promesa de durabilidad: es una cache, así que una entrada perdida es solo un miss. Lo que nunca debe hacer es fallar de un modo que mande todo el tráfico a la base de datos de golpe.\n\nEscala (supuesta): 240 GB de datos calientes y 500k operaciones/s en el pico.\n\nPreguntas que haría:\n\n1. ¿Cada entrada se puede reconstruir desde una fuente de verdad, o esto es un almacén disfrazado?\n2. ¿Cuánto le cuesta un miss al backend?\n3. ¿Los clientes necesitan operaciones sobre varias keys?\n\n### Diseño del nodo\n\nCada nodo es una tabla hash en RAM con un **límite de memoria**. Cuando se llena, una escritura desaloja otra entrada: lo usual es **LRU**, o **LFU** cuando unas pocas keys dominan y un escaneo las sacaría. Los TTL expiran de forma perezosa al leer, más un barrido en segundo plano. Cómo *usan* una cache las aplicaciones está en [[caching]].\n\n### Arquitectura\n\nEl **particionamiento** asigna cada key a un nodo. Los servidores de Memcached no saben nada unos de otros: el cliente ubica las keys en un anillo ([[consistent-hashing]]). Redis Cluster lleva cada key a uno de **16,384 slots** y asigna los slots a los nodos. El **enrutamiento** lo hace un cliente inteligente que tiene el mapa, o un proxy que lo esconde. La **replicación** es asíncrona, de primario a réplica, y una réplica se promueve cuando su primario muere.\n\n### Las partes difíciles\n\n1. **Keys calientes.** El hashing reparte keys, no carga: una key famosa igual cae en un solo nodo.\n2. **Un nodo muere o reinicia frío.** Su parte de las keys ahora da miss, y la base de datos recibe ese tráfico en una sola ráfaga."
+  },
+  "keyPoints": [
+    {
+      "en": "Each node is a hash table with a **memory limit**; when full, it evicts by LRU or LFU.",
+      "es": "Cada nodo es una tabla hash con un **límite de memoria**; cuando se llena, desaloja por LRU o LFU."
+    },
+    {
+      "en": "Redis Cluster maps keys to **16,384 slots** owned by nodes; Memcached clients hash keys onto a ring.",
+      "es": "Redis Cluster asigna las keys a **16,384 slots** repartidos entre los nodos; los clientes de Memcached las ubican en un anillo."
+    },
+    {
+      "en": "A **smart client** reaches the owner in one hop; a proxy keeps clients thin but adds a hop.",
+      "es": "Un **cliente inteligente** llega al dueño en un salto; un proxy deja los clientes simples, pero suma un salto."
+    },
+    {
+      "en": "Replication is **asynchronous**: a failover can lose acknowledged writes, which a cache tolerates.",
+      "es": "La replicación es **asíncrona**: un failover puede perder escrituras ya confirmadas, y una cache lo tolera."
+    },
+    {
+      "en": "Losing 1 of 10 nodes at a 95% hit rate nearly **triples** the database load.",
+      "es": "Perder 1 de 10 nodos con un hit rate de 95% casi **triplica** la carga de la base de datos."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  A[App server] --> SC[\"Smart client<br/>slot map in memory\"]\n  SC -->|\"CRC16(key) mod 16384\"| S{\"Slot owner?\"}\n  S --> P1[\"Primary A<br/>slots 0-5460\"]\n  S --> P2[\"Primary B<br/>slots 5461-10922\"]\n  S --> P3[\"Primary C<br/>slots 10923-16383\"]\n  P1 -.->|async replication| R1[Replica A]\n  P2 -.->|async replication| R2[Replica B]\n  P3 -.->|async replication| R3[Replica C]\n  P2 -->|\"MOVED: refresh map\"| SC\n  P3 -->|memory full| E[\"Evict by LRU or LFU\"]\n  R1 -.->|\"primary dies: promote\"| P1",
+    "caption": {
+      "en": "The client computes the slot and goes straight to its owner; a MOVED reply means its map is stale, and a replica takes over when a primary dies.",
+      "es": "El cliente calcula el slot y va directo a su dueño; una respuesta MOVED indica que su mapa está viejo, y una réplica toma el lugar cuando un primario muere."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Redis Cluster routing: hash slot, MOVED and ASK",
+      "es": "Enrutamiento en Redis Cluster: hash slot, MOVED y ASK"
+    },
+    "source": "from binascii import crc_hqx\n\ndef key_slot(key: bytes) -> int:\n    # Hash tag: if the key contains {...}, only that part is hashed, so\n    # user:{42}:cart and user:{42}:profile share a slot and multi-key ops work.\n    start = key.find(b\"{\")\n    if start != -1:\n        end = key.find(b\"}\", start + 1)\n        if end > start + 1:\n            key = key[start + 1:end]\n    return crc_hqx(key, 0) % 16384          # CRC16-XMODEM; key_slot(b\"foo\") == 12182\n\nclass SmartClient:\n    def __init__(self, seed_node):\n        self.slots = fetch_slot_map(seed_node)      # CLUSTER SHARDS: slot -> primary\n\n    def call(self, cmd: str, key: bytes, *args, max_redirects: int = 5):\n        node = self.slots[key_slot(key)]            # one hop, no proxy\n        for _ in range(max_redirects):\n            reply = node.send(cmd, key, *args)\n            if reply.is_error(\"MOVED\"):             # slot has a new owner: my map is stale\n                self.slots = fetch_slot_map(node)\n                node = self.slots[key_slot(key)]\n            elif reply.is_error(\"ASK\"):             # slot is mid-migration: one-off hop,\n                node = connect(reply.address)       # and the map stays as it is\n                node.send(\"ASKING\")\n            else:\n                return reply\n        raise RuntimeError(\"too many redirects: the cluster is reconfiguring\")"
+  },
+  "example": {
+    "en": "A cluster of 10 primaries serves reads at a **95% hit rate**, so the database sees 5% of them. One node dies with no replica. Its 10% of the keys now always miss: database load becomes 10% + 90% × 5% = **14.5%** of reads, **2.9×** normal, within seconds.\n\nWith a replica, promotion takes the node timeout plus a second or two, and only writes not yet replicated are lost. With a spare *gutter* pool, as Facebook runs, clients send the dead node's keys there instead: each key misses once, then hits.",
+    "es": "Un clúster de 10 primarios atiende las lecturas con un **hit rate de 95%**, así que la base de datos ve el 5%. Un nodo muere y no tiene réplica. Su 10% de las keys ahora siempre da miss: la carga de la base pasa a 10% + 90% × 5% = **14.5%** de las lecturas, **2.9×** lo normal, en segundos.\n\nCon una réplica, la promoción tarda el timeout del nodo más uno o dos segundos, y solo se pierden las escrituras que aún no se habían replicado. Con un pool *gutter* de reserva, como el de Facebook, los clientes mandan ahí las keys del nodo muerto: cada key da miss una vez y después hit."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Partitioning and routing",
+        "es": "Particionamiento y enrutamiento"
+      },
+      "body": {
+        "en": "**Consistent hashing** (Memcached clients): nodes sit on a ring with virtual nodes; adding one moves ~1/N of the keys, and the servers coordinate nothing. **Hash slots** (Redis Cluster): `CRC16(key) mod 16384` picks a slot and a table maps slots to nodes. Resharding moves whole slots, one at a time, while the cluster keeps serving; ownership is explicit and inspectable. **Routing**: a smart client caches the slot map and reaches the owner in one hop; on `MOVED` it refreshes the map, on `ASK` it follows a one-off redirect during a migration. A **proxy** such as Facebook's mcrouter speaks the cache protocol to simple clients and pools connections, at the price of an extra hop and another tier to run. Multi-key commands work only when the keys share a slot: force that with hash tags like `user:{42}:cart`.",
+        "es": "**Consistent hashing** (clientes de Memcached): los nodos están en un anillo con nodos virtuales; agregar uno mueve ~1/N de las keys, y los servidores no coordinan nada. **Hash slots** (Redis Cluster): `CRC16(key) mod 16384` elige un slot y una tabla asigna slots a nodos. El resharding mueve slots enteros, de a uno, mientras el clúster sigue atendiendo; la propiedad es explícita y se puede inspeccionar. **Enrutamiento**: un cliente inteligente guarda el mapa de slots y llega al dueño en un salto; ante un `MOVED` refresca el mapa, y ante un `ASK` sigue una redirección puntual durante una migración. Un **proxy** como mcrouter, de Facebook, habla el protocolo de la cache con clientes simples y agrupa conexiones, al precio de un salto extra y otra capa que operar. Los comandos sobre varias keys solo funcionan si comparten slot: fuérzalo con hash tags como `user:{42}:cart`."
+      }
+    },
+    {
+      "title": {
+        "en": "Eviction and memory",
+        "es": "Desalojo y memoria"
+      },
+      "body": {
+        "en": "A cache without a memory cap is a memory leak. Memcached starts with 64 MB and evicts by LRU. Redis ships with **no limit and `noeviction`**, so a Redis cache must set `maxmemory` and a policy, usually `allkeys-lru`. Redis keeps no true LRU list: it samples 5 keys (`maxmemory-samples`) and evicts the best candidate, close to real LRU for a fraction of the memory. **LFU** (`allkeys-lfu`, Redis 4.0+) keeps an approximate, decaying access counter per key, so a nightly scan can't push out the truly hot keys as it does under LRU. Leave headroom: replication buffers are not counted in `maxmemory`. Watch evictions and hit rate together: a falling hit rate with rising evictions means the cache is too small, not that the TTLs are wrong.",
+        "es": "Una cache sin tope de memoria es una fuga de memoria. Memcached arranca con 64 MB y desaloja por LRU. Redis viene **sin límite y con `noeviction`**, así que una cache en Redis debe definir `maxmemory` y una política, normalmente `allkeys-lru`. Redis no mantiene una lista LRU real: toma una muestra de 5 keys (`maxmemory-samples`) y desaloja a la mejor candidata, muy cerca del LRU real con una fracción de la memoria. **LFU** (`allkeys-lfu`, Redis 4.0+) guarda por key un contador de accesos aproximado que decae, así un escaneo nocturno no saca a las keys realmente calientes, como sí pasa con LRU. Deja margen: los buffers de replicación no cuentan dentro de `maxmemory`. Mira juntos los desalojos y el hit rate: un hit rate que baja con desalojos que suben significa que la cache es chica, no que los TTL estén mal."
+      }
+    },
+    {
+      "title": {
+        "en": "Failover and the cold-cache problem",
+        "es": "Failover y el problema de la cache fría"
+      },
+      "body": {
+        "en": "With asynchronous replication the primary answers before the replica has the write; the Redis Cluster spec says plainly that acknowledged writes can be lost in a failover. For a cache that is fine. The load shift is not. When a node dies you can **promote a replica** (warm, but 2× the memory); **rehash onto the survivors** (cheap, but the node that inherits a hot key can overload and fail too, a cascade Facebook explicitly avoids); or keep a **gutter pool**, idle machines (~1% of the servers in a Facebook cluster) that temporarily take the dead node's keys with short TTLs. For restarts and scale-ups, warm a node before it takes full traffic. And coalesce every miss: Facebook's leases let one client refill a key while the others wait, cutting a peak of 17K database queries/s to 1.3K.",
+        "es": "Con replicación asíncrona el primario responde antes de que la réplica tenga la escritura; la especificación de Redis Cluster dice sin vueltas que en un failover se pueden perder escrituras ya confirmadas. Para una cache está bien. El salto de carga no. Cuando muere un nodo puedes **promover una réplica** (caliente, pero 2× la memoria); **rehashear sobre los sobrevivientes** (barato, pero el nodo que hereda una key caliente puede sobrecargarse y caer también, una cascada que Facebook evita a propósito); o tener un **pool gutter**, máquinas ociosas (~1% de los servidores de un clúster de Facebook) que toman por un rato las keys del nodo muerto con TTL cortos. En reinicios y ampliaciones, calienta el nodo antes de darle todo el tráfico. Y agrupa cada miss: los leases de Facebook dejan que un solo cliente rellene una key mientras los demás esperan, y bajaron un pico de 17K consultas/s a la base de datos a 1.3K."
+      }
+    },
+    {
+      "title": {
+        "en": "Hot keys",
+        "es": "Keys calientes"
+      },
+      "body": {
+        "en": "One key can dominate: Facebook reports that a single key can account for 20% of a server's requests. Partitioning can't help, because a key lives on one node by definition. In order of cost: an **in-process cache** in each app server with a TTL of seconds removes most reads before they touch the network; Redis 6+ can keep it fresh with client-side caching, where the server sends an invalidation when a tracked key changes. **Read from replicas** for keys that tolerate lag. **Split the key** into `key#1…key#k` copies on different nodes and read a random one; writes must update all k. Find hot keys by sampling requests at the client or proxy, not by guessing. Large values are the sibling problem: a 1 MB value read 1,000 times/s is 1 GB/s of network from a single node.",
+        "es": "Una sola key puede dominar: Facebook cuenta que una sola key puede llevarse el 20% de los requests de un servidor. El particionamiento no ayuda, porque una key vive en un solo nodo por definición. De menor a mayor costo: una **cache en el proceso** de cada servidor de aplicación, con un TTL de segundos, quita la mayoría de las lecturas antes de que toquen la red; Redis 6+ puede mantenerla fresca con client-side caching, donde el servidor envía una invalidación cuando cambia una key seguida. **Leer de las réplicas** para las keys que toleran retraso. **Dividir la key** en copias `key#1…key#k` en nodos distintos y leer una al azar; las escrituras deben actualizar las k. Encuentra las keys calientes tomando muestras de requests en el cliente o el proxy, no adivinando. Los valores grandes son el problema hermano: un valor de 1 MB leído 1,000 veces/s es 1 GB/s de red desde un solo nodo."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Scales by adding nodes: memory and throughput grow with the number of shards.",
+      "es": "Escala agregando nodos: la memoria y el throughput crecen con la cantidad de shards."
+    },
+    {
+      "en": "A smart client reaches the owner in one hop, with no proxy or coordinator on the request path.",
+      "es": "Un cliente inteligente llega al dueño en un salto, sin proxy ni coordinador en el camino del request."
+    },
+    {
+      "en": "Replicas turn a node failure into a brief failover instead of a miss storm.",
+      "es": "Las réplicas convierten la caída de un nodo en un failover breve en vez de una tormenta de misses."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Asynchronous replication can lose acknowledged writes on failover: fine for a cache, wrong for a store.",
+      "es": "La replicación asíncrona puede perder escrituras confirmadas en un failover: aceptable en una cache, incorrecto en un almacén."
+    },
+    {
+      "en": "Hot keys and large values overload one node however many nodes you add.",
+      "es": "Las keys calientes y los valores grandes sobrecargan un nodo por más nodos que agregues."
+    },
+    {
+      "en": "Multi-key operations work only inside one slot; there are no cross-node transactions.",
+      "es": "Las operaciones sobre varias keys solo funcionan dentro de un slot; no hay transacciones entre nodos."
+    }
+  ],
+  "whenToUse": {
+    "en": "A read-heavy service whose hot data no longer fits one cache node, or whose database could not survive that node failing.",
+    "es": "Un servicio con muchas lecturas cuyos datos calientes ya no caben en un nodo de cache, o cuya base de datos no sobreviviría a la caída de ese nodo."
+  },
+  "whenNotToUse": {
+    "en": "Data you can't rebuild: use a database or [[case-kv-store]]. Or data that fits one node with a replica: clustering adds moving parts for nothing.",
+    "es": "Datos que no puedes reconstruir: usa una base de datos o [[case-kv-store]]. Tampoco si los datos caben en un nodo con una réplica: el clúster suma piezas móviles sin ganar nada."
+  },
+  "numbers": [
+    {
+      "en": "Redis Cluster: 16,384 slots, slot = CRC16(key) mod 16384; suggested maximum of ~1,000 nodes.",
+      "es": "Redis Cluster: 16,384 slots, slot = CRC16(key) mod 16384; máximo sugerido de ~1,000 nodos."
+    },
+    {
+      "en": "Memcached defaults: 64 MB of memory, 1 MB max item, 250-byte keys, 4 threads, port 11211.",
+      "es": "Valores por defecto de Memcached: 64 MB de memoria, ítems de hasta 1 MB, keys de 250 bytes, 4 threads, puerto 11211."
+    },
+    {
+      "en": "Redis defaults: no memory limit, `noeviction`, and 5 keys sampled per eviction.",
+      "es": "Valores por defecto de Redis: sin límite de memoria, `noeviction` y 5 keys de muestra por desalojo."
+    },
+    {
+      "en": "Sizing (assumed): 240 GB ÷ 24 GB usable per 32 GB node = 10 primaries, 20 nodes with replicas; 500k ops/s ÷ 10 = 50k each.",
+      "es": "Dimensionamiento (supuesto): 240 GB ÷ 24 GB útiles por nodo de 32 GB = 10 primarios, 20 nodos con réplicas; 500k ops/s ÷ 10 = 50k cada uno."
+    },
+    {
+      "en": "Lose 1 of 10 nodes at a 95% hit rate: database load goes from 5% to 14.5% of reads, 2.9×.",
+      "es": "Pierdes 1 de 10 nodos con un hit rate de 95%: la carga de la base pasa de 5% a 14.5% de las lecturas, 2.9×."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Redis as a cache on defaults: no memory limit and `noeviction`, so it grows until the OS kills it.",
+      "es": "Redis como cache con los valores por defecto: sin límite de memoria y con `noeviction`, crece hasta que el sistema operativo lo mata."
+    },
+    {
+      "en": "Rehashing a dead node's keys onto its neighbors: the hot key moves too and takes down the next node.",
+      "es": "Rehashear las keys de un nodo muerto sobre sus vecinos: la key caliente también se muda y tira al siguiente nodo."
+    },
+    {
+      "en": "Treating failover as lossless: replication is asynchronous, so acknowledged writes can vanish.",
+      "es": "Creer que el failover no pierde nada: la replicación es asíncrona, así que escrituras confirmadas pueden desaparecer."
+    },
+    {
+      "en": "Multi-key commands across slots: Redis Cluster rejects them unless the keys share a hash tag.",
+      "es": "Comandos sobre varias keys en slots distintos: Redis Cluster los rechaza, salvo que las keys compartan un hash tag."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Consistent hashing or hash slots?",
+        "es": "¿Consistent hashing o hash slots?"
+      },
+      "a": {
+        "en": "Both limit how many keys move when nodes change; they differ in who knows the mapping. Every client computes a ring from the member list: no coordination, ideal for Memcached, whose servers don't talk to each other. Slots add an explicit table, 16,384 entries in Redis Cluster, so I can move one slot, see who owns what and migrate online. I'd pick slots when the cluster manages itself, and a ring when clients or a proxy own routing.",
+        "es": "Ambos limitan cuántas keys se mueven cuando cambian los nodos; difieren en quién conoce el mapa. Cada cliente calcula el anillo a partir de la lista de miembros: sin coordinación, ideal para Memcached, cuyos servidores no se hablan entre sí. Los slots suman una tabla explícita, 16,384 entradas en Redis Cluster, así puedo mover un slot, ver quién es dueño de qué y migrar en línea. Elegiría slots cuando el clúster se administra solo, y un anillo cuando el enrutamiento es de los clientes o de un proxy."
+      }
+    },
+    {
+      "q": {
+        "en": "One key receives 30% of all reads. What do you do?",
+        "es": "Una key recibe el 30% de todas las lecturas. ¿Qué haces?"
+      },
+      "a": {
+        "en": "Adding nodes won't help: one key lives on one node. First I put a small in-process cache with a TTL of a few seconds in each app server, which absorbs most reads before the network. If staleness matters, Redis client-side caching invalidates it on change. Next come replica reads, or splitting the key into k copies on different nodes and reading a random one. I'd also sample requests to detect hot keys, so the next one is found early.",
+        "es": "Agregar nodos no ayuda: una key vive en un solo nodo. Primero pongo una cache chica en el proceso de cada servidor de aplicación, con un TTL de pocos segundos, que absorbe la mayoría de las lecturas antes de la red. Si importa la frescura, el client-side caching de Redis la invalida cuando hay un cambio. Después vienen las lecturas en réplicas, o dividir la key en k copias en nodos distintos y leer una al azar. También tomaría muestras de requests para detectar keys calientes, así la próxima aparece a tiempo."
+      }
+    },
+    {
+      "q": {
+        "en": "A cache node dies. Walk me through what happens.",
+        "es": "Muere un nodo de la cache. Cuéntame qué pasa."
+      },
+      "a": {
+        "en": "With a replica: the other primaries mark it failed after the node timeout, a replica is elected in a second or two, and clients get MOVED and refresh their maps. Unreplicated writes are gone, which a cache accepts. Without a replica its keys miss and the database takes the burst: at a 95% hit rate, losing 1 of 10 nodes nearly triples its load. So I size the database for that or run a gutter pool, and I coalesce refills.",
+        "es": "Con una réplica: los demás primarios lo marcan como caído tras el timeout del nodo, una réplica sale elegida en uno o dos segundos, y los clientes reciben MOVED y refrescan sus mapas. Las escrituras que no se habían replicado se pierden, y una cache lo acepta. Sin réplica, sus keys dan miss y la base de datos recibe la ráfaga: con un hit rate de 95%, perder 1 de 10 nodos casi triplica su carga. Por eso dimensiono la base para ese caso, o uso un pool gutter, y agrupo las recargas."
+      }
+    }
+  ],
+  "related": [
+    "caching",
+    "consistent-hashing",
+    "replication",
+    "sharding",
+    "case-kv-store",
+    "gossip-membership"
+  ],
+  "sources": [
+    {
+      "title": "Redis — Cluster specification",
+      "url": "https://redis.io/docs/latest/operate/oss_and_stack/reference/cluster-spec/"
+    },
+    {
+      "title": "Redis — Key eviction",
+      "url": "https://redis.io/docs/latest/develop/reference/eviction/"
+    },
+    {
+      "title": "Memcached — Configuring the server (defaults)",
+      "url": "https://docs.memcached.org/serverguide/configuring/"
+    },
+    {
+      "title": "Nishtala et al. — Scaling Memcache at Facebook (NSDI 2013)",
+      "url": "https://www.usenix.org/conference/nsdi13/technical-sessions/presentation/nishtala"
+    }
+  ]
+}

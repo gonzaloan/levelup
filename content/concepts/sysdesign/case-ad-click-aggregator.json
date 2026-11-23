@@ -1,0 +1,233 @@
+{
+  "id": "case-ad-click-aggregator",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": {
+    "en": "Design: ad click aggregator",
+    "es": "Diseño: agregador de clics de anuncios"
+  },
+  "aliases": [
+    "ad click aggregation",
+    "click counting",
+    "real-time analytics pipeline",
+    "ad event processing",
+    "click deduplication",
+    "lambda architecture",
+    "batch reconciliation"
+  ],
+  "tldr": {
+    "en": "Log clicks to Kafka, drop duplicates by click id, count per ad per minute by event time with exactly-once output into an OLAP store, and reconcile against a batch recount of the raw log.",
+    "es": "Registra los clics en Kafka, descarta duplicados por click id, cuenta por anuncio y por minuto según event time con salida exactly-once hacia un store OLAP, y reconcilia contra un reconteo batch del log crudo."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: record every ad click; show advertisers clicks per ad per minute, sliced by campaign or country, and the top ads; feed **billing**. **Non-functional**: no click lost or counted twice; dashboards about a minute behind; queries under a second; the click redirect never waits on analytics.\n\nScale (assumed): 1B clicks/day ≈ 11.6k/s average, ~58k/s at a 5× peak; ~0.5 KB per event ≈ 500 GB/day of raw log.\n\nQuestions I'd ask:\n\n1. How fresh and how exact? A dashboard tolerates a small error for a minute; an invoice doesn't.\n2. Which dimensions do queries filter and group by?\n3. How late can a click arrive (offline mobile SDKs)?\n\n### API and data model\n\nEvent: `{click_id, ad_id, user_id, ts, country}`. The `click_id` is minted when the ad is served, so a retried click carries the same id. Aggregate row: `(ad_id, minute, country) → clicks`. Query: `GET /ads/{id}/clicks?from&to&granularity`.\n\n### Architecture\n\n1. **Click service**: appends the event to Kafka and redirects the user ([[case-message-queue]]).\n2. **Stream job** (Flink): drops duplicate `click_id`s, then counts per `(ad_id, minute)` in 1-minute tumbling event-time windows ([[stream-processing]]).\n3. **OLAP store** (Pinot, Druid, ClickHouse): keeps the minute rows, rolls them up to hours and days, and serves dashboards.\n4. **Batch recount**: the raw log is archived to object storage; an hourly and daily job recounts it and overwrites the stream's totals.\n\n### The hard parts\n\n1. **Exactly-once counts**: client retries, redelivery and job restarts all create duplicates.\n2. **Late events**: the watermark closes a window, but a click that arrives later must still be billed.\n3. **Hot ads**: one viral ad overloads a single partition and subtask.",
+    "es": "### Requisitos\n\n**Funcionales**: registrar cada clic en un anuncio; mostrar a los anunciantes los clics por anuncio y por minuto, filtrados por campaña o país, y los anuncios top; alimentar la **facturación**. **No funcionales**: ningún clic perdido ni contado dos veces; dashboards con cerca de un minuto de atraso; consultas en menos de un segundo; la redirección del clic nunca espera a la analítica.\n\nEscala (supuesta): 1,000M de clics/día ≈ 11.6k/s en promedio, ~58k/s con un pico de 5×; ~0.5 KB por evento ≈ 500 GB/día de log crudo.\n\nPreguntas que haría:\n\n1. ¿Qué tan fresco y qué tan exacto? Un dashboard tolera un error pequeño durante un minuto; una factura no.\n2. ¿Por qué dimensiones filtran y agrupan las consultas?\n3. ¿Qué tan tarde puede llegar un clic (SDKs móviles sin conexión)?\n\n### API y modelo de datos\n\nEvento: `{click_id, ad_id, user_id, ts, country}`. El `click_id` se genera cuando se sirve el anuncio, así que un clic reintentado lleva el mismo id. Fila agregada: `(ad_id, minute, country) → clicks`. Consulta: `GET /ads/{id}/clicks?from&to&granularity`.\n\n### Arquitectura\n\n1. **Servicio de clics**: agrega el evento a Kafka y redirige al usuario ([[case-message-queue]]).\n2. **Job de streaming** (Flink): descarta los `click_id` duplicados y luego cuenta por `(ad_id, minute)` en ventanas tumbling de 1 minuto por event time ([[stream-processing]]).\n3. **Store OLAP** (Pinot, Druid, ClickHouse): guarda las filas por minuto, las agrega a horas y días, y sirve los dashboards.\n4. **Reconteo batch**: el log crudo se archiva en object storage; un job horario y otro diario lo recuentan y sobrescriben los totales del stream.\n\n### Las partes difíciles\n\n1. **Conteos exactly-once**: los reintentos del cliente, las reentregas y los reinicios del job crean duplicados.\n2. **Eventos tardíos**: el watermark cierra una ventana, pero un clic que llega después igual se tiene que facturar.\n3. **Anuncios calientes**: un anuncio viral sobrecarga una sola partición y una sola subtarea."
+  },
+  "keyPoints": [
+    {
+      "en": "The click path only appends to Kafka and redirects; all counting is asynchronous.",
+      "es": "El camino del clic solo agrega a Kafka y redirige; todo el conteo es asíncrono."
+    },
+    {
+      "en": "Drop duplicates by **click id**, then count per ad per minute in event-time windows.",
+      "es": "Descarta duplicados por **click id** y luego cuenta por anuncio y por minuto en ventanas de event time."
+    },
+    {
+      "en": "Checkpoints plus a transactional or upsert sink keep counts **exactly-once** across restarts.",
+      "es": "Los checkpoints más un sink transaccional o con upsert mantienen los conteos **exactly-once** entre reinicios."
+    },
+    {
+      "en": "Late clicks miss their window; a **batch recount** of the raw log corrects the totals.",
+      "es": "Los clics tardíos pierden su ventana; un **reconteo batch** del log crudo corrige los totales."
+    },
+    {
+      "en": "Dashboards read fresh stream counts; invoices read reconciled ones.",
+      "es": "Los dashboards leen los conteos frescos del stream; las facturas leen los reconciliados."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  U[User clicks ad] --> C[\"Click service<br/>append + redirect\"]\n  C --> K[(\"Kafka<br/>raw clicks\")]\n  K --> D[Dedupe by click_id]\n  D --> W[\"1-min event-time<br/>windows per ad\"]\n  W -->|\"upsert (ad, minute)\"| O[(\"OLAP store<br/>minute rows\")]\n  K --> R[(\"Object storage<br/>raw log\")]\n  R --> B[\"Batch recount<br/>hourly and daily\"]\n  B -->|overwrite totals| O\n  O --> Q[\"Dashboards<br/>and billing\"]",
+    "caption": {
+      "en": "The stream path gives per-minute counts within about a minute; the batch path recounts the raw log, late clicks included, and overwrites the same rows.",
+      "es": "El camino de streaming entrega conteos por minuto en cerca de un minuto; el camino batch recuenta el log crudo, con los clics tardíos incluidos, y sobrescribe las mismas filas."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "What the stream job does: dedupe, window, idempotent upsert",
+      "es": "Lo que hace el job de streaming: deduplicar, ventana, upsert idempotente"
+    },
+    "source": "from collections import defaultdict\n\nWINDOW, ALLOWED_DELAY, DEDUPE_TTL = 60, 30, 3600   # seconds, by event time\n\n# In Flink these three are keyed state, checkpointed together with the Kafka offsets\nseen: dict[str, float] = {}          # click_id -> event time\ncounts = defaultdict(int)            # (ad_id, minute) -> clicks in open windows\nmax_ts = 0.0\n\ndef on_click(e: dict) -> None:       # e = {click_id, ad_id, ts}\n    global max_ts\n    if e[\"click_id\"] in seen:        # client retry or redelivery: count it once\n        return\n    seen[e[\"click_id\"]] = e[\"ts\"]\n    minute = int(e[\"ts\"] // WINDOW) * WINDOW\n    if minute + WINDOW <= max_ts - ALLOWED_DELAY:   # its window was already emitted\n        late_clicks.send(e)          # not lost: the batch recount reads the raw log\n        return\n    counts[(e[\"ad_id\"], minute)] += 1\n    max_ts = max(max_ts, e[\"ts\"])\n    advance(watermark=max_ts - ALLOWED_DELAY)\n\ndef advance(watermark: float) -> None:\n    for ad_id, minute in [k for k in counts if k[1] + WINDOW <= watermark]:\n        # Deterministic key + absolute value: a replay overwrites, it never adds\n        olap.upsert(key=(ad_id, minute), clicks=counts.pop((ad_id, minute)))\n    for click_id in [c for c, ts in seen.items() if ts < watermark - DEDUPE_TTL]:\n        del seen[click_id]           # bounded dedupe state"
+  },
+  "example": {
+    "en": "Uber's pipeline for ads on UberEats (2021): Flink reads ad clicks and impressions from Kafka, removes duplicates with keyed state, and counts them in one-minute tumbling windows. Each aggregated row gets a record UUID: Pinot upserts on it and the ad-budget service uses it as an idempotency key, so a replay never counts twice. Output goes to Kafka in transactions that commit on each Flink checkpoint, every 2 minutes, and readers use `read_committed`: exactly-once results, at the price of trailing by up to one checkpoint interval.",
+    "es": "El pipeline de Uber para anuncios en UberEats (2021): Flink lee clics e impresiones de anuncios desde Kafka, elimina duplicados con keyed state y los cuenta en ventanas tumbling de un minuto. Cada fila agregada recibe un UUID de registro: Pinot hace upsert sobre él y el servicio de presupuesto de anuncios lo usa como idempotency key, así que un replay nunca cuenta dos veces. La salida va a Kafka en transacciones que se confirman en cada checkpoint de Flink, cada 2 minutos, y los lectores usan `read_committed`: resultados exactly-once, a cambio de ir hasta un intervalo de checkpoint atrás."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Exactly-once counts, end to end",
+        "es": "Conteos exactly-once de punta a punta"
+      },
+      "body": {
+        "en": "Duplicates enter at three places, and each needs its own fix. **Client retries**: the same click sent twice carries the same `click_id`; the job keeps seen ids in keyed state with a TTL and drops repeats. That state is ~42M ids per hour of TTL at 1B clicks/day; a Bloom filter would shrink it, but a false positive drops a real, billable click. **Job restarts**: Flink restores counts and Kafka offsets from the same checkpoint, so replayed events don't count twice ([[stream-processing]]). **Sink writes**: commit output in a transaction tied to the checkpoint, or upsert each row under a deterministic key such as `(ad_id, minute)`, so a replay overwrites. Invalid clicks (bots, click farms) are filtered in a separate step before billing.",
+        "es": "Los duplicados entran por tres lugares y cada uno tiene su propia solución. **Reintentos del cliente**: el mismo clic enviado dos veces lleva el mismo `click_id`; el job guarda los ids vistos en keyed state con TTL y descarta los repetidos. Ese estado son ~42M de ids por hora de TTL con 1,000M de clics/día; un filtro de Bloom lo reduciría, pero un falso positivo descarta un clic real y facturable. **Reinicios del job**: Flink restaura los conteos y los offsets de Kafka desde el mismo checkpoint, así que los eventos reprocesados no cuentan dos veces ([[stream-processing]]). **Escrituras al sink**: confirma la salida en una transacción atada al checkpoint, o haz upsert de cada fila con una key determinística como `(ad_id, minute)`, para que un replay sobrescriba. Los clics inválidos (bots, granjas de clics) se filtran en un paso aparte antes de facturar."
+      }
+    },
+    {
+      "title": {
+        "en": "Late events and batch reconciliation",
+        "es": "Eventos tardíos y reconciliación batch"
+      },
+      "body": {
+        "en": "The watermark delay sets the trade: 30 s means each minute is final ~30 s after it ends, and anything later misses the stream count. Send those clicks to a side output and track their rate. They are not lost: every event is in the raw log, archived to object storage by event hour. A batch job recounts each closed hour and day with the same dedupe and filter rules, then overwrites the stored rows. Billing reads only reconciled periods, and an alert fires when stream and batch totals diverge beyond a threshold. This is the Lambda architecture: two code paths to keep in sync. The alternative, Kappa, keeps one streaming job and fixes history by replaying the log through a new version of it.",
+        "es": "La demora del watermark define el trade-off: 30 s significa que cada minuto queda cerrado ~30 s después de terminar, y lo que llega más tarde no entra en el conteo del stream. Envía esos clics a una salida lateral y mide su tasa. No se pierden: cada evento está en el log crudo, archivado en object storage por hora de evento. Un job batch recuenta cada hora y cada día cerrados con las mismas reglas de deduplicación y filtrado, y sobrescribe las filas guardadas. La facturación lee solo períodos reconciliados, y una alerta se dispara cuando los totales del stream y del batch difieren más que un umbral. Esto es la arquitectura Lambda: dos caminos de código que hay que mantener iguales. La alternativa, Kappa, mantiene un solo job de streaming y corrige la historia reprocesando el log con una versión nueva del job."
+      }
+    },
+    {
+      "title": {
+        "en": "Serving store and hot ads",
+        "es": "Store de consulta y anuncios calientes"
+      },
+      "body": {
+        "en": "Queries are aggregations over time ranges with filters, the workload column stores are built for. Store one row per `(ad_id, minute, dimensions)` and roll up to hours and days: Druid's rollup at ingestion can cut row counts by orders of magnitude, at the cost of losing individual events. A 30-day chart then reads 720 hourly rows per ad instead of 43,200 minute rows. \"Top ads\" is `ORDER BY clicks DESC LIMIT k` over a window, or a dedicated pipeline ([[case-top-k]]). **Hot ads**: keyed by ad, one viral ad lands on one subtask. Aggregate in two stages: count per `(ad_id, salt)` with a random salt, then sum the partial counts per `ad_id`.",
+        "es": "Las consultas son agregaciones sobre rangos de tiempo con filtros, justo la carga para la que existen los column stores. Guarda una fila por `(ad_id, minute, dimensiones)` y agrega a horas y días: el rollup de Druid en la ingesta puede reducir la cantidad de filas en órdenes de magnitud, a cambio de perder los eventos individuales. Un gráfico de 30 días lee entonces 720 filas horarias por anuncio en vez de 43,200 filas por minuto. Los \"anuncios top\" son un `ORDER BY clicks DESC LIMIT k` sobre una ventana, o un pipeline dedicado ([[case-top-k]]). **Anuncios calientes**: con el anuncio como key, uno viral cae en una sola subtarea. Agrega en dos etapas: cuenta por `(ad_id, salt)` con un salt aleatorio y luego suma los conteos parciales por `ad_id`."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "The click path does one log append: an aggregation outage never breaks redirects.",
+      "es": "El camino del clic hace un solo append al log: una caída de la agregación nunca rompe las redirecciones."
+    },
+    {
+      "en": "Event-time windows give the same counts live and on replay.",
+      "es": "Las ventanas por event time dan los mismos conteos en vivo y en un replay."
+    },
+    {
+      "en": "The raw log is the source of truth: any aggregate can be recomputed after a bug.",
+      "es": "El log crudo es la fuente de verdad: cualquier agregado se puede recalcular después de un bug."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Two code paths, stream and batch, must apply the same dedupe and filter rules.",
+      "es": "Dos caminos de código, stream y batch, tienen que aplicar las mismas reglas de deduplicación y filtrado."
+    },
+    {
+      "en": "Exactly-once output trails by a checkpoint interval; a tight watermark means more late clicks.",
+      "es": "La salida exactly-once va un intervalo de checkpoint atrás; un watermark ajustado implica más clics tardíos."
+    },
+    {
+      "en": "Dedupe state grows with click rate × TTL.",
+      "es": "El estado de deduplicación crece con la tasa de clics × el TTL."
+    }
+  ],
+  "whenToUse": {
+    "en": "High-volume event counting that is shown in near real time and also billed: ad clicks and impressions, API usage metering, view and like counters.",
+    "es": "Conteo de eventos de alto volumen que se muestra casi en tiempo real y además se factura: clics e impresiones de anuncios, medición de uso de APIs, contadores de vistas y likes."
+  },
+  "whenNotToUse": {
+    "en": "A few thousand events a day: insert rows and `GROUP BY` in the database. If nobody needs numbers before tomorrow, a daily batch job alone is simpler.",
+    "es": "Unos pocos miles de eventos al día: inserta filas y usa `GROUP BY` en la base de datos. Si nadie necesita los números antes de mañana, un job batch diario solo es más simple."
+  },
+  "numbers": [
+    {
+      "en": "Assumed: 1B clicks/day ÷ 86,400 s ≈ 11.6k/s average, ~58k/s at a 5× peak.",
+      "es": "Supuesto: 1,000M de clics/día ÷ 86,400 s ≈ 11.6k/s en promedio, ~58k/s con un pico de 5×."
+    },
+    {
+      "en": "Raw log: 1B × ~0.5 KB (assumed) ≈ 500 GB/day.",
+      "es": "Log crudo: 1,000M × ~0.5 KB (supuesto) ≈ 500 GB/día."
+    },
+    {
+      "en": "Dedupe state: ~42M click ids per hour of TTL (1B ÷ 24).",
+      "es": "Estado de deduplicación: ~42M de click ids por hora de TTL (1,000M ÷ 24)."
+    },
+    {
+      "en": "Freshness ≈ 1-minute window + watermark delay (e.g. 30 s) + checkpoint interval when the sink is transactional.",
+      "es": "Frescura ≈ ventana de 1 minuto + demora del watermark (p. ej., 30 s) + intervalo de checkpoint cuando el sink es transaccional."
+    },
+    {
+      "en": "Uber (2021): one-minute tumbling windows, Flink checkpoints every 2 minutes.",
+      "es": "Uber (2021): ventanas tumbling de un minuto y checkpoints de Flink cada 2 minutos."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Counting by processing time: a consumer backlog moves clicks into the wrong minute, and the wrong invoice.",
+      "es": "Contar por processing time: un backlog del consumidor mueve clics al minuto equivocado, y a la factura equivocada."
+    },
+    {
+      "en": "Incrementing the stored count on each window emit: a replay after a crash adds the window twice. Upsert by `(ad_id, minute)`.",
+      "es": "Incrementar el conteo guardado en cada emisión de ventana: un replay tras una caída suma la ventana dos veces. Haz upsert por `(ad_id, minute)`."
+    },
+    {
+      "en": "Different dedupe or fraud rules in stream and batch: the two totals never match and nobody trusts either.",
+      "es": "Reglas distintas de deduplicación o fraude en stream y batch: los dos totales nunca coinciden y nadie confía en ninguno."
+    },
+    {
+      "en": "Unbounded dedupe state: keep click ids for a TTL, not forever.",
+      "es": "Estado de deduplicación sin límite: guarda los click ids durante un TTL, no para siempre."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "The stream job crashes and restarts. How do you avoid double counting?",
+        "es": "El job de streaming se cae y reinicia. ¿Cómo evitas contar doble?"
+      },
+      "a": {
+        "en": "Three layers. State and Kafka offsets come back from the same checkpoint, so each click affects the counts once. The sink is idempotent: every window row is upserted under a deterministic key, `(ad_id, minute)`, or written in a transaction that commits with the checkpoint. And each click carries a `click_id` minted when the ad was served, so client retries are dropped in keyed state. Billing still reads the batch-reconciled totals.",
+        "es": "Con tres capas. El estado y los offsets de Kafka vuelven del mismo checkpoint, así que cada clic afecta los conteos una sola vez. El sink es idempotente: cada fila de ventana se escribe con upsert bajo una key determinística, `(ad_id, minute)`, o en una transacción que se confirma junto con el checkpoint. Y cada clic lleva un `click_id` generado cuando se sirvió el anuncio, así que los reintentos del cliente se descartan en keyed state. La facturación igual lee los totales reconciliados por batch."
+      }
+    },
+    {
+      "q": {
+        "en": "A click arrives two hours late. Is it billed?",
+        "es": "Un clic llega dos horas tarde. ¿Se factura?"
+      },
+      "a": {
+        "en": "Yes, but not by the stream. The watermark closed that minute long ago, so the job sends the click to a late side output and counts it as a metric. The raw event is in the log, so the next batch recount includes it and overwrites the stored total. I'd state the contract to the product team: dashboards are fresh and nearly right; invoices come from reconciled data.",
+        "es": "Sí, pero no lo factura el stream. El watermark cerró ese minuto hace rato, así que el job manda el clic a una salida lateral de tardíos y lo cuenta como métrica. El evento crudo está en el log, así que el siguiente reconteo batch lo incluye y sobrescribe el total guardado. Le dejaría claro el contrato al equipo de producto: los dashboards son frescos y casi exactos; las facturas salen de datos reconciliados."
+      }
+    },
+    {
+      "q": {
+        "en": "One ad gets 30% of all clicks. What breaks?",
+        "es": "Un anuncio recibe el 30% de todos los clics. ¿Qué se rompe?"
+      },
+      "a": {
+        "en": "Skew. Keyed by ad, one subtask takes 30% of the load and lags while the others idle. I'd aggregate in two stages: key by `(ad_id, salt)` with a random salt from 0 to 15 and count per window, then key by `ad_id` and sum the 16 partial counts. Dedupe is keyed by `click_id`, so it is already spread evenly. In the store, a hot ad is still one row per minute.",
+        "es": "El sesgo. Con el anuncio como key, una subtarea recibe el 30% de la carga y se atrasa mientras las demás están ociosas. Agregaría en dos etapas: key por `(ad_id, salt)` con un salt aleatorio de 0 a 15 y conteo por ventana, y luego key por `ad_id` para sumar los 16 conteos parciales. La deduplicación usa `click_id` como key, así que ya está bien repartida. En el store, un anuncio caliente sigue siendo una fila por minuto."
+      }
+    }
+  ],
+  "related": [
+    "stream-processing",
+    "queues-streams",
+    "idempotency",
+    "case-top-k",
+    "batch-vs-realtime",
+    "case-ads-ctr"
+  ],
+  "sources": [
+    {
+      "title": "Uber Engineering — Real-Time Exactly-Once Ad Event Processing with Apache Flink, Kafka, and Pinot (2021)",
+      "url": "https://www.uber.com/blog/real-time-exactly-once-ad-event-processing/"
+    },
+    {
+      "title": "Ananthanarayanan et al. — Photon: Fault-tolerant and Scalable Joining of Continuous Data Streams (SIGMOD 2013)",
+      "url": "https://research.google/pubs/photon-fault-tolerant-and-scalable-joining-of-continuous-data-streams/"
+    },
+    {
+      "title": "Jay Kreps — Questioning the Lambda Architecture (O'Reilly, 2014)",
+      "url": "https://www.oreilly.com/radar/questioning-the-lambda-architecture/"
+    },
+    {
+      "title": "Apache Druid docs — Data rollup",
+      "url": "https://druid.apache.org/docs/latest/ingestion/rollup/"
+    }
+  ]
+}

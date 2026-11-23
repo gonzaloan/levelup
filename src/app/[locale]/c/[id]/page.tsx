@@ -2,7 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
-import { LOCALES, m, t } from "@/lib/i18n";
+import { pageMeta } from "@/lib/meta";
+import { DIFF, LOCALES, m, t } from "@/lib/i18n";
 import { allConcepts, checkItemsFor, conceptsOf, domainIndex, getConcept, getDomain, labsFor, neighbors, pathPosition, problemsFor } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
@@ -14,6 +15,7 @@ import { MasteredDot, MasteredToggle } from "@/components/Mastered";
 import { Toc } from "@/components/Toc";
 import { KeyNav } from "@/components/KeyNav";
 import { QuickCheck } from "@/components/practice/QuickCheck";
+import { SolvedMark } from "@/components/practice/SolvedMark";
 import { Emoji, Illustration, StackRow } from "@/components/Visual";
 
 type P = { params: Promise<{ locale: Locale; id: string }> };
@@ -23,12 +25,7 @@ export const generateStaticParams = () => LOCALES.flatMap((locale) => allConcept
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale, id } = await params;
   const c = getConcept(id);
-  if (!c) return {};
-  return {
-    title: t(c.title, locale),
-    description: t(c.tldr, locale),
-    alternates: { languages: { en: `/en/c/${id}/`, es: `/es/c/${id}/` } },
-  };
+  return c ? pageMeta(locale, `/c/${id}/`, t(c.title, locale), t(c.tldr, locale), { article: true }) : {};
 }
 
 export default async function ConceptPage({ params }: P) {
@@ -93,19 +90,6 @@ export default async function ConceptPage({ params }: P) {
           {c.aliases.length > 0 && <p className="aliases">{c.aliases.join(" · ")}</p>}
         </header>
 
-        <details className="topic-nav only-narrow">
-          <summary><Icon name={d.icon} size={16} /> {L("conceptsInDomain")}: {t(d.title, locale)} <span>({siblings.findIndex((s) => s.id === id) + 1}/{siblings.length})</span></summary>
-          <ol className="sibling-list">
-            {siblings.map((s) => (
-              <li key={s.id}>
-                <Link href={`/${locale}/c/${s.id}/`} className={s.id === id ? "current" : ""} aria-current={s.id === id ? "page" : undefined}>
-                  <MasteredDot id={s.id} />{t(s.title, locale)}
-                </Link>
-              </li>
-            ))}
-          </ol>
-        </details>
-
         <section id="tldr" className="tldr">
           <div className="tldr-label">{L("tldr")}</div>
           <p className="tldr-text">{t(c.tldr, locale)}</p>
@@ -167,14 +151,19 @@ export default async function ConceptPage({ params }: P) {
         )}
 
         {problems.length > 0 && (
-          <section className="lab-promo" aria-label={L("solveIt")}>
-            {problems.map((p) => (
-              <Link key={p.id} href={`/${locale}/practice/code/${p.id}/`} className="lab-promo-card">
-                <Emoji name="laptop" size={34} />
-                <span><small>{L("solveIt")}</small><strong>{t(p.title, locale)}</strong><span>{p.complexity.time} · {p.difficulty}</span></span>
-                <Icon name="right" size={18} />
-              </Link>
-            ))}
+          <section className="solve" aria-label={L("solveIt")}>
+            <h2 className="section-label"><Emoji name="laptop" size={20} /> {L("solveIt")}</h2>
+            <ul className="code-list">
+              {problems.map((p) => (
+                <li key={p.id}>
+                  <Link href={`/${locale}/practice/code/${p.id}/`}>
+                    <span className="cl-title">{t(p.title, locale)}</span>
+                    <span className={`diff diff-${p.difficulty}`}>{DIFF[p.difficulty][locale]}</span>
+                    <SolvedMark id={p.id} />
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </section>
         )}
 
@@ -283,6 +272,19 @@ export default async function ConceptPage({ params }: P) {
             ))}
           </ul>
         </section>
+
+        <details className="topic-nav only-narrow">
+          <summary><Icon name={d.icon} size={16} /> {L("conceptsInDomain")}: {t(d.title, locale)} <span>({siblings.findIndex((s) => s.id === id) + 1}/{siblings.length})</span></summary>
+          <ol className="sibling-list">
+            {siblings.map((s) => (
+              <li key={s.id}>
+                <Link href={`/${locale}/c/${s.id}/`} className={s.id === id ? "current" : ""} aria-current={s.id === id ? "page" : undefined}>
+                  <MasteredDot id={s.id} />{t(s.title, locale)}
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </details>
 
         <nav className="pager">
           {prev ? <Link href={`/${locale}/c/${prev.id}/`}><Icon name="left" size={16} /><span><small>{L("prev")}</small>{t(prev.title, locale)}</span></Link> : <span />}

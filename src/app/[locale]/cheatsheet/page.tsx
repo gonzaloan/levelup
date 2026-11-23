@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { m, t } from "@/lib/i18n";
 import { conceptsOf, getDomains } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -13,7 +14,7 @@ import { Icon } from "@/components/Icon";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return { title: m("cheatsheetTitle", locale), description: m("cheatsheetSub", locale) };
+  return pageMeta(locale, "/cheatsheet/", m("cheatsheetTitle", locale), m("cheatsheetSub", locale));
 }
 
 export default async function Cheatsheet({ params }: P) {

@@ -62,7 +62,7 @@ export function QuickCheck({ items, conceptId, locale }: { items: PItem[]; conce
   return (
     <div className={`qc${result ? (result.correct ? " is-ok" : result.score > 0 ? " is-partial" : " is-bad") : ""}`}>
       <div className="qc-top">
-        <span className="qc-dots" aria-label={`${idx + 1} / ${items.length}`}>
+        <span className="qc-dots" role="img" aria-label={`${idx + 1} / ${items.length}`}>
           {items.map((_, i) => <i key={i} className={i < idx ? "past" : i === idx ? "now" : ""} />)}
         </span>
       </div>

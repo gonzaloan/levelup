@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { m, t } from "@/lib/i18n";
 import { domainIndex, getArchitectureMap, getConcept, type MapGroup } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -11,7 +12,7 @@ type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
   const map = getArchitectureMap();
-  return { title: t(map.title, locale), description: t(map.subtitle, locale) };
+  return pageMeta(locale, "/map/", t(map.title, locale), t(map.subtitle, locale));
 }
 
 function Chips({ group, locale }: { group: MapGroup; locale: Locale }) {

@@ -2,16 +2,16 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { LOCALES, t } from "@/lib/i18n";
 import { conceptsOf, getConcept } from "@/lib/content";
-import { PHASES, RUBRIC } from "@/lib/design-round";
+import { DESIGN_DOMAINS, PHASES, RUBRIC } from "@/lib/design-round";
 import { Icon } from "@/components/Icon";
 import { Markdown } from "@/components/Markdown";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Diagram } from "@/components/Diagram";
 import { Illustration } from "@/components/Visual";
 import { DesignRound, type PhaseView } from "@/components/practice/DesignRound";
-import { DESIGN_DOMAINS } from "../page";
 
 type P = { params: Promise<{ locale: Locale; id: string }> };
 export const dynamicParams = false;
@@ -21,7 +21,7 @@ export const generateStaticParams = () => LOCALES.flatMap((locale) => cases().ma
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale, id } = await params;
   const c = getConcept(id);
-  return c ? { title: `${locale === "es" ? "Ronda" : "Round"}: ${t(c.title, locale)}` } : {};
+  return c ? pageMeta(locale, `/practice/design/${id}/`, `${locale === "es" ? "Ronda" : "Round"}: ${t(c.title, locale)}`, t(c.tldr, locale)) : {};
 }
 
 export default async function DesignCasePage({ params }: P) {

@@ -1,0 +1,130 @@
+{
+  "concept": "case-ad-click-aggregator",
+  "items": [
+    {
+      "id": "case-ad-click-aggregator.a1",
+      "type": "mcq",
+      "prompt": {
+        "en": "After every restart of the Flink job, advertisers see roughly **double** counts for the last minutes before the crash. Dedupe by `click_id` works. The sink runs `UPDATE … SET clicks = clicks + n` when a window closes. What do you fix?",
+        "es": "Después de cada reinicio del job de Flink, los anunciantes ven conteos cerca del **doble** en los últimos minutos antes de la caída. La deduplicación por `click_id` funciona. El sink ejecuta `UPDATE … SET clicks = clicks + n` cuando cierra una ventana. ¿Qué corriges?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Upsert the window's absolute count under the key `(ad_id, minute)`",
+            "es": "Hacer upsert del conteo absoluto de la ventana con la key `(ad_id, minute)`"
+          },
+          "why": {
+            "en": "Windows emitted after the last checkpoint are emitted again on replay; an overwrite makes that harmless.",
+            "es": "Las ventanas emitidas después del último checkpoint se emiten de nuevo en el replay; al sobrescribir, eso no hace daño."
+          }
+        },
+        {
+          "text": {
+            "en": "Checkpoint more often, so fewer events are replayed after a crash",
+            "es": "Hacer checkpoints más seguido, para reprocesar menos eventos tras una caída"
+          },
+          "why": {
+            "en": "That shrinks the doubled range but never removes it: an increment is still applied twice.",
+            "es": "Eso achica el rango duplicado pero no lo elimina: un incremento se sigue aplicando dos veces."
+          }
+        },
+        {
+          "text": {
+            "en": "Raise the watermark delay, so windows close after the stragglers arrive",
+            "es": "Subir la demora del watermark, para que las ventanas cierren después de los rezagados"
+          },
+          "why": {
+            "en": "Late events cause undercounts, not double counts. The watermark is unrelated to replay.",
+            "es": "Los eventos tardíos causan conteos de menos, no dobles. El watermark no tiene que ver con el replay."
+          }
+        },
+        {
+          "text": {
+            "en": "Keep `click_id`s for a longer TTL in the dedupe state",
+            "es": "Guardar los `click_id` con un TTL más largo en el estado de deduplicación"
+          },
+          "why": {
+            "en": "Dedupe state is restored with the checkpoint and works; the duplicate is the sink write, not the event.",
+            "es": "El estado de deduplicación se restaura con el checkpoint y funciona; lo duplicado es la escritura al sink, no el evento."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "Checkpoints make state exactly-once, not side effects. After a crash the job rewinds to the last checkpoint and emits the same windows again. The sink must tolerate that: an upsert of the absolute value under a deterministic key, or a transaction that commits only when the checkpoint does.",
+        "es": "Los checkpoints hacen exactly-once el estado, no los efectos externos. Tras una caída, el job vuelve al último checkpoint y emite otra vez las mismas ventanas. El sink tiene que tolerarlo: un upsert del valor absoluto con una key determinística, o una transacción que se confirma solo cuando se confirma el checkpoint."
+      }
+    },
+    {
+      "id": "case-ad-click-aggregator.a2",
+      "type": "numeric",
+      "prompt": {
+        "en": "Assume **1B clicks/day**, spread evenly, a dedupe TTL of **2 hours** and **~50 bytes** of state per click id. How many **GB** of dedupe state does the job hold?",
+        "es": "Supón **1,000M de clics/día**, repartidos de forma pareja, un TTL de deduplicación de **2 horas** y **~50 bytes** de estado por click id. ¿Cuántos **GB** de estado de deduplicación mantiene el job?"
+      },
+      "answer": 4.2,
+      "tolerance": 0.15,
+      "unit": "GB",
+      "explain": {
+        "en": "1B ÷ 24 ≈ 42M clicks/hour. × 2 hours ≈ 83M ids. × 50 B ≈ 4.2 GB. Dedupe state = click rate × TTL × bytes per id, so the TTL is a cost dial: size it to how late a retry can realistically arrive.",
+        "es": "1,000M ÷ 24 ≈ 42M de clics/hora. × 2 horas ≈ 83M de ids. × 50 B ≈ 4.2 GB. Estado de deduplicación = tasa de clics × TTL × bytes por id, así que el TTL es una perilla de costo: ajústalo a qué tan tarde puede llegar de verdad un reintento."
+      }
+    },
+    {
+      "id": "case-ad-click-aggregator.a3",
+      "type": "mcq",
+      "prompt": {
+        "en": "A teammate says: \"We count by event time with a 30 s watermark and exactly-once checkpoints, so the stream totals are final. Let's bill from them.\" What is wrong?",
+        "es": "Alguien del equipo dice: \"Contamos por event time con un watermark de 30 s y checkpoints exactly-once, así que los totales del stream son definitivos. Facturemos con ellos.\" ¿Qué está mal?"
+      },
+      "options": [
+        {
+          "text": {
+            "en": "Clicks later than the watermark miss their window; bill from the batch recount",
+            "es": "Los clics que llegan después del watermark pierden su ventana; factura con el reconteo batch"
+          },
+          "why": {
+            "en": "Exactly-once covers what the job processed in time, not what arrived after the window closed.",
+            "es": "El exactly-once cubre lo que el job procesó a tiempo, no lo que llegó después de cerrar la ventana."
+          }
+        },
+        {
+          "text": {
+            "en": "Exactly-once checkpoints don't work with Kafka sources, only with files",
+            "es": "Los checkpoints exactly-once no funcionan con fuentes Kafka, solo con archivos"
+          },
+          "why": {
+            "en": "Kafka is the standard case: the checkpoint stores the source offsets with the state.",
+            "es": "Kafka es el caso estándar: el checkpoint guarda los offsets de la fuente junto con el estado."
+          }
+        },
+        {
+          "text": {
+            "en": "Event time is set by the device; processing time is safer for billing",
+            "es": "El event time lo pone el dispositivo; el processing time es más seguro para facturar"
+          },
+          "why": {
+            "en": "Processing time shifts clicks between minutes on every backlog or replay, so totals stop being reproducible.",
+            "es": "El processing time mueve clics entre minutos con cada backlog o replay, y los totales dejan de ser reproducibles."
+          }
+        },
+        {
+          "text": {
+            "en": "A 30 s watermark emits each window 30 s early, so counts are partial",
+            "es": "Un watermark de 30 s emite cada ventana 30 s antes, así que los conteos son parciales"
+          },
+          "why": {
+            "en": "It is the opposite: the window is emitted ~30 s after it ends, to wait for stragglers.",
+            "es": "Es al revés: la ventana se emite ~30 s después de terminar, para esperar a los rezagados."
+          }
+        }
+      ],
+      "answer": 0,
+      "explain": {
+        "en": "A watermark is a bet on how late events can be, and some always lose it: an offline phone can deliver a click hours later. The stream gives fast, nearly right numbers. Money needs the batch recount of the raw log, which sees every event whenever it arrived.",
+        "es": "Un watermark es una apuesta sobre qué tan tarde pueden llegar los eventos, y algunos siempre la pierden: un teléfono sin conexión puede entregar un clic horas después. El stream da números rápidos y casi exactos. El dinero necesita el reconteo batch del log crudo, que ve cada evento sin importar cuándo llegó."
+      }
+    }
+  ]
+}

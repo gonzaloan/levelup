@@ -6,18 +6,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Locale } from "@/lib/types";
 import { addActivity, loadState, saveState } from "@/lib/practice/store";
+import { loadCode, saveCode } from "@/lib/practice/code-store";
 
 type Test = { args: unknown[]; expected: unknown; visible?: boolean };
 type Result = { ok: boolean; got: unknown; error: string | null; ms: number };
 type Outcome = { results?: Result[]; error?: string; stdout?: string };
-
-const KEY = "fg.code.v1";
-type Saved = { solved: Record<string, number>; drafts: Record<string, string> };
-export function loadCode(): Saved {
-  try { const s = JSON.parse(localStorage.getItem(KEY) ?? "null"); if (s?.solved) return { solved: s.solved, drafts: s.drafts ?? {} }; } catch { /* ignore */ }
-  return { solved: {}, drafts: {} };
-}
-function saveCode(s: Saved) { try { localStorage.setItem(KEY, JSON.stringify(s)); } catch { /* ignore */ } }
 
 const T = {
   en: { run: "Run tests", running: "Running…", loading: "Loading Python (~13 MB, first time only)…", reset: "Reset", passed: "All tests pass", partly: (n: number, t: number) => `${n}/${t} tests pass`,
@@ -30,30 +23,14 @@ const T = {
 
 const show = (v: unknown) => JSON.stringify(v);
 
-export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, locale }: {
-  id: string; fn: string; starter: string; tests: Test[]; compare: string; concept: string; nextId?: string; locale: Locale;
-}) {
-  const t = T[locale];
-  const [code, setCode] = useState(starter);
-  const [status, setStatus] = useState<"idle" | "loading" | "running">("idle");
-  const [out, setOut] = useState<Outcome | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [solvedAt, setSolvedAt] = useState<number | null>(null);
-  const worker = useRef<Worker | null>(null);
-  const ready = useRef<Promise<void> | null>(null);
-  const seq = useRef(0);
-  const area = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    const s = loadCode();
-    if (s.drafts[id]) setCode(s.drafts[id]);
-    setSolvedAt(s.solved[id] ?? null);
-    return () => worker.current?.terminate();
-  }, [id]);
-
-  const call = (type: string, payload?: unknown, timeoutMs?: number) => new Promise<Outcome>((resolve, reject) => {
-    const w = worker.current!;
-    const n = ++seq.current;
+// One Python worker for the whole page: every runner on it (the mock interview mounts two) shares
+// the ~13 MB runtime. It is terminated on a timeout and when the last runner unmounts.
+let shared: { w: Worker; ready: Promise<void> } | null = null;
+let seq = 0;
+let users = 0;
+function rpc(w: Worker, type: string, payload?: unknown, timeoutMs?: number) {
+  return new Promise<Outcome>((resolve, reject) => {
+    const n = ++seq;
     const timer = timeoutMs ? setTimeout(() => reject(new Error("timeout")), timeoutMs) : undefined;
     const onMsg = (e: MessageEvent) => {
       if (e.data?.id !== n) return;
@@ -64,25 +41,50 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
     w.addEventListener("message", onMsg);
     w.postMessage({ id: n, type, payload });
   });
+}
+function killWorker() { shared?.w.terminate(); shared = null; }
+function bootWorker() {
+  if (!shared) {
+    const w = new Worker("/py/worker.mjs", { type: "module" });
+    shared = { w, ready: rpc(w, "warm").then(() => undefined) };
+  }
+  return shared;
+}
 
-  const boot = useCallback(() => {
-    if (!worker.current) {
-      worker.current = new Worker("/py/worker.mjs", { type: "module" });
-      ready.current = call("warm").then(() => undefined);
-    }
-    return ready.current!;
-  }, []);
+export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, locale, draftId = id, onResult }: {
+  id: string; fn: string; starter: string; tests: Test[]; compare: string; concept: string; nextId?: string; locale: Locale;
+  /** Where the draft is kept: the mock uses its own key so an old solution is not pre-filled. */
+  draftId?: string;
+  onResult?: (passed: number, total: number) => void;
+}) {
+  const t = T[locale];
+  const [code, setCode] = useState(starter);
+  const [status, setStatus] = useState<"idle" | "loading" | "running">("idle");
+  const [out, setOut] = useState<Outcome | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [solvedAt, setSolvedAt] = useState<number | null>(null);
+  const area = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const s = loadCode();
+    if (s.drafts[draftId]) setCode(s.drafts[draftId]);
+    setSolvedAt(s.solved[id] ?? null);
+  }, [id, draftId]);
+  useEffect(() => { users++; return () => { if (--users === 0) killWorker(); }; }, []);
+
+  const boot = useCallback(() => bootWorker().ready, []);
 
   const run = async () => {
     if (status !== "idle") return;
     setNotice(null);
     setStatus("loading");
-    try { await boot(); } catch { setStatus("idle"); setNotice(t.failed); worker.current = null; return; }
+    try { await boot(); } catch { setStatus("idle"); setNotice(t.failed); killWorker(); return; }
     setStatus("running");
     try {
-      const res = await call("run", { code, fn, tests, compare }, 5000);
+      const res = await rpc(bootWorker().w, "run", { code, fn, tests, compare }, 5000);
       setOut(res);
       const all = !!res.results?.length && res.results.every((r) => r.ok);
+      if (res.results) onResult?.(res.results.filter((r) => r.ok).length, res.results.length);
       if (all && !solvedAt) {
         const s = loadCode(); s.solved[id] = Date.now(); saveCode(s); setSolvedAt(s.solved[id]);
         const st = loadState(); addActivity(st, new Date(), 20, true); st.read[concept] ??= Date.now(); saveState(st);
@@ -90,7 +92,7 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
       }
     } catch (e) {
       // A run that never answers is an infinite loop (or a huge input): kill the worker, start fresh next time.
-      if ((e as Error).message === "timeout") { worker.current?.terminate(); worker.current = null; setNotice(t.timeout); setOut(null); }
+      if ((e as Error).message === "timeout") { killWorker(); setNotice(t.timeout); setOut(null); }
       else setOut({ error: (e as Error).message });
     }
     setStatus("idle");
@@ -98,7 +100,7 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
 
   const edit = (v: string) => {
     setCode(v);
-    const s = loadCode(); s.drafts[id] = v; saveCode(s);
+    const s = loadCode(); s.drafts[draftId] = v; saveCode(s);
   };
 
   // A small editor: Tab/Shift+Tab indent by 4, Enter keeps the indent (and adds 4 after ":").
@@ -178,11 +180,4 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
       )}
     </div>
   );
-}
-
-/** "✓" next to a problem in lists, from this browser's solved marks. */
-export function SolvedMark({ id }: { id: string }) {
-  const [ok, setOk] = useState(false);
-  useEffect(() => { setOk(!!loadCode().solved[id]); }, [id]);
-  return ok ? <span className="cr-solved-mark" title="✓">✓</span> : null;
 }

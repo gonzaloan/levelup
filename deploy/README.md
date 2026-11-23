@@ -24,8 +24,10 @@ cd deploy && ./deploy.sh
 
 `deploy.sh` is idempotent: it reuses the bucket, OAC, function, and (by matching
 the alias) the distribution, so re-running just re-uploads `out/` and invalidates.
-Upload uses typed passes — HTML `no-cache`, hashed `_next/*` assets
-`max-age=31536000,immutable` — then a prune-only `--delete` sync to remove orphans.
+Upload uses typed passes — HTML, the service worker (`sw.js`), its file lists
+(`offline-*.json`), the manifest and the page payloads (`index.txt`) `no-cache`; hashed
+`_next/*` assets `max-age=31536000,immutable`; everything else one day — then a prune-only
+`--delete` sync to remove orphans.
 `DRYRUN=1 ./deploy.sh` prints planned AWS actions without calling AWS.
 
 ## Notes / gotchas
@@ -39,6 +41,32 @@ Upload uses typed passes — HTML `no-cache`, hashed `_next/*` assets
   (`https://levelup.skillrealm.dev`). If the domain changes, update it and rebuild.
 - **2026-11 rewrite:** the old routes (`/path`, `/lesson/*`, `/codex`, `/assess`, …) no longer
   exist. The prune-only `--delete` sync removes them from the bucket; old links land on `404.html`.
+
+## Offline mode and its kill switch
+
+`public/sw.js` is a service worker: pages a reader has visited keep working offline, and
+"Save for offline" (footer) downloads the whole guide in one language (~18 MB, about 700
+requests, once). It only handles same-origin GETs; sign-in and sync never pass through it. Pages are
+network-first, so a deploy shows up on the next online visit. It costs nothing in AWS: the files
+are the same static objects, served by the same CloudFront plan.
+
+A bug in a service worker outlives the deploy that fixes it, because browsers keep running the
+old one until they fetch a new `sw.js`. If it ever misbehaves:
+
+```bash
+cp deploy/sw-kill.js public/sw.js
+```
+
+```bash
+npm run build && cd deploy && ./deploy.sh
+```
+
+Every browser that checks for an update then drops its caches, unregisters the worker and reloads
+from the network. Restore the real worker with `git checkout public/sw.js` once the fix is ready.
+On localhost the worker is off; `localStorage.setItem("fg.sw", "on")` turns it on.
+
+`npm run brand` re-renders `public/og.png` (the link preview image) and the app icons; run it only
+when the brand changes (needs Chromium) and commit the result.
 
 ## Login and progress sync (optional)
 

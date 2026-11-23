@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { Header } from "@/components/Header";
 import { SearchPalette } from "@/components/SearchPalette";
 import { SyncAgent } from "@/components/Account";
+import { Offline } from "@/components/Offline";
 import { LOCALES, isLocale, m, t } from "@/lib/i18n";
 import { getDomains } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -19,6 +20,7 @@ export default async function LocaleLayout({ children, params }: { children: Rea
       <Header locale={locale} />
       <div id="main" className="site-main">{children}</div>
       <footer className="site-footer">
+        <Offline locale={locale} />
         <p>{m("footer", locale)} {m("shortcuts", locale)}</p>
       </footer>
       <SyncAgent />

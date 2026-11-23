@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { t } from "@/lib/i18n";
 import { domainIndex, getConcept, getPath } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -8,10 +9,8 @@ import { PathView, type PathPhaseView } from "@/components/PathView";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return {
-    title: locale === "es" ? "Ruta de estudio" : "Study path",
-    description: locale === "es" ? "Por dónde empezar y en qué orden: 3 fases, de los fundamentos al nivel Staff." : "Where to start and in what order: 3 phases, from foundations to Staff level.",
-  };
+  return pageMeta(locale, "/path/", locale === "es" ? "Ruta de estudio" : "Study path",
+    locale === "es" ? "Por dónde empezar y en qué orden: 3 fases, de los fundamentos al nivel Staff." : "Where to start and in what order: 3 phases, from foundations to Staff level.");
 }
 
 export default async function PathPage({ params }: P) {

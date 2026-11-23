@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { t } from "@/lib/i18n";
 import { domainIndex, getConcept, getDomains } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -9,7 +10,7 @@ import { knowledgeGraph } from "@/lib/graph";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return { title: locale === "es" ? "Mapa del conocimiento" : "Knowledge map", description: locale === "es" ? "Todos los conceptos como un mapa: territorios por tema y puentes entre ideas." : "Every concept as a map: territories by topic and bridges between ideas." };
+  return pageMeta(locale, "/graph/", locale === "es" ? "Mapa del conocimiento" : "Knowledge map", locale === "es" ? "Todos los conceptos como un mapa: territorios por tema y puentes entre ideas." : "Every concept as a map: territories by topic and bridges between ideas.");
 }
 
 // Hub concepts (most connected) keep their label visible; the rest show it on hover/focus.

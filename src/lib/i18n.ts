@@ -15,6 +15,10 @@ const UI = {
   navInterview: { en: "Interview", es: "Entrevista" },
   navPractice: { en: "Practice", es: "Práctica" },
   navLabs: { en: "Labs", es: "Labs" },
+  navMore: { en: "More", es: "Más" },
+  navPlan: { en: "Interview plan", es: "Plan de entrevista" },
+  navGraph: { en: "Knowledge map", es: "Mapa del conocimiento" },
+  navQuestions: { en: "Question bank", es: "Banco de preguntas" },
   pCode: { en: "Python coding", es: "Coding en Python" },
   pCodeSub: { en: "Write the function, run the tests in your browser.", es: "Escribe la función y corre los tests en tu navegador." },
   pDesign: { en: "System design round", es: "Ronda de system design" },
@@ -200,3 +204,6 @@ const UI = {
 export type UIKey = keyof typeof UI;
 export const m = (key: UIKey, l: Locale) => UI[key][l];
 export const isLocale = (x: string): x is Locale => x === "en" || x === "es";
+
+/** Difficulty labels of coding problems. */
+export const DIFF = { easy: { en: "easy", es: "fácil" }, medium: { en: "medium", es: "media" }, hard: { en: "hard", es: "difícil" } } as const;

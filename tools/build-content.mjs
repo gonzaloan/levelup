@@ -260,6 +260,23 @@ for (const lang of ["en", "es"]) {
   fs.writeFileSync(path.join(outDir, `practice-${lang}.json`), JSON.stringify({ meta, phases, items }));
 }
 
+// Coding problems for the timed mock (/practice/code/mock): what the page needs to pose and run a
+// problem, without hints or solutions. Loaded lazily, only on that page.
+{
+  const order = new Map(domains.flatMap((d) => d.concepts).map((id, i) => [id, i]));
+  const all = listProblemFiles().map((f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } })
+    .filter((p) => p && concepts.has(p.concept))
+    .sort((a, b) => (order.get(a.concept) ?? 0) - (order.get(b.concept) ?? 0) || a.id.localeCompare(b.id));
+  // The mock gives no hints, so the starter's approach comment goes; the "# ---" section markers stay.
+  const noHints = (src) => src.split("\n").filter((l) => !/^\s*#(?! ---)/.test(l)).join("\n");
+  for (const lang of ["en", "es"]) {
+    fs.writeFileSync(path.join(outDir, `problems-${lang}.json`), JSON.stringify(all.map((p) => ({
+      id: p.id, c: p.concept, ct: concepts.get(p.concept).title[lang], d: p.difficulty, t: p.title[lang], prompt: p.prompt[lang],
+      fn: p.fn, starter: noHints(p.starter), tests: p.tests, compare: p.compare ?? "exact",
+    }))));
+  }
+}
+
 warnings.forEach((w) => console.log("warn:", w));
 if (errors.length) { errors.forEach((e) => console.log("ERROR:", e)); console.log(`\ncontent: ${errors.length} error(s)`); process.exit(1); }
 const total = domains.reduce((n, d) => n + d.concepts.length, 0);

@@ -2,14 +2,14 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
-import { LOCALES, t } from "@/lib/i18n";
+import { pageMeta } from "@/lib/meta";
+import { DIFF, LOCALES, t } from "@/lib/i18n";
 import { getConcept, getProblem, getProblems, labsFor } from "@/lib/content";
 import { Icon } from "@/components/Icon";
 import { Markdown } from "@/components/Markdown";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Illustration } from "@/components/Visual";
 import { CodeRunner } from "@/components/practice/CodeRunner";
-import { DIFF } from "../page";
 
 type P = { params: Promise<{ locale: Locale; id: string }> };
 export const dynamicParams = false;
@@ -18,7 +18,7 @@ export const generateStaticParams = () => LOCALES.flatMap((locale) => getProblem
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale, id } = await params;
   const p = getProblem(id);
-  return p ? { title: t(p.title, locale), description: t(p.prompt, locale).slice(0, 150) } : {};
+  return p ? pageMeta(locale, `/practice/code/${id}/`, t(p.title, locale), t(p.prompt, locale).replace(/[`*]/g, "").split("\n")[0].slice(0, 160)) : {};
 }
 
 export default async function ProblemPage({ params }: P) {

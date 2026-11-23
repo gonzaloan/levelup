@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { LOCALES, t } from "@/lib/i18n";
 import { domainIndex, getConcept, getLab, getLabs } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -16,7 +17,7 @@ export const generateStaticParams = () => LOCALES.flatMap((locale) => getLabs().
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale, id } = await params;
   const l = getLab(id);
-  return l ? { title: t(l.title, locale), description: t(l.blurb, locale) } : {};
+  return l ? pageMeta(locale, `/labs/${id}/`, t(l.title, locale), t(l.blurb, locale)) : {};
 }
 
 export default async function LabPage({ params }: P) {

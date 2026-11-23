@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { t } from "@/lib/i18n";
 import { getConcept, getLabs } from "@/lib/content";
 import { Icon } from "@/components/Icon";
@@ -9,7 +10,7 @@ import { Emoji } from "@/components/Visual";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return { title: "Labs", description: locale === "es" ? "Simuladores interactivos: cambia un parámetro y mira qué se mueve." : "Interactive simulators: change one thing and watch what moves." };
+  return pageMeta(locale, "/labs/", "Labs", locale === "es" ? "Simuladores interactivos: cambia un parámetro y mira qué se mueve." : "Interactive simulators: change one thing and watch what moves.");
 }
 
 export default async function LabsPage({ params }: P) {

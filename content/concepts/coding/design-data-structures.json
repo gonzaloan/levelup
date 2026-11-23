@@ -1,0 +1,118 @@
+{
+  "id": "design-data-structures",
+  "domain": "coding",
+  "level": "advanced",
+  "title": { "en": "Design a data structure (LRU cache)", "es": "Diseñar una estructura de datos (LRU cache)" },
+  "aliases": ["LRU cache", "design a class", "data structure design", "min stack", "insert delete getRandom O(1)", "RandomizedSet", "OrderedDict", "diseño de estructuras de datos"],
+  "tldr": {
+    "en": "In a \"design a class\" round no single structure makes every operation O(1), so you compose two: a hash map to find things plus a list, linked list or stack that keeps the order.",
+    "es": "En una ronda de \"diseña una clase\" ninguna estructura por sí sola hace todas las operaciones en O(1), así que combinas dos: un hash map para encontrar y una lista, linked list o stack que mantiene el orden."
+  },
+  "analogy": {
+    "en": "A library: the catalog tells you the shelf instantly, the shelf order tells you which book is oldest. You need both, and every loan must update both.",
+    "es": "Una biblioteca: el catálogo te dice el estante al instante y el orden del estante te dice qué libro es el más antiguo. Necesitas ambos, y cada préstamo debe actualizar los dos."
+  },
+  "explain": {
+    "en": "The prompt gives an API and a cost, usually \"every operation in O(1)\". No single structure does it, so you **compose** two and keep them in sync on every write.\n\nStart from what each operation needs: lookup by key → hash map; recency or insertion order → linked list; pick by index → array; running min or max → an extra stack.\n\n- **LRU cache**: a hash map from key to node, plus a **doubly linked list** in recency order. `get` moves the node to the front; `put` inserts at the front and, over capacity, evicts the tail. The map hands you the node and a doubly linked node can unlink itself, so each step is O(1). Python's `OrderedDict` packages this pair.\n- **Min stack**: each entry stores `(value, min so far)`, so popping restores the previous minimum.\n- **Insert/delete/getRandom**: an array for O(1) random picks plus a map from value to index. To delete, move the last element into the hole and pop the end.\n\nSay the invariant out loud (\"map and list hold the same keys\") before you code.",
+    "es": "El enunciado da una API y un costo, casi siempre \"todas las operaciones en O(1)\". Ninguna estructura lo logra sola, así que **combinas** dos y las mantienes sincronizadas en cada escritura.\n\nParte de lo que necesita cada operación: buscar por clave → hash map; orden de uso o de inserción → linked list; elegir por índice → arreglo; mínimo o máximo acumulado → un stack extra.\n\n- **LRU cache**: un hash map de clave a nodo, más una **lista doblemente enlazada** en orden de uso reciente. `get` mueve el nodo al frente; `put` inserta al frente y, si se pasa de la capacidad, expulsa la cola. El map te entrega el nodo y un nodo doblemente enlazado puede desconectarse solo, así que cada paso es O(1). `OrderedDict` de Python empaqueta este par.\n- **Min stack**: cada entrada guarda `(valor, mínimo hasta ahora)`, así que al hacer pop se recupera el mínimo anterior.\n- **Insert/delete/getRandom**: un arreglo para elegir al azar en O(1) más un map de valor a índice. Para borrar, mueve el último elemento al hueco y quita el final.\n\nDi el invariante en voz alta (\"el map y la lista tienen las mismas claves\") antes de programar."
+  },
+  "keyPoints": [
+    {
+      "en": "List what each operation needs, pick one structure per need, and keep them in sync.",
+      "es": "Anota qué necesita cada operación, elige una estructura por necesidad y mantenlas sincronizadas."
+    },
+    {
+      "en": "**LRU cache** = hash map (key → node) + doubly linked list in recency order.",
+      "es": "**LRU cache** = hash map (clave → nodo) + lista doblemente enlazada en orden de uso reciente."
+    },
+    {
+      "en": "`get` moves the node to the front; `put` evicts the tail when over capacity.",
+      "es": "`get` mueve el nodo al frente; `put` expulsa la cola cuando se supera la capacidad."
+    },
+    {
+      "en": "**Min stack**: every entry stores the minimum so far, so a pop restores it.",
+      "es": "**Min stack**: cada entrada guarda el mínimo hasta ahora, así que un pop lo recupera."
+    },
+    {
+      "en": "**getRandom in O(1)**: array plus value → index map; delete by swapping with the last element.",
+      "es": "**getRandom en O(1)**: arreglo más un map de valor → índice; borra intercambiando con el último elemento."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  G[\"get(key) or put(key, value)\"] --> M{\"Key in hash map?\"}\n  M -->|hit| N[\"Map returns the node\"]\n  N --> F[\"Unlink, move to front\"]\n  M -->|\"miss on get\"| X[\"Return -1\"]\n  M -->|\"miss on put\"| I[\"New node at front\"]\n  I --> C{\"Over capacity?\"}\n  C -->|yes| E[\"Evict tail,<br/>delete its key\"]\n  C -->|no| K[\"Done in O(1)\"]\n  E --> K\n  F --> K",
+    "caption": {
+      "en": "LRU cache: the hash map finds the node, the doubly linked list keeps recency order. Every path is a constant number of pointer changes.",
+      "es": "LRU cache: el hash map encuentra el nodo y la lista doblemente enlazada mantiene el orden de uso. Cada camino es una cantidad constante de cambios de punteros."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "LRU cache with OrderedDict, and an O(1) random set", "es": "LRU cache con OrderedDict y un set aleatorio O(1)" },
+    "source": "import random\nfrom collections import OrderedDict\n\nclass LRUCache:\n    def __init__(self, capacity: int):\n        self.cap, self.data = capacity, OrderedDict()  # hash map + doubly linked list\n    def get(self, key):\n        if key in self.data:\n            self.data.move_to_end(key)       # a read also counts as a use\n        return self.data.get(key, -1)\n    def put(self, key, value):\n        self.data[key] = value\n        self.data.move_to_end(key)           # also when overwriting a key\n        if len(self.data) > self.cap:\n            self.data.popitem(last=False)    # evict the least recently used\n\nclass RandomizedSet:\n    def __init__(self):\n        self.items, self.pos = [], {}        # array to pick from, value -> index\n    def insert(self, x):\n        if x not in self.pos:\n            self.pos[x] = len(self.items)\n            self.items.append(x)\n    def remove(self, x):\n        if x in self.pos:\n            i, last = self.pos.pop(x), self.items.pop()\n            if i < len(self.items):          # x wasn't last: fill its hole\n                self.items[i], self.pos[last] = last, i\n    def get_random(self):\n        return random.choice(self.items)     # uniform, O(1)"
+  },
+  "example": {
+    "en": "**LRU cache** with capacity 2. `put(1, A)`, `put(2, B)` → recency order `[2, 1]`. `get(1)` returns A and moves key 1 to the front: `[1, 2]`. `put(3, C)` exceeds the capacity, so the tail, key 2, is evicted: `[3, 1]`. `get(2)` is now a miss. Each step is one map lookup plus a few pointer changes. A dict with a last-used timestamp per key would scan all n entries on every eviction: O(n).",
+    "es": "**LRU cache** con capacidad 2. `put(1, A)`, `put(2, B)` → orden de uso `[2, 1]`. `get(1)` devuelve A y mueve la clave 1 al frente: `[1, 2]`. `put(3, C)` supera la capacidad, así que se expulsa la cola, la clave 2: `[3, 1]`. Ahora `get(2)` es un miss. Cada paso es una búsqueda en el map más unos pocos cambios de punteros. Un dict con un timestamp de último uso por clave recorrería las n entradas en cada expulsión: O(n)."
+  },
+  "pros": [
+    { "en": "Every operation is O(1) by construction.", "es": "Cada operación es O(1) por construcción." },
+    { "en": "Reuses structures you already know; the work is the invariant, not a new algorithm.", "es": "Reutiliza estructuras que ya conoces; el trabajo está en el invariante, no en un algoritmo nuevo." },
+    { "en": "Maps to real components: caches, rate limiters, schedulers.", "es": "Se parece a componentes reales: caches, rate limiters, schedulers." }
+  ],
+  "cons": [
+    { "en": "Two structures to update on every write: miss one and they drift apart.", "es": "Dos estructuras que actualizar en cada escritura: si olvidas una, se desincronizan." },
+    { "en": "More memory per entry: a map entry plus a node with two pointers.", "es": "Más memoria por entrada: una entrada del map más un nodo con dos punteros." },
+    { "en": "Not thread-safe as written; a shared cache needs a lock or shards.", "es": "No es thread-safe tal como está; un cache compartido necesita un lock o shards." }
+  ],
+  "whenToUse": {
+    "en": "The prompt is an API with a cost per operation: LRU or LFU cache, min/max stack, random set, hit counter, time-based key-value store. Also when a simple class has one O(n) operation to remove.",
+    "es": "El enunciado es una API con un costo por operación: LRU o LFU cache, min/max stack, set aleatorio, contador de hits, key-value store por tiempo. También cuando una clase simple tiene una operación O(n) que hay que eliminar."
+  },
+  "whenNotToUse": {
+    "en": "One built-in already fits (a heap for \"smallest next\", `deque` for a queue), or the limits allow O(log n) or O(n): don't build a linked list you don't need.",
+    "es": "Una estructura estándar ya sirve (un heap para \"el menor siguiente\", `deque` para una queue), o los límites permiten O(log n) u O(n): no construyas una linked list que no necesitas."
+  },
+  "numbers": [
+    { "en": "LRU cache: `get` and `put` in O(1); space O(capacity).", "es": "LRU cache: `get` y `put` en O(1); espacio O(capacidad)." },
+    { "en": "Min stack: push, pop, top and getMin in O(1); O(n) extra space for the stored minimums.", "es": "Min stack: push, pop, top y getMin en O(1); O(n) de espacio extra para los mínimos guardados." },
+    { "en": "Random set: insert, remove and getRandom in O(1) average (hash map).", "es": "Set aleatorio: insert, remove y getRandom en O(1) promedio (hash map)." },
+    { "en": "Python's `functools.lru_cache` defaults to `maxsize=128`.", "es": "`functools.lru_cache` de Python usa `maxsize=128` por defecto." },
+    { "en": "Redis approximates LRU by sampling keys (`maxmemory-samples`, default 5): a true LRU costs more memory.", "es": "Redis aproxima LRU muestreando claves (`maxmemory-samples`, 5 por defecto): un LRU exacto cuesta más memoria." }
+  ],
+  "pitfalls": [
+    { "en": "LRU: forgetting that `get` is also a use and must move the node.", "es": "LRU: olvidar que `get` también cuenta como uso y debe mover el nodo." },
+    { "en": "LRU nodes that don't store the key: on eviction you can't delete the map entry.", "es": "Nodos de LRU que no guardan la clave: al expulsar no puedes borrar la entrada del map." },
+    { "en": "Min stack with one `min` variable: after popping the minimum, the previous one is lost.", "es": "Min stack con una sola variable `min`: tras sacar el mínimo, el anterior se pierde." },
+    { "en": "Random set: not updating the moved element's index after the swap.", "es": "Set aleatorio: no actualizar el índice del elemento movido después del intercambio." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "How do you approach a \"design a class\" question?", "es": "¿Cómo abordas una pregunta de \"diseña una clase\"?" },
+      "a": {
+        "en": "I write the API first, with the target cost next to each method. For each operation I name the structure that makes it O(1): a hash map for lookup, an array for index or random access, a linked list for reordering, a stack or heap for min and max. Then I state the invariant that ties them together and which methods must update both. Only then do I code, and I test the smallest capacity.",
+        "es": "Primero escribo la API, con el costo objetivo junto a cada método. Para cada operación nombro la estructura que la hace O(1): un hash map para buscar, un arreglo para acceso por índice o aleatorio, una linked list para reordenar, un stack o un heap para mínimo y máximo. Luego digo el invariante que las une y qué métodos deben actualizar ambas. Recién entonces programo, y pruebo la capacidad más pequeña."
+      }
+    },
+    {
+      "q": { "en": "Implement an LRU cache without `OrderedDict`.", "es": "Implementa un LRU cache sin `OrderedDict`." },
+      "a": {
+        "en": "A dict from key to node, and a doubly linked list with two sentinel nodes, head and tail, so there are no null checks. Two helpers, `remove(node)` and `add_front(node)`, both O(1). `get` is remove plus add_front. `put` updates or creates the node, adds it at the front and, if over capacity, removes `tail.prev` and deletes its key from the dict, which is why every node stores its key.",
+        "es": "Un dict de clave a nodo y una lista doblemente enlazada con dos nodos centinela, head y tail, para no tener que revisar nulos. Dos helpers, `remove(node)` y `add_front(node)`, ambos O(1). `get` es remove más add_front. `put` actualiza o crea el nodo, lo agrega al frente y, si se supera la capacidad, quita `tail.prev` y borra su clave del dict; por eso cada nodo guarda su clave."
+      }
+    },
+    {
+      "q": { "en": "Make the LRU cache safe for many threads.", "es": "Haz que el LRU cache sea seguro con muchos threads." },
+      "a": {
+        "en": "The simplest correct version is one lock around `get` and `put`; `get` writes too, because it reorders the list. If that lock gets hot, I shard by key hash, each shard with its own lock and list. Beyond that I'd question exact LRU: Redis samples a few keys instead of keeping a global list, because exact recency costs memory. For TTLs and stampedes, see [[caching]].",
+        "es": "La versión correcta más simple es un lock alrededor de `get` y `put`; `get` también escribe, porque reordena la lista. Si ese lock se vuelve un cuello de botella, hago shards por hash de la clave, cada shard con su propio lock y su lista. Más allá de eso, cuestionaría el LRU exacto: Redis muestrea unas pocas claves en vez de mantener una lista global, porque el orden exacto cuesta memoria. Para TTL y stampedes, mira [[caching]]."
+      }
+    }
+  ],
+  "related": ["hash-maps", "linked-lists", "heaps-top-k", "caching", "case-distributed-cache"],
+  "sources": [
+    { "title": "Python docs — collections.OrderedDict (move_to_end, popitem, LRU recipes)", "url": "https://docs.python.org/3/library/collections.html#collections.OrderedDict" },
+    { "title": "Python docs — functools.lru_cache", "url": "https://docs.python.org/3/library/functools.html#functools.lru_cache" },
+    { "title": "Redis docs — Key eviction (approximated LRU)", "url": "https://redis.io/docs/latest/develop/reference/eviction/" },
+    { "title": "Wikipedia — Cache replacement policies (LRU)", "url": "https://en.wikipedia.org/wiki/Cache_replacement_policies" }
+  ]
+}

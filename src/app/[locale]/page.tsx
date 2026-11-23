@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { m, t } from "@/lib/i18n";
 import { allConcepts, getConcept, getDomains, getLabs } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -24,7 +25,7 @@ const TRACKS: { id: string; en: string; es: string; domains: string[] }[] = [
 
 export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
   const { locale } = await params;
-  return { title: { absolute: m("brand", locale) }, description: m("heroSub", locale), alternates: { languages: { en: "/en/", es: "/es/" } } };
+  return pageMeta(locale, "/", m("brand", locale), m("heroSub", locale), { absolute: true });
 }
 
 export default async function Home({ params }: { params: Promise<{ locale: Locale }> }) {
@@ -51,6 +52,7 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
         <div className="hero-ctas">
           <Link className="btn btn-primary" href={`/${locale}/path/`}>{L("startHere")} <Icon name="right" size={16} /></Link>
           <Link className="btn" href={`/${locale}/practice/`}><Icon name="cards" size={16} /> {L("practiceQuestions")}</Link>
+          <Link className="btn" href={`/${locale}/plan/`}><Icon name="chart" size={16} /> {L("navPlan")}</Link>
         </div>
         <ul className="stats">
           {stats.map(([n, label]) => <li key={label}><strong>{n}</strong> {label}</li>)}

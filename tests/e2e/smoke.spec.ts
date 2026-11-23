@@ -205,3 +205,100 @@ test("story bank: a tagged story fills its competency in coverage", async ({ pag
   await page.getByRole("tab", { name: "Coverage" }).click();
   await expect(page.locator(".sb-cov li.ok")).toHaveCount(1);
 });
+
+test("phones get a bottom tab bar with names, and the rest under More", async ({ page, isMobile }) => {
+  await page.goto("/en/");
+  if (!isMobile) {
+    await expect(page.locator(".tabbar")).toBeHidden();
+    await expect(page.locator(".main-nav a").first()).toBeVisible();
+    return;
+  }
+  await expect(page.locator(".main-nav")).toBeHidden();
+  const tabs = page.locator(".tabbar .tab");
+  await expect(tabs).toHaveCount(5);
+  for (const tab of await tabs.all()) await expect(tab.locator("span")).not.toBeEmpty();
+  await page.locator(".tabbar a.tab", { hasText: "Practice" }).click();
+  await expect(page).toHaveURL(/\/en\/practice\/$/);
+  await expect(page.locator('.tabbar a.tab[aria-current="page"]')).toHaveText("Practice");
+  await page.locator(".tabbar button.tab").click();
+  await page.locator(".tab-sheet a", { hasText: "Interview plan" }).click();
+  await expect(page).toHaveURL(/\/en\/plan\/$/);
+  await expect(page.locator(".tab-sheet")).toHaveCount(0);
+});
+
+test("interview plan: a date gives a pace, today's concepts and the weeks ahead", async ({ page }) => {
+  await page.goto("/en/plan/");
+  await expect(page.locator(".plan-msg")).toBeVisible();
+  const d = new Date(Date.now() + 30 * 86_400_000);
+  const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  await page.locator(".plan-date input").fill(iso);
+  await expect(page.locator(".plan-verdict strong")).toHaveText("30 days left");
+  await expect(page.locator(".plan-list li").first()).toBeVisible();
+  // 30 days → 6 for rehearsal; weeks of 7 days from today.
+  await expect(page.locator(".plan-weeks ol > li")).toHaveCount(5);
+  await expect(page.locator(".plan-weeks li.rehearsal")).toHaveCount(1);
+  // More time per day never covers less.
+  const reach = async () => page.locator(".plan-list li").count();
+  const before = await reach();
+  await page.getByRole("group", { name: "Minutes per day" }).getByRole("button", { name: "120" }).click();
+  expect(await reach()).toBeGreaterThanOrEqual(before);
+  await page.reload();
+  await expect(page.locator(".plan-date input")).toHaveValue(iso);
+});
+
+test("mock coding interview: two problems, a clock, and results that survive a reload", async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto("/en/practice/code/mock/");
+  await page.getByRole("button", { name: "Start the mock" }).click();
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.locator(".dr-clock")).toHaveText(/^4[45]:\d\d$/);
+  // The mock gives no hints: the starter has no approach comment.
+  await expect(page.locator(".problem-grid:not([hidden]) textarea")).not.toHaveValue(/^\s*#(?! ---)/m);
+  await page.locator(".problem-grid:not([hidden])").getByRole("button", { name: "Run tests" }).click();
+  await expect(page.locator(".problem-grid:not([hidden]) .cr-summary")).toBeVisible({ timeout: 90_000 });
+  await page.reload();
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  await page.getByRole("button", { name: "Finish" }).click();
+  await expect(page.locator(".cm-results li")).toHaveCount(3);
+  await expect(page.locator(".cm-results li").first()).toContainText(/\d+\/\d+ tests|solved/);
+});
+
+test("a shared link carries a preview: Open Graph and Twitter tags", async ({ page }) => {
+  await page.goto("/es/c/reranking/");
+  const meta = (p: string) => page.locator(`meta[property="${p}"], meta[name="${p}"]`).first();
+  await expect(meta("og:title")).toHaveAttribute("content", /Reranking/i);
+  await expect(meta("og:description")).toHaveAttribute("content", /.{40,}/);
+  await expect(meta("og:image")).toHaveAttribute("content", /\/og\.png$/);
+  await expect(meta("og:url")).toHaveAttribute("content", /\/es\/c\/reranking\/$/);
+  await expect(meta("twitter:card")).toHaveAttribute("content", "summary_large_image");
+  const img = await page.request.get("/og.png");
+  expect(img.status()).toBe(200);
+});
+
+test("offline: visited pages keep working, and Save for offline brings the rest", async ({ page, context }) => {
+  test.setTimeout(180_000);
+  // The worker is off on localhost unless asked for (it would cache a dev server).
+  await page.addInitScript(() => { try { localStorage.setItem("fg.sw", "on"); } catch { /* ignore */ } });
+  await page.goto("/en/c/reranking/");
+  await page.evaluate(async () => { await navigator.serviceWorker.ready; });
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+  await page.reload();
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator("h1")).toContainText("Reranking");
+  await expect(page.locator(".dg svg").first()).toBeAttached();
+  // Not visited and not saved: an honest offline page instead of a browser error.
+  await page.goto("/en/c/consistent-hashing/");
+  await expect(page.locator("h1")).toContainText("Offline");
+  await context.setOffline(false);
+  await page.goto("/en/");
+  await page.getByRole("button", { name: "Save for offline" }).click();
+  await expect(page.locator(".offline")).toContainText("Available offline", { timeout: 150_000 });
+  await context.setOffline(true);
+  await page.goto("/en/c/consistent-hashing/");
+  await expect(page.locator("h1")).toContainText("Consistent hashing");
+  await page.goto("/en/path/");
+  await expect(page.locator(".next-step")).toBeVisible();
+  await context.setOffline(false);
+});

@@ -1,0 +1,41 @@
+{
+  "id": "cheapest-drive-with-fuel-tank",
+  "concept": "shortest-paths",
+  "difficulty": "hard",
+  "title": { "en": "Cheapest drive with a limited tank", "es": "Viaje más barato con tanque limitado" },
+  "prompt": {
+    "en": "Cities are numbered 0 to `n - 1`, and fuel costs `price[i]` per unit in city `i`. Each entry of `roads` is `[a, b, d]`: a two-way road that burns `d` units of fuel. Your tank holds at most `capacity` units and is empty when you start at `src`. In any city you may buy any whole number of units that fits in the tank. Return the least money needed to reach `dst`, or `-1` if it cannot be reached. If `src == dst`, the answer is 0.\n\n`1 ≤ n ≤ 20`, `1 ≤ capacity ≤ 20`; prices and `d` are positive integers. Two cities may be joined by more than one road.",
+    "es": "Las ciudades se numeran de 0 a `n - 1`, y el combustible cuesta `price[i]` por unidad en la ciudad `i`. Cada entrada de `roads` es `[a, b, d]`: una carretera de doble sentido que gasta `d` unidades de combustible. Tu tanque guarda a lo sumo `capacity` unidades y está vacío cuando partes en `src`. En cualquier ciudad puedes comprar cualquier cantidad entera de unidades que quepa en el tanque. Devuelve la menor cantidad de dinero necesaria para llegar a `dst`, o `-1` si no se puede llegar. Si `src == dst`, la respuesta es 0.\n\n`1 ≤ n ≤ 20`, `1 ≤ capacity ≤ 20`; los precios y `d` son enteros positivos. Dos ciudades pueden estar unidas por más de una carretera."
+  },
+  "fn": "cheapest_drive",
+  "starter": "def cheapest_drive(price: list[int], roads: list[list[int]], capacity: int, src: int, dst: int) -> int:\n    # Dijkstra over (city, fuel) states: buy one unit here, or drive a road the tank covers.\n    return -1\n",
+  "tests": [
+    { "args": [[3, 1, 9], [[0, 1, 5], [1, 2, 5]], 10, 0, 2], "expected": 20, "visible": true },
+    { "args": [[1, 9, 9], [[0, 1, 5], [1, 2, 5]], 10, 0, 2], "expected": 10, "visible": true },
+    { "args": [[1, 9, 9], [[0, 1, 5], [1, 2, 5]], 7, 0, 2], "expected": 34, "visible": true },
+    { "args": [[2, 2], [[0, 1, 6]], 5, 0, 1], "expected": -1, "visible": true },
+    { "args": [[5], [], 1, 0, 0], "expected": 0 },
+    { "args": [[4, 4], [[0, 1, 1]], 3, 1, 1], "expected": 0 },
+    { "args": [[1, 1, 1], [[0, 1, 2]], 5, 0, 2], "expected": -1 },
+    { "args": [[4, 1], [[0, 1, 5]], 5, 0, 1], "expected": 20 },
+    { "args": [[2, 3], [[0, 1, 7], [0, 1, 3]], 10, 0, 1], "expected": 6 },
+    { "args": [[2, 5, 1], [[1, 0, 3], [2, 1, 2]], 4, 0, 2], "expected": 13 },
+    { "args": [[10, 1, 5], [[0, 2, 4], [0, 1, 1], [1, 2, 4]], 5, 0, 2], "expected": 14 },
+    { "args": [[10, 1, 7], [[0, 1, 1], [0, 2, 6]], 8, 0, 2], "expected": 17 },
+    { "args": [[9, 1, 3], [[0, 1, 5], [1, 2, 5]], 10, 2, 0], "expected": 20 },
+    { "args": [[9, 1, 5, 6], [[0, 2, 4], [0, 1, 1], [0, 3, 6]], 4, 0, 2], "expected": 22 },
+    { "args": [[4, 1, 6, 2, 5, 5], [[0, 3, 5], [1, 4, 1], [1, 3, 1], [2, 4, 2], [3, 5, 1], [4, 5, 6], [3, 4, 1]], 5, 3, 0], "expected": 9 }
+  ],
+  "compare": "exact",
+  "hints": [
+    { "en": "The city alone is not enough state: arriving with more fuel can be worth more than arriving cheaper. Make each node a pair (city, fuel in tank).", "es": "La ciudad sola no alcanza como estado: llegar con más combustible puede valer más que llegar gastando menos. Haz que cada nodo sea un par (ciudad, combustible en el tanque)." },
+    { "en": "Two kinds of edges. Buy one unit: (city, f) → (city, f + 1), costing `price[city]`. Drive a road with d ≤ f: (city, f) → (next, f − d), costing 0. Run Dijkstra on money spent.", "es": "Dos tipos de aristas. Comprar una unidad: (ciudad, f) → (ciudad, f + 1), con costo `price[city]`. Recorrer una carretera con d ≤ f: (ciudad, f) → (siguiente, f − d), con costo 0. Corre Dijkstra sobre el dinero gastado." },
+    { "en": "Buying one unit at a time already covers every amount. Don't fill the tank at every stop, and don't buy just enough for the next road: both greedy rules lose on some map.", "es": "Comprar de a una unidad ya cubre todas las cantidades. No llenes el tanque en cada parada, ni compres lo justo para la próxima carretera: las dos reglas greedy pierden en algún mapa." }
+  ],
+  "solution": "import heapq\n\n\ndef cheapest_drive(price: list[int], roads: list[list[int]], capacity: int, src: int, dst: int) -> int:\n    adj = [[] for _ in price]\n    for a, b, d in roads:\n        adj[a].append((b, d))\n        adj[b].append((a, d))\n    spent = {(src, 0): 0}                # least money to be in a city with that much fuel\n    heap = [(0, src, 0)]                 # (money spent, city, fuel in tank)\n    while heap:\n        cost, city, fuel = heapq.heappop(heap)\n        if city == dst:\n            return cost                  # first pop of dst, with any fuel left, is optimal\n        if cost > spent[(city, fuel)]:\n            continue                     # stale entry\n        moves = [(cost, nxt, fuel - d) for nxt, d in adj[city] if d <= fuel]  # drive: free\n        if fuel < capacity:\n            moves.append((cost + price[city], city, fuel + 1))               # buy one unit\n        for c, v, f in moves:\n            if c < spent.get((v, f), float(\"inf\")):\n                spent[(v, f)] = c\n                heapq.heappush(heap, (c, v, f))\n    return -1\n",
+  "complexity": { "time": "O((n + E)·C·log(n·C)), E = len(roads), C = capacity", "space": "O((n + E)·C)" },
+  "explain": {
+    "en": "What you can do next depends on the fuel in the tank, so a node is (city, fuel): at most n·(capacity + 1) of them. Buying one unit costs `price[city]` and driving costs nothing, so no weight is negative and Dijkstra applies; the first time `dst` is popped, with any fuel left, is the answer. The trap is one best cost per city: a pricier arrival with more fuel can win later. Greedy rules (fill up, or buy only for the next road) fail too.",
+    "es": "Lo que puedes hacer después depende del combustible en el tanque, así que un nodo es (ciudad, combustible): a lo sumo n·(capacity + 1). Comprar una unidad cuesta `price[city]` y manejar no cuesta nada, así que ningún peso es negativo y Dijkstra aplica; la primera vez que `dst` sale del heap, con el combustible que sea, es la respuesta. La trampa es guardar un solo mejor costo por ciudad: una llegada más cara con más combustible puede ganar después. Las reglas greedy (llenar el tanque, o comprar solo para la próxima carretera) también fallan."
+  }
+}

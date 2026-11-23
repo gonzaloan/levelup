@@ -1,0 +1,118 @@
+{
+  "id": "gossip-membership",
+  "domain": "systems",
+  "level": "advanced",
+  "title": { "en": "Gossip protocols & failure detection", "es": "Protocolos gossip y detección de fallas" },
+  "aliases": ["gossip protocol", "epidemic protocol", "cluster membership", "SWIM", "phi accrual failure detector", "heartbeat", "memberlist", "Serf"],
+  "tldr": {
+    "en": "Every node periodically swaps what it knows with a few random peers, so membership and failure news reach the whole cluster in O(log N) rounds with no coordinator.",
+    "es": "Cada nodo intercambia periódicamente lo que sabe con unos pocos pares al azar, y así las noticias de membresía y de fallas llegan a todo el cluster en O(log N) rondas, sin coordinador."
+  },
+  "analogy": {
+    "en": "Office rumors: each person tells a few colleagues at the coffee machine, who tell a few more. By the afternoon everyone knows, and nobody sent a company-wide email.",
+    "es": "Los rumores de oficina: cada persona le cuenta a unos pocos colegas en la máquina de café, y ellos a otros más. En la tarde todos lo saben, y nadie mandó un correo a toda la empresa."
+  },
+  "explain": {
+    "en": "A cluster needs every node to know **who is in it and who is alive**. If all N nodes heartbeat each other, messages grow as N²; a central registry is a single point of failure. **Gossip** (epidemic) protocols avoid both.\n\n**Dissemination.** Every interval, each node picks a few random peers and exchanges state: its heartbeat counter plus what it heard about others. The receiver keeps the newer version of each entry. Informed nodes multiply every round, so news reaches everyone in **O(log N)** rounds while each node's load stays constant.\n\n**Failure detection.** A peer whose heartbeat stops rising becomes suspect. Two refinements:\n\n- **SWIM**: ping one random member per period. No ack? Ask *k* other members to ping it (**indirect probe**). Still silent: gossip it as **suspect**, and declare it dead only if it doesn't refute in time.\n- **Phi accrual**: replace the fixed timeout with a suspicion level φ computed from past heartbeat arrival times, so the detector adapts to the network.\n\nThe view is **eventually consistent**: two nodes can briefly disagree. Use gossip for membership; decisions that need one answer, like electing a leader, need [[consensus]].",
+    "es": "Un cluster necesita que cada nodo sepa **quién lo integra y quién está vivo**. Si los N nodos se envían heartbeats entre todos, los mensajes crecen como N²; un registro central es un punto único de falla. Los protocolos **gossip** (epidémicos) evitan ambos problemas.\n\n**Diseminación.** En cada intervalo, cada nodo elige unos pocos pares al azar e intercambia estado: su contador de heartbeat más lo que escuchó sobre los demás. El receptor conserva la versión más nueva de cada entrada. Los nodos informados se multiplican en cada ronda, así que la noticia llega a todos en **O(log N)** rondas mientras la carga por nodo se mantiene constante.\n\n**Detección de fallas.** Un par cuyo heartbeat deja de subir pasa a ser sospechoso. Dos refinamientos:\n\n- **SWIM**: haz ping a un miembro al azar por período. ¿No hay ack? Pide a otros *k* miembros que le hagan ping (**sondeo indirecto**). Si sigue en silencio, difúndelo como **sospechoso** y decláralo muerto solo si no lo desmiente a tiempo.\n- **Phi accrual**: reemplaza el timeout fijo por un nivel de sospecha φ calculado con los tiempos de llegada de los heartbeats anteriores, así el detector se adapta a la red.\n\nLa vista es **eventualmente consistente**: dos nodos pueden discrepar por un momento. Usa gossip para la membresía; las decisiones que exigen una sola respuesta, como elegir un líder, necesitan [[consensus]]."
+  },
+  "keyPoints": [
+    {
+      "en": "Each node **gossips** with a few random peers every interval, exchanging heartbeats and what it heard about others.",
+      "es": "Cada nodo hace **gossip** con unos pocos pares al azar en cada intervalo: intercambia heartbeats y lo que escuchó de otros."
+    },
+    {
+      "en": "News spreads like an epidemic: everyone knows in **O(log N)** rounds, with constant load per node.",
+      "es": "La noticia se propaga como una epidemia: todos la conocen en **O(log N)** rondas, con carga constante por nodo."
+    },
+    {
+      "en": "**SWIM** pings a random member, retries through k other nodes, then marks it suspect before declaring it dead.",
+      "es": "**SWIM** hace ping a un miembro al azar, reintenta a través de otros k nodos y lo marca como sospechoso antes de declararlo muerto."
+    },
+    {
+      "en": "**Phi accrual** replaces a fixed timeout with a suspicion level computed from past heartbeat arrivals.",
+      "es": "**Phi accrual** reemplaza el timeout fijo por un nivel de sospecha calculado con las llegadas anteriores de heartbeats."
+    },
+    {
+      "en": "Views are **eventually consistent**: fine for membership, wrong for decisions that need one answer.",
+      "es": "Las vistas son **eventualmente consistentes**: sirven para membresía, no para decisiones que exigen una sola respuesta."
+    }
+  ],
+  "diagram": {
+    "code": "sequenceDiagram\n  participant A as Node A\n  participant B as Node B\n  participant C as Node C\n  A->>B: ping\n  Note over A,B: no ack in time\n  A->>C: ping-req B\n  C->>B: ping\n  alt B answers\n    B-->>C: ack\n    C-->>A: ack, B is alive\n  else B stays silent\n    A->>C: gossip B is suspect\n    Note over A,C: not refuted in time, B is dead\n  end",
+    "caption": {
+      "en": "A SWIM probe: a failed ping is retried through other members, and the target is suspected, not buried, until a timeout confirms it.",
+      "es": "Un sondeo de SWIM: un ping fallido se reintenta a través de otros miembros, y el nodo queda como sospechoso, no enterrado, hasta que un timeout lo confirma."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": { "en": "Toy push gossip: rounds grow with log N", "es": "Gossip push de juguete: las rondas crecen con log N" },
+    "source": "import random\n\ndef rounds_to_spread(n: int, fanout: int = 3, seed: int = 0) -> int:\n    \"\"\"Push gossip: each informed node tells `fanout` random peers per round.\"\"\"\n    rnd = random.Random(seed)\n    informed = {0}                 # node 0 learns that a node joined\n    rounds = 0\n    while len(informed) < n:\n        informed |= {rnd.randrange(n) for _ in informed for _ in range(fanout)}\n        rounds += 1\n    return rounds\n\nfor n in (1_000, 10_000, 100_000):\n    print(n, rounds_to_spread(n))  # 8, 10, 13: 100x the nodes, 5 more rounds\n\ndef merge(mine: dict, theirs: dict) -> None:\n    # entry = (generation, heartbeat): the higher tuple is newer, so it wins.\n    # No coordinator: any two nodes that talk end up with the same view.\n    for node, state in theirs.items():\n        if state > mine.get(node, (0, -1)):\n            mine[node] = state"
+  },
+  "example": {
+    "en": "A 1,000-node cluster gossips to 3 random peers every 200 ms (the LAN defaults of HashiCorp memberlist). A node joins. In a toy simulation of push gossip with fanout 3, all 1,000 nodes know after ~8 rounds, about 1.6 s. With 10,000 nodes it takes 10–11 rounds: 10× the nodes, 2–3 more rounds.\n\nEach node still sends only 3 small messages per interval, whatever the cluster size. All-to-all heartbeats would need ~1,000,000 messages per interval.",
+    "es": "Un cluster de 1.000 nodos hace gossip con 3 pares al azar cada 200 ms (los valores por defecto para LAN de HashiCorp memberlist). Se une un nodo. En una simulación de juguete de gossip push con fanout 3, los 1.000 nodos lo saben tras ~8 rondas, unos 1,6 s. Con 10.000 nodos toma 10–11 rondas: 10× los nodos, 2–3 rondas más.\n\nCada nodo sigue enviando solo 3 mensajes pequeños por intervalo, sin importar el tamaño del cluster. Con heartbeats de todos contra todos harían falta ~1.000.000 de mensajes por intervalo."
+  },
+  "pros": [
+    { "en": "No coordinator and no single point of failure: a new node joins through any member.", "es": "Sin coordinador ni punto único de falla: un nodo nuevo se une a través de cualquier miembro." },
+    { "en": "Constant load per node, so it scales to thousands of nodes.", "es": "Carga constante por nodo, así que escala a miles de nodos." },
+    { "en": "Tolerates lost messages and dead nodes: the next round goes around them.", "es": "Tolera mensajes perdidos y nodos caídos: la siguiente ronda los rodea." }
+  ],
+  "cons": [
+    { "en": "Only eventually consistent: for a moment, nodes disagree on who is alive.", "es": "Solo eventualmente consistente: por un momento los nodos discrepan sobre quién está vivo." },
+    { "en": "Detection is probabilistic: a slow or overloaded node can be declared dead (a false positive).", "es": "La detección es probabilística: un nodo lento o sobrecargado puede ser declarado muerto (un falso positivo)." },
+    { "en": "Hard to debug: no single place holds the truth about the cluster.", "es": "Difícil de depurar: ningún lugar tiene la verdad sobre el cluster." }
+  ],
+  "whenToUse": {
+    "en": "Membership, failure detection and slowly changing metadata (ring tokens, schema versions, service catalogs) in large clusters without a leader: Dynamo-style stores and service discovery.",
+    "es": "Membresía, detección de fallas y metadatos que cambian poco (tokens del anillo, versiones de esquema, catálogos de servicios) en clusters grandes sin líder: stores estilo Dynamo y service discovery."
+  },
+  "whenNotToUse": {
+    "en": "Anything that needs one agreed answer or an order: leader election, locks, configuration that must change atomically. Use [[consensus]]. A small fixed cluster can simply heartbeat a coordinator.",
+    "es": "Todo lo que necesite una sola respuesta acordada o un orden: elección de líder, locks, configuración que debe cambiar de forma atómica. Usa [[consensus]]. Un cluster pequeño y fijo puede simplemente enviar heartbeats a un coordinador."
+  },
+  "numbers": [
+    { "en": "Cassandra: every second each node gossips with one random node, plus sometimes an unreachable node or a seed; it convicts peers with a phi accrual variant (`phi_convict_threshold` 8 by default).", "es": "Cassandra: cada segundo cada nodo hace gossip con un nodo al azar, y a veces con uno inalcanzable o un seed; condena a sus pares con una variante de phi accrual (`phi_convict_threshold` 8 por defecto)." },
+    { "en": "HashiCorp memberlist LAN defaults (checked Nov 2026): gossip to 3 nodes every 200 ms, probe one node every 1 s, 3 indirect probes.", "es": "Valores por defecto para LAN de HashiCorp memberlist (revisado en nov. 2026): gossip a 3 nodos cada 200 ms, un sondeo por segundo, 3 sondeos indirectos." },
+    { "en": "Dynamo paper (2007): each node contacts a random peer every second; gossiping the full membership works for a couple of hundred nodes.", "es": "Paper de Dynamo (2007): cada nodo contacta a un par al azar cada segundo; hacer gossip de la membresía completa funciona para un par de cientos de nodos." },
+    { "en": "SWIM (2002): detection time and message load per member do not grow with group size; all-to-all heartbeats grow as N².", "es": "SWIM (2002): el tiempo de detección y la carga de mensajes por miembro no crecen con el tamaño del grupo; los heartbeats de todos contra todos crecen como N²." },
+    { "en": "Toy simulation, fanout 3: ~8 rounds for 1,000 nodes, 10–11 for 10,000, ~13 for 100,000.", "es": "Simulación de juguete, fanout 3: ~8 rondas para 1.000 nodos, 10–11 para 10.000, ~13 para 100.000." }
+  ],
+  "pitfalls": [
+    { "en": "Deciding from the gossip view what needs agreement: two nodes each believe they are the leader (split brain).", "es": "Decidir con la vista de gossip algo que exige acuerdo: dos nodos creen cada uno que es el líder (split brain)." },
+    { "en": "Tight fixed timeouts: a GC pause or a network blip marks healthy nodes dead and triggers needless rebalancing.", "es": "Timeouts fijos y ajustados: una pausa de GC o un corte breve de red marca como muertos a nodos sanos y dispara rebalanceos innecesarios." },
+    { "en": "Forgetting that a degraded node suspects everyone else; Lifeguard makes a node that misses acks slow its own detector.", "es": "Olvidar que un nodo degradado sospecha de todos los demás; Lifeguard hace que un nodo al que le faltan acks frene su propio detector." },
+    { "en": "Treating seed nodes as leaders: they only help new nodes find the cluster.", "es": "Tratar a los seed nodes como líderes: solo ayudan a los nodos nuevos a encontrar el cluster." }
+  ],
+  "interview": [
+    {
+      "q": { "en": "Why gossip instead of a central registry with heartbeats?", "es": "¿Por qué gossip en vez de un registro central con heartbeats?" },
+      "a": {
+        "en": "A registry is simple, and for tens of nodes I'd use one. But it is a single point of failure whose load grows with the cluster, and all-to-all heartbeats grow as N squared. With gossip each node talks to a few random peers per round, so load per node is constant and news still reaches everyone in O(log N) rounds. The price is an eventually consistent view, so I never take exclusive decisions from it.",
+        "es": "Un registro es simple, y para decenas de nodos usaría uno. Pero es un punto único de falla cuya carga crece con el cluster, y los heartbeats de todos contra todos crecen como N al cuadrado. Con gossip cada nodo habla con unos pocos pares al azar por ronda, así que la carga por nodo es constante y la noticia igual llega a todos en O(log N) rondas. El precio es una vista eventualmente consistente, así que nunca tomo decisiones exclusivas a partir de ella."
+      }
+    },
+    {
+      "q": { "en": "How does SWIM avoid declaring a healthy node dead?", "es": "¿Cómo evita SWIM declarar muerto a un nodo sano?" },
+      "a": {
+        "en": "Three mechanisms. First, indirect probes: if my ping fails, I ask k other nodes to ping the target, which rules out a problem on my own link. Second, suspicion: the node is gossiped as suspect and declared dead only after a timeout. Third, refutation: the suspect hears the rumor and answers with a higher incarnation number, which overrides it. HashiCorp's Lifeguard adds that a node missing acks slows its own detector.",
+        "es": "Tres mecanismos. Primero, sondeos indirectos: si mi ping falla, pido a otros k nodos que hagan ping al objetivo, lo que descarta un problema en mi propio enlace. Segundo, sospecha: el nodo se difunde como sospechoso y se declara muerto recién tras un timeout. Tercero, refutación: el sospechoso escucha el rumor y responde con un número de encarnación mayor, que lo anula. Lifeguard, de HashiCorp, agrega que un nodo al que le faltan acks frena su propio detector."
+      }
+    },
+    {
+      "q": { "en": "Gossip or consensus: where does each belong in one system?", "es": "Gossip o consenso: ¿dónde va cada uno dentro de un mismo sistema?" },
+      "a": {
+        "en": "Both, for different data. Consul is the usual example: Serf gossip tracks which nodes exist and are alive, cheaply and without a leader, while its Raft servers hold the data that must be consistent. My rule: gossip for facts that may be briefly stale, like membership or load; consensus for decisions that must be unique, like who is leader or who holds a lock.",
+        "es": "Ambos, para datos distintos. Consul es el ejemplo típico: el gossip de Serf sigue qué nodos existen y están vivos, barato y sin líder, mientras sus servidores Raft guardan los datos que deben ser consistentes. Mi regla: gossip para hechos que pueden estar desactualizados un momento, como la membresía o la carga; consenso para decisiones que deben ser únicas, como quién es el líder o quién tiene un lock."
+      }
+    }
+  ],
+  "related": ["consensus", "consistent-hashing", "replication", "distributed-locks", "clocks-ordering", "case-kv-store"],
+  "sources": [
+    { "title": "Das, Gupta, Motivala — SWIM: Scalable Weakly-consistent Infection-style Process Group Membership Protocol (2002)", "url": "https://www.cs.cornell.edu/projects/Quicksilver/public_pdfs/SWIM.pdf" },
+    { "title": "Apache Cassandra docs — Dynamo: gossip, ring membership and failure detection", "url": "https://cassandra.apache.org/doc/latest/cassandra/architecture/dynamo.html" },
+    { "title": "DeCandia et al. — Dynamo: Amazon's Highly Available Key-value Store (SOSP 2007)", "url": "https://www.allthingsdistributed.com/files/amazon-dynamo-sosp2007.pdf" },
+    { "title": "HashiCorp Consul docs — Gossip (Serf, SWIM, Lifeguard)", "url": "https://developer.hashicorp.com/consul/docs/concept/gossip" }
+  ]
+}

@@ -1,0 +1,234 @@
+{
+  "id": "case-proximity-service",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": {
+    "en": "Design: proximity service (Yelp)",
+    "es": "Diseño: servicio de proximidad (Yelp)"
+  },
+  "aliases": [
+    "Yelp design",
+    "nearby places",
+    "find nearby",
+    "places near me",
+    "nearby search",
+    "store locator",
+    "geohash search",
+    "Google Places"
+  ],
+  "tldr": {
+    "en": "Index mostly static businesses by geohash cell; a search reads the user's cell plus its 8 neighbors from cache or read replicas, filters by exact distance, and widens the cell when results are few.",
+    "es": "Indexa negocios casi estáticos por celda de geohash; una búsqueda lee la celda del usuario y sus 8 vecinas desde la cache o las réplicas de lectura, filtra por distancia exacta y agranda la celda cuando hay pocos resultados."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: given a position and a radius (0.5 to 10 km, say), return nearby businesses, optionally filtered by category or *open now*; owners add and edit businesses; users open a business page. **Non-functional**: search answers in ~100 ms (assumed target), high availability, and results may lag an edit by hours.\n\nScale (assumed): 100M daily users × 5 searches ≈ ~5.8k searches/s on average, over 200M businesses that rarely change. Reads outnumber writes by orders of magnitude.\n\nQuestions I'd ask:\n\n1. A few fixed radius options, or any radius?\n2. How soon must a new or edited business appear?\n3. Distance only, or text search and ranking too?\n\n### API and data model\n\n`GET /search/nearby?lat&lng&radius&category` returns a page of `{business_id, name, distance}`; `GET`, `POST` and `PUT /businesses/{id}` serve pages and owners. Two tables: `business(id, name, lat, lng, category, hours…)`, the source of truth, and `geo_index(geohash, business_id, lat, lng)`, one row per business with an index on `geohash`.\n\n### Architecture\n\nTwo stateless services. The **business service** writes to the primary database. The **location service** only reads: it serves the geo index from a **cache keyed by cell**, backed by **read replicas**. A search picks the geohash precision that fits the radius, reads the user's cell and its 8 neighbors, filters the candidates by exact distance, ranks and paginates. Cells and their trade-offs are taught in [[geospatial-indexing]].\n\n### The hard parts\n\n1. **Choosing the index.** A geohash is a plain indexed string: any database serves it and any cache can key on it. A **quadtree** adapts to density but lives in each server's memory. **S2** covers arbitrary shapes with cells of mixed sizes. For static points and a few radii, I pick geohash.\n2. **Too few results.** In sparse areas the 9 cells hold almost nothing: drop one geohash character, a 32× larger cell, and search again up to a maximum radius.\n\nUnlike [[case-ride-hailing]], where drivers move every few seconds and the index is write-heavy and in memory, this data is nearly static, so replicas and caches do the work.",
+    "es": "### Requisitos\n\n**Funcionales**: dada una posición y un radio (digamos de 0.5 a 10 km), devolver los negocios cercanos, con filtros opcionales por categoría o *abierto ahora*; los dueños agregan y editan negocios; los usuarios abren la página de un negocio. **No funcionales**: la búsqueda responde en ~100 ms (objetivo supuesto), alta disponibilidad, y los resultados pueden tardar horas en reflejar una edición.\n\nEscala (supuesta): 100M de usuarios diarios × 5 búsquedas ≈ ~5.8k búsquedas/s en promedio, sobre 200M de negocios que casi no cambian. Las lecturas superan a las escrituras por órdenes de magnitud.\n\nPreguntas que haría:\n\n1. ¿Unas pocas opciones fijas de radio o cualquier radio?\n2. ¿Qué tan pronto debe aparecer un negocio nuevo o editado?\n3. ¿Solo distancia, o también búsqueda de texto y ranking?\n\n### API y modelo de datos\n\n`GET /search/nearby?lat&lng&radius&category` devuelve una página de `{business_id, name, distance}`; `GET`, `POST` y `PUT /businesses/{id}` atienden las páginas y a los dueños. Dos tablas: `business(id, name, lat, lng, category, hours…)`, la fuente de verdad, y `geo_index(geohash, business_id, lat, lng)`, una fila por negocio con un índice sobre `geohash`.\n\n### Arquitectura\n\nDos servicios sin estado. El **servicio de negocios** escribe en la base primaria. El **servicio de ubicación** solo lee: sirve el índice geográfico desde una **cache por celda**, con **réplicas de lectura** detrás. Una búsqueda elige la precisión de geohash que corresponde al radio, lee la celda del usuario y sus 8 vecinas, filtra los candidatos por distancia exacta, ordena y pagina. Las celdas y sus trade-offs se explican en [[geospatial-indexing]].\n\n### Las partes difíciles\n\n1. **Elegir el índice.** Un geohash es un string indexado común: cualquier base de datos lo sirve y cualquier cache lo usa como key. Un **quadtree** se adapta a la densidad, pero vive en la memoria de cada servidor. **S2** cubre formas arbitrarias con celdas de tamaños mixtos. Para puntos estáticos y unos pocos radios, elijo geohash.\n2. **Muy pocos resultados.** En zonas poco densas las 9 celdas casi no tienen nada: quita un carácter del geohash, una celda 32× más grande, y busca de nuevo hasta un radio máximo.\n\nA diferencia de [[case-ride-hailing]], donde los conductores se mueven cada pocos segundos y el índice vive en memoria con muchas escrituras, aquí los datos son casi estáticos, así que las réplicas y las caches hacen el trabajo."
+  },
+  "keyPoints": [
+    {
+      "en": "Reads dominate: assume ~5.8k searches/s over 200M businesses that rarely change.",
+      "es": "Dominan las lecturas: supón ~5.8k búsquedas/s sobre 200M de negocios que casi no cambian."
+    },
+    {
+      "en": "A **geohash** column turns nearby search into an indexed prefix lookup that any database can serve.",
+      "es": "Una columna **geohash** convierte la búsqueda cercana en una consulta por prefijo indexado que cualquier base de datos sirve."
+    },
+    {
+      "en": "Pick the precision whose cell is at least as large as the radius, then read **9 cells**.",
+      "es": "Elige la precisión cuya celda sea al menos tan grande como el radio y luego lee **9 celdas**."
+    },
+    {
+      "en": "Cache candidates **per cell**, not per user position: every user inside a cell shares the entry.",
+      "es": "Guarda en cache los candidatos **por celda**, no por posición del usuario: todos los usuarios de la celda comparten la entrada."
+    },
+    {
+      "en": "Too few results? Drop one geohash character, a 32× larger cell, and search again.",
+      "es": "¿Muy pocos resultados? Quita un carácter del geohash, una celda 32× más grande, y busca de nuevo."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  U[User app] -->|\"GET /search/nearby\"| LS[\"Location service<br/>read-only\"]\n  LS --> P[\"Geohash cell<br/>plus 8 neighbors\"]\n  P --> K[(\"Cell cache<br/>cell to ids\")]\n  K -->|hit| F[\"Exact distance filter<br/>rank, paginate\"]\n  K -->|miss| RR[(\"Read replicas<br/>geo index\")]\n  RR -->|fill cache| F\n  F --> D[\"Business details<br/>cached by id\"]\n  O[Business owner] -->|\"POST /businesses\"| BS[Business service]\n  BS --> PR[(Primary database)]\n  PR -.->|replication| RR\n  BS -.->|invalidate cell| K",
+    "caption": {
+      "en": "Searches read cells from cache, falling back to read replicas; rare owner writes go to the primary and invalidate the cells they touch.",
+      "es": "Las búsquedas leen celdas desde la cache y, si faltan, desde las réplicas de lectura; las escrituras de los dueños, poco frecuentes, van a la primaria e invalidan las celdas que tocan."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Nearby search: precision, 9 cells, exact filter, expansion",
+      "es": "Búsqueda cercana: precisión, 9 celdas, filtro exacto y expansión"
+    },
+    "source": "import math\nimport pygeohash as pgh\n\n# Geohash cell (width, height) in km at the equator, by precision\nCELL_KM = {4: (39.1, 19.5), 5: (4.9, 4.9), 6: (1.2, 0.61)}\n\ndef precision_for(radius_km: float, lat: float) -> int:\n    # Finest cell at least as large as the radius: then 3x3 cells cover the circle\n    shrink = math.cos(math.radians(lat))       # cells get narrower away from the equator\n    fits = [p for p, (w, h) in CELL_KM.items() if min(w * shrink, h) >= radius_km]\n    return max(fits, default=4)\n\ndef block_3x3(cell: str) -> list[str]:\n    rows = (pgh.get_adjacent(cell, \"top\"), cell, pgh.get_adjacent(cell, \"bottom\"))\n    return [*rows, *(pgh.get_adjacent(c, side) for c in rows for side in (\"left\", \"right\"))]\n\ndef cell_members(cell: str) -> list[tuple[str, float, float]]:\n    if (hit := cache.get(f\"cell:{cell}\")) is not None:\n        return hit                             # shared by every user inside this cell\n    rows = replica.query(\"SELECT business_id, lat, lng FROM geo_index \"\n                         \"WHERE geohash LIKE %s\", cell + \"%\")  # prefix = any coarser cell\n    cache.set(f\"cell:{cell}\", rows, ttl=jittered(86_400))      # static data: long TTL\n    return rows\n\ndef nearby(lat: float, lng: float, radius_km: float, want: int = 20) -> list[tuple[float, str]]:\n    p = precision_for(radius_km, lat)\n    while True:\n        cells = block_3x3(pgh.encode(lat, lng, precision=p))\n        found = sorted((d, biz) for c in cells for biz, blat, blng in cell_members(c)\n                       if (d := haversine_km(lat, lng, blat, blng)) <= radius_km)\n        if len(found) >= want or p == 4:       # cells are coarse; the distance filter is exact\n            return found[:want]\n        p, radius_km = p - 1, radius_km * 4    # sparse area: 32x larger cell, wider radius"
+  },
+  "example": {
+    "en": "A user in downtown São Paulo searches *coffee within 500 m*. Precision 6 gives cells of ~1.2 km × 0.6 km; the service reads the user's cell and its 8 neighbors, all cache hits, and gets ~700 candidates with coordinates. The exact distance filter keeps 85, the category filter 23, and the first 20 load their details from the business cache.\n\nThe same search in a small town finds 2 results, so the service retries at precision 5 (~4.9 km cells) with a wider radius, finds 14 and returns them sorted by distance.",
+    "es": "Un usuario en el centro de São Paulo busca *café a menos de 500 m*. La precisión 6 da celdas de ~1.2 km × 0.6 km; el servicio lee la celda del usuario y sus 8 vecinas, todas con hit en la cache, y obtiene ~700 candidatos con coordenadas. El filtro de distancia exacta deja 85, el de categoría 23, y los primeros 20 cargan sus detalles desde la cache de negocios.\n\nLa misma búsqueda en un pueblo chico encuentra 2 resultados, así que el servicio reintenta con precisión 5 (celdas de ~4.9 km) y un radio mayor, encuentra 14 y los devuelve ordenados por distancia."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Geohash vs quadtree vs S2",
+        "es": "Geohash vs quadtree vs S2"
+      },
+      "body": {
+        "en": "**Geohash**: a string column with a B-tree index. A prefix query serves any coarser precision, and it works in any database or cache. Cell sizes are fixed, so a downtown cell returns thousands of candidates and a rural one almost none. **Quadtree**: an in-memory tree that splits a cell when it holds too many points (say 100), so every leaf has a similar count and k-nearest search is natural. The cost is operational: each server builds the tree at startup, so deploys must be rolling, and edits need a rebuild or careful in-place updates. **S2**: covers any region, a circle or a polygon, with cells of mixed levels; best for geofences and tight coverings. For static points and a handful of radii, geohash in the database is the simplest thing that works. Move on when density skew hurts.",
+        "es": "**Geohash**: una columna de texto con un índice B-tree. Una consulta por prefijo sirve cualquier precisión más gruesa, y funciona en cualquier base de datos o cache. Los tamaños de celda son fijos, así que una celda del centro devuelve miles de candidatos y una rural casi ninguno. **Quadtree**: un árbol en memoria que divide una celda cuando tiene demasiados puntos (digamos 100), así cada hoja tiene una cantidad parecida y la búsqueda de los k más cercanos sale natural. El costo es operativo: cada servidor construye el árbol al arrancar, así que los deploys deben ser graduales, y las ediciones piden reconstruirlo o actualizarlo en el lugar con cuidado. **S2**: cubre cualquier región, un círculo o un polígono, con celdas de niveles mixtos; es lo mejor para geocercas y coberturas ajustadas. Para puntos estáticos y unos pocos radios, geohash en la base de datos es lo más simple que funciona. Cambia cuando el sesgo de densidad duela."
+      }
+    },
+    {
+      "title": {
+        "en": "Caching by cell and read replicas",
+        "es": "Cache por celda y réplicas de lectura"
+      },
+      "body": {
+        "en": "Two caches, both keyed by things that rarely change. `cell:{geohash}` holds a list of (business id, lat, lng): enough to filter and rank without loading any business. Every user in the cell shares it, unlike a key built from raw coordinates, which almost never repeats. `business:{id}` holds the details shown in results. On an edit, the business service updates the primary and deletes the affected cell and business keys; a long jittered TTL is the backstop ([[caching]]). Size check (assumed): 200M index entries × ~30 B ≈ ~6 GB, so the whole geo index fits in one cache node's memory. Misses go to read replicas; a few seconds of replication lag is invisible when the product tolerates hours ([[replication]]).",
+        "es": "Dos caches, ambas con keys que casi no cambian. `cell:{geohash}` guarda una lista de (id del negocio, lat, lng): suficiente para filtrar y ordenar sin cargar ningún negocio. Todos los usuarios de la celda la comparten, a diferencia de una key armada con las coordenadas crudas, que casi nunca se repite. `business:{id}` guarda los detalles que se muestran en los resultados. Ante una edición, el servicio de negocios actualiza la primaria y borra las keys de la celda y del negocio afectados; un TTL largo con jitter es el respaldo ([[caching]]). Chequeo de tamaño (supuesto): 200M de entradas del índice × ~30 B ≈ ~6 GB, así que todo el índice geográfico cabe en la memoria de un nodo de cache. Los misses van a las réplicas de lectura; unos segundos de retraso de replicación no se notan cuando el producto tolera horas ([[replication]])."
+      }
+    },
+    {
+      "title": {
+        "en": "Filters, ranking and search engines",
+        "es": "Filtros, ranking y motores de búsqueda"
+      },
+      "body": {
+        "en": "Distance alone is rarely the product. With light filters (category, open now), filter the candidates after the distance pass: a few hundred rows in memory. When users combine text, many filters and relevance ranking (rating, reviews, price), move the query to a search engine that indexes coordinates next to the text and applies a distance filter inside the same query. Yelp built Nrtsearch, its own Lucene-based engine, to replace Elasticsearch (2021): a primary indexes and replicas pull the finished segments, the same read-replica shape as here. At the other end, PostGIS is enough while the data fits one database server: `ST_DWithin` answers radius queries using a spatial index. Whatever the engine, cap the candidates per query so one dense cell can't blow the latency budget.",
+        "es": "La distancia sola rara vez es el producto. Con filtros livianos (categoría, abierto ahora), filtra los candidatos después del paso de distancia: son unos cientos de filas en memoria. Cuando los usuarios combinan texto, muchos filtros y ranking por relevancia (calificación, reseñas, precio), lleva la consulta a un motor de búsqueda que indexe las coordenadas junto al texto y aplique el filtro de distancia dentro de la misma consulta. Yelp construyó Nrtsearch, su propio motor basado en Lucene, para reemplazar a Elasticsearch (2021): una primaria indexa y las réplicas descargan los segmentos ya armados, la misma forma de réplicas de lectura que aquí. En el otro extremo, PostGIS alcanza mientras los datos quepan en un servidor de base de datos: `ST_DWithin` responde consultas por radio usando un índice espacial. Sea cual sea el motor, limita los candidatos por consulta para que una celda densa no rompa el presupuesto de latencia."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "A search is 9 key lookups plus an in-memory filter: easy to cache and to scale with replicas.",
+      "es": "Una búsqueda son 9 lecturas por key más un filtro en memoria: fácil de cachear y de escalar con réplicas."
+    },
+    {
+      "en": "Stateless services over static data: any replica or cache node can answer any query.",
+      "es": "Servicios sin estado sobre datos estáticos: cualquier réplica o nodo de cache responde cualquier consulta."
+    },
+    {
+      "en": "Geohash needs no special database: an indexed string column is enough.",
+      "es": "Geohash no requiere una base de datos especial: alcanza con una columna de texto indexada."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Fixed cells ignore density: downtown cells return thousands of candidates, rural ones almost none.",
+      "es": "Las celdas fijas ignoran la densidad: las del centro devuelven miles de candidatos y las rurales casi ninguno."
+    },
+    {
+      "en": "Edits show up late unless every write also invalidates the cell keys it affects.",
+      "es": "Las ediciones aparecen tarde, salvo que cada escritura invalide también las keys de las celdas que afecta."
+    },
+    {
+      "en": "Rich filters and relevance ranking outgrow the cell lookup and need a search engine.",
+      "es": "Los filtros complejos y el ranking por relevancia le quedan grandes a la búsqueda por celda y piden un motor de búsqueda."
+    }
+  ],
+  "whenToUse": {
+    "en": "Read-heavy search over points that rarely move: restaurants, stores, ATMs, charging stations, real-estate listings.",
+    "es": "Búsquedas con muchas lecturas sobre puntos que casi no se mueven: restaurantes, tiendas, cajeros, estaciones de carga, avisos inmobiliarios."
+  },
+  "whenNotToUse": {
+    "en": "Moving objects that need freshness within seconds ([[case-ride-hailing]]), or polygon queries such as delivery zones, which need S2 coverings or PostGIS.",
+    "es": "Objetos en movimiento que necesitan frescura de segundos ([[case-ride-hailing]]), o consultas por polígonos como zonas de reparto, que piden coberturas S2 o PostGIS."
+  },
+  "numbers": [
+    {
+      "en": "Load (assumed): 100M daily users × 5 searches ÷ 86,400 s ≈ ~5.8k searches/s on average.",
+      "es": "Carga (supuesta): 100M de usuarios diarios × 5 búsquedas ÷ 86,400 s ≈ ~5.8k búsquedas/s en promedio."
+    },
+    {
+      "en": "Geohash cells at the equator: 4 characters ≈ 39.1 × 19.5 km, 5 ≈ 4.9 × 4.9 km, 6 ≈ 1.2 km × 609 m.",
+      "es": "Celdas de geohash en el ecuador: 4 caracteres ≈ 39.1 × 19.5 km, 5 ≈ 4.9 × 4.9 km, 6 ≈ 1.2 km × 609 m."
+    },
+    {
+      "en": "Each geohash character adds 5 bits: one character less is a 32× larger cell.",
+      "es": "Cada carácter de geohash agrega 5 bits: un carácter menos es una celda 32× más grande."
+    },
+    {
+      "en": "Geo index (assumed): 200M entries × ~30 B ≈ ~6 GB, small enough to keep entirely in memory.",
+      "es": "Índice geográfico (supuesto): 200M de entradas × ~30 B ≈ ~6 GB, lo bastante chico para tenerlo entero en memoria."
+    },
+    {
+      "en": "S2 average cell area: level 12 ≈ 5.07 km², level 13 ≈ 1.27 km², level 14 ≈ 0.32 km².",
+      "es": "Área promedio de una celda S2: nivel 12 ≈ 5.07 km², nivel 13 ≈ 1.27 km², nivel 14 ≈ 0.32 km²."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "Caching by the user's exact coordinates: every request is a new key and the hit rate is ~0.",
+      "es": "Cachear por las coordenadas exactas del usuario: cada request es una key nueva y el hit rate es ~0."
+    },
+    {
+      "en": "Reading only the user's own cell: a café 30 m away, across the edge, never shows up.",
+      "es": "Leer solo la celda del usuario: un café a 30 m, del otro lado del borde, nunca aparece."
+    },
+    {
+      "en": "Skipping the exact distance filter: the corners of the 3×3 block lie far outside the radius.",
+      "es": "Saltarse el filtro de distancia exacta: las esquinas del bloque de 3×3 quedan muy fuera del radio."
+    },
+    {
+      "en": "One precision for every radius: a 5 km search over 6-character cells reads more than 100 cells.",
+      "es": "Una sola precisión para todos los radios: una búsqueda de 5 km sobre celdas de 6 caracteres lee más de 100 celdas."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Geohash, quadtree or S2: which do you pick here?",
+        "es": "Geohash, quadtree o S2: ¿cuál eliges aquí?"
+      },
+      "a": {
+        "en": "Geohash, because the data is static points and the radii are few. It is a plain indexed column, so the database, the replicas and the cache all work unchanged, and a prefix query gives me coarser cells for free. A quadtree adapts to density but lives in each server's memory, which complicates deploys and edits. I'd reach for S2 if I needed polygons, like delivery zones. If density skew hurt, I'd first cap candidates per cell.",
+        "es": "Geohash, porque los datos son puntos estáticos y los radios son pocos. Es una columna indexada común, así que la base de datos, las réplicas y la cache funcionan sin cambios, y una consulta por prefijo me da celdas más gruesas gratis. Un quadtree se adapta a la densidad, pero vive en la memoria de cada servidor, lo que complica los deploys y las ediciones. Usaría S2 si necesitara polígonos, como zonas de reparto. Si el sesgo de densidad doliera, primero limitaría los candidatos por celda."
+      }
+    },
+    {
+      "q": {
+        "en": "An owner changes their address. When do users see it?",
+        "es": "Un dueño cambia su dirección. ¿Cuándo lo ven los usuarios?"
+      },
+      "a": {
+        "en": "First I'd agree on the freshness the product needs; hours is usually fine. The write goes to the primary; the business service then deletes the old and the new cell keys and the business key, so the next search refills them. A lagging replica can refill the cache with the old row, so I delete again after a short delay and keep a TTL as backstop. If minutes mattered, I'd update caches from a stream of change events.",
+        "es": "Primero acordaría qué frescura necesita el producto; lo normal es que horas alcance. La escritura va a la primaria; después el servicio de negocios borra las keys de la celda vieja y de la nueva, y la del negocio, así la próxima búsqueda las vuelve a llenar. Una réplica atrasada puede rellenar la cache con la fila vieja, así que borro otra vez tras una breve espera y dejo un TTL como respaldo. Si importaran los minutos, actualizaría las caches desde un stream de eventos de cambio."
+      }
+    },
+    {
+      "q": {
+        "en": "How is this different from finding nearby drivers?",
+        "es": "¿En qué se diferencia de buscar conductores cercanos?"
+      },
+      "a": {
+        "en": "The index is the same idea, cells; the workload is the opposite. Drivers move, so that index takes hundreds of thousands of writes per second, lives in memory and expires stale entries. Businesses stay put: writes are rare, so I keep the index in a database, serve it from read replicas and cache whole cells for a day. Here the hard parts are density skew and ranking, not write throughput.",
+        "es": "El índice es la misma idea, celdas; la carga es la opuesta. Los conductores se mueven, así que ese índice recibe cientos de miles de escrituras por segundo, vive en memoria y expira las entradas viejas. Los negocios no se mueven: las escrituras son raras, así que dejo el índice en una base de datos, lo sirvo desde réplicas de lectura y guardo en cache celdas enteras por un día. Aquí lo difícil es el sesgo de densidad y el ranking, no el throughput de escritura."
+      }
+    }
+  ],
+  "related": [
+    "geospatial-indexing",
+    "case-ride-hailing",
+    "caching",
+    "replication",
+    "indexes",
+    "back-of-envelope"
+  ],
+  "sources": [
+    {
+      "title": "Elastic — Geohash grid aggregation (cell sizes by precision)",
+      "url": "https://www.elastic.co/docs/reference/aggregations/search-aggregations-bucket-geohashgrid-aggregation"
+    },
+    {
+      "title": "S2 Geometry — S2 Cell Statistics",
+      "url": "https://s2geometry.io/resources/s2cell_statistics"
+    },
+    {
+      "title": "PostGIS — ST_DWithin",
+      "url": "https://postgis.net/docs/ST_DWithin.html"
+    },
+    {
+      "title": "Yelp Engineering — Nrtsearch: Yelp's Fast, Scalable and Cost Effective Search Engine (2021)",
+      "url": "https://engineeringblog.yelp.com/2021/09/nrtsearch-yelps-fast-scalable-and-cost-effective-search-engine.html"
+    }
+  ]
+}

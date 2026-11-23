@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { m, t } from "@/lib/i18n";
 import { conceptsOf, getDomains } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -11,7 +12,7 @@ import { Filter } from "@/components/Filter";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return { title: m("questionBank", locale) };
+  return pageMeta(locale, "/questions/", m("questionBank", locale), m("interviewSub", locale));
 }
 
 export default async function Questions({ params }: P) {

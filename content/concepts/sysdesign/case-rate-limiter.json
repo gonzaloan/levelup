@@ -1,0 +1,234 @@
+{
+  "id": "case-rate-limiter",
+  "domain": "sysdesign",
+  "level": "advanced",
+  "title": {
+    "en": "Design: distributed rate limiter",
+    "es": "Diseño: rate limiter distribuido"
+  },
+  "aliases": [
+    "rate limiter design",
+    "API throttling",
+    "distributed rate limiting",
+    "Redis Lua rate limiter",
+    "fail open",
+    "fail closed",
+    "429 Retry-After",
+    "RateLimit headers"
+  ],
+  "tldr": {
+    "en": "Enforce limits at the gateway with rules cached in memory and counters in a regional Redis updated by one atomic script; answer excess with 429 and Retry-After, and fail open if the limiter breaks.",
+    "es": "Aplica los límites en el gateway, con reglas en memoria y contadores en un Redis regional que se actualizan con un solo script atómico; responde el exceso con 429 y Retry-After, y haz fail open si el limiter falla."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: cap requests per client (API key, user or IP) and per endpoint, from rules that change without a deploy; tell rejected clients when to retry. **Non-functional**: add ~1 ms at most to each request (assumed budget), count correctly across every gateway node, and never become the outage.\n\nScale (assumed): 100k requests/s at peak and 10M active keys.\n\nQuestions I'd ask:\n\n1. Is the limit a hard contract (billing, abuse) or a fairness guard where a small overshoot is fine?\n2. One global limit, or one per region?\n3. If the limiter is down, do we let traffic through?\n\n### Where it lives\n\n- **Client**: throttling and backoff in the SDK. Polite, but a client can skip it; never trust it.\n- **Gateway** (my default): one place, and it rejects before the backend does any work.\n- **Service**: a library or sidecar, for limits only the service understands (cost per query, caps per resource).\n\n### Architecture\n\n**Rules** (`key`, `limit`, `window`, `on_error`) live in a config store and reach each node by push or polling; nodes match them from memory, never on the request path. **Counters** live in a regional Redis Cluster, sharded by client key. Per request: identify the client → match the rule → one Redis call that counts and decides → forward, or reply `429`. The algorithm is a parameter of the rule; they are compared in [[rate-limiting]].\n\n### The hard parts\n\n1. **The race.** `GET`, compare, `SET` from two nodes at once: both read 99 and both allow. The fix is one atomic step: a Lua script, or an `INCR` whose returned value decides.\n2. **Accuracy vs latency.** One global counter is exact but puts a cross-region round trip on every request. Regional or local counters are fast and slightly wrong. Choose per rule.\n3. **Failure.** A limiter that blocks traffic when Redis is down has become the outage: fail open, except on security limits.",
+    "es": "### Requisitos\n\n**Funcionales**: limitar los requests por cliente (API key, usuario o IP) y por endpoint, con reglas que cambian sin hacer deploy; avisar al cliente rechazado cuándo reintentar. **No funcionales**: sumar como máximo ~1 ms a cada request (presupuesto supuesto), contar bien entre todos los nodos del gateway y no convertirse nunca en la caída.\n\nEscala (supuesta): 100k requests/s en el pico y 10M de keys activas.\n\nPreguntas que haría:\n\n1. ¿El límite es un contrato estricto (facturación, abuso) o una protección de equidad donde un pequeño exceso es aceptable?\n2. ¿Un límite global o uno por región?\n3. Si el limiter se cae, ¿dejamos pasar el tráfico?\n\n### Dónde vive\n\n- **Cliente**: throttling y backoff en el SDK. Es cortesía: el cliente puede saltárselo, así que nunca confíes en él.\n- **Gateway** (mi opción por defecto): un solo lugar, y rechaza antes de que el backend trabaje.\n- **Servicio**: una librería o un sidecar, para límites que solo el servicio entiende (costo por consulta, topes por recurso).\n\n### Arquitectura\n\nLas **reglas** (`key`, `limit`, `window`, `on_error`) viven en un almacén de configuración y llegan a cada nodo por push o polling; el nodo las evalúa desde memoria, nunca en el camino del request. Los **contadores** viven en un Redis Cluster regional, particionado por la key del cliente. Por request: identificar al cliente → encontrar la regla → una llamada a Redis que cuenta y decide → reenviar, o responder `429`. El algoritmo es un parámetro de la regla; se comparan en [[rate-limiting]].\n\n### Las partes difíciles\n\n1. **La carrera.** `GET`, comparar y `SET` desde dos nodos a la vez: ambos leen 99 y ambos permiten. La solución es un solo paso atómico: un script Lua, o un `INCR` cuyo valor de retorno decide.\n2. **Exactitud vs latencia.** Un contador global único es exacto, pero mete un viaje entre regiones en cada request. Los contadores regionales o locales son rápidos y un poco inexactos. Elige por regla.\n3. **Fallas.** Un limiter que bloquea el tráfico cuando Redis se cae se convirtió en la caída: haz fail open, salvo en los límites de seguridad."
+  },
+  "keyPoints": [
+    {
+      "en": "Enforce at the **gateway**: one place, and excess traffic is rejected before the backend does any work.",
+      "es": "Aplícalo en el **gateway**: un solo lugar, y el exceso se rechaza antes de que el backend trabaje."
+    },
+    {
+      "en": "Check-then-set from two nodes races; one **atomic** Redis script that counts and decides closes it.",
+      "es": "Leer y luego escribir desde dos nodos genera una carrera; un script **atómico** de Redis que cuenta y decide la cierra."
+    },
+    {
+      "en": "Rules come from a config store and are matched **from memory**, never fetched per request.",
+      "es": "Las reglas vienen de un almacén de configuración y se evalúan **desde memoria**; nunca se consultan en cada request."
+    },
+    {
+      "en": "An exact global counter costs a cross-region round trip; **regional** counters trade a small overshoot for speed.",
+      "es": "Un contador global exacto cuesta un viaje entre regiones; los contadores **regionales** cambian un pequeño exceso por velocidad."
+    },
+    {
+      "en": "If Redis fails, **fail open** to a local limit; fail closed only for security limits like login.",
+      "es": "Si Redis falla, haz **fail open** con un límite local; fail closed solo en límites de seguridad, como el login."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  C[Client] --> G[\"API gateway<br/>limiter middleware\"]\n  CFG[(Rules store)] -.->|push or poll| G\n  G --> M[\"Match rule<br/>build counter key\"]\n  M --> R[(\"Regional Redis<br/>atomic Lua script\")]\n  R -->|within limit| S[Backend service]\n  R -->|over limit| X[\"429 + Retry-After\"]\n  R -.->|timeout or error| F{\"Rule says<br/>fail open?\"}\n  F -->|yes| L[Local fallback limit]\n  L --> S\n  F -->|no| E[\"503 on sensitive routes\"]",
+    "caption": {
+      "en": "Rules are matched from memory; the only network hop is one atomic Redis call, and each rule decides what happens when that call fails.",
+      "es": "Las reglas se evalúan desde memoria; el único salto de red es una llamada atómica a Redis, y cada regla decide qué pasa cuando esa llamada falla."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "Gateway middleware: atomic count, fail-open, 429 headers",
+      "es": "Middleware del gateway: conteo atómico, fail open y headers del 429"
+    },
+    "source": "import redis.asyncio as redis\nfrom redis.exceptions import RedisError\nfrom fastapi import FastAPI, Request\nfrom fastapi.responses import JSONResponse\n\napp = FastAPI()\nr = redis.Redis(socket_timeout=0.005)   # 5 ms budget: the limiter is never the slow hop\n\n# Count, set the TTL and read it back in ONE atomic step. Fixed window to keep it\n# short; a real rule would pick the token bucket from the rate-limiting concept.\nHIT = r.register_script(\"\"\"\nlocal n = redis.call('INCR', KEYS[1])\nif n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end\nreturn {n, redis.call('TTL', KEYS[1])}\n\"\"\")\n\n@app.middleware(\"http\")\nasync def rate_limit(request: Request, call_next):\n    rule = RULES.match(request)             # in-memory copy, refreshed in the background\n    client = request.headers.get(\"x-api-key\") or request.client.host\n    try:\n        n, ttl = await HIT(keys=[f\"rl:{rule.id}:{client}\"], args=[rule.window_s])\n    except RedisError:                      # timeout or Redis down\n        if rule.fail_closed:                # login, OTP: safety over availability\n            return JSONResponse({\"error\": \"limiter unavailable\"}, status_code=503)\n        n, ttl = LOCAL.hit(rule, client), rule.window_s   # fail open to a per-node limit\n    headers = {\"RateLimit\": f'\"{rule.id}\";r={max(0, rule.limit - n)};t={ttl}'}\n    if n > rule.limit:\n        return JSONResponse({\"error\": \"rate limit exceeded\"}, status_code=429,\n                            headers={**headers, \"Retry-After\": str(ttl)})\n    response = await call_next(request)\n    response.headers.update(headers)\n    return response"
+  },
+  "example": {
+    "en": "An API allows **100 requests/min** per key behind 20 gateway pods.\n\n- **v1, in-memory counters**: each pod allows 100, so a client spread over the fleet gets up to 2,000/min.\n- **v2, Redis `GET` → compare → `SET`**: a burst of 300 concurrent requests reads the same count on several pods, and more than 100 pass.\n- **v3, one Lua script**: exactly 100 pass; the other 200 get `429` with `Retry-After: 23`.\n\nThen a Redis node fails over: for those seconds each pod applies a local limit and logs it, instead of rejecting every customer.",
+    "es": "Una API permite **100 requests/min** por key detrás de 20 pods del gateway.\n\n- **v1, contadores en memoria**: cada pod permite 100, así que un cliente repartido en la flota llega a 2,000/min.\n- **v2, Redis con `GET` → comparar → `SET`**: una ráfaga de 300 requests concurrentes lee el mismo valor en varios pods, y pasan más de 100.\n- **v3, un script Lua**: pasan exactamente 100; los otros 200 reciben `429` con `Retry-After: 23`.\n\nLuego un nodo de Redis hace failover: durante esos segundos cada pod aplica un límite local y lo registra, en vez de rechazar a todos los clientes."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "The race and the atomic fix",
+        "es": "La carrera y la solución atómica"
+      },
+      "body": {
+        "en": "Read-then-write is two round trips, and any other node can run between them. Three fixes, simplest first. **Decide on the result of `INCR`**: the increment is atomic and returns the new count, so no two requests see the same value. **Set the TTL in the same step**: Redis's own docs warn that `INCR` followed by a separate `EXPIRE` leaks a counter with no expiry if the client dies in between, and that counter eventually blocks the client for good. **A Lua script** for anything richer (token bucket, sliding window): Redis runs a script atomically, blocking everything else meanwhile, so keep it O(1). Read the time with Redis `TIME` inside the script, not from the gateway's clock. In Redis Cluster a script may only touch keys passed in `KEYS`, all in one slot: use one key per client and rule.",
+        "es": "Leer y luego escribir son dos viajes de red, y cualquier otro nodo puede colarse entre ambos. Tres soluciones, de la más simple a la más completa. **Decide con el resultado de `INCR`**: el incremento es atómico y devuelve el nuevo valor, así que dos requests nunca ven el mismo. **Pon el TTL en el mismo paso**: la propia documentación de Redis advierte que un `INCR` seguido de un `EXPIRE` aparte deja un contador sin expiración si el cliente muere en el medio, y ese contador termina bloqueando al cliente para siempre. **Un script Lua** para todo lo más elaborado (token bucket, sliding window): Redis ejecuta el script de forma atómica y bloquea todo lo demás mientras tanto, así que mantenlo en O(1). Lee la hora con `TIME` de Redis dentro del script, no con el reloj del gateway. En Redis Cluster un script solo puede tocar las keys que recibe en `KEYS`, todas en un mismo slot: usa una key por cliente y regla."
+      }
+    },
+    {
+      "title": {
+        "en": "Multi-region: local vs global accuracy",
+        "es": "Multirregión: exactitud local vs global"
+      },
+      "body": {
+        "en": "A global limit of 1,000/min across three regions has three designs. **One global counter**: exact, but every request pays a cross-region round trip, and that region's outage breaks limiting everywhere. **Per-region counters**: fast and independent; a client spreading traffic can reach 3× the limit, and a static split (333 each) starves the one region the client really uses. **Local counting with async sync**: nodes count in memory and flush to the shared store on a short interval, so overshoot is bounded by what arrives in one interval. Cloudflare counts per point of presence, because anycast sends an IP's traffic to the same one, and increments asynchronously. Envoy applies two stages: a local token bucket absorbs bursts before the global service is called. I'd keep exact global counters for billing quotas only.",
+        "es": "Un límite global de 1,000/min en tres regiones admite tres diseños. **Un contador global**: exacto, pero cada request paga un viaje entre regiones, y la caída de esa región rompe el límite en todas. **Contadores por región**: rápidos e independientes; un cliente que reparte su tráfico puede llegar a 3× el límite, y un reparto fijo (333 cada una) deja corta a la única región que el cliente usa de verdad. **Conteo local con sincronización asíncrona**: los nodos cuentan en memoria y vuelcan al almacén compartido en intervalos cortos, así que el exceso queda acotado por lo que llega en un intervalo. Cloudflare cuenta por punto de presencia, porque anycast lleva el tráfico de una IP siempre al mismo, e incrementa de forma asíncrona. Envoy aplica dos etapas: un token bucket local absorbe las ráfagas antes de llamar al servicio global. Yo dejaría los contadores globales exactos solo para cuotas de facturación."
+      }
+    },
+    {
+      "title": {
+        "en": "Failure modes and what the client sees",
+        "es": "Modos de falla y lo que ve el cliente"
+      },
+      "body": {
+        "en": "The limiter sits on every request, so its failure mode is a product decision. Give the Redis call a tight timeout (Envoy's rate-limit filter defaults to 20 ms) and choose per rule: **fail open** for general API protection, as Stripe does, falling back to a conservative in-memory limit; **fail closed** for login, OTP and anything that costs money per call. Alert on the fail-open rate, or a dead limiter goes unnoticed. Rejected requests get `429` (RFC 6585) with `Retry-After`; without it clients retry at once and deepen the overload ([[retries-backoff]]). Send the remaining quota on successful responses too: GitHub uses `x-ratelimit-remaining` and `x-ratelimit-reset`, while the IETF `RateLimit` header is still an Internet-Draft (Nov 2026). Launch new rules in shadow mode: log what they would block, then enforce.",
+        "es": "El limiter está en el camino de cada request, así que su modo de falla es una decisión de producto. Dale a la llamada a Redis un timeout corto (el filtro de rate limit de Envoy usa 20 ms por defecto) y elige por regla: **fail open** para la protección general de la API, como hace Stripe, con un límite conservador en memoria como respaldo; **fail closed** para login, OTP y todo lo que cuesta dinero por llamada. Pon una alerta sobre la tasa de fail open, o un limiter muerto pasa inadvertido. Los requests rechazados reciben `429` (RFC 6585) con `Retry-After`; sin él los clientes reintentan de inmediato y agravan la sobrecarga ([[retries-backoff]]). Envía también la cuota restante en las respuestas exitosas: GitHub usa `x-ratelimit-remaining` y `x-ratelimit-reset`, mientras que el header `RateLimit` del IETF sigue siendo un Internet-Draft (nov 2026). Lanza las reglas nuevas en modo sombra: registra lo que bloquearían y después aplícalas."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "One atomic Redis call per request: correct counts across any number of gateway nodes.",
+      "es": "Una llamada atómica a Redis por request: conteo correcto con cualquier cantidad de nodos del gateway."
+    },
+    {
+      "en": "Rules change through config: no deploy, and no lookup on the request path.",
+      "es": "Las reglas cambian por configuración: sin deploy y sin consultas en el camino del request."
+    },
+    {
+      "en": "Rejecting at the edge is cheap: excess traffic never reaches the application servers.",
+      "es": "Rechazar en el borde es barato: el exceso nunca llega a los servidores de aplicación."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Redis is now on the path of every request: one more round trip and one more dependency to keep available.",
+      "es": "Redis queda en el camino de cada request: un viaje de red más y una dependencia más que mantener disponible."
+    },
+    {
+      "en": "Exact global limits and low latency conflict: multi-region setups accept overshoot or skewed quotas.",
+      "es": "Los límites globales exactos chocan con la baja latencia: en multirregión aceptas excesos o cuotas mal repartidas."
+    },
+    {
+      "en": "Failing open means a limiter outage is also a window with weaker protection.",
+      "es": "Hacer fail open implica que una caída del limiter es también una ventana con menos protección."
+    }
+  ],
+  "whenToUse": {
+    "en": "Any public or multi-tenant API served by more than one node: per-key quotas, login and signup throttles, protecting a shared dependency.",
+    "es": "Cualquier API pública o multi-tenant servida por más de un nodo: cuotas por key, frenos al login y al registro, o proteger una dependencia compartida."
+  },
+  "whenNotToUse": {
+    "en": "A single-node service, where an in-process bucket is enough. Or as your overload protection: limits cap clients, not total load, so add load shedding ([[backpressure-load-shedding]]).",
+    "es": "Un servicio de un solo nodo, donde alcanza con un bucket en el proceso. Tampoco como protección contra sobrecarga: los límites acotan clientes, no la carga total, así que suma load shedding ([[backpressure-load-shedding]])."
+  },
+  "numbers": [
+    {
+      "en": "Memory (assumed): 10M active keys × ~100 B per counter ≈ ~1 GB. Counter memory is rarely the constraint.",
+      "es": "Memoria (supuesta): 10M de keys activas × ~100 B por contador ≈ ~1 GB. La memoria de los contadores rara vez es el límite."
+    },
+    {
+      "en": "Throughput: 100k checks/s (assumed) is about one Redis instance's ~100k simple ops/s (rule of thumb): shard by client key.",
+      "es": "Throughput: 100k verificaciones/s (supuesto) es más o menos lo que rinde una instancia de Redis, ~100k ops simples/s (regla práctica): particiona por key del cliente."
+    },
+    {
+      "en": "Cloudflare (2017): its sliding-window counters wrongly allowed or limited only 0.003% of 400M requests.",
+      "es": "Cloudflare (2017): sus contadores de ventana deslizante permitieron o limitaron por error solo el 0.003% de 400M de requests."
+    },
+    {
+      "en": "Envoy's rate-limit filter: 20 ms default timeout; on errors it lets traffic through unless `failure_mode_deny` is set (then 500).",
+      "es": "Filtro de rate limit de Envoy: timeout de 20 ms por defecto; ante errores deja pasar el tráfico salvo que actives `failure_mode_deny` (entonces responde 500)."
+    },
+    {
+      "en": "N regions with independent counters: worst case N × the limit; with a static split, a one-region client gets 1/N.",
+      "es": "N regiones con contadores independientes: en el peor caso, N × el límite; con un reparto fijo, un cliente de una sola región recibe 1/N."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "`GET`, compare, then `SET`: two gateways read the same count and both let the request through.",
+      "es": "`GET`, comparar y luego `SET`: dos gateways leen el mismo valor y ambos dejan pasar el request."
+    },
+    {
+      "en": "`INCR` and `EXPIRE` as two separate calls: a crash between them leaves a counter that never resets.",
+      "es": "`INCR` y `EXPIRE` en dos llamadas separadas: una caída entre ambas deja un contador que nunca se reinicia."
+    },
+    {
+      "en": "Loading rules from a database on every request: the limiter becomes the slowest hop.",
+      "es": "Cargar las reglas desde una base de datos en cada request: el limiter se vuelve el salto más lento."
+    },
+    {
+      "en": "Failing closed everywhere: a Redis blip turns into a full API outage.",
+      "es": "Hacer fail closed en todos lados: un parpadeo de Redis se convierte en una caída total de la API."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "Redis goes down. What does your limiter do?",
+        "es": "Redis se cae. ¿Qué hace tu limiter?"
+      },
+      "a": {
+        "en": "It depends on the rule, and I decide it before the incident. For general API limits I fail open: the Redis call has a timeout of a few ms, and on error each gateway applies a conservative in-memory limit, so abuse is still capped per node. For login, OTP or paid operations I fail closed with a 503. I alert on the fail-open rate, because a limiter that silently allows everything looks healthy.",
+        "es": "Depende de la regla, y lo decido antes del incidente. Para los límites generales de la API hago fail open: la llamada a Redis tiene un timeout de pocos ms y, ante un error, cada gateway aplica un límite conservador en memoria, así que el abuso sigue acotado por nodo. Para login, OTP u operaciones pagadas hago fail closed con un 503. Pongo una alerta sobre la tasa de fail open, porque un limiter que deja pasar todo en silencio parece sano."
+      }
+    },
+    {
+      "q": {
+        "en": "How do you enforce one limit across three regions?",
+        "es": "¿Cómo aplicas un solo límite entre tres regiones?"
+      },
+      "a": {
+        "en": "First I ask how exact it must be. For a fairness limit I count per region and accept that a client spreading traffic can exceed it; or nodes count locally and sync asynchronously, which bounds the overshoot to one sync interval. For a billing quota I want one source of truth: a global counter, with each region leasing chunks of quota so the cross-region call is not on every request. Exact, fast, multi-region: pick two.",
+        "es": "Primero pregunto qué tan exacto debe ser. Para un límite de equidad cuento por región y acepto que un cliente que reparte su tráfico lo exceda; o los nodos cuentan en local y sincronizan de forma asíncrona, lo que acota el exceso a un intervalo de sincronización. Para una cuota de facturación quiero una sola fuente de verdad: un contador global, del que cada región toma bloques de cuota para que la llamada entre regiones no esté en cada request. Exacto, rápido y multirregión: elige dos."
+      }
+    },
+    {
+      "q": {
+        "en": "How do you keep the limiter from slowing every request?",
+        "es": "¿Cómo evitas que el limiter haga más lento cada request?"
+      },
+      "a": {
+        "en": "Three things. Rules are matched in memory, so the only I/O is one Redis script call on a pooled connection in the same region. Clients already over the limit are remembered locally until their window resets, so repeat offenders cost no Redis call at all; Cloudflare does this. And for very hot keys, each node leases a batch of tokens and spends them locally. I track the limiter's own p99 as an SLO.",
+        "es": "Tres cosas. Las reglas se evalúan en memoria, así que la única E/S es una llamada a un script de Redis, por una conexión del pool y en la misma región. A los clientes que ya superaron el límite los recuerdo en local hasta que se reinicia su ventana, así que los reincidentes no cuestan ninguna llamada a Redis; Cloudflare hace esto. Y para las keys muy calientes, cada nodo toma un lote de tokens y los gasta en local. Mido el p99 del propio limiter como un SLO."
+      }
+    }
+  ],
+  "related": [
+    "rate-limiting",
+    "backpressure-load-shedding",
+    "retries-backoff",
+    "api-design",
+    "multi-tenancy",
+    "case-distributed-cache"
+  ],
+  "sources": [
+    {
+      "title": "Redis — INCR (Pattern: rate limiter)",
+      "url": "https://redis.io/docs/latest/commands/incr/"
+    },
+    {
+      "title": "Cloudflare — How we built rate limiting capable of scaling to millions of domains (2017)",
+      "url": "https://blog.cloudflare.com/counting-things-a-lot-of-different-things/"
+    },
+    {
+      "title": "Envoy — Global rate limiting",
+      "url": "https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/other_features/global_rate_limiting"
+    },
+    {
+      "title": "Stripe — Scaling your API with rate limiters (2017)",
+      "url": "https://stripe.com/blog/rate-limiters"
+    }
+  ]
+}

@@ -14,7 +14,8 @@ detail one tap away. The study path answers one question first: "what do I do ne
 ## Run & verify
 - `npm run dev` — local dev (tolerates concepts that are not written yet).
 - `npm run verify` — **the gate**: content validation + typecheck + lint + unit tests.
-- `npm run build` — strict content gate, then static export to `out/`.
+- `npm run build` — strict content gate, then static export to `out/`, then the offline file
+  lists (`tools/offline-list.mjs` → `out/offline-<locale>.json`).
 - `npm run diagrams` — re-render Mermaid → SVG (needs Chromium; outputs are committed).
 - `npm run links` — source-URL liveness (curl; 403s from bot-blocking sites are reported apart).
 - `npm run e2e` — Playwright smoke tests against `out/` (build first; always `--workers=1`).
@@ -39,8 +40,12 @@ detail one tap away. The study path answers one question first: "what do I do ne
   gitignored, regenerated on dev/build).
 - `src/lib/` — content loading (server-only), search, i18n, markdown, highlighting, progress.
 - `src/app/[locale]/` — routes: `/`, `/path`, `/map`, `/d/[domain]`, `/c/[id]`, `/cheatsheet`,
-  `/interview`, `/questions`, `/practice`, `/practice/play?mode=…`. `/auth` is the OAuth callback.
-  `src/app/sitemap.ts` + `robots.ts` are generated statically.
+  `/interview`, `/questions`, `/practice`, `/practice/play?mode=…`, `/plan`. `/auth` is the OAuth
+  callback. `src/app/sitemap.ts` + `robots.ts` are generated statically. Every page builds its
+  metadata with `pageMeta` (`src/lib/meta.ts`: canonical, language alternates, Open Graph, Twitter).
+  A page file may only export what Next expects: shared constants live in `src/lib/`.
+- `src/components/Nav.tsx` — one list of destinations, two shapes: header links (desktop) and a
+  bottom tab bar with a "More" sheet (≤ 900 px). Add a destination in `Header.tsx`.
 - `src/lib/practice/` — the practice engine, pure and unit-tested: graders, seeded shuffles, FSRS
   state (ts-fsrs), sessions, XP/levels/streak, union `merge` for sync.
 - `content/labs.json` + `src/components/labs/<id>.tsx` — interactive labs (`/labs`): controls left,
@@ -55,6 +60,14 @@ detail one tap away. The study path answers one question first: "what do I do ne
   `public/pyodide/` by the build) runs in a module Web Worker (`public/py/worker.mjs`) with a 5 s
   limit; `public/py/runner.mjs` is the harness, shared with `tools/check-problems.mjs` (part of
   `npm run verify`): every reference solution must pass and every starter must fail.
+- `/practice/code/mock` — mock coding interview (two problems, 45 minutes, no hints) from the lazy
+  `src/generated/problems-<locale>.json`; every `CodeRunner` on a page shares one Python worker.
+- `/plan` — interview plan (`src/lib/plan.ts`, pure and unit-tested): date + role + minutes per
+  day → today's work and the weeks ahead. Its time model is a labelled assumption.
+- `public/sw.js` + `src/lib/offline.ts` + `src/components/Offline.tsx` — offline mode: visited
+  pages work offline (network-first, cached copies gzipped), "Save for offline" stores a whole
+  language. The cache names are shared between the worker and `offline.ts`. Kill switch:
+  `deploy/sw-kill.js` (see `deploy/README.md`).
 - `/practice/design/<case>` — 45-minute system design round (`src/lib/design-round.ts` phases +
   rubric; references come from the case's own file). `/interview/stories` — STAR story bank
   (`src/lib/stories.ts`: Amazon's 16 LPs, checked 2026-11-22, + Staff themes). Both local-only.
@@ -71,11 +84,13 @@ detail one tap away. The study path answers one question first: "what do I do ne
   approximations; prices carry a date or are labelled as assumptions.
 - **Zero JS for content.** Diagrams, illustrations and logos are static SVG, code is highlighted at
   build time (shiki). Client JS only for search, theme, progress, filters, practice and labs (each
-  lab is its own chunk, loaded only on its page).
+  lab is its own chunk, loaded only on its page), plus the service worker registration.
 - **Search and practice indexes load lazily** (`import()` of `src/generated/*.json`), never inlined
   into every page.
 - **localStorage only for per-reader convenience** (theme, mastered, practice boxes), every access in
   try/catch.
+- **Phones first.** Most studying happens on a phone: check every screen at 390 px, keep touch
+  targets ≥ 44 px, and never ship an icon without a name.
 - **Two themes** via `[data-theme]` on `<html>`; every color is a token in `globals.css`. Per-domain
   color is `--h` (oklch hue) from `src/lib/hue.ts`; `--dc*` are recomputed on every element that sets
   `--h` (a var(--h) inside a token declared on `<html>` would freeze at the default hue).

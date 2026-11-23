@@ -4,6 +4,9 @@
 // answer covers" comes from the case's own concept file.
 import type { I18n } from "./types";
 
+/** Topics whose `case-*` concepts can be played as a design round. */
+export const DESIGN_DOMAINS = ["sysdesign", "design"];
+
 export interface Phase { id: string; minutes: number; title: I18n; prompts: I18n[] }
 
 export const PHASES: Phase[] = [

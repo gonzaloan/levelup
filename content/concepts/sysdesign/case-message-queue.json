@@ -1,0 +1,234 @@
+{
+  "id": "case-message-queue",
+  "domain": "sysdesign",
+  "level": "staff",
+  "title": {
+    "en": "Design: distributed message queue",
+    "es": "Diseño: cola de mensajes distribuida"
+  },
+  "aliases": [
+    "Kafka design",
+    "distributed log",
+    "commit log",
+    "message broker",
+    "in-sync replicas",
+    "ISR",
+    "consumer offsets",
+    "pub/sub"
+  ],
+  "tldr": {
+    "en": "Store each topic as partitioned append-only logs, replicate every partition from a leader to in-sync followers, acknowledge once they have the write, and let consumer groups pull by offset and commit their own position.",
+    "es": "Guarda cada topic como logs append-only particionados, replica cada partición desde un líder hacia seguidores in-sync, confirma cuando ellos tienen la escritura y deja que los consumer groups lean por offset y guarden su propia posición."
+  },
+  "explain": {
+    "en": "### Requirements\n\n**Functional**: producers publish to a topic; every consumer group reads every message, in order per key; messages are retained for days and can be replayed. **Non-functional**: no acknowledged message is lost when a broker dies; throughput near disk and network limits; publish latency of a few ms.\n\nScale (assumed): 1M messages/s × 1 KB ≈ 1 GB/s ≈ 86 TB/day; 7 days × 3 replicas ≈ 1.8 PB.\n\nQuestions I'd ask:\n\n1. Task queue (one worker per message, deleted on ack) or log (retained, replayable)? [[queues-streams]] covers the difference; here I design the log.\n2. Ordering: global, or per key?\n3. May a producer trade durability for latency?\n\n### API and data model\n\n`produce(topic, key, value) → (partition, offset)`, `fetch(topic, partition, offset, max_bytes)`, `commit(group, partition, offset)`. A **topic** is split into **partitions**; `hash(key) % partitions` picks one, so order holds per key. A partition is an append-only log and a message's id is its **offset**.\n\n### Architecture\n\n1. **Storage**: a partition is a directory of **segment files** (1 GiB by default in Kafka) with a sparse offset index. Writes append to the last segment; retention deletes whole old segments.\n2. **Replication**: each partition has a **leader** and followers that fetch from it. The **in-sync replicas (ISR)** are the ones keeping up. A write is *committed* once every ISR member has it, and consumers only see committed messages ([[replication]]).\n3. **Consumers** pull. A group coordinator gives each partition to one member of the group, and members commit their offsets to an internal topic.\n4. **Metadata** (brokers, partition leaders, ISR) lives in a small Raft quorum, KRaft in Kafka ([[consensus]]).\n\n### The hard parts\n\n1. **Throughput from disks**: sequential I/O, the OS page cache, batching and zero-copy.\n2. **Durability vs availability** when replicas fall behind: `acks`, `min.insync.replicas` and who may become leader.\n3. **Duplicates**: retries and rebalances redeliver, so exactly-once needs idempotent producers and transactions.",
+    "es": "### Requisitos\n\n**Funcionales**: los productores publican en un topic; cada consumer group lee todos los mensajes, en orden por key; los mensajes se retienen por días y se pueden reprocesar. **No funcionales**: no se pierde ningún mensaje confirmado cuando muere un broker; throughput cercano al límite del disco y de la red; latencia de publicación de pocos ms.\n\nEscala (supuesta): 1M de mensajes/s × 1 KB ≈ 1 GB/s ≈ 86 TB/día; 7 días × 3 réplicas ≈ 1.8 PB.\n\nPreguntas que haría:\n\n1. ¿Cola de tareas (un worker por mensaje, que se borra con el ack) o log (retenido y reproducible)? [[queues-streams]] explica la diferencia; aquí diseño el log.\n2. Orden: ¿global o por key?\n3. ¿Puede un productor ceder durabilidad a cambio de latencia?\n\n### API y modelo de datos\n\n`produce(topic, key, value) → (partition, offset)`, `fetch(topic, partition, offset, max_bytes)`, `commit(group, partition, offset)`. Un **topic** se divide en **particiones**; `hash(key) % partitions` elige una, así que el orden se mantiene por key. Una partición es un log append-only y el id de un mensaje es su **offset**.\n\n### Arquitectura\n\n1. **Almacenamiento**: una partición es un directorio de **archivos de segmento** (1 GiB por defecto en Kafka) con un índice disperso de offsets. Las escrituras se agregan al último segmento; la retención borra segmentos viejos completos.\n2. **Replicación**: cada partición tiene un **líder** y seguidores que le piden los datos (fetch). Las **réplicas in-sync (ISR)** son las que van al día. Una escritura queda *committed* cuando la tienen todas las réplicas del ISR, y los consumidores solo ven mensajes committed ([[replication]]).\n3. Los **consumidores** hacen pull. Un coordinador de grupo asigna cada partición a un miembro del grupo, y los miembros guardan sus offsets en un topic interno.\n4. La **metadata** (brokers, líderes de partición, ISR) vive en un quorum Raft pequeño, KRaft en Kafka ([[consensus]]).\n\n### Las partes difíciles\n\n1. **Throughput con discos**: I/O secuencial, el page cache del sistema operativo, batching y zero-copy.\n2. **Durabilidad vs disponibilidad** cuando las réplicas se atrasan: `acks`, `min.insync.replicas` y quién puede ser líder.\n3. **Duplicados**: los reintentos y los rebalanceos reentregan, así que el exactly-once necesita productores idempotentes y transacciones."
+  },
+  "keyPoints": [
+    {
+      "en": "A partition is an **append-only log** of segment files; a message's id is its offset.",
+      "es": "Una partición es un **log append-only** de archivos de segmento; el id de un mensaje es su offset."
+    },
+    {
+      "en": "Sequential writes, the OS page cache, batching and zero-copy `sendfile` make plain disks fast.",
+      "es": "Escrituras secuenciales, el page cache del sistema operativo, batching y `sendfile` zero-copy hacen rápidos los discos comunes."
+    },
+    {
+      "en": "A write is **committed** once every in-sync replica has it; consumers only see committed messages.",
+      "es": "Una escritura queda **committed** cuando la tienen todas las réplicas in-sync; los consumidores solo ven mensajes committed."
+    },
+    {
+      "en": "Replication factor 3, `min.insync.replicas=2` and `acks=all` survive a broker loss without losing acknowledged data.",
+      "es": "Con factor de replicación 3, `min.insync.replicas=2` y `acks=all` sobrevives a la caída de un broker sin perder datos confirmados."
+    },
+    {
+      "en": "Consumer groups pull and commit their own offsets, so replay is just rewinding an offset.",
+      "es": "Los consumer groups hacen pull y guardan sus propios offsets, así que reprocesar es solo rebobinar un offset."
+    }
+  ],
+  "diagram": {
+    "code": "flowchart TD\n  P[Producer] -->|\"batch, acks=all\"| L[\"Leader broker<br/>partition 0\"]\n  L -->|append| S[(\"Segment files<br/>+ offset index\")]\n  F1[Follower 1] -->|fetch| L\n  F2[Follower 2] -->|fetch| L\n  L -->|\"ack once ISR has it\"| P\n  C[\"Controller quorum<br/>(Raft)\"] -.->|\"leader and ISR\"| L\n  G[\"Consumer group<br/>member\"] -->|\"fetch from offset\"| L\n  G -->|commit offset| O[(Offsets topic)]\n  CO[Group coordinator] -.->|assign partitions| G",
+    "caption": {
+      "en": "Producers append to the partition leader; followers fetch from it, and the ack returns once the in-sync replicas have the batch. Consumers pull by offset and commit their position.",
+      "es": "Los productores escriben en el líder de la partición; los seguidores le piden los datos y el ack vuelve cuando las réplicas in-sync tienen el batch. Los consumidores leen por offset y guardan su posición."
+    }
+  },
+  "code": {
+    "lang": "python",
+    "title": {
+      "en": "A partition log: append, sparse index, high watermark",
+      "es": "El log de una partición: append, índice disperso, high watermark"
+    },
+    "source": "import bisect, os, struct\n\nclass PartitionLog:\n    \"\"\"One replica of a partition: an append-only file plus a sparse offset index.\"\"\"\n    def __init__(self, path: str):\n        self.f = open(path, \"ab+\")          # append-only: every write goes to the tail\n        self.index = [(0, 0)]               # sparse (offset, byte position), sorted\n        self.next_offset = self.unindexed = 0\n        self.high_watermark = 0             # first offset NOT yet committed\n\n    def append(self, value: bytes) -> int:\n        pos = self.f.seek(0, os.SEEK_END)\n        self.f.write(struct.pack(\">QI\", self.next_offset, len(value)) + value)\n        self.unindexed += 12 + len(value)\n        if self.unindexed >= 4096:          # one index entry per ~4 KB of log\n            self.index.append((self.next_offset, pos))\n            self.unindexed = 0\n        self.next_offset += 1\n        return self.next_offset - 1         # the message's id is its offset\n\n    def on_replica_progress(self, isr_log_ends: list[int]) -> None:\n        self.high_watermark = min(isr_log_ends)   # committed = on every in-sync replica\n\n    def read(self, offset: int, max_msgs: int = 100) -> list[tuple[int, bytes]]:\n        i = bisect.bisect_right(self.index, (offset, float(\"inf\"))) - 1\n        self.f.seek(self.index[i][1])       # jump near the offset, then scan forward\n        out = []\n        while len(out) < max_msgs and len(head := self.f.read(12)) == 12:\n            off, size = struct.unpack(\">QI\", head)\n            value = self.f.read(size)\n            if off >= self.high_watermark:  # never serve uncommitted messages\n                break\n            if off >= offset:\n                out.append((off, value))\n        return out"
+  },
+  "example": {
+    "en": "Topic `orders`: 12 partitions, replication factor 3, `min.insync.replicas=2`, producers with `acks=all`. Broker B2, leader of partition 7, dies. B1 and B3 are in the ISR, so both hold every committed message; the controller makes B1 leader and producers retry against it. Sequence numbers let B1 drop a batch it already stored. Consumers continue from their committed offsets. If B3 then falls behind, the ISR shrinks to one and `acks=all` writes fail with `NotEnoughReplicas`: the partition stays readable but refuses writes rather than risk losing them.",
+    "es": "Topic `orders`: 12 particiones, factor de replicación 3, `min.insync.replicas=2` y productores con `acks=all`. El broker B2, líder de la partición 7, muere. B1 y B3 están en el ISR, así que ambos tienen todos los mensajes committed; el controller nombra líder a B1 y los productores reintentan contra él. Los números de secuencia le permiten a B1 descartar un batch que ya guardó. Los consumidores siguen desde sus offsets guardados. Si después B3 se atrasa, el ISR se reduce a uno y las escrituras con `acks=all` fallan con `NotEnoughReplicas`: la partición se puede leer, pero rechaza escrituras antes que arriesgarse a perderlas."
+  },
+  "deepDive": [
+    {
+      "title": {
+        "en": "Storage: segments, sequential I/O, retention",
+        "es": "Almacenamiento: segmentos, I/O secuencial, retención"
+      },
+      "body": {
+        "en": "Appending to the end of a file is sequential I/O. Kafka's design doc measures linear writes at ~600 MB/s against ~100 kB/s for random writes on the same six-disk array. The broker keeps no cache of its own: it writes to the OS **page cache** and lets the kernel flush. Producers send **batches**, which stay compressed on disk and on the way to consumers. Reads go from page cache to socket with `sendfile`, without copying through user space, so consumers that keep up never touch the disk. A sparse index maps an offset to a file position: binary-search it, then scan a few KB. **Retention** drops whole segments by age (7 days by default) or size; **compaction** keeps only the latest value per key.",
+        "es": "Agregar al final de un archivo es I/O secuencial. El documento de diseño de Kafka mide escrituras lineales de ~600 MB/s contra ~100 kB/s de escrituras aleatorias en el mismo arreglo de seis discos. El broker no mantiene una cache propia: escribe en el **page cache** del sistema operativo y deja que el kernel haga el flush. Los productores envían **batches**, que siguen comprimidos en disco y en el camino hacia los consumidores. Las lecturas van del page cache al socket con `sendfile`, sin copiar por el espacio de usuario, así que los consumidores que van al día nunca tocan el disco. Un índice disperso lleva de un offset a una posición del archivo: búsqueda binaria y luego un recorrido de pocos KB. La **retención** borra segmentos completos por antigüedad (7 días por defecto) o por tamaño; la **compactación** conserva solo el último valor por key."
+      }
+    },
+    {
+      "title": {
+        "en": "Replication: ISR, acks and leader election",
+        "es": "Replicación: ISR, acks y elección de líder"
+      },
+      "body": {
+        "en": "Followers fetch from the leader like consumers. One that stops fetching or stays behind for `replica.lag.time.max.ms` (30 s by default) is removed from the **ISR**. The **high watermark** is the offset every ISR member has reached; only messages below it are committed and visible. Producers choose: `acks=0` (no wait), `acks=1` (leader only: lost if it dies before followers copy) or `acks=all` (every in-sync replica). `acks=all` only means something with `min.insync.replicas` ≥ 2: writes then fail when the ISR is too small, instead of being accepted on one copy. On leader failure the controller picks a new leader from the ISR. If none is left, **unclean election** (off by default) trades committed data for availability. ISR survives f failures with f+1 replicas; a majority quorum needs 2f+1 but never waits for its slowest member.",
+        "es": "Los seguidores le piden datos al líder igual que un consumidor. El que deja de pedir o se queda atrás durante `replica.lag.time.max.ms` (30 s por defecto) sale del **ISR**. El **high watermark** es el offset que alcanzaron todas las réplicas del ISR; solo los mensajes por debajo están committed y son visibles. El productor elige: `acks=0` (no espera), `acks=1` (solo el líder: se pierde si muere antes de que los seguidores copien) o `acks=all` (todas las réplicas in-sync). `acks=all` solo vale con `min.insync.replicas` ≥ 2: así las escrituras fallan cuando el ISR es demasiado chico, en vez de aceptarse en una sola copia. Si el líder falla, el controller elige uno nuevo dentro del ISR. Si no queda ninguno, la **elección unclean** (apagada por defecto) cambia datos committed por disponibilidad. El ISR tolera f fallas con f+1 réplicas; un quorum por mayoría necesita 2f+1, pero nunca espera a su miembro más lento."
+      }
+    },
+    {
+      "title": {
+        "en": "Consumers, offsets and exactly-once",
+        "es": "Consumidores, offsets y exactly-once"
+      },
+      "body": {
+        "en": "**Pull** lets each consumer set its pace, batch, and rewind. A slow consumer builds **lag** (log end offset − committed offset), the metric to alert and autoscale on, without hurting anyone else. The broker tracks one number per group and partition, not per-message acks. A member that stops heartbeating triggers a **rebalance**, and work it had not committed is redelivered: at-least-once ([[idempotency]]). **Exactly-once** inside the log takes two mechanisms. The **idempotent producer** (on by default in current Kafka) gets a producer id and numbers its batches, so the broker drops a retried batch it already has. A **transaction** writes output messages and the consumed offsets atomically; consumers set `isolation.level=read_committed` to skip aborted data. Outside the log (a database, an email) you still need an idempotency key.",
+        "es": "El **pull** deja que cada consumidor marque su ritmo, lea en batches y rebobine. Un consumidor lento acumula **lag** (offset final del log − offset guardado), la métrica para alertar y autoescalar, sin afectar a nadie más. El broker guarda un número por grupo y partición, no un ack por mensaje. Un miembro que deja de enviar heartbeats dispara un **rebalanceo**, y el trabajo que no había confirmado se reentrega: at-least-once ([[idempotency]]). El **exactly-once** dentro del log usa dos mecanismos. El **productor idempotente** (activo por defecto en el Kafka actual) recibe un id de productor y numera sus batches, así el broker descarta un batch reintentado que ya tiene. Una **transacción** escribe los mensajes de salida y los offsets consumidos de forma atómica; los consumidores usan `isolation.level=read_committed` para saltar los datos abortados. Fuera del log (una base de datos, un email) sigues necesitando una idempotency key."
+      }
+    }
+  ],
+  "pros": [
+    {
+      "en": "Sequential appends and zero-copy reads: throughput is bounded by disk and network bandwidth, not by seeks.",
+      "es": "Appends secuenciales y lecturas zero-copy: el throughput lo limita el ancho de banda del disco y de la red, no los seeks."
+    },
+    {
+      "en": "Retention decouples consumers: a slow or new consumer replays from disk without affecting the others.",
+      "es": "La retención desacopla a los consumidores: uno lento o nuevo reprocesa desde disco sin afectar a los demás."
+    },
+    {
+      "en": "ISR replication survives f failures with f+1 replicas, fewer than a majority quorum needs.",
+      "es": "La replicación con ISR tolera f fallas con f+1 réplicas, menos de las que necesita un quorum por mayoría."
+    }
+  ],
+  "cons": [
+    {
+      "en": "Ordering and parallelism are tied to partitions, and changing the partition count remaps keys.",
+      "es": "El orden y el paralelismo dependen de las particiones, y cambiar su número reasigna las keys."
+    },
+    {
+      "en": "No per-message ack, delay or priority: one poison message blocks its partition.",
+      "es": "No hay ack, demora ni prioridad por mensaje: un mensaje venenoso bloquea su partición."
+    },
+    {
+      "en": "A commit waits for the slowest in-sync replica until it is dropped from the ISR.",
+      "es": "Un commit espera a la réplica in-sync más lenta hasta que sale del ISR."
+    }
+  ],
+  "whenToUse": {
+    "en": "High-volume event streams that several teams consume independently and replay: activity tracking, CDC, log and metrics pipelines, the input of stream processors.",
+    "es": "Streams de eventos de alto volumen que varios equipos consumen por separado y reprocesan: tracking de actividad, CDC, pipelines de logs y métricas, la entrada de los stream processors."
+  },
+  "whenNotToUse": {
+    "en": "Task queues that need per-message acks, delays, priorities or a dead-letter queue: use SQS or RabbitMQ. For a few events a day, a database table is enough.",
+    "es": "Colas de tareas que necesitan ack por mensaje, demoras, prioridades o una dead-letter queue: usa SQS o RabbitMQ. Para pocos eventos al día, basta una tabla en la base de datos."
+  },
+  "numbers": [
+    {
+      "en": "Assumed load: 1M messages/s × 1 KB ≈ 1 GB/s ≈ 86 TB/day; 7 days × 3 replicas ≈ 1.8 PB.",
+      "es": "Carga supuesta: 1M de mensajes/s × 1 KB ≈ 1 GB/s ≈ 86 TB/día; 7 días × 3 réplicas ≈ 1.8 PB."
+    },
+    {
+      "en": "Kafka defaults (4.4 docs, checked Nov 2026): 1 GiB segments, 7-day retention, `acks=all`, idempotent producer on.",
+      "es": "Defaults de Kafka (docs 4.4, revisados en nov. 2026): segmentos de 1 GiB, retención de 7 días, `acks=all`, productor idempotente activo."
+    },
+    {
+      "en": "A follower leaves the ISR after 30 s behind the leader (`replica.lag.time.max.ms`).",
+      "es": "Un seguidor sale del ISR tras 30 s de atraso respecto al líder (`replica.lag.time.max.ms`)."
+    },
+    {
+      "en": "Kafka design doc: linear writes ~600 MB/s vs ~100 kB/s random on a six-disk SATA array.",
+      "es": "Documento de diseño de Kafka: escrituras lineales de ~600 MB/s vs ~100 kB/s aleatorias en un arreglo SATA de seis discos."
+    },
+    {
+      "en": "ISR survives f failures with f+1 replicas; a majority quorum needs 2f+1.",
+      "es": "El ISR tolera f fallas con f+1 réplicas; un quorum por mayoría necesita 2f+1."
+    }
+  ],
+  "pitfalls": [
+    {
+      "en": "`acks=all` with `min.insync.replicas=1`: when the ISR shrinks to the leader, \"all\" is one copy and a crash loses acknowledged data.",
+      "es": "`acks=all` con `min.insync.replicas=1`: cuando el ISR se reduce al líder, \"all\" es una sola copia y una caída pierde datos confirmados."
+    },
+    {
+      "en": "Too few partitions: a group can't run more active consumers than partitions, and adding partitions later breaks per-key order.",
+      "es": "Muy pocas particiones: un grupo no puede tener más consumidores activos que particiones, y agregar particiones después rompe el orden por key."
+    },
+    {
+      "en": "Turning on unclean leader election to restore availability: an out-of-sync replica becomes leader and committed messages disappear.",
+      "es": "Activar la elección unclean para recuperar disponibilidad: una réplica atrasada pasa a ser líder y desaparecen mensajes committed."
+    },
+    {
+      "en": "Sizing disks from the average rate: plan for peak × retention × replication factor, plus room to rebuild a replica.",
+      "es": "Dimensionar los discos con la tasa promedio: calcula pico × retención × factor de replicación, más espacio para reconstruir una réplica."
+    }
+  ],
+  "interview": [
+    {
+      "q": {
+        "en": "A broker dies. What happens to its partitions, and can you lose data?",
+        "es": "Muere un broker. ¿Qué pasa con sus particiones y puedes perder datos?"
+      },
+      "a": {
+        "en": "For each partition it led, the controller picks a new leader from the ISR. Every ISR member has all committed messages, so nothing acknowledged with `acks=all` is lost; producers retry, and sequence numbers drop duplicates. Data is at risk only if I allowed `acks=1`, or if `min.insync.replicas=1` let the ISR shrink to the leader alone. I'd run replication factor 3, min ISR 2 and no unclean election.",
+        "es": "Para cada partición que lideraba, el controller elige un líder nuevo dentro del ISR. Todas las réplicas del ISR tienen los mensajes committed, así que no se pierde nada confirmado con `acks=all`; los productores reintentan y los números de secuencia descartan duplicados. Solo hay riesgo si permití `acks=1`, o si `min.insync.replicas=1` dejó que el ISR se redujera al líder. Usaría factor de replicación 3, ISR mínimo de 2 y sin elección unclean."
+      }
+    },
+    {
+      "q": {
+        "en": "Why does Kafka replicate with an ISR instead of a majority quorum like Raft?",
+        "es": "¿Por qué Kafka replica con un ISR y no con un quorum por mayoría como Raft?"
+      },
+      "a": {
+        "en": "Cost per partition. To survive f failures a majority quorum needs 2f+1 replicas; an ISR needs f+1, because a write commits only when every in-sync replica has it, so any of them can lead. For large data that is two copies instead of three to survive one failure. The price: a commit waits for the slowest in-sync replica until it is evicted. Metadata is small, so there Kafka does use a Raft quorum.",
+        "es": "Por el costo por partición. Para tolerar f fallas, un quorum por mayoría necesita 2f+1 réplicas; un ISR necesita f+1, porque una escritura solo queda committed cuando la tienen todas las réplicas in-sync, así que cualquiera puede ser líder. Con muchos datos, eso son dos copias en vez de tres para tolerar una falla. El precio: el commit espera a la réplica in-sync más lenta hasta que la expulsan. La metadata es pequeña, y ahí Kafka sí usa un quorum Raft."
+      }
+    },
+    {
+      "q": {
+        "en": "How would you offer exactly-once delivery on this log?",
+        "es": "¿Cómo ofrecerías entrega exactly-once sobre este log?"
+      },
+      "a": {
+        "en": "Two mechanisms. On the produce side, an idempotent producer: the broker gives each producer an id and drops batches whose sequence number it has already stored, so retries don't duplicate. For consume-process-produce, a transaction writes the output and the consumed offsets atomically, and readers use `read_committed`. That holds inside the log. Once I call an external system, I'm back to at-least-once plus an idempotency key.",
+        "es": "Con dos mecanismos. Al producir, un productor idempotente: el broker le da un id a cada productor y descarta los batches cuyo número de secuencia ya guardó, así los reintentos no duplican. Para consumir-procesar-producir, una transacción escribe la salida y los offsets consumidos de forma atómica, y los lectores usan `read_committed`. Eso vale dentro del log. En cuanto llamo a un sistema externo, vuelvo a at-least-once más una idempotency key."
+      }
+    }
+  ],
+  "related": [
+    "queues-streams",
+    "replication",
+    "consensus",
+    "storage-engines",
+    "idempotency",
+    "stream-processing"
+  ],
+  "sources": [
+    {
+      "title": "Apache Kafka documentation — Design (persistence, efficiency, replication, delivery semantics)",
+      "url": "https://kafka.apache.org/documentation/#design"
+    },
+    {
+      "title": "Kreps, Narkhede, Rao — Kafka: a Distributed Messaging System for Log Processing (NetDB 2011)",
+      "url": "https://www.microsoft.com/en-us/research/wp-content/uploads/2017/09/Kafka.pdf"
+    },
+    {
+      "title": "Jay Kreps — The Log: What every software engineer should know about real-time data's unifying abstraction (LinkedIn, 2013)",
+      "url": "https://www.linkedin.com/blog/engineering/distributed-systems/log-what-every-software-engineer-should-know-about-real-time-datas-unifying"
+    },
+    {
+      "title": "Confluent — Exactly-once Semantics is Possible: Here's How Apache Kafka Does it (2017)",
+      "url": "https://www.confluent.io/blog/exactly-once-semantics-are-possible-heres-how-apache-kafka-does-it/"
+    }
+  ]
+}

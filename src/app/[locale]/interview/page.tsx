@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
+import { pageMeta } from "@/lib/meta";
 import { m, t } from "@/lib/i18n";
 import { conceptsOf, getConcept, getDomains } from "@/lib/content";
 import { hueFor } from "@/lib/hue";
@@ -14,7 +15,7 @@ import { ConceptCard } from "@/components/Bits";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return { title: m("interviewTitle", locale), description: m("interviewSub", locale) };
+  return pageMeta(locale, "/interview/", m("interviewTitle", locale), m("interviewSub", locale));
 }
 
 export default async function Interview({ params }: P) {
@@ -34,6 +35,7 @@ export default async function Interview({ params }: P) {
           <p className="page-sub">{L("interviewSub")}</p>
           <div className="hero-ctas">
             <a className="btn btn-primary" href={`/${locale}/practice/play/?mode=mock`}><Icon name="mic" size={16} /> {L("pMock")}</a>
+            <Link className="btn" href={`/${locale}/plan/`}><Icon name="chart" size={16} /> {L("navPlan")}</Link>
             <a className="btn" href={`/${locale}/practice/design/`}><Icon name="server" size={16} /> {L("pDesign")}</a>
             <a className="btn" href={`/${locale}/practice/code/`}><Icon name="code" size={16} /> {L("pCode")}</a>
             <a className="btn" href={`/${locale}/interview/stories/`}><Icon name="book" size={16} /> {L("pStories")}</a>
