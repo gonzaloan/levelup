@@ -58,11 +58,11 @@
       "en": "What the stream job does: dedupe, window, idempotent upsert",
       "es": "Lo que hace el job de streaming: deduplicar, ventana, upsert idempotente"
     },
-    "source": "from collections import defaultdict\n\nWINDOW, ALLOWED_DELAY, DEDUPE_TTL = 60, 30, 3600   # seconds, by event time\n\n# In Flink these three are keyed state, checkpointed together with the Kafka offsets\nseen: dict[str, float] = {}          # click_id -> event time\ncounts = defaultdict(int)            # (ad_id, minute) -> clicks in open windows\nmax_ts = 0.0\n\ndef on_click(e: dict) -> None:       # e = {click_id, ad_id, ts}\n    global max_ts\n    if e[\"click_id\"] in seen:        # client retry or redelivery: count it once\n        return\n    seen[e[\"click_id\"]] = e[\"ts\"]\n    minute = int(e[\"ts\"] // WINDOW) * WINDOW\n    if minute + WINDOW <= max_ts - ALLOWED_DELAY:   # its window was already emitted\n        late_clicks.send(e)          # not lost: the batch recount reads the raw log\n        return\n    counts[(e[\"ad_id\"], minute)] += 1\n    max_ts = max(max_ts, e[\"ts\"])\n    advance(watermark=max_ts - ALLOWED_DELAY)\n\ndef advance(watermark: float) -> None:\n    for ad_id, minute in [k for k in counts if k[1] + WINDOW <= watermark]:\n        # Deterministic key + absolute value: a replay overwrites, it never adds\n        olap.upsert(key=(ad_id, minute), clicks=counts.pop((ad_id, minute)))\n    for click_id in [c for c, ts in seen.items() if ts < watermark - DEDUPE_TTL]:\n        del seen[click_id]           # bounded dedupe state"
+    "source": "from collections import defaultdict\n\nWINDOW, ALLOWED_DELAY, DEDUPE_TTL = 60, 30, 3600   # seconds, by event time\n\n# In Flink, seen and counts are keyed state, checkpointed together with the Kafka offsets\nseen: dict[str, float] = {}          # click_id -> event time\ncounts = defaultdict(int)            # (ad_id, minute) -> clicks in open windows\nmax_ts = 0.0\n\ndef on_click(e: dict) -> None:       # e = {click_id, ad_id, ts}\n    global max_ts\n    if e[\"click_id\"] in seen:        # client retry or redelivery: count it once\n        return\n    seen[e[\"click_id\"]] = e[\"ts\"]\n    minute = int(e[\"ts\"] // WINDOW) * WINDOW\n    if minute + WINDOW <= max_ts - ALLOWED_DELAY:   # its window was already emitted\n        late_clicks.send(e)          # not lost: the batch recount reads the raw log\n        return\n    counts[(e[\"ad_id\"], minute)] += 1\n    max_ts = max(max_ts, e[\"ts\"])\n    advance(watermark=max_ts - ALLOWED_DELAY)\n\ndef advance(watermark: float) -> None:\n    for ad_id, minute in [k for k in counts if k[1] + WINDOW <= watermark]:\n        # Deterministic key + absolute value: a replay overwrites, it never adds\n        olap.upsert(key=(ad_id, minute), clicks=counts.pop((ad_id, minute)))\n    for click_id in [c for c, ts in seen.items() if ts < watermark - DEDUPE_TTL]:\n        del seen[click_id]           # bounded dedupe state"
   },
   "example": {
-    "en": "Uber's pipeline for ads on UberEats (2021): Flink reads ad clicks and impressions from Kafka, removes duplicates with keyed state, and counts them in one-minute tumbling windows. Each aggregated row gets a record UUID: Pinot upserts on it and the ad-budget service uses it as an idempotency key, so a replay never counts twice. Output goes to Kafka in transactions that commit on each Flink checkpoint, every 2 minutes, and readers use `read_committed`: exactly-once results, at the price of trailing by up to one checkpoint interval.",
-    "es": "El pipeline de Uber para anuncios en UberEats (2021): Flink lee clics e impresiones de anuncios desde Kafka, elimina duplicados con keyed state y los cuenta en ventanas tumbling de un minuto. Cada fila agregada recibe un UUID de registro: Pinot hace upsert sobre él y el servicio de presupuesto de anuncios lo usa como idempotency key, así que un replay nunca cuenta dos veces. La salida va a Kafka en transacciones que se confirman en cada checkpoint de Flink, cada 2 minutos, y los lectores usan `read_committed`: resultados exactly-once, a cambio de ir hasta un intervalo de checkpoint atrás."
+    "en": "Uber's pipeline for ads on UberEats (2021): Flink reads ad clicks and impressions from Kafka, removes duplicates with keyed state, and counts them in one-minute tumbling windows. Each aggregated row gets a record UUID: Pinot upserts on it and the ad-budget service uses it as an idempotency key, so a replay never counts twice. Output goes to Kafka in transactions that commit on each Flink checkpoint, every 2 minutes, and readers use `read_committed`. Uber calls the checkpoint interval its main latency bottleneck: exactly-once, but not quite real time.",
+    "es": "El pipeline de Uber para anuncios en UberEats (2021): Flink lee clics e impresiones de anuncios desde Kafka, elimina duplicados con keyed state y los cuenta en ventanas tumbling de un minuto. Cada fila agregada recibe un UUID de registro: Pinot hace upsert sobre él y el servicio de presupuesto de anuncios lo usa como idempotency key, así que un replay nunca cuenta dos veces. La salida va a Kafka en transacciones que se confirman en cada checkpoint de Flink, cada 2 minutos, y los lectores usan `read_committed`. Uber señala el intervalo de checkpoint como su principal cuello de botella de latencia: exactly-once, pero no del todo en tiempo real."
   },
   "deepDive": [
     {
@@ -116,8 +116,8 @@
       "es": "Dos caminos de código, stream y batch, tienen que aplicar las mismas reglas de deduplicación y filtrado."
     },
     {
-      "en": "Exactly-once output trails by a checkpoint interval; a tight watermark means more late clicks.",
-      "es": "La salida exactly-once va un intervalo de checkpoint atrás; un watermark ajustado implica más clics tardíos."
+      "en": "Transactional output waits for the next checkpoint, up to one interval; a tight watermark means more late clicks.",
+      "es": "La salida transaccional espera al siguiente checkpoint, hasta un intervalo; un watermark ajustado implica más clics tardíos."
     },
     {
       "en": "Dedupe state grows with click rate × TTL.",
@@ -146,8 +146,8 @@
       "es": "Estado de deduplicación: ~42M de click ids por hora de TTL (1,000M ÷ 24)."
     },
     {
-      "en": "Freshness ≈ 1-minute window + watermark delay (e.g. 30 s) + checkpoint interval when the sink is transactional.",
-      "es": "Frescura ≈ ventana de 1 minuto + demora del watermark (p. ej., 30 s) + intervalo de checkpoint cuando el sink es transaccional."
+      "en": "Freshness ≈ 1-minute window + watermark delay (e.g. 30 s) + up to one checkpoint interval when the sink is transactional.",
+      "es": "Frescura ≈ ventana de 1 minuto + demora del watermark (p. ej., 30 s) + hasta un intervalo de checkpoint cuando el sink es transaccional."
     },
     {
       "en": "Uber (2021): one-minute tumbling windows, Flink checkpoints every 2 minutes.",
