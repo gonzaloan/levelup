@@ -36,3 +36,22 @@ git commit -am "feat(infra): levelup sync on the shared login with a fixed cost 
 
 Then: PR → merge → Actions `deploy-infra` → `site` (apply off, read the change set: it only adds
 resources; then apply on).
+
+### Fix: the CloudFormation role could not create the identity pool (2026-11-24)
+
+The first apply failed and rolled back with `get-certified-cfn-exec is not authorized to perform:
+cognito-identity:CreateIdentityPool`. The service role CloudFormation acts as (in
+`github-oidc.yaml`, a separate stack) had no Cognito Identity rights. `cfn-exec-identity-pools.diff`
+grants `cognito-identity:*` on this account's identity pools only. It is applied with
+`setup-github-oidc.sh` (admin AWS CLI + GitHub CLI), not by `deploy-infra`:
+
+```bash
+cd get-certified && git checkout main && git pull
+git apply ../levelup/deploy/get-certified/cfn-exec-identity-pools.diff
+npm run gate
+git commit -am "fix(infra): let the CloudFormation role manage levelup's identity pool"
+git push
+cd deploy && DRYRUN=1 ./setup-github-oidc.sh && ./setup-github-oidc.sh
+```
+
+Then run `deploy-infra` → `site` with apply on again.
