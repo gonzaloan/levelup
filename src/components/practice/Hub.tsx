@@ -105,6 +105,7 @@ export function Hub({ locale }: { locale: Locale }) {
           <a className="mode-card" href={play("mode=mock")}><Icon name="mic" size={22} /><strong>{L("pMock")}</strong><span>{L("pMockSub")}</span></a>
           <a className="mode-card" href={play("mode=weak")}><Icon name="zap" size={22} /><strong>{L("pWeak")} {view.weak ? `(${view.weak})` : ""}</strong><span>{L("pWeakSub")}</span></a>
           <a className="mode-card" href={play("mode=cards")}><Icon name="cards" size={22} /><strong>{L("pCards")}</strong><span>{L("pCardsSub")}</span></a>
+          <a className="mode-card mode-gym" href={`/${locale}/gym/`}><Icon name="zap" size={22} /><strong>{L("pGym")}</strong><span>{L("pGymSub")}</span></a>
           <a className="mode-card" href={`/${locale}/practice/code/`}><Icon name="code" size={22} /><strong>{L("pCode")}</strong><span>{L("pCodeSub")}</span></a>
           <a className="mode-card" href={`/${locale}/practice/design/`}><Icon name="server" size={22} /><strong>{L("pDesign")}</strong><span>{L("pDesignSub")}</span></a>
           <a className="mode-card" href={`/${locale}/interview/stories/`}><Icon name="book" size={22} /><strong>{L("pStories")}</strong><span>{L("pStoriesSub")}</span></a>

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Concept, Domain, I18n, Locale } from "./types";
 import type { PItem } from "./practice/types";
+import { flowWalk, sequenceWalk, type WalkGraph, type WalkStep } from "./diagram-walk";
 
 const ROOT = process.cwd();
 const CONTENT = path.join(ROOT, "content");
@@ -40,6 +41,23 @@ export function getDiagram(id: string): { dark: string; light: string } | null {
   };
   const dark = read("dark"), light = read("light");
   return dark && light ? { dark, light } : null;
+}
+
+/** The walkthrough of a diagram (see src/lib/diagram-walk.ts): flowcharts from their graph.json,
+ *  sequence diagrams from their rendered messages. Null when there is nothing to step through. */
+export function getDiagramWalk(id: string): { kind: "flow" | "seq"; steps: WalkStep[] } | null {
+  const svg = getDiagram(id)?.dark;
+  if (!svg) return null;
+  const g = path.join(CONTENT, "diagrams", `${id}.graph.json`);
+  if (fs.existsSync(g)) {
+    const steps = flowWalk(JSON.parse(fs.readFileSync(g, "utf8")) as WalkGraph, svg);
+    return steps.length >= 2 ? { kind: "flow", steps } : null;
+  }
+  if (svg.includes('aria-roledescription="sequence"')) {
+    const steps = sequenceWalk(svg);
+    return steps.length >= 2 ? { kind: "seq", steps } : null;
+  }
+  return null;
 }
 
 /** Domain position in the syllabus (0-based); drives its hue. */

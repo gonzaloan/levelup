@@ -25,6 +25,11 @@ Live: https://levelup.skillrealm.dev
   browser (Pyodide, no server) with graded hints, a mock coding interview (two problems, 45
   minutes, no hints), a timed 45-minute system design round with a rubric, and a STAR story bank
   with coverage of Amazon's Leadership Principles and Staff themes.
+- **Gym (no AI allowed):** 15 minutes a day of what an assistant now does for you, done by hand:
+  back-of-the-envelope estimates without a calculator, predicting what code prints, spotting the
+  buggy line, Big-O at a glance, explaining a concept cold and re-solving a problem from a blank
+  page (paste is off). Fresh numbers every day, every answer checked against real Python, and a
+  fitness meter per skill so you see it sharpen or rust.
 - **Interview plan:** give it your interview date, your role (Staff SWE, AI Architect or both) and
   your minutes per day; it tells you what to study today, when to practice and what to leave out
   if time is short.

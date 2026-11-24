@@ -332,3 +332,53 @@ test("reduced motion: labs open on the finished picture and a race ends at once"
   await expect(page.locator(".race-clock strong")).toHaveText("30 years");
   await expect(page.locator(".race-lane.done")).not.toHaveCount(0);
 });
+
+test("gym: today's workout, by hand, end to end", async ({ page }) => {
+  await page.goto("/en/gym/");
+  await page.getByRole("button", { name: /^Start/ }).click();
+  for (let k = 0; k < 8; k++) {
+    const head = (await page.locator('[class*="repHead"]').textContent()) ?? "";
+    if (/Estimate|Trace/.test(head)) {
+      const input = page.locator("form input");
+      // Manual mode: pasting does nothing.
+      await input.focus();
+      await page.evaluate(() => {
+        const el = document.activeElement as HTMLInputElement;
+        const dt = new DataTransfer(); dt.setData("text/plain", "999");
+        el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      });
+      await expect(input).toHaveValue("");
+      await input.fill(/Estimate/.test(head) ? "5k" : "0");
+      await page.locator("form button[type=submit]").click();
+    } else if (/bug/.test(head)) {
+      await page.locator("pre button").first().click();
+      if (await page.locator("pre button").count()) await page.locator("pre button").nth(1).click();
+    } else if (/Big-O/.test(head)) {
+      await page.getByRole("group").locator("button").first().click();
+    } else {
+      await page.locator("textarea").fill("It measures how the work of an algorithm grows with the input size, dropping constants and lower terms.");
+      await page.getByRole("button", { name: /Compare/ }).click();
+      await page.locator("input[type=checkbox]").first().check();
+    }
+    await page.getByRole("button", { name: /Next|Done/ }).click();
+  }
+  await expect(page.getByText("Workout done")).toBeVisible();
+  await expect(page.locator('[class*="recap"] li')).toHaveCount(8);
+  await page.getByRole("button", { name: /Back to the gym/ }).click();
+  await expect(page.getByText(/Done today/)).toBeVisible();
+  const state = await page.evaluate(() => JSON.parse(localStorage.getItem("fg.gym.v1") ?? "{}"));
+  expect(Object.values(state.days as Record<string, { done: boolean; reps: number }>)[0]).toMatchObject({ done: true, reps: 8 });
+});
+
+test("gym: a reload mid-workout resumes at the same rep", async ({ page }) => {
+  await page.goto("/en/gym/");
+  await page.getByRole("button", { name: /^Start/ }).click();
+  const first = await page.locator('[class*="repHead"]').textContent();
+  expect(first).toMatch(/Estimate/);
+  await page.locator("form input").fill("1M");
+  await page.locator("form button[type=submit]").click();
+  await page.getByRole("button", { name: /Next/ }).click();
+  await page.reload();
+  await page.getByRole("button", { name: /Resume \(1\/8\)/ }).click();
+  await expect(page.locator('[class*="repHead"]')).toContainText("Trace code");
+});

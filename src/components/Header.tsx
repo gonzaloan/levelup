@@ -14,6 +14,7 @@ export function Header({ locale }: { locale: Locale }) {
   const items: NavItem[] = [
     { href: `/${locale}/path/`, icon: "compass", label: L("navPath"), primary: true },
     { href: `/${locale}/practice/`, icon: "cards", label: L("navPractice"), primary: true },
+    { href: `/${locale}/gym/`, icon: "zap", label: L("navGym"), primary: true },
     { href: `/${locale}/labs/`, icon: "sliders", label: L("navLabs"), primary: true },
     { href: home, icon: "book", label: L("navDomains") },
     { href: `/${locale}/map/`, icon: "map", label: L("navMap") },

@@ -277,6 +277,19 @@ for (const lang of ["en", "es"]) {
   }
 }
 
+// The Gym's "explain it cold" reps: each concept's title and key points, in study-path order, as
+// plain text (the reader ticks which points their own explanation covered). Lazy, gym page only.
+{
+  const order = studyPath.phases.flatMap((p) => p.modules.flatMap((m) => m.concepts)).filter((id) => concepts.has(id));
+  const md = (x) => plain(x).replace(/\*\*/g, "");
+  for (const lang of ["en", "es"]) {
+    fs.writeFileSync(path.join(outDir, `gym-${lang}.json`), JSON.stringify(order.map((id) => {
+      const c = concepts.get(id);
+      return { id, t: c.title[lang], kp: (c.keyPoints ?? []).map((k) => md(k[lang])) };
+    })));
+  }
+}
+
 warnings.forEach((w) => console.log("warn:", w));
 if (errors.length) { errors.forEach((e) => console.log("ERROR:", e)); console.log(`\ncontent: ${errors.length} error(s)`); process.exit(1); }
 const total = domains.reduce((n, d) => n + d.concepts.length, 0);

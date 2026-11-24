@@ -51,6 +51,7 @@ export default async function Home({ params }: { params: Promise<{ locale: Local
         <SearchButton big label={L("search")} placeholder={L("searchPlaceholder")} />
         <div className="hero-ctas">
           <Link className="btn btn-primary" href={`/${locale}/path/`}>{L("startHere")} <Icon name="right" size={16} /></Link>
+          <Link className="btn" href={`/${locale}/gym/`}><Icon name="zap" size={16} /> {L("pGym")}</Link>
           <Link className="btn" href={`/${locale}/practice/`}><Icon name="cards" size={16} /> {L("practiceQuestions")}</Link>
           <Link className="btn" href={`/${locale}/plan/`}><Icon name="chart" size={16} /> {L("navPlan")}</Link>
         </div>

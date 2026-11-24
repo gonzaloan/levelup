@@ -112,7 +112,7 @@ export default async function ConceptPage({ params }: P) {
 
         {c.diagram && (
           <section id="diagram" className="diagram-top">
-            <Diagram id={c.id} caption={t(c.diagram.caption, locale)} zoomLabel={locale === "es" ? "Ampliar" : "Expand"} closeLabel={locale === "es" ? "Cerrar" : "Close"} />
+            <Diagram id={c.id} caption={t(c.diagram.caption, locale)} zoomLabel={locale === "es" ? "Ampliar" : "Expand"} closeLabel={locale === "es" ? "Cerrar" : "Close"} walk={locale} />
           </section>
         )}
 

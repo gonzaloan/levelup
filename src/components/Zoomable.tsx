@@ -2,8 +2,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Icon } from "./Icon";
 
-/** Wraps a diagram; click (or the button) opens it full-screen — wide architectures need it on phones. */
-export function Zoomable({ children, label, closeLabel }: { children: ReactNode; label: string; closeLabel: string }) {
+/** Wraps a diagram; click (or the button) opens it full-screen — wide architectures need it on phones.
+ *  `footer` (the walkthrough bar) sits inside the frame but outside the click-to-zoom area, so it
+ *  stays usable in the full-screen view too. */
+export function Zoomable({ children, label, closeLabel, footer }: { children: ReactNode; label: string; closeLabel: string; footer?: ReactNode }) {
   const [zoom, setZoom] = useState(false);
   useEffect(() => {
     if (!zoom) return;
@@ -18,6 +20,7 @@ export function Zoomable({ children, label, closeLabel }: { children: ReactNode;
         <Icon name={zoom ? "close" : "expand"} size={16} />
       </button>
       <div className="zoom-body" onClick={() => !zoom && setZoom(true)}>{children}</div>
+      {footer}
     </div>
   );
 }

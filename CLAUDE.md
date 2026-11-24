@@ -66,6 +66,11 @@ detail one tap away. The study path answers one question first: "what do I do ne
   `npm run verify`): every reference solution must pass and every starter must fail.
 - `/practice/code/mock` — mock coding interview (two problems, 45 minutes, no hints) from the lazy
   `src/generated/problems-<locale>.json`; every `CodeRunner` on a page shares one Python worker.
+- `/gym` — the Gym (spec: `docs/specs/gym.md`): a daily workout of manual reps for the skills AI
+  does for you — estimate, trace code, spot the bug, Big-O, explain cold, code from a blank page.
+  Generators are pure and seeded in `src/lib/gym/` (same date → same workout); `tests/gym.test.ts`
+  runs every generated trace/debug snippet in Pyodide, so a shown answer can never be wrong. Paste is
+  blocked in answer fields by design. State: localStorage `fg.gym.v1` (`src/lib/gym/store.ts`).
 - `/plan` — interview plan (`src/lib/plan.ts`, pure and unit-tested): date + role + minutes per
   day → today's work and the weeks ahead. Its time model is a labelled assumption.
 - `public/sw.js` + `src/lib/offline.ts` + `src/components/Offline.tsx` — offline mode: visited

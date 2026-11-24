@@ -15,10 +15,10 @@ type Outcome = { results?: Result[]; error?: string; stdout?: string };
 const T = {
   en: { run: "Run tests", running: "Running…", loading: "Loading Python (~13 MB, first time only)…", reset: "Reset", passed: "All tests pass", partly: (n: number, t: number) => `${n}/${t} tests pass`,
     hidden: "Hidden test", input: "Input", expected: "Expected", got: "Got", timeout: "Time limit exceeded (5 s): an infinite loop, or a solution too slow for one of the tests.", stdout: "Printed output",
-    xp: "+20 XP · marked solved", next: "Next problem", tip: "Ctrl/⌘ + Enter runs · Tab indents", failed: "Python could not start in this browser.", solvedBefore: "Solved before" },
+    xp: "+20 XP · marked solved", next: "Next problem", tip: "Ctrl/⌘ + Enter runs · Tab indents", failed: "Python could not start in this browser.", solvedBefore: "Solved before", noPaste: "Manual mode: type it yourself, pasting is off here." },
   es: { run: "Ejecutar tests", running: "Ejecutando…", loading: "Cargando Python (~13 MB, solo la primera vez)…", reset: "Reiniciar", passed: "Pasan todos los tests", partly: (n: number, t: number) => `Pasan ${n}/${t} tests`,
     hidden: "Test oculto", input: "Entrada", expected: "Esperado", got: "Obtenido", timeout: "Límite de tiempo excedido (5 s): un loop infinito, o una solución demasiado lenta para alguno de los tests.", stdout: "Salida impresa",
-    xp: "+20 XP · marcado como resuelto", next: "Siguiente problema", tip: "Ctrl/⌘ + Enter ejecuta · Tab indenta", failed: "Python no pudo iniciar en este navegador.", solvedBefore: "Ya lo resolviste" },
+    xp: "+20 XP · marcado como resuelto", next: "Siguiente problema", tip: "Ctrl/⌘ + Enter ejecuta · Tab indenta", failed: "Python no pudo iniciar en este navegador.", solvedBefore: "Ya lo resolviste", noPaste: "Modo manual: escríbelo tú, pegar está desactivado aquí." },
 };
 
 const show = (v: unknown) => JSON.stringify(v);
@@ -51,11 +51,13 @@ function bootWorker() {
   return shared;
 }
 
-export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, locale, draftId = id, onResult }: {
+export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, locale, draftId = id, onResult, noPaste }: {
   id: string; fn: string; starter: string; tests: Test[]; compare: string; concept: string; nextId?: string; locale: Locale;
   /** Where the draft is kept: the mock uses its own key so an old solution is not pre-filled. */
   draftId?: string;
   onResult?: (passed: number, total: number) => void;
+  /** The Gym's manual mode: pasting does nothing (and says why). */
+  noPaste?: boolean;
 }) {
   const t = T[locale];
   const [code, setCode] = useState(starter);
@@ -137,6 +139,7 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
     <div className="code-runner">
       <div className="cr-editor">
         <textarea ref={area} value={code} onChange={(e) => edit(e.target.value)} onKeyDown={onKey} onFocus={() => void boot().catch(() => undefined)}
+          onPaste={noPaste ? (e) => { e.preventDefault(); setNotice(t.noPaste); } : undefined}
           spellCheck={false} autoCapitalize="off" autoComplete="off" autoCorrect="off" aria-label="Python" rows={Math.max(12, code.split("\n").length + 2)} />
       </div>
       <div className="cr-actions">

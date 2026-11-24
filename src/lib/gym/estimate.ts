@@ -1,0 +1,127 @@
+// Back-of-the-envelope reps with fresh numbers every time. The recipe is the back-of-envelope
+// concept's own: QPS = DAU × actions ÷ 86,400 s, peak = 2–5× average, storage = items × bytes ×
+// days × replication, bandwidth = QPS × payload. Graded by how many times off you are, because the
+// power of ten is what decides a design.
+import type { EstimateRep, Rand, Unit } from "./types";
+import { int, pick } from "./types";
+
+const DAY = 86_400;
+const DAU = [2e6, 5e6, 10e6, 20e6, 50e6, 100e6, 200e6, 500e6, 1e9];
+const ACTIONS = [2, 3, 5, 10, 20, 50];
+const PAYLOAD = [200, 500, 1_000, 2_000, 5_000, 20_000, 100_000, 500_000];
+const PER_SERVER = [500, 1_000, 2_000, 5_000, 10_000];
+
+const COUNT_UNITS: [number, string][] = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "k"]];
+const BYTE_UNITS: [number, string][] = [[1e15, "PB"], [1e12, "TB"], [1e9, "GB"], [1e6, "MB"], [1e3, "KB"]];
+
+/** 3 significant figures at most, no trailing zeros: 5787.04 → "5.79k". */
+export function human(v: number, unit: Unit): string {
+  const units = unit === "bytes" || unit === "bps" ? BYTE_UNITS : COUNT_UNITS;
+  for (const [f, s] of units) if (v >= f) return `${sig(v / f)}${unit === "bytes" || unit === "bps" ? " " : ""}${s}${unit === "bps" ? "/s" : ""}`;
+  return `${sig(v)}${unit === "bytes" ? " B" : unit === "bps" ? " B/s" : ""}`;
+}
+const sig = (x: number) => Number(x.toPrecision(3)).toString();
+const comma = (x: number) => Math.round(x).toLocaleString("en-US");
+
+/** "5.8k", "5800", "5,800", "6e3", "12 TB", "1.2 GB/s" → a number; null when unreadable. */
+export function parseAmount(text: string, unit: Unit): number | null {
+  const t = text.trim().replace(/,/g, "").replace(/\s+/g, "").replace(/\/s$/i, "").replace(/(req|rps|qps|servers?|servidores?)$/i, "");
+  const m = t.match(/^([0-9]*\.?[0-9]+(?:e[+-]?[0-9]+)?)([a-z]*)$/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n)) return null;
+  const suf = m[2].toLowerCase();
+  if (!suf) return n;
+  const bytes = unit === "bytes" || unit === "bps";
+  const table: Record<string, number> = bytes
+    ? { b: 1, kb: 1e3, k: 1e3, mb: 1e6, m: 1e6, gb: 1e9, g: 1e9, tb: 1e12, t: 1e12, pb: 1e15, p: 1e15 }
+    : { k: 1e3, m: 1e6, mm: 1e6, b: 1e9, bn: 1e9, g: 1e9, t: 1e12 };
+  return suf in table ? n * table[suf] : null;
+}
+
+/** 1 within 1.25×, 0.6 within 2×, 0.2 within 10× (the right order of magnitude), else 0. */
+export function gradeEstimate(guess: number, truth: number): number {
+  if (!(guess > 0) || !(truth > 0)) return 0;
+  const r = Math.max(guess / truth, truth / guess);
+  return r <= 1.25 ? 1 : r <= 2 ? 0.6 : r <= 10 ? 0.2 : 0;
+}
+
+type Gen = (r: Rand, seed: string) => EstimateRep;
+
+const avgQps: Gen = (r, seed) => {
+  const dau = pick(r, DAU), a = pick(r, ACTIONS), q = (dau * a) / DAY;
+  return {
+    skill: "estimate", seed, unit: "rps", answer: q,
+    prompt: {
+      en: `${human(dau, "count")} daily active users each make ${a} requests a day. Average requests per second?`,
+      es: `${human(dau, "count")} usuarios activos al día hacen ${a} requests diarias cada uno. ¿Requests por segundo en promedio?`,
+    },
+    steps: [
+      { en: `${human(dau, "count")} × ${a} = ${human(dau * a, "count")} requests a day`, es: `${human(dau, "count")} × ${a} = ${human(dau * a, "count")} requests al día` },
+      { en: `÷ 86,400 s ≈ ÷ 10⁵ (the trick) → ≈ ${human(q, "count")}/s`, es: `÷ 86,400 s ≈ ÷ 10⁵ (el truco) → ≈ ${human(q, "count")}/s` },
+    ],
+  };
+};
+
+const peakQps: Gen = (r, seed) => {
+  const dau = pick(r, DAU), a = pick(r, ACTIONS), k = pick(r, [2, 3, 5]), avg = (dau * a) / DAY, q = avg * k;
+  return {
+    skill: "estimate", seed, unit: "rps", answer: q,
+    prompt: {
+      en: `${human(dau, "count")} DAU, ${a} requests each per day, and the peak is ${k}× the average. Peak requests per second?`,
+      es: `${human(dau, "count")} DAU, ${a} requests diarias cada uno, y el pico es ${k}× el promedio. ¿Requests por segundo en el pico?`,
+    },
+    steps: [
+      { en: `Average: ${human(dau * a, "count")} ÷ 86,400 ≈ ${human(avg, "count")}/s`, es: `Promedio: ${human(dau * a, "count")} ÷ 86,400 ≈ ${human(avg, "count")}/s` },
+      { en: `Peak: × ${k} ≈ ${human(q, "count")}/s`, es: `Pico: × ${k} ≈ ${human(q, "count")}/s` },
+    ],
+  };
+};
+
+const storage: Gen = (r, seed) => {
+  const items = pick(r, [1e6, 5e6, 10e6, 50e6, 100e6, 500e6, 1e9]), size = pick(r, PAYLOAD), years = pick(r, [1, 3, 5]), rep = pick(r, [1, 3]);
+  const b = items * size * 365 * years * rep;
+  return {
+    skill: "estimate", seed, unit: "bytes", answer: b,
+    prompt: {
+      en: `${human(items, "count")} new items a day, ${human(size, "bytes")} each, kept ${years} year${years > 1 ? "s" : ""}${rep > 1 ? `, ${rep} replicas` : ""}. Total storage?`,
+      es: `${human(items, "count")} ítems nuevos al día, de ${human(size, "bytes")} cada uno, guardados ${years} año${years > 1 ? "s" : ""}${rep > 1 ? `, ${rep} réplicas` : ""}. ¿Almacenamiento total?`,
+    },
+    steps: [
+      { en: `Per day: ${human(items, "count")} × ${human(size, "bytes")} = ${human(items * size, "bytes")}`, es: `Por día: ${human(items, "count")} × ${human(size, "bytes")} = ${human(items * size, "bytes")}` },
+      { en: `× 365 × ${years}${rep > 1 ? ` × ${rep}` : ""} ≈ ${human(b, "bytes")}`, es: `× 365 × ${years}${rep > 1 ? ` × ${rep}` : ""} ≈ ${human(b, "bytes")}` },
+    ],
+  };
+};
+
+const bandwidth: Gen = (r, seed) => {
+  const qps = pick(r, [500, 1_000, 2_000, 5_000, 10_000, 20_000, 50_000, 100_000]), size = pick(r, PAYLOAD), bw = qps * size;
+  return {
+    skill: "estimate", seed, unit: "bps", answer: bw,
+    prompt: {
+      en: `${comma(qps)} requests per second, each response ${human(size, "bytes")}. Outgoing bandwidth?`,
+      es: `${comma(qps)} requests por segundo, cada respuesta de ${human(size, "bytes")}. ¿Ancho de banda de salida?`,
+    },
+    steps: [{ en: `${comma(qps)}/s × ${human(size, "bytes")} = ${human(bw, "bps")}`, es: `${comma(qps)}/s × ${human(size, "bytes")} = ${human(bw, "bps")}` }],
+  };
+};
+
+const servers: Gen = (r, seed) => {
+  const dau = pick(r, DAU.slice(2)), a = pick(r, ACTIONS), k = pick(r, [2, 3, 5]), per = pick(r, PER_SERVER);
+  const peak = ((dau * a) / DAY) * k, n = Math.max(1, Math.ceil(peak / per));
+  return {
+    skill: "estimate", seed, unit: "servers", answer: n,
+    prompt: {
+      en: `${human(dau, "count")} DAU × ${a} requests a day, peak ${k}× average, and one server handles ${comma(per)} requests/s. How many servers for the peak?`,
+      es: `${human(dau, "count")} DAU × ${a} requests al día, pico ${k}× el promedio, y un servidor atiende ${comma(per)} requests/s. ¿Cuántos servidores para el pico?`,
+    },
+    steps: [
+      { en: `Peak ≈ ${human(dau * a, "count")} ÷ 86,400 × ${k} ≈ ${human(peak, "count")}/s`, es: `Pico ≈ ${human(dau * a, "count")} ÷ 86,400 × ${k} ≈ ${human(peak, "count")}/s` },
+      { en: `÷ ${comma(per)} per server → ${n} server${n > 1 ? "s" : ""} (before headroom)`, es: `÷ ${comma(per)} por servidor → ${n} servidor${n > 1 ? "es" : ""} (antes de dejar margen)` },
+    ],
+  };
+};
+
+const GENS: Gen[] = [avgQps, peakQps, storage, bandwidth, servers];
+/** Which recipe is picked from the seed's first draw, so every recipe shows up over a week. */
+export const estimateRep = (r: Rand, seed: string): EstimateRep => GENS[int(r, 0, GENS.length - 1)](r, seed);
