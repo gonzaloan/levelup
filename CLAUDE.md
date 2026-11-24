@@ -51,7 +51,11 @@ detail one tap away. The study path answers one question first: "what do I do ne
 - `content/labs.json` + `src/components/labs/<id>.tsx` — interactive labs (`/labs`): controls left,
   live result right, built on `src/components/labs/ui.tsx` (gold: `capacity.tsx`). Facts come from
   the concepts each lab names; toy values are labelled. The gate checks ids, concepts, files and
-  `registry.tsx` match.
+  `registry.tsx` match. Motion comes from `src/components/labs/motion.tsx` (step player, sweep
+  clock, counting numbers, code highlight, gliding pointers; gold: `loops.tsx`): every animation
+  shows the mechanism, honours `prefers-reduced-motion` (no autoplay, final state at once), and
+  continuous loops sleep off-screen and in hidden tabs. A lab's own styles go in
+  `src/components/labs/<id>.module.css`, using the theme tokens and `var(--spring)`.
 - `content/illustrations.json` (one Fluent Emoji Flat name per concept, MIT) and `content/tech.json`
   (logos, CC0, for tools/companies a concept mentions) — rendered as static SVG at build time by
   `src/lib/visuals.ts`. Find emoji names with `node tools/emoji-search.mjs <word>`.

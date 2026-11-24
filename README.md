@@ -14,10 +14,13 @@ Live: https://levelup.skillrealm.dev
   inference & cost · security & governance · AI architecture · AI system-design cases · ML
   foundations · MLOps · Staff/Principal leadership and execution.
 - **Study path:** one big "next step", three phases, modules folded except the one you are in.
-- **Labs you can touch (12):** back-of-the-envelope calculator, latency ladder, Big-O growth,
-  sliding window stepper, consistent hashing ring, rate limiters, quorums (N/R/W), cache hit ratio
-  (LRU + Zipf), utilization vs latency (M/M/c), Bloom filter calculator, GPU memory (weights + KV
-  cache) and a sampling playground. Each concept links its lab.
+- **Labs you can touch (13), animated:** loops in motion (code running line by line, every step a
+  square, the shape is the Big-O), a Big-O race on a log clock, back-of-the-envelope calculator,
+  latency ladder you can "feel", sliding window stepper, consistent hashing ring where moved keys
+  glide to their new owner, rate limiters with tokens dripping and requests bouncing, quorums with
+  messages and acks in flight, cache hit ratio (a live LRU), utilization vs latency (a live M/M/c
+  queue), Bloom filter beams, GPU memory (weights + KV cache) and a sampling playground. Each
+  concept links its lab; motion respects "reduce motion".
 - **Interview practice beyond reading:** 73 Python coding problems you solve and test in the
   browser (Pyodide, no server) with graded hints, a mock coding interview (two problems, 45
   minutes, no hints), a timed 45-minute system design round with a rubric, and a STAR story bank

@@ -2,10 +2,14 @@
 // Cache hit ratio, measured: 200,000 seeded requests over K keys with Zipf-like popularity, run
 // through an LRU cache. One pass computes each request's LRU stack distance (Mattson et al., 1970):
 // a request hits a cache of size C exactly when its distance is ≤ C, so the whole curve is a count.
-import { useDeferredValue, useMemo, useState } from "react";
+// On top, a toy request stream plays through a small LRU: hits bounce back from the cache, misses
+// travel on to the origin and get inserted at the front, and the least recent key fades out.
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
 import { mulberry32 } from "@/lib/practice/rng";
 import { Bar, Insight, LabGrid, LogRange, Plot, Range, Seg, Stat, fmtNum, fmtTime, type PlotLabel } from "./ui";
+import { PlayerBar, Ticker, usePlayer, useReducedMotion, type Player } from "./motion";
+import css from "./cache-sim.module.css";
 
 const R = 200_000, FROM = R / 2, RATE = 1000; // requests, warm-up, assumed requests per second
 const TTLS = [0, 60, 10, 1] as const; // seconds; 0 = no TTL
@@ -74,6 +78,12 @@ const T = {
     insight: (share: string, hit: string, uni: string, l90: string, l99: string) => `A cache holding ${share} of the keys serves ${hit} of the reads; with uniform traffic the same cache would serve ${uni}. Skew is what lets a small cache work. Past 90% every point counts: 90% → 99% hits cuts origin traffic 10×${l90 === l99 ? "" : ` and the average latency from ${l90} to ${l99}`}.`,
     ttlCost: (h: string) => ` The TTL costs you here: without it the hit ratio would be ${h}, because rarely read keys expire before their next read.`,
     note: "Simulated in your browser: 200,000 seeded requests at an assumed 1,000/s (200 s); the first 100,000 warm the cache and the hit ratio is measured on the rest. LRU eviction; a TTL counts from the miss that filled the key (cache-aside), hits don't extend it, and an expired copy keeps its slot until evicted. A key's first request is always a miss, so with a huge catalog even an infinite cache stays below 100%. Formulas from the caching and CDN concepts.",
+    stream: "Request stream through an LRU cache", app: "App", cache: "Cache (LRU)", mru: "newest", lru: "oldest",
+    originBox: "Origin (database)", next: "next", ready: (n: number) => `A warm cache with ${n} slots. Press play: each step is one request for one key.`,
+    hitMsg: (k: number, at: number) => `#${k}: hit at position ${at} → served from the cache and moved to the front (most recent).`,
+    missMsg: (k: number, ev: number | null) => `#${k}: miss → read from the origin, inserted at the front${ev ? `; #${ev}, the least recent, is evicted` : ""}.`,
+    toyHit: "This stream", toyHitSub: (h: number, n: number) => `${h} hit${h === 1 ? "" : "s"} of ${n}`, simHit: "Measured above", simHitSub: "200,000 requests",
+    toyNote: (k: string) => `Toy stream (illustrative): 8 slots and a ${k}-key catalog, so the same cache share and skew as your settings; warmed up first, no TTL, durations not to scale. #r is the r-th most popular key: watch the hot ones stay. The red-edged slot is the least recent one, the next to be evicted.`,
   },
   es: {
     skew: "Sesgo de popularidad s", skewHint: "Tipo Zipf: la i-ésima clave más popular recibe una fracción ∝ 1/iˢ. Valores ilustrativos.",
@@ -88,6 +98,12 @@ const T = {
     insight: (share: string, hit: string, uni: string, l90: string, l99: string) => `Una caché con ${share} de las claves atiende ${hit} de las lecturas; con tráfico uniforme, la misma caché atendería ${uni}. El sesgo es lo que hace funcionar una caché chica. Pasado el 90%, cada punto cuenta: de 90% a 99% de hits, el tráfico al origen baja 10×${l90 === l99 ? "" : ` y la latencia promedio pasa de ${l90} a ${l99}`}.`,
     ttlCost: (h: string) => ` Aquí el TTL te cuesta: sin él, el hit ratio sería ${h}, porque las claves que se leen poco expiran antes de su siguiente lectura.`,
     note: "Simulado en tu navegador: 200.000 requests con semilla a una tasa supuesta de 1.000/s (200 s); las primeras 100.000 calientan la caché y el hit ratio se mide sobre el resto. Desalojo LRU; el TTL corre desde el miss que llenó la clave (cache-aside), los hits no lo extienden y una copia expirada conserva su lugar hasta que se desaloja. La primera request de cada clave siempre es miss, así que con un catálogo enorme ni una caché infinita llega al 100%. Fórmulas de los conceptos de caching y CDN.",
+    stream: "Flujo de requests por una caché LRU", app: "App", cache: "Caché (LRU)", mru: "reciente", lru: "antigua",
+    originBox: "Origen (base de datos)", next: "siguen", ready: (n: number) => `Una caché caliente con ${n} espacios. Dale play: cada paso es una request por una clave.`,
+    hitMsg: (k: number, at: number) => `#${k}: hit en la posición ${at} → se sirve desde la caché y pasa al frente (la más reciente).`,
+    missMsg: (k: number, ev: number | null) => `#${k}: miss → se lee del origen y se inserta al frente${ev ? `; #${ev}, la menos reciente, se desaloja` : ""}.`,
+    toyHit: "Este flujo", toyHitSub: (h: number, n: number) => `${h} hit${h === 1 ? "" : "s"} de ${n}`, simHit: "Medido arriba", simHitSub: "200.000 requests",
+    toyNote: (k: string) => `Flujo de juguete (ilustrativo): 8 espacios y un catálogo de ${k} claves, o sea, la misma fracción de caché y el mismo sesgo que tu configuración; se calienta primero, sin TTL y con duraciones fuera de escala. #r es la r-ésima clave más popular: mira cómo las calientes se quedan. El espacio con borde rojo es la menos reciente, la próxima en desalojarse.`,
   },
 };
 
@@ -125,6 +141,7 @@ export default function CacheSimLab({ locale }: { locale: Locale }) {
   const y = (h: number) => TOP + (1 - h) * (VH - TOP - BOT);
   const pts = (hs: number[]) => m.sizes.map((v, i) => `${x(v).toFixed(1)},${y(hs[i]).toFixed(1)}`).join(" ");
   const ticks = [10, 100, 1e3, 1e4, 1e5, 1e6].filter((v) => v <= dk);
+  const toyK = Math.min(TOY_MAX, Math.max(SLOTS, Math.round((SLOTS * dk) / c)));
 
   return (
     <LabGrid
@@ -139,11 +156,12 @@ export default function CacheSimLab({ locale }: { locale: Locale }) {
         </>
       }
     >
+      <CacheStream k={toyK} skew={ds} hit={m.hit} originMs={originMs} cacheMs={cacheMs} locale={locale} />
       <div className="lab-stats" aria-live="polite">
-        <Stat label={t.hit} value={pct(m.hit)} sub={t.hitSub} tone="good" />
-        <Stat label={t.avg} value={ms(avg)} sub={t.avgSub(ms(originMs))} />
-        <Stat label={t.origin} value={pct(miss)} sub={t.originSub(miss > 0.1 ? (1 / miss).toFixed(1) : fmtNum(1 / Math.max(miss, 1e-5)))} />
-        <Stat label={t.top} value={pct(skewed.top1)} sub={t.topSub} />
+        <Stat label={t.hit} value={<Ticker value={m.hit} format={pct} />} sub={t.hitSub} tone="good" />
+        <Stat label={t.avg} value={<Ticker value={avg} format={ms} />} sub={t.avgSub(ms(originMs))} />
+        <Stat label={t.origin} value={<Ticker value={miss} format={pct} />} sub={t.originSub(miss > 0.1 ? (1 / miss).toFixed(1) : fmtNum(1 / Math.max(miss, 1e-5)))} />
+        <Stat label={t.top} value={<Ticker value={skewed.top1} format={pct} />} sub={t.topSub} />
       </div>
       <div>
         <Plot w={VW} h={VH} label={t.aria(ds.toFixed(1))} labels={[
@@ -154,8 +172,8 @@ export default function CacheSimLab({ locale }: { locale: Locale }) {
           <polyline points={pts(m.flat)} vectorEffect="non-scaling-stroke" style={{ fill: "none", stroke: "var(--muted)", strokeWidth: 2, strokeDasharray: "5 4" }} />
           <polyline points={pts(m.curve)} vectorEffect="non-scaling-stroke" style={{ fill: "none", stroke: "var(--accent)", strokeWidth: 2.5 }} />
           <line x1={x(c)} x2={x(c)} y1={TOP} y2={VH - BOT} vectorEffect="non-scaling-stroke" style={{ stroke: "var(--text-2)", strokeDasharray: "2 3" }} />
-          <circle cx={x(c)} cy={y(m.uni)} r={4} style={{ fill: "var(--muted)" }} />
-          <circle cx={x(c)} cy={y(m.hit)} r={5.5} style={{ fill: "var(--accent)", stroke: "var(--surface)", strokeWidth: 2 }} />
+          <circle className={css.mark} cx={x(c)} cy={y(m.uni)} r={4} style={{ fill: "var(--muted)" }} />
+          <circle className={css.mark} cx={x(c)} cy={y(m.hit)} r={5.5} style={{ fill: "var(--accent)", stroke: "var(--surface)", strokeWidth: 2 }} />
         </Plot>
         <p className="lab-note"><Sw c="var(--accent)" />{t.skewed(ds.toFixed(1))} · <Sw c="var(--muted)" dash />{t.uniform} · {t.axis}</p>
       </div>
@@ -168,5 +186,130 @@ export default function CacheSimLab({ locale }: { locale: Locale }) {
       <Insight>{t.insight(pct(c / dk), pct(m.hit), pct(m.uni), at(0.9), at(0.99)) + (ttlS && m.noTtl - m.hit > 0.02 ? t.ttlCost(pct(m.noTtl)) : "")}</Insight>
       <p className="lab-note">{t.note}</p>
     </LabGrid>
+  );
+}
+
+/* ------------------------------------------------------------------ the request stream */
+// A toy LRU with SLOTS keys, fed a seeded Zipf stream over a catalog scaled to the same cache share
+// as the controls (SLOTS ÷ catalog ≈ cache ÷ keys) and the same skew. Precomputed, one snapshot
+// per request; the player only moves an index, and CSS does the flying (paths in cqw / px).
+const SLOTS = 8, STEPS = 48, WARM = 400, TOY_MAX = 5000, STEP_MS = 1300;
+const SPAD = 3, SLOT_W = (100 - 2 * SPAD) / SLOTS; // % of the stage width
+const Y = { app: 22, cache: 86, db: 152 }; // px, centers of the three rows
+const slotX = (i: number) => SPAD + SLOT_W * (i + 0.5);
+
+type Req = { key: number; hit: boolean; from: number; order: number[]; evicted: number | null; hits: number; n: number };
+function toyStream(k: number, s: number): Req[] {
+  const cdf = new Float64Array(k);
+  let acc = 0;
+  for (let i = 0; i < k; i++) cdf[i] = acc += (i + 1) ** -s;
+  const rnd = mulberry32(k * 131 + Math.round(s * 100));
+  const draw = () => {
+    const x = rnd() * acc;
+    let lo = 0, hi = k - 1;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (cdf[m] < x) lo = m + 1; else hi = m; }
+    return lo + 1;
+  };
+  let order: number[] = [];
+  const touch = (key: number) => {
+    const from = order.indexOf(key);
+    let evicted: number | null = null;
+    if (from >= 0) order = [key, ...order.slice(0, from), ...order.slice(from + 1)];
+    else { order = [key, ...order]; if (order.length > SLOTS) evicted = order.pop()!; }
+    return { from, evicted };
+  };
+  for (let i = 0; i < WARM; i++) touch(draw());
+  const out: Req[] = [{ key: 0, hit: false, from: -1, order, evicted: null, hits: 0, n: 0 }];
+  let hits = 0;
+  for (let n = 1; n <= STEPS; n++) {
+    const key = draw(), { from, evicted } = touch(key);
+    if (from >= 0) hits++;
+    out.push({ key, hit: from >= 0, from, order, evicted, hits, n });
+  }
+  return out;
+}
+
+function CacheStream({ k, skew, hit, originMs, cacheMs, locale }: { k: number; skew: number; hit: number; originMs: number; cacheMs: number; locale: Locale }) {
+  const t = T[locale];
+  const reduced = useReducedMotion();
+  const run = useMemo(() => toyStream(k, skew), [k, skew]);
+  const p = usePlayer(run.length, { baseMs: STEP_MS, key: `${k}:${skew}` });
+  const cur = run[p.i];
+
+  // Autoplay while on screen and the tab is visible, until the reader takes the controls.
+  const root = useRef<HTMLElement>(null);
+  const [auto, setAuto] = useState(true);
+  const [seen, setSeen] = useState(false);
+  const [tabOn, setTabOn] = useState(true);
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const io = new IntersectionObserver(([e]) => setSeen(e.isIntersecting), { threshold: 0.3 });
+    io.observe(el);
+    const vis = () => setTabOn(document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", vis);
+    return () => { io.disconnect(); document.removeEventListener("visibilitychange", vis); };
+  }, []);
+  const { play, pause, playing, done, seek } = p;
+  useEffect(() => {
+    if (reduced) return;
+    const want = auto && seen && tabOn && !done;
+    if (want && !playing) play();
+    else if (!want && playing) pause();
+  }, [auto, seen, tabOn, done, playing, reduced, play, pause]);
+  // Reduced motion: no autoplay; open on the last request instead.
+  useEffect(() => { if (reduced) seek(run.length - 1); }, [reduced, run, seek]);
+  const bar: Player = {
+    ...p,
+    toggle: () => { setAuto(!p.playing); p.toggle(); },
+    step: (d) => { setAuto(false); p.step(d); },
+    seek: (i) => { setAuto(false); p.seek(i); },
+    reset: () => { setAuto(false); p.reset(); },
+  };
+
+  // Timing of one request (ms): a hit is a short round trip, a miss goes on to the origin and back.
+  const step = STEP_MS / p.speed, dur = (cur.hit ? 0.55 : 0.95) * step;
+  const at = (f: number) => (reduced ? 0 : Math.round(f * dur));
+  const delay = cur.n === 0 ? 0 : cur.hit ? at(0.5) : at(0.8);
+  const slots = cur.order.map((key, i) => ({ key, i, fresh: !cur.hit && i === 0 && cur.n > 0, gone: false }));
+  if (cur.evicted !== null && cur.n > 0) slots.push({ key: cur.evicted, i: SLOTS, fresh: false, gone: true });
+  const upcoming = run.slice(p.i + 1, p.i + 4).map((r) => r.key);
+  const msg = cur.n === 0 ? t.ready(SLOTS) : cur.hit ? t.hitMsg(cur.key, cur.from + 1) : t.missMsg(cur.key, cur.evicted);
+  const v = (o: Record<string, string | number>) => o as CSSProperties;
+
+  return (
+    <figure className={css.flow} ref={root}>
+      <figcaption className="section-label">{t.stream}</figcaption>
+      <PlayerBar p={bar} count={run.length} locale={locale} />
+      <div className={css.stage} style={v({ "--sw": SLOT_W, "--pad": SPAD, "--delay": `${delay}ms`, "--dur": `${dur}ms` })} aria-hidden>
+        {upcoming.length > 0 && <span className={css.next}>{t.next}: {upcoming.map((key, j) => <b key={`${p.i + j}`}>#{key}</b>)}</span>}
+        <span className={css.app} style={v({ top: `${Y.app}px` })}>{t.app}</span>
+        <span className={css.rowLabel} style={v({ top: `${Y.cache - 34}px` })}><b>{t.cache} · {ms(cacheMs)}</b><span>{t.mru} → {t.lru}</span></span>
+        <span className={css.rail} style={v({ top: `${Y.cache}px` })}>
+          {cur.n > 0 && !cur.hit && <i key={p.i} className={css.missFlash} style={v({ animationDelay: `${at(0.22)}ms` })} />}
+        </span>
+        {slots.map((x) => (
+          <span key={x.key} className={`${css.slot}${x.i === SLOTS - 1 ? ` ${css.last}` : ""}${x.fresh ? ` ${css.fresh}` : ""}${x.gone ? ` ${css.gone}` : ""}${cur.n > 0 && x.key === cur.key ? ` ${cur.hit ? css.hit : css.now}` : ""}`}
+            style={v({ "--i": x.i, "--age": x.i / (SLOTS - 1), top: `${Y.cache}px` })}>
+            #{x.key}
+            {cur.n > 0 && cur.hit && x.key === cur.key && <i key={p.i} className={css.hitFlash} style={v({ animationDelay: `${at(0.42)}ms` })} />}
+          </span>
+        ))}
+        <span className={css.db} style={v({ top: `${Y.db}px` })}>
+          {t.originBox} · {ms(originMs)}
+          {cur.n > 0 && !cur.hit && <i key={p.i} className={css.dbPulse} style={v({ animationDelay: `${at(0.5)}ms` })} />}
+        </span>
+        {cur.n > 0 && !reduced && (
+          <span key={p.i} className={`${css.chip} ${cur.hit ? css.hitPath : css.missPath}`}
+            style={v({ "--ax": 50, "--ay": `${Y.app}px`, "--hx": slotX(Math.max(0, cur.from)), "--hy": `${Y.cache}px`, "--dx": 50, "--dy": `${Y.db - 24}px`, "--sx": slotX(0) })}>#{cur.key}</span>
+        )}
+      </div>
+      <p className="mo-msg" aria-live="polite">{msg}</p>
+      <div className={css.read}>
+        <span className={css.chipStat}><small>{t.toyHit}</small><b>{cur.n ? <Ticker value={cur.hits / cur.n} format={pct} /> : "—"}</b><em>{t.toyHitSub(cur.hits, cur.n)}</em></span>
+        <span className={css.chipStat}><small>{t.simHit}</small><b>{pct(hit)}</b><em>{t.simHitSub}</em></span>
+      </div>
+      <p className="lab-note">{t.toyNote(fmtNum(k))}</p>
+    </figure>
   );
 }

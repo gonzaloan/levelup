@@ -43,8 +43,11 @@ export function usePlayer(count: number, { baseMs = 650, key = "" }: { baseMs?: 
   }, [playing, i, last, baseMs, speed]);
   const step = useCallback((d = 1) => { setPlaying(false); setI((v) => Math.max(0, Math.min(last, v + d))); }, [last]);
   const seek = useCallback((v: number) => { setPlaying(false); setI(Math.max(0, Math.min(last, v))); }, [last]);
+  // Between a new `count` and the reset effect there is one render with the old index: clamp it,
+  // or a shorter run (another algorithm, a shorter input) would read past its last snapshot.
+  const at = Math.max(0, Math.min(i, last));
   return {
-    i, playing, speed, done: i >= last,
+    i: at, playing, speed, done: at >= last,
     play: () => { if (i >= last) setI(0); setPlaying(true); },
     pause: () => setPlaying(false),
     toggle: () => { if (playing) { setPlaying(false); return; } if (i >= last) setI(0); setPlaying(true); },
@@ -120,7 +123,8 @@ export function Ticker({ value, format = (v: number) => Math.round(v).toLocaleSt
   const [shown, setShown] = useState(value);
   const from = useRef(value);
   useEffect(() => {
-    if (reduced || !Number.isFinite(value)) { setShown(value); from.current = value; return; }
+    // From or to ∞/NaN there is nothing to tween (∞ − ∞ is NaN): show the new value at once.
+    if (reduced || !Number.isFinite(value) || !Number.isFinite(from.current)) { setShown(value); from.current = value; return; }
     const start = performance.now(), a = from.current, b = value;
     let raf = 0;
     const tick = (now: number) => {

@@ -1,0 +1,87 @@
+/* Rate limiter lab: the live replay (token bucket scene + fixed / sliding window lanes). */
+.live { display: grid; gap: 12px; padding: 12px; border-radius: 14px; background: var(--bg-2); border: 1px solid var(--border); min-width: 0; }
+
+/* transport: restart · play/pause · scrubber · clock · speed */
+.transport { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.tbtn { display: inline-grid; place-items: center; width: 44px; height: 44px; border-radius: 11px; border: 1px solid var(--border-2); background: var(--surface); color: var(--text-2); cursor: pointer; transition: transform 0.2s var(--spring), border-color 0.2s, color 0.2s; }
+.tbtn:hover { color: var(--text); border-color: var(--text-2); transform: translateY(-1px); }
+.tbtn:active { transform: scale(0.94); }
+.main { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); box-shadow: 0 6px 18px -8px var(--accent); }
+.main:hover { color: var(--accent-ink); border-color: var(--accent); }
+.scrub { flex: 1 1 140px; min-width: 120px; height: 44px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; cursor: pointer; }
+.scrub::-webkit-slider-runnable-track { height: 6px; border-radius: 99px; background: linear-gradient(90deg, var(--accent) var(--pct), var(--border) var(--pct)); }
+.scrub::-moz-range-track { height: 6px; border-radius: 99px; background: linear-gradient(90deg, var(--accent) var(--pct), var(--border) var(--pct)); }
+.scrub::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -6px; border-radius: 50%; background: var(--surface); border: 3px solid var(--accent); }
+.scrub::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--surface); border: 3px solid var(--accent); }
+.clock { min-width: 120px; white-space: nowrap; font: 700 14px ui-monospace, Menlo, monospace; font-variant-numeric: tabular-nums; color: var(--text); }
+.speed { display: flex; gap: 2px; padding: 2px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); }
+.speed button { min-width: 40px; height: 40px; border: 0; border-radius: 8px; background: none; color: var(--muted); font: 650 12.5px ui-monospace, Menlo, monospace; cursor: pointer; }
+.speed button.on { background: var(--surface-2); color: var(--text); box-shadow: inset 0 0 0 1px var(--border-2); }
+.ff { margin-left: 6px; font: 600 11.5px ui-monospace, Menlo, monospace; font-style: normal; color: oklch(0.72 0.15 250); opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+.ffOn { opacity: 1; }
+
+/* one lane: a head line (title · live meter · state tag · counts so far) over a drawing */
+.lane { display: grid; gap: 4px; min-width: 0; }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; font-size: 13.5px; }
+.head strong { font-weight: 700; }
+.meter { font: 12.5px ui-monospace, Menlo, monospace; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.sofar { margin-left: auto; font: 12.5px ui-monospace, Menlo, monospace; color: var(--muted); font-variant-numeric: tabular-nums; }
+.okc { color: var(--good); font-weight: 700; }
+.rejc { color: var(--bad); font-weight: 700; }
+.tag { font: 650 11.5px ui-monospace, Menlo, monospace; padding: 1px 7px; border-radius: 99px; border: 1px solid var(--border-2); color: var(--muted); white-space: nowrap; }
+.tagBad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, transparent); background: color-mix(in srgb, var(--bad) 10%, transparent); }
+.tagReset { color: oklch(0.72 0.15 250); border-color: oklch(0.72 0.15 250 / 0.6); }
+
+/* token bucket scene */
+.boxShape { fill: var(--surface); stroke: var(--border-2); stroke-width: 1.5; }
+.track { stroke: var(--border-2); stroke-width: 2; stroke-dasharray: 2 6; stroke-linecap: round; }
+.tap { fill: none; stroke: var(--muted); stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.bucket { fill: none; stroke: var(--text-2); stroke-width: 3; stroke-linecap: round; }
+.liquid { fill: color-mix(in srgb, var(--accent) 55%, transparent); stroke: color-mix(in srgb, var(--accent) 35%, transparent); stroke-width: 3; }
+.spout { stroke: var(--border-2); stroke-width: 3; }
+.tok { color: var(--accent); font-weight: 700; }
+.drop { fill: var(--accent); }
+.coin { fill: var(--accent); stroke: color-mix(in srgb, var(--accent) 40%, transparent); stroke-width: 5; }
+.gate { fill: var(--border-2); transition: fill 0.15s; }
+.gateOk { fill: var(--good); stroke: color-mix(in srgb, var(--good) 35%, transparent); stroke-width: 8; }
+.gateBad { fill: var(--bad); stroke: color-mix(in srgb, var(--bad) 35%, transparent); stroke-width: 8; }
+.req { fill: var(--text-2); }
+/* Glows are wide translucent strokes, not CSS filters: a filter re-rasterizes on every frame. */
+.pass { fill: var(--good); stroke: color-mix(in srgb, var(--good) 35%, transparent); stroke-width: 5; }
+.bounce { fill: var(--bad); stroke: color-mix(in srgb, var(--bad) 35%, transparent); stroke-width: 5; }
+.flash429 { color: var(--bad); font-weight: 800; }
+
+/* window lanes */
+.win { fill: none; stroke: var(--border-2); stroke-width: 1.5; }
+.future .win { stroke-dasharray: 4 4; opacity: 0.6; }
+.past .win { opacity: 0.8; }
+.cur .win { stroke: var(--accent); stroke-width: 2.5; fill: color-mix(in srgb, var(--accent) 7%, transparent); }
+.wfill { fill: color-mix(in srgb, var(--good) 32%, transparent); stroke: var(--good); stroke-width: 1; }
+.past .wfill { opacity: 0.55; }
+.wfull { fill: color-mix(in srgb, var(--good) 45%, transparent); stroke: var(--bad); stroke-width: 2; }
+.resetFlash { fill: oklch(0.72 0.15 250); opacity: 0; pointer-events: none; }
+.base { stroke: var(--border); stroke-width: 1.5; }
+.tickOk { fill: none; stroke: var(--good); stroke-width: 1.5; }
+.tickOld { fill: none; stroke: var(--muted); stroke-width: 1.2; opacity: 0.35; }
+.tickBad { fill: none; stroke: var(--bad); stroke-width: 1.5; }
+.playhead { stroke: var(--accent); stroke-width: 2.5; }
+
+/* summary charts below: bars settle into place when the controls change */
+.bars rect { transition: y 0.45s var(--spring), height 0.45s var(--spring); }
+.busiest { transition: x 0.5s var(--spring) !important; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .resetFlash { animation: reset 0.9s ease-out; }
+  .tagReset { animation: pop 0.45s var(--spring); }
+  .tagBad { animation: pop 0.45s var(--spring); }
+}
+@keyframes reset { 0% { opacity: 0.45; } 100% { opacity: 0; } }
+@keyframes pop { 0% { transform: scale(0.6); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .tbtn, .gate, .bars rect, .busiest, .ff { transition: none !important; }
+}
+@media (max-width: 520px) {
+  .live { padding: 10px; }
+  .clock { min-width: 104px; font-size: 13px; }
+  .sofar { margin-left: 0; }
+}

@@ -309,8 +309,8 @@ test("loops lab: each step adds one square, and the finished shape has exactly t
   const squares = page.locator(".mo-grid span.on");
   await expect(squares).toHaveCount(0);
   for (let k = 0; k < 5; k++) await page.getByRole("button", { name: "Step", exact: true }).click();
-  // The first snapshot is the setup line, so 5 steps forward = 4 counted operations.
-  await expect(squares).toHaveCount(4);
+  // Snapshot 0 is the setup line; each step after it is one counted operation.
+  await expect(squares).toHaveCount(5);
   await expect(page.locator(".mo-ptr")).toHaveCount(2);
   // Scrub to the end: n(n−1)/2 squares for the default n = 8.
   const scrub = page.getByRole("slider", { name: "Step" });
@@ -322,6 +322,8 @@ test("loops lab: each step adds one square, and the finished shape has exactly t
 test("reduced motion: labs open on the finished picture and a race ends at once", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/en/labs/loops/");
+  // Opens finished (n = 8 nested loops: 28 squares); switching to a shorter run must not crash.
+  await expect(page.locator(".mo-grid span.on")).toHaveCount(28);
   await page.getByRole("button", { name: "Merge levels" }).click();
   // n = 8 → 3 levels × 8 writes, shown immediately, no autoplay.
   await expect(page.locator(".mo-grid span.on")).toHaveCount(24);
