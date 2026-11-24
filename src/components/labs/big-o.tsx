@@ -2,10 +2,10 @@
 // Big-O growth: one slider for n, one bar per complexity class, a 1 s budget line. Everything is
 // computed in log10 space, so 2ⁿ at n = 10⁹ never overflows. The speed (10⁸ simple ops/s) is a
 // labelled assumption at the low end of the concept's "some hundreds of millions".
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
 import { Insight, LabGrid, LogRange, Seg, Stat, YEAR_S, fmtDuration, fmtNum, fmtTime } from "./ui";
-import { useReducedMotion } from "./motion";
+import { useSweep } from "./motion";
 
 const LG_OPS = 8; // log10 of the assumed 10⁸ simple operations per second
 const AXIS = 16; // the track spans 10⁰ … 10¹⁶ steps; the 1 s budget (10⁸ steps) sits at 50%
@@ -125,22 +125,7 @@ const T0 = -9, T1 = Math.log10(30 * YEAR_S), RACE_MS = 7000;
 type Row = { label: string; lgSec: number; tone: keyof typeof TONE; time: string };
 
 function Race({ rows, n, locale, t }: { rows: Row[]; n: number; locale: Locale; t: (typeof T)["en"] }) {
-  const reduced = useReducedMotion();
-  const [clock, setClock] = useState<number | null>(null);
-  const raf = useRef(0);
-  useEffect(() => { cancelAnimationFrame(raf.current); setClock(null); }, [n]);
-  useEffect(() => () => cancelAnimationFrame(raf.current), []);
-  const start = () => {
-    cancelAnimationFrame(raf.current);
-    if (reduced) { setClock(T1); return; }
-    const t0 = performance.now();
-    const tick = (now: number) => {
-      const k = Math.min(1, (now - t0) / RACE_MS);
-      setClock(T0 + (T1 - T0) * k);
-      if (k < 1) raf.current = requestAnimationFrame(tick);
-    };
-    raf.current = requestAnimationFrame(tick);
-  };
+  const { value: clock, start } = useSweep(T0, T1, RACE_MS, String(n));
   const pos = (lg: number) => Math.max(0, Math.min(1, (lg - T0) / (T1 - T0))) * 100;
   const c = clock ?? T0;
   const clockText = c < 0 ? fmtTime(10 ** (c + 9)) : fmtDuration(10 ** c, locale);

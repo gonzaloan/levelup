@@ -5,6 +5,7 @@
 import { useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
 import { Insight, LabGrid, Seg, Stat, fmtDuration, fmtNum, fmtTime } from "./ui";
+import { useSweep } from "./motion";
 
 type Tier = "cpu" | "mem" | "disk" | "net";
 type Op = { id: string; ns: number; tier: Tier; en: string; es: string };
@@ -36,6 +37,7 @@ const mono: CSSProperties = { font: "650 13px ui-monospace, Menlo, monospace", c
 const T = {
   en: {
     scale: "Scale", real: "Real time", human: "If 1 ns were 1 s", base: "Compare against", tap: "Or tap any row.",
+    feel: "Feel it: one clock for every row", again: "Again", clock: "Clock",
     tiers: { cpu: "CPU", mem: "Memory", disk: "Storage", net: "Network" } as Record<Tier, string>,
     memL1: "Memory ÷ L1", ssdMem: "SSD read ÷ memory", wanDc: "Cross-continent ÷ same DC",
     caption: (b: string, t: string) => `Log scale, one gridline per 10×. Ratios against: ${b} (${t}).`,
@@ -45,6 +47,7 @@ const T = {
   },
   es: {
     scale: "Escala", real: "Tiempo real", human: "Si 1 ns fuera 1 s", base: "Comparar contra", tap: "O toca cualquier fila.",
+    feel: "Siéntelo: un mismo reloj para todas las filas", again: "Otra vez", clock: "Reloj",
     tiers: { cpu: "CPU", mem: "Memoria", disk: "Almacenamiento", net: "Red" } as Record<Tier, string>,
     memL1: "Memoria ÷ L1", ssdMem: "Lectura SSD ÷ memoria", wanDc: "Entre continentes ÷ mismo DC",
     caption: (b: string, t: string) => `Escala logarítmica, una línea por cada 10×. Comparado contra: ${b} (${t}).`,
@@ -67,6 +70,9 @@ export default function LatencyLab({ locale }: { locale: Locale }) {
   };
   const vs = (a: string, c: string) => `${show(BY[a].ns)} vs ${show(BY[c].ns)}`;
   const times = (a: string, c: string) => `~${fmtNum(BY[a].ns / BY[c].ns)}×`;
+  // "Feel it": a clock sweeps the axis (0.1 ns → 1 s, log) and each row fills as time reaches it.
+  const sweep = useSweep(-1, 9, 9000);
+  const clockNs = sweep.value === null ? null : 10 ** sweep.value;
 
   return (
     <LabGrid
@@ -95,6 +101,10 @@ export default function LatencyLab({ locale }: { locale: Locale }) {
         <Stat label={t.ssdMem} value={times("ssd", "mem")} sub={vs("ssd", "mem")} />
         <Stat label={t.wanDc} value={times("wan", "dc")} sub={vs("wan", "dc")} />
       </div>
+      <div className="lat-feel">
+        <button type="button" className="btn btn-primary" onClick={sweep.start}>{clockNs === null ? t.feel : t.again} ▶</button>
+        {clockNs !== null && <span className="lat-clock"><small>{t.clock}</small> <strong>{show(clockNs)}</strong></span>}
+      </div>
       <p className="lab-note" aria-live="polite">{t.caption(b[locale], show(b.ns))}</p>
       <div>
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 2 }}>
@@ -108,8 +118,8 @@ export default function LatencyLab({ locale }: { locale: Locale }) {
                     <span style={{ color: "var(--text-2)" }}>{o[locale]}</span>
                     <span style={mono}>~{show(o.ns)} <span style={{ color: on ? "var(--accent)" : "var(--muted)" }}>{on ? "=" : ratio(o.ns)}</span></span>
                   </span>
-                  <span className="lb-track" style={{ display: "block", background: GRID }}>
-                    <span style={{ width: `${pct(o.ns)}%`, background: TIER[o.tier] }} />
+                  <span className={`lb-track${clockNs !== null ? " lat-live" : ""}${clockNs !== null && clockNs >= o.ns ? " lat-done" : ""}`} style={{ display: "block", background: GRID, ["--tc" as string]: TIER[o.tier] } as CSSProperties}>
+                    <span style={{ width: `${clockNs === null ? pct(o.ns) : pct(Math.min(clockNs, o.ns))}%`, background: TIER[o.tier] }} />
                   </span>
                 </button>
               </li>

@@ -88,6 +88,31 @@ function Glyph({ d, fill }: { d: string; fill?: boolean }) {
   );
 }
 
+/* ------------------------------------------------------------------ a sweeping clock */
+/** A value that sweeps from `from` to `to` in `ms` with requestAnimationFrame (a race clock, a
+ *  time axis). `null` until started. Reduced motion jumps to the end. `key` resets it. */
+export function useSweep(from: number, to: number, ms: number, key = ""): { value: number | null; start: () => void; running: boolean } {
+  const reduced = useReducedMotion();
+  const [value, setValue] = useState<number | null>(null);
+  const [running, setRunning] = useState(false);
+  const raf = useRef(0);
+  useEffect(() => { cancelAnimationFrame(raf.current); setValue(null); setRunning(false); }, [key]);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  const start = useCallback(() => {
+    cancelAnimationFrame(raf.current);
+    if (reduced) { setValue(to); return; }
+    const t0 = performance.now();
+    setRunning(true);
+    const tick = (now: number) => {
+      const k = Math.min(1, (now - t0) / ms);
+      setValue(from + (to - from) * k);
+      if (k < 1) raf.current = requestAnimationFrame(tick); else setRunning(false);
+    };
+    raf.current = requestAnimationFrame(tick);
+  }, [from, to, ms, reduced]);
+  return { value, start, running };
+}
+
 /* ------------------------------------------------------------------ counting number */
 /** Counts from the last shown value to `value` with an ease-out, so a jump reads as motion. */
 export function Ticker({ value, format = (v: number) => Math.round(v).toLocaleString(), ms = 450 }: { value: number; format?: (v: number) => string; ms?: number }) {
@@ -143,12 +168,19 @@ export type CellTone = "on" | "dim" | "hit" | "done" | "";
 export interface Pointer { name: string; at: number; color: string }
 
 /** A row of cells; pointers glide between them (CSS transform on one element per pointer). */
-export function Cells({ values, tones = [], pointers = [], label }: { values: (string | number)[]; tones?: CellTone[]; pointers?: Pointer[]; label: string }) {
+export function Cells({ values, tones = [], pointers = [], label, span }: {
+  values: (string | number)[]; tones?: CellTone[]; pointers?: Pointer[]; label: string;
+  /** A window [from, to] (inclusive) drawn as a frame that glides and stretches over the cells. */
+  span?: [number, number] | null;
+}) {
   const n = values.length;
   // Pointers on the same cell stack instead of covering each other.
   const stack = new Map<number, number>();
   return (
     <div className="mo-cells" role="img" aria-label={label} style={{ ["--n" as string]: n } as CSSProperties}>
+      {span && span[1] >= span[0] && (
+        <span className="mo-span" aria-hidden style={{ left: `calc(${span[0]} * (100% + 4px) / var(--n) - 3px)`, width: `calc(${span[1] - span[0] + 1} * (100% + 4px) / var(--n) + 2px)` }} />
+      )}
       <div className="mo-row">
         {values.map((v, k) => <span key={k} className={`mo-cell ${tones[k] ?? ""}`}><span>{v}</span><small>{k}</small></span>)}
       </div>

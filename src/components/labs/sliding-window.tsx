@@ -2,9 +2,10 @@
 // Sliding window, step by step: "longest substring without repeating characters" with the
 // concept's own template (a count map, `while` to shrink, record after shrinking). The whole run
 // is precomputed as snapshots, one per pointer move, so Step / Play only move an index.
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useState } from "react";
 import type { Locale } from "@/lib/types";
 import { Insight, LabGrid, Seg, Stat } from "./ui";
+import { Cells, CodeView, PlayerBar, Ticker, usePlayer, type CellTone } from "./motion";
 
 const MAX = 24;
 const EXAMPLES = ["abcabcbb", "bbbbb", "pwwkew"];
@@ -45,7 +46,7 @@ function trace(s: string[]): Snap[] {
 
 const T = {
   en: {
-    input: `String (up to ${MAX} characters)`, examples: "Examples", step: "Step", play: "Play", pause: "Pause", reset: "Reset",
+    input: `String (up to ${MAX} characters)`, examples: "Examples",
     window: "Window", len: "length", best: "Best", moves: "Pointer moves", empty: "(empty)", count: "count (the window's state)",
     msg: (p: Snap, bestStr: string) => ({
       start: "Start: left = 0, empty window, best = 0.",
@@ -60,7 +61,7 @@ const T = {
     note: "Same algorithm as the concept's code template. The example strings are illustrative.",
   },
   es: {
-    input: `String (hasta ${MAX} caracteres)`, examples: "Ejemplos", step: "Paso", play: "Reproducir", pause: "Pausa", reset: "Reiniciar",
+    input: `String (hasta ${MAX} caracteres)`, examples: "Ejemplos",
     window: "Ventana", len: "largo", best: "Mejor", moves: "Movimientos de punteros", empty: "(vacía)", count: "count (el estado de la ventana)",
     msg: (p: Snap, bestStr: string) => ({
       start: "Inicio: left = 0, ventana vacía, best = 0.",
@@ -76,31 +77,24 @@ const T = {
   },
 };
 
-const cell: CSSProperties = { width: 30, height: 34, display: "grid", placeItems: "center", borderRadius: 8, font: "700 16px ui-monospace, Menlo, monospace" };
-const tint = (c: string, pct: number) => `color-mix(in srgb, ${c} ${pct}%, transparent)`;
-
 export default function SlidingWindowLab({ locale }: { locale: Locale }) {
   const t = T[locale];
   const [s, setS] = useState("abcabcbb");
-  const [i, setI] = useState(0);
-  const [play, setPlay] = useState(false);
   // Code points, like Python indexes a str: an emoji is one character, not two UTF-16 units.
   const chars = useMemo(() => [...s], [s]);
   const steps = useMemo(() => trace(chars), [chars]);
-  const last = steps.length - 1;
-  const p = steps[Math.min(i, last)];
-  const playing = play && i < last;
+  const pl = usePlayer(steps.length, { key: s, baseMs: 750 });
+  const p = steps[Math.min(pl.i, steps.length - 1)];
 
-  useEffect(() => {
-    if (!playing) return;
-    const id = setTimeout(() => setI((x) => x + 1), 700);
-    return () => clearTimeout(id);
-  }, [playing, i]);
-
-  const load = (v: string) => { setS(v.slice(0, MAX)); setI(0); setPlay(false); };
-  const toggle = () => { if (playing) setPlay(false); else { if (i >= last) setI(0); setPlay(true); } };
+  const load = (v: string) => setS(v.slice(0, MAX));
   const n = chars.length, rMoves = p.right + 1, conflict = p.kind === "dup" || p.kind === "shrink";
   const win = chars.slice(p.left, p.right + 1).join(""), bestStr = chars.slice(p.bestL, p.bestL + p.best).join("");
+  const tones: CellTone[] = chars.map((c, k) => {
+    const inWin = k >= p.left && k <= p.right;
+    if (conflict && inWin && c === p.ch) return "hit";
+    if (inWin) return "on";
+    return k < p.left ? "dim" : "";
+  });
 
   return (
     <LabGrid
@@ -112,48 +106,28 @@ export default function SlidingWindowLab({ locale }: { locale: Locale }) {
               style={{ padding: "8px 10px", borderRadius: 9, border: "1px solid var(--border-2)", background: "var(--bg-2)", color: "var(--text)", font: "600 15px ui-monospace, Menlo, monospace" }} />
           </label>
           <Seg label={t.examples} value={s} onChange={load} options={EXAMPLES.map((v) => ({ value: v, label: v }))} />
-          <div className="ls-opts">
-            <button type="button" onClick={() => { setPlay(false); setI((x) => Math.min(last, x + 1)); }} disabled={i >= last} style={{ opacity: i >= last ? 0.5 : 1 }}>{t.step}</button>
-            <button type="button" onClick={toggle} className={playing ? "on" : undefined} aria-pressed={playing}>{playing ? t.pause : t.play}</button>
-            <button type="button" onClick={() => { setPlay(false); setI(0); }}>{t.reset}</button>
-          </div>
+          <CodeView lines={CODE} active={p.lines} label="Python" />
         </>
       }
     >
+      <PlayerBar p={pl} count={steps.length} locale={locale} />
+      <Cells values={chars.map((c) => (c === " " ? "␣" : c))} tones={tones} label={s}
+        span={p.right >= p.left ? [p.left, p.right] : null}
+        pointers={[{ name: "L", at: p.left, color: "var(--accent)" }, { name: "R", at: p.right, color: "oklch(0.72 0.15 250)" }]} />
+      <p className="mo-msg" aria-live="polite">{t.msg(p, bestStr)}</p>
       <div className="lab-stats">
         <Stat label={t.window} value={win ? `"${win}"` : t.empty} sub={`${t.len} ${win.length}`} tone={conflict ? "bad" : undefined} />
-        <Stat label={t.best} value={p.best} sub={`"${bestStr}"`} tone="good" />
-        <Stat label={t.moves} value={`${rMoves + p.lMoves} / ≤ ${2 * n}`} sub={`right ${rMoves}/${n} · left ${p.lMoves}`} />
+        <Stat label={t.best} value={<Ticker value={p.best} />} sub={`"${bestStr}"`} tone="good" />
+        <Stat label={t.moves} value={<><Ticker value={rMoves + p.lMoves} /> / ≤ {2 * n}</>} sub={`right ${rMoves}/${n} · left ${p.lMoves}`} />
       </div>
-      <p aria-live="polite" style={{ margin: 0, minHeight: "3em", fontSize: 14.5, lineHeight: 1.5 }}>
-        <span style={{ color: "var(--muted)", fontFamily: "ui-monospace, Menlo, monospace" }}>{t.step} {Math.min(i, last)}/{last} · </span>{t.msg(p, bestStr)}
-      </p>
-      <ol aria-label={s} style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: "8px 4px" }}>
-        {chars.map((c, k) => {
-          const inWin = k >= p.left && k <= p.right, hot = conflict && inWin && c === p.ch;
-          const color = hot ? "var(--bad)" : inWin ? "var(--accent)" : k < p.left ? "var(--border)" : "var(--border-2)";
-          return (
-            <li key={k} style={{ display: "grid", justifyItems: "center", gap: 3, opacity: k < p.left ? 0.5 : 1 }}>
-              <span style={{ fontSize: 10.5, color: "var(--muted)" }}>{k}</span>
-              <span style={{ ...cell, border: `1.5px solid ${color}`, background: hot ? tint("var(--bad)", 14) : inWin ? tint("var(--accent)", 16) : "transparent", color: k > p.right ? "var(--text-2)" : "var(--text)" }}>{c === " " ? "␣" : c}</span>
-              <span style={{ height: 14, font: "700 11px ui-monospace, Menlo, monospace", color: "var(--accent)" }}>{k === p.left ? "L" : ""}{k === p.right ? "R" : ""}</span>
-            </li>
-          );
-        })}
-      </ol>
       <div style={{ display: "grid", gap: 6 }}>
         <span style={{ fontSize: 12.5, color: "var(--muted)" }}>{t.count}</span>
-        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: 6, minHeight: 28 }}>
+        <ul className="sw-counts">
           {p.counts.map(([k, v]) => (
-            <li key={k} style={{ padding: "3px 8px", borderRadius: 8, font: "650 13px ui-monospace, Menlo, monospace", border: `1px solid ${v > 1 ? "var(--bad)" : "var(--border-2)"}`, color: v > 1 ? "var(--bad)" : v === 0 ? "var(--muted)" : "var(--text)" }}>{k === " " ? "␣" : k}: {v}</li>
+            <li key={k} className={v > 1 ? "bad" : v === 0 ? "zero" : undefined}>{k === " " ? "␣" : k}: {v}</li>
           ))}
         </ul>
       </div>
-      <pre style={{ margin: 0, padding: "10px 0", borderRadius: 10, background: "var(--bg-2)", border: "1px solid var(--border)", font: "13px ui-monospace, Menlo, monospace", overflowX: "auto" }}>
-        {CODE.map((line, k) => (
-          <span key={k} style={{ display: "block", padding: "1px 12px", color: p.lines.includes(k) ? "var(--text)" : "var(--muted)", background: p.lines.includes(k) ? tint("var(--accent)", 18) : undefined }}>{line}</span>
-        ))}
-      </pre>
       <p className="lab-formula">{t.formula}</p>
       <Insight>{t.insight(n)}</Insight>
       <p className="lab-note">{t.note}</p>

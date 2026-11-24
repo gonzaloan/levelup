@@ -302,3 +302,31 @@ test("offline: visited pages keep working, and Save for offline brings the rest"
   await expect(page.locator(".next-step")).toBeVisible();
   await context.setOffline(false);
 });
+
+test("loops lab: each step adds one square, and the finished shape has exactly the counted steps", async ({ page }) => {
+  await page.goto("/en/labs/loops/");
+  await page.getByRole("button", { name: "Nested loops" }).click();
+  const squares = page.locator(".mo-grid span.on");
+  await expect(squares).toHaveCount(0);
+  for (let k = 0; k < 5; k++) await page.getByRole("button", { name: "Step", exact: true }).click();
+  // The first snapshot is the setup line, so 5 steps forward = 4 counted operations.
+  await expect(squares).toHaveCount(4);
+  await expect(page.locator(".mo-ptr")).toHaveCount(2);
+  // Scrub to the end: n(n−1)/2 squares for the default n = 8.
+  const scrub = page.getByRole("slider", { name: "Step" });
+  await scrub.fill(await scrub.getAttribute("max") ?? "0");
+  await expect(squares).toHaveCount(28);
+  await expect(page.locator(".lab-stat").nth(1).locator(".st-value")).toHaveText("28");
+});
+
+test("reduced motion: labs open on the finished picture and a race ends at once", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/en/labs/loops/");
+  await page.getByRole("button", { name: "Merge levels" }).click();
+  // n = 8 → 3 levels × 8 writes, shown immediately, no autoplay.
+  await expect(page.locator(".mo-grid span.on")).toHaveCount(24);
+  await page.goto("/en/labs/big-o/");
+  await page.getByRole("button", { name: /Race them/ }).click();
+  await expect(page.locator(".race-clock strong")).toHaveText("30 years");
+  await expect(page.locator(".race-lane.done")).not.toHaveCount(0);
+});

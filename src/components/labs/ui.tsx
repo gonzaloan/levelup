@@ -90,7 +90,8 @@ export function Stat({ label, value, sub, tone }: { label: string; value: ReactN
   return (
     <div className={`lab-stat${tone ? ` ${tone}` : ""}`}>
       <span className="st-label">{label}</span>
-      <strong className="st-value">{value}</strong>
+      {/* Keyed by its text, so a new value re-mounts and plays the CSS "pop". */}
+      <strong key={typeof value === "string" || typeof value === "number" ? String(value) : undefined} className="st-value">{value}</strong>
       {sub && <span className="st-sub">{sub}</span>}
     </div>
   );
