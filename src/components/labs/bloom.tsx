@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
 import { hashString } from "@/lib/practice/rng";
-import { Insight, LabGrid, LogRange, Plot, Range, Seg, Stat, fmtBytes, fmtNum, type PlotLabel } from "./ui";
+import { Insight, LabGrid, LabMore, LogRange, Plot, Range, Seg, Stat, fmtBytes, fmtNum, type PlotLabel } from "./ui";
 import { PlayerBar, Ticker, usePlayer, useReducedMotion, type Player } from "./motion";
 import css from "./bloom.module.css";
 
@@ -181,9 +181,11 @@ export default function BloomLab({ locale }: { locale: Locale }) {
         </Plot>
         <p className="lab-note">{t.axis}</p>
       </div>
-      <p className="lab-formula">{t.formula}</p>
-      <Insight>{t.insight(pc(fpN), bpk.toFixed(1), k, fmtNum(n), fmtBytes(m / 8), fmtBytes(n * EXACT_B)) + (f > 1 ? t.over(`${fillPct}%`, pc(fpNow)) : t.under(pc(fp2)))}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <Insight>{t.insight(pc(fpN), bpk.toFixed(1), k, fmtNum(n), fmtBytes(m / 8), fmtBytes(n * EXACT_B))}</Insight>
+      <LabMore locale={locale} formula={t.formula}>
+        <p className="lab-note">{(f > 1 ? t.over(`${fillPct}%`, pc(fpNow)) : t.under(pc(fp2))).trim()}</p>
+        <p className="lab-note">{t.note}</p>
+      </LabMore>
     </LabGrid>
   );
 }

@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Locale } from "@/lib/types";
 import { mulberry32 } from "@/lib/practice/rng";
-import { Insight, LabGrid, LogRange, Plot, Range, Stat, fmtNum, fmtTime, type PlotLabel } from "./ui";
+import { Insight, LabGrid, LabMore, LogRange, Plot, Range, Stat, fmtNum, fmtTime, type PlotLabel } from "./ui";
 import { Ticker, useReducedMotion } from "./motion";
 import css from "./queueing.module.css";
 
@@ -126,10 +126,10 @@ export default function QueueingLab({ locale }: { locale: Locale }) {
 
   const mx = g.x(Math.min(rho, 1)), my = g.y(Math.min(w, g.ymax));
   const simW = measured && measured.n >= 30 ? measured.meanS * s : null;
-  const tail = c > 1 ? t.pool(c) : "";
   const insight = rho >= 1
     ? t.over(pct(rho), need)
-    : t.insight(pct(rho), times(w / s), ms(w), times(wRatio(c, 0.9)), times(wRatio(c, 0.99))) + (ratio > 1 ? t.allows(pct(rMax), fmtNum(rMax * cap)) : "") + tail;
+    : t.insight(pct(rho), times(w / s), ms(w), times(wRatio(c, 0.9)), times(wRatio(c, 0.99)));
+  const more = ((rho < 1 && ratio > 1 ? t.allows(pct(rMax), fmtNum(rMax * cap)) : "") + (c > 1 ? t.pool(c) : "")).trim();
   // Infinity cannot be tweened: show ∞ as text, and a fresh Ticker counts again once it is finite.
   const tick = (v: number, f: (x: number) => string) => (Number.isFinite(v) ? <Ticker value={v} format={f} /> : "∞");
 
@@ -170,9 +170,12 @@ export default function QueueingLab({ locale }: { locale: Locale }) {
         </Plot>
         <p className="lab-note"><Sw c="var(--accent)" />{t.shared(c)}{c > 1 && <> · <Sw c="var(--muted)" dash="dotted" />{t.split(c)}</>} · <Sw c="var(--bad)" dash="dashed" />{t.bShort}{ratio > 1 && <> · <i aria-hidden style={{ display: "inline-block", width: 10, height: 10, borderRadius: 2, background: "color-mix(in srgb, var(--bad) 18%, transparent)", margin: "0 5px -1px 0" }} />{t.zone}</>}{simW !== null && <> · <i aria-hidden className={css.ringKey} />{t.ring}</>} · {t.axis}</p>
       </div>
-      <p className="lab-formula">{t.formula}</p>
       <Insight>{insight}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <LabMore locale={locale} formula={t.formula}>
+        {more && <p className="lab-note">{more}</p>}
+        <p className="lab-note">{t.simNote(`${Number(secPerS(c).toFixed(1))} s`)}</p>
+        <p className="lab-note">{t.note}</p>
+      </LabMore>
     </LabGrid>
   );
 }
@@ -390,7 +393,6 @@ function LiveQueue({ c, rho, s, budget, w, t, onMeasure }: { c: number; rho: num
   const stepOnce = () => { const sm = sim.current!; advance(sm, sm.t + 1, (x) => x * s <= budget, g); move(sm, 0, g, true); draw(); };
 
   const pct0 = (x: number) => `${Math.round(x * 100)}%`;
-  const sec = `${Number(secPerS(c).toFixed(1))} s`;
   const zone = (a: number, b: number) => ({ left: `${a}px`, width: `${b - a}px` });
   return (
     <figure className={css.sim} ref={root} aria-label={t.live}>
@@ -447,7 +449,6 @@ function LiveQueue({ c, rho, s, budget, w, t, onMeasure }: { c: number; rho: num
           <em className={css.vs}>{t.count(v?.n ?? 0)}</em>
         </span>
       </div>
-      <p className="lab-note">{t.simNote(sec)}</p>
     </figure>
   );
 }

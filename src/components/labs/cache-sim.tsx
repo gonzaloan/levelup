@@ -7,7 +7,7 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
 import { mulberry32 } from "@/lib/practice/rng";
-import { Bar, Insight, LabGrid, LogRange, Plot, Range, Seg, Stat, fmtNum, fmtTime, type PlotLabel } from "./ui";
+import { Bar, Insight, LabGrid, LabMore, LogRange, Plot, Range, Seg, Stat, fmtNum, fmtTime, type PlotLabel } from "./ui";
 import { PlayerBar, Ticker, usePlayer, useReducedMotion, type Player } from "./motion";
 import css from "./cache-sim.module.css";
 
@@ -75,7 +75,8 @@ const T = {
     skewed: (s: string) => `skewed, s = ${s}`, uniform: "uniform (s = 0)", axis: "x: cache size (keys, log) · y: hit ratio",
     split: "Where the average latency comes from", fromHits: "hits × cache", fromMisses: "misses × origin",
     formula: (h: string, m: string, c: string, o: string, a: string) => `avg = hit × cache + miss × origin = ${h} × ${c} + ${m} × ${o} = ${a} · origin load = requests × (1 − hit)`,
-    insight: (share: string, hit: string, uni: string, l90: string, l99: string) => `A cache holding ${share} of the keys serves ${hit} of the reads; with uniform traffic the same cache would serve ${uni}. Skew is what lets a small cache work. Past 90% every point counts: 90% → 99% hits cuts origin traffic 10×${l90 === l99 ? "" : ` and the average latency from ${l90} to ${l99}`}.`,
+    insight: (share: string, hit: string, uni: string) => `A cache holding ${share} of the keys serves ${hit} of the reads; with uniform traffic the same cache would serve ${uni}. Skew is what lets a small cache work.`,
+    past: (l90: string, l99: string) => `Past 90% every point counts: 90% → 99% hits cuts origin traffic 10×${l90 === l99 ? "" : ` and the average latency from ${l90} to ${l99}`}.`,
     ttlCost: (h: string) => ` The TTL costs you here: without it the hit ratio would be ${h}, because rarely read keys expire before their next read.`,
     note: "Simulated in your browser: 200,000 seeded requests at an assumed 1,000/s (200 s); the first 100,000 warm the cache and the hit ratio is measured on the rest. LRU eviction; a TTL counts from the miss that filled the key (cache-aside), hits don't extend it, and an expired copy keeps its slot until evicted. A key's first request is always a miss, so with a huge catalog even an infinite cache stays below 100%. Formulas from the caching and CDN concepts.",
     stream: "Request stream through an LRU cache", app: "App", cache: "Cache (LRU)", mru: "newest", lru: "oldest",
@@ -95,7 +96,8 @@ const T = {
     skewed: (s: string) => `sesgado, s = ${s}`, uniform: "uniforme (s = 0)", axis: "x: tamaño de la caché (claves, log) · y: hit ratio",
     split: "De dónde sale la latencia promedio", fromHits: "hits × caché", fromMisses: "misses × origen",
     formula: (h: string, m: string, c: string, o: string, a: string) => `promedio = hit × caché + miss × origen = ${h} × ${c} + ${m} × ${o} = ${a} · carga del origen = requests × (1 − hit)`,
-    insight: (share: string, hit: string, uni: string, l90: string, l99: string) => `Una caché con ${share} de las claves atiende ${hit} de las lecturas; con tráfico uniforme, la misma caché atendería ${uni}. El sesgo es lo que hace funcionar una caché chica. Pasado el 90%, cada punto cuenta: de 90% a 99% de hits, el tráfico al origen baja 10×${l90 === l99 ? "" : ` y la latencia promedio pasa de ${l90} a ${l99}`}.`,
+    insight: (share: string, hit: string, uni: string) => `Una caché con ${share} de las claves atiende ${hit} de las lecturas; con tráfico uniforme, la misma caché atendería ${uni}. El sesgo es lo que hace funcionar una caché chica.`,
+    past: (l90: string, l99: string) => `Pasado el 90%, cada punto cuenta: de 90% a 99% de hits, el tráfico al origen baja 10×${l90 === l99 ? "" : ` y la latencia promedio pasa de ${l90} a ${l99}`}.`,
     ttlCost: (h: string) => ` Aquí el TTL te cuesta: sin él, el hit ratio sería ${h}, porque las claves que se leen poco expiran antes de su siguiente lectura.`,
     note: "Simulado en tu navegador: 200.000 requests con semilla a una tasa supuesta de 1.000/s (200 s); las primeras 100.000 calientan la caché y el hit ratio se mide sobre el resto. Desalojo LRU; el TTL corre desde el miss que llenó la clave (cache-aside), los hits no lo extienden y una copia expirada conserva su lugar hasta que se desaloja. La primera request de cada clave siempre es miss, así que con un catálogo enorme ni una caché infinita llega al 100%. Fórmulas de los conceptos de caching y CDN.",
     stream: "Flujo de requests por una caché LRU", app: "App", cache: "Caché (LRU)", mru: "reciente", lru: "antigua",
@@ -182,9 +184,12 @@ export default function CacheSimLab({ locale }: { locale: Locale }) {
         <Bar label={t.fromHits} value={m.hit * cacheMs} max={avg} text={ms(m.hit * cacheMs)} tone="good" />
         <Bar label={t.fromMisses} value={miss * originMs} max={avg} text={ms(miss * originMs)} tone="bad" />
       </div>
-      <p className="lab-formula">{t.formula(m.hit.toFixed(3), miss.toFixed(3), ms(cacheMs), ms(originMs), ms(avg))}</p>
-      <Insight>{t.insight(pct(c / dk), pct(m.hit), pct(m.uni), at(0.9), at(0.99)) + (ttlS && m.noTtl - m.hit > 0.02 ? t.ttlCost(pct(m.noTtl)) : "")}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <Insight>{t.insight(pct(c / dk), pct(m.hit), pct(m.uni)) + (ttlS && m.noTtl - m.hit > 0.02 ? t.ttlCost(pct(m.noTtl)) : "")}</Insight>
+      <LabMore locale={locale} formula={t.formula(m.hit.toFixed(3), miss.toFixed(3), ms(cacheMs), ms(originMs), ms(avg))}>
+        <p className="lab-note">{t.past(at(0.9), at(0.99))}</p>
+        <p className="lab-note">{t.toyNote(fmtNum(toyK))}</p>
+        <p className="lab-note">{t.note}</p>
+      </LabMore>
     </LabGrid>
   );
 }
@@ -309,7 +314,6 @@ function CacheStream({ k, skew, hit, originMs, cacheMs, locale }: { k: number; s
         <span className={css.chipStat}><small>{t.toyHit}</small><b>{cur.n ? <Ticker value={cur.hits / cur.n} format={pct} /> : "—"}</b><em>{t.toyHitSub(cur.hits, cur.n)}</em></span>
         <span className={css.chipStat}><small>{t.simHit}</small><b>{pct(hit)}</b><em>{t.simHitSub}</em></span>
       </div>
-      <p className="lab-note">{t.toyNote(fmtNum(k))}</p>
     </figure>
   );
 }

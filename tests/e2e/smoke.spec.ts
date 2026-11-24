@@ -56,6 +56,23 @@ test("theme toggle switches the diagram variant", async ({ page }) => {
   await expect(page.locator(after === "light" ? ".dg-light svg" : ".dg-dark svg")).toBeVisible();
 });
 
+test("diagram walkthrough lights one step at a time, in flow order", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" }); // manual stepping only: deterministic
+  await page.goto("/en/c/reranking/");
+  await page.getByRole("button", { name: "Walk through" }).click();
+  const theme = await page.evaluate(() => document.documentElement.dataset.theme);
+  const lit = page.locator(`.dg-${theme} svg .node.wk-on`);
+  await expect(lit).toHaveCount(1);
+  await expect(page.locator(".wk-cap")).toContainText("User query");
+  await expect(page.getByRole("button", { name: "Play" })).toHaveCount(0);
+  for (let k = 0; k < 2; k++) await page.getByRole("button", { name: "Next step" }).click();
+  // Both inputs come before the step that needs them; the edges that led there light up too.
+  await expect(page.locator(".wk-cap")).toContainText("Hybrid retrieval");
+  await expect(page.locator(`.dg-${theme} svg path.wk-on`)).toHaveCount(2);
+  await page.getByRole("button", { name: "Exit walkthrough" }).click();
+  await expect(page.locator(`.dg-${theme} svg .wk-on`)).toHaveCount(0);
+});
+
 test("language switch keeps the page", async ({ page }) => {
   await page.goto("/es/c/reranking/");
   await page.locator("a.lang").click();
@@ -215,7 +232,8 @@ test("phones get a bottom tab bar with names, and the rest under More", async ({
   }
   await expect(page.locator(".main-nav")).toBeHidden();
   const tabs = page.locator(".tabbar .tab");
-  await expect(tabs).toHaveCount(5);
+  // Path, Practice, Gym, Labs, Interview + More.
+  await expect(tabs).toHaveCount(6);
   for (const tab of await tabs.all()) await expect(tab.locator("span")).not.toBeEmpty();
   await page.locator(".tabbar a.tab", { hasText: "Practice" }).click();
   await expect(page).toHaveURL(/\/en\/practice\/$/);

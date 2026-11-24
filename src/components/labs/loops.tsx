@@ -5,7 +5,7 @@
 // and lands on its curve. Runs are precomputed as snapshots; the player only moves an index.
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
-import { Insight, LabGrid, Plot, Range, Seg, Stat } from "./ui";
+import { Insight, LabGrid, LabMore, Plot, Range, Seg, Stat } from "./ui";
 import { Cells, CodeView, PlayerBar, Ticker, usePlayer, useReducedMotion, type CellTone, type Pointer } from "./motion";
 
 type Alg = "linear" | "pairs" | "halving" | "twoptr" | "merge";
@@ -188,9 +188,11 @@ export default function LoopsLab({ locale }: { locale: Locale }) {
         </>
       }
     >
-      <PlayerBar p={p} count={run.snaps.length} locale={locale} />
-      <Cells values={snap.vals} tones={snap.tones} pointers={snap.ptr} label={snap.msg[locale === "es" ? 1 : 0]} />
-      <p className="mo-msg" aria-live="polite">{snap.msg[locale === "es" ? 1 : 0]}</p>
+      <div className="lab-hero">
+        <PlayerBar p={p} count={run.snaps.length} locale={locale} />
+        <Cells values={snap.vals} tones={snap.tones} pointers={snap.ptr} label={snap.msg[locale === "es" ? 1 : 0]} />
+        <p className="mo-msg" aria-live="polite">{snap.msg[locale === "es" ? 1 : 0]}</p>
+      </div>
       <div className="lab-stats">
         <Stat label={t.steps} value={<Ticker value={snap.ops} />} sub={BIG[alg]} />
         <Stat label={t.end} value={COUNT[alg](n)} sub={`n = ${n}`} tone={p.done ? "good" : undefined} />
@@ -198,7 +200,7 @@ export default function LoopsLab({ locale }: { locale: Locale }) {
       <Work run={run} upto={snap.ops} label={t.work} caption={t.shape[run.shape]} />
       <Growth alg={alg} n={n} ops={snap.ops} dots={dots} label={t.chart} />
       <Insight>{t.insight(alg, n)}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <LabMore locale={locale}><p className="lab-note">{t.note}</p></LabMore>
     </LabGrid>
   );
 }

@@ -4,7 +4,7 @@
 // labelled assumption at the low end of the concept's "some hundreds of millions".
 import { useMemo, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
-import { Insight, LabGrid, LogRange, Seg, Stat, YEAR_S, fmtDuration, fmtNum, fmtTime } from "./ui";
+import { Insight, LabGrid, LabMore, LogRange, Seg, Stat, YEAR_S, fmtDuration, fmtNum, fmtTime } from "./ui";
 import { useSweep } from "./motion";
 
 const LG_OPS = 8; // log10 of the assumed 10⁸ simple operations per second
@@ -81,11 +81,6 @@ export default function BigOLab({ locale }: { locale: Locale }) {
         </>
       }
     >
-      <div className="lab-stats" aria-live="polite">
-        <Stat label={t.cph} value={rule} sub={alt ? `${t.or} ${alt}` : undefined} />
-        <Stat label={t.logn} value={`≈ ${Math.round(Math.log2(n))}`} sub={t.cheap} />
-        <Stat label={t.fits} value={fit.label} sub={`${fit.time} ${t.at}`} tone="good" />
-      </div>
       <div>
         <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 10 }}>
           {rows.map((r) => (
@@ -109,10 +104,14 @@ export default function BigOLab({ locale }: { locale: Locale }) {
           ))}
         </div>
       </div>
+      <div className="lab-stats" aria-live="polite">
+        <Stat label={t.cph} value={rule} sub={alt ? `${t.or} ${alt}` : undefined} />
+        <Stat label={t.logn} value={`≈ ${Math.round(Math.log2(n))}`} sub={t.cheap} />
+        <Stat label={t.fits} value={fit.label} sub={`${fit.time} ${t.at}`} tone="good" />
+      </div>
       <Race rows={rows} n={n} locale={locale} t={t} />
-      <p className="lab-formula">{t.formula}</p>
       <Insight>{t.insight(fmtNum(n), fit.label, over?.label, over?.time)}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <LabMore locale={locale} formula={t.formula}><p className="lab-note">{t.note}</p></LabMore>
     </LabGrid>
   );
 }

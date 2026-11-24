@@ -3,6 +3,7 @@
 // the right", so a learner can change one thing and watch what moves. No chart library: plain
 // elements and inline SVG, themed by the same tokens as the rest of the site.
 import type { ReactNode } from "react";
+import type { Locale } from "@/lib/types";
 
 /* ------------------------------------------------------------------ formatting */
 const UNITS = [[1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "k"]] as const;
@@ -120,6 +121,21 @@ export function LabGrid({ controls, children }: { controls: ReactNode; children:
 
 /** The takeaway under a lab: one or two sentences, the thing to remember in an interview. */
 export const Insight = ({ children }: { children: ReactNode }) => <p className="lab-insight">{children}</p>;
+
+const MORE = { en: "How it's calculated · assumptions", es: "Cómo se calcula · supuestos" };
+/** Folded under the picture: the formula, the model's assumptions and the sources. The lab shows
+ *  the mechanism; the fine print is one tap away. Children are paragraphs (`lab-note`). */
+export function LabMore({ locale, formula, children }: { locale: Locale; formula?: ReactNode; children?: ReactNode }) {
+  return (
+    <details className="lab-more">
+      <summary><span className="lm-i" aria-hidden>i</span>{MORE[locale]}</summary>
+      <div className="lm-body">
+        {formula && <p className="lab-formula">{formula}</p>}
+        {children}
+      </div>
+    </details>
+  );
+}
 
 /* ------------------------------------------------------------------ charts */
 export type PlotLabel = { x: number; y: number; text: ReactNode; anchor?: "start" | "middle" | "end"; dy?: number; color?: string };

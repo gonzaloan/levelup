@@ -5,7 +5,7 @@
 // purpose, so every result is a ceiling, and the note says so.
 import { useState } from "react";
 import type { Locale } from "@/lib/types";
-import { Insight, LabGrid, Range, Seg, Stat, fmtBytes } from "./ui";
+import { Insight, LabGrid, LabMore, Range, Seg, Stat, fmtBytes } from "./ui";
 
 const UTIL = 0.9; // vLLM's default gpu_memory_utilization
 const GB = 1e9;
@@ -89,6 +89,7 @@ export default function GpuMemoryLab({ locale }: { locale: Locale }) {
         </>
       }
     >
+      <MemBar weights={weights} kv={kv} usable={usable} hbm={hbm} fits={fits} t={t} />
       <div className="lab-stats" aria-live="polite">
         <Stat label={t.weights} value={fmtBytes(weights)} sub={`${m.params / GB}B × ${W_BYTES[wp]} B (${PREC[wp]})`} />
         <Stat label={t.kv} value={fmtBytes(kv)} sub={`${kvPerTok / 1024} KiB × ${ctxLabel(ctxExp)} × ${batch}`} />
@@ -97,14 +98,14 @@ export default function GpuMemoryLab({ locale }: { locale: Locale }) {
           sub={fits ? `${Math.round(((weights + kv) / usable) * 100)}% ${t.ofUsable}` : `${t.short} ${fmtBytes(weights + kv - usable)}`} />
         <Stat label={t.maxBatch} value={maxBatch} tone={maxBatch === 0 ? "bad" : undefined} sub={`${fmtBytes(perSeq)} ${t.perSeq}`} />
       </div>
-      <MemBar weights={weights} kv={kv} usable={usable} hbm={hbm} fits={fits} t={t} />
-      <p className="lab-formula">
+      <Insight>{free <= 0 ? t.noWeights : t.insight(fmtBytes(free), maxBatch, ctxLabel(ctxExp))}</Insight>
+      <LabMore locale={locale} formula={<>
         KV/token = 2 × {t.layers} × kv_heads × head_dim × {t.bytes} = 2 × {m.layers} × {m.kvHeads} × {m.headDim} × {KV_BYTES[kp]} B = {kvPerTok / 1024} KiB
         <br />
         {t.maxB} = ⌊({t.usable.toLowerCase()} − {t.weights.toLowerCase()}) ÷ (KV/token × {ctxLabel(ctxExp)})⌋ = {maxBatch}
-      </p>
-      <Insight>{free <= 0 ? t.noWeights : t.insight(fmtBytes(free), maxBatch, ctxLabel(ctxExp))}</Insight>
-      <p className="lab-note">{t.note}</p>
+      </>}>
+        <p className="lab-note">{t.note}</p>
+      </LabMore>
     </LabGrid>
   );
 }

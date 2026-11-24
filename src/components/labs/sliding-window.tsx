@@ -4,7 +4,7 @@
 // is precomputed as snapshots, one per pointer move, so Step / Play only move an index.
 import { useMemo, useState } from "react";
 import type { Locale } from "@/lib/types";
-import { Insight, LabGrid, Seg, Stat } from "./ui";
+import { Insight, LabGrid, LabMore, Seg, Stat } from "./ui";
 import { Cells, CodeView, PlayerBar, Ticker, usePlayer, type CellTone } from "./motion";
 
 const MAX = 24;
@@ -110,11 +110,13 @@ export default function SlidingWindowLab({ locale }: { locale: Locale }) {
         </>
       }
     >
-      <PlayerBar p={pl} count={steps.length} locale={locale} />
-      <Cells values={chars.map((c) => (c === " " ? "␣" : c))} tones={tones} label={s}
-        span={p.right >= p.left ? [p.left, p.right] : null}
-        pointers={[{ name: "L", at: p.left, color: "var(--accent)" }, { name: "R", at: p.right, color: "oklch(0.72 0.15 250)" }]} />
-      <p className="mo-msg" aria-live="polite">{t.msg(p, bestStr)}</p>
+      <div className="lab-hero">
+        <PlayerBar p={pl} count={steps.length} locale={locale} />
+        <Cells values={chars.map((c) => (c === " " ? "␣" : c))} tones={tones} label={s}
+          span={p.right >= p.left ? [p.left, p.right] : null}
+          pointers={[{ name: "L", at: p.left, color: "var(--accent)" }, { name: "R", at: p.right, color: "oklch(0.72 0.15 250)" }]} />
+        <p className="mo-msg" aria-live="polite">{t.msg(p, bestStr)}</p>
+      </div>
       <div className="lab-stats">
         <Stat label={t.window} value={win ? `"${win}"` : t.empty} sub={`${t.len} ${win.length}`} tone={conflict ? "bad" : undefined} />
         <Stat label={t.best} value={<Ticker value={p.best} />} sub={`"${bestStr}"`} tone="good" />
@@ -128,9 +130,8 @@ export default function SlidingWindowLab({ locale }: { locale: Locale }) {
           ))}
         </ul>
       </div>
-      <p className="lab-formula">{t.formula}</p>
       <Insight>{t.insight(n)}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <LabMore locale={locale} formula={t.formula}><p className="lab-note">{t.note}</p></LabMore>
     </LabGrid>
   );
 }

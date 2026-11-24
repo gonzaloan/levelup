@@ -83,6 +83,15 @@ export function DiagramWalk({ steps, kind, locale }: { steps: WalkStep[]; kind: 
     return () => q.removeEventListener("change", on);
   }, []);
 
+  // The flowing edges (CSS) pause while the diagram is off-screen: no repaints nobody sees.
+  useEffect(() => {
+    const box = bar.current?.closest(".zoomable");
+    if (!box || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => box.classList.toggle("dg-idle", !e.isIntersecting));
+    io.observe(box);
+    return () => io.disconnect();
+  }, []);
+
   // Paint every variant (dark and light), then bring the current step into view if the diagram
   // scrolls (wide diagrams on a phone, the full-screen view).
   useEffect(() => {

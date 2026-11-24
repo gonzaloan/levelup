@@ -50,7 +50,7 @@ const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Walk of a flowchart: every node once, in flow order. Each step lights the edges that join it
  *  to a node already visited (in either direction, so a loop's back edge lights up too). */
 export function flowWalk(g: WalkGraph, svg: string): WalkStep[] {
-  const order = flowOrder(g);
+  const order = flowOrder({ nodes: g.nodes, edges: [...g.edges, ...clusterEdges(g, svg)] });
   const label = new Map(g.nodes.map((n) => [n.id, n.label]));
   const edgeIds = [...new Set([...svg.matchAll(/data-id="(L_[^"]+)"/g)].map((m) => m[1]))];
   const idsOf = (from: string, to: string) => edgeIds.filter((d) => d.startsWith(`L_${from}_${to}_`) && /^\d+$/.test(d.slice(`L_${from}_${to}_`.length)));
@@ -70,6 +70,22 @@ export function flowWalk(g: WalkGraph, svg: string): WalkStep[] {
     }
     return { n: id, label: text, ...(via.length ? { via } : {}), ...(edge ? { edge } : {}) };
   });
+}
+
+/** A subgraph that edges point at ("G --> M") reaches its members only through the drawing: read
+ *  membership from the geometry (node centre inside the cluster box) and order the box first. */
+function clusterEdges(g: WalkGraph, svg: string): WalkGraph["edges"] {
+  const out: WalkGraph["edges"] = [];
+  for (const c of g.nodes) {
+    const box = svg.match(new RegExp(`<g class="cluster[^"]*" id="[^"]*-${esc(c.id)}"[^>]*><rect[^>]* x="([-\\d.]+)" y="([-\\d.]+)" width="([\\d.]+)" height="([\\d.]+)"`));
+    if (!box) continue;
+    const [x, y, w, h] = box.slice(1).map(Number);
+    for (const n of g.nodes) {
+      const at = svg.match(new RegExp(`id="[^"]*-flowchart-${esc(n.id)}-\\d+"[^>]*transform="translate\\(([-\\d.]+),\\s*([-\\d.]+)\\)"`));
+      if (at && +at[1] >= x && +at[1] <= x + w && +at[2] >= y && +at[2] <= y + h) out.push({ from: c.id, to: n.id });
+    }
+  }
+  return out;
 }
 
 /** Walk of a sequence diagram: its messages, top to bottom. */

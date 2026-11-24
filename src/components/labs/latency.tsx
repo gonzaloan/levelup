@@ -4,7 +4,7 @@
 // Values are Colin Scott's interactive model at 2020 (the last year on its slider); see the note.
 import { useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
-import { Insight, LabGrid, Seg, Stat, fmtDuration, fmtNum, fmtTime } from "./ui";
+import { Insight, LabGrid, LabMore, Seg, Stat, fmtDuration, fmtNum, fmtTime } from "./ui";
 import { useSweep } from "./motion";
 
 type Tier = "cpu" | "mem" | "disk" | "net";
@@ -42,7 +42,8 @@ const T = {
     memL1: "Memory ÷ L1", ssdMem: "SSD read ÷ memory", wanDc: "Cross-continent ÷ same DC",
     caption: (b: string, t: string) => `Log scale, one gridline per 10×. Ratios against: ${b} (${t}).`,
     formula: "latency ≈ Σ hops on the critical path · memory ≈ 100× L1 · SSD ≈ 100–1,000× memory · cross-continent ≈ 300× same-DC round trip",
-    insight: "Memory is ~100× L1, and leaving the machine is another world: one California ↔ Netherlands round trip costs as much as ~150 million L1 reads. Design around round trips: cache near the reader (a CDN), batch calls, keep the critical path inside one datacenter.",
+    insight: "Memory is ~100× L1, and leaving the machine is another world: one California ↔ Netherlands round trip costs as much as ~150 million L1 reads.",
+    advice: "Design around round trips: cache near the reader (a CDN), batch calls, keep the critical path inside one datacenter.",
     note: "Values: Colin Scott's interactive \"Latency Numbers Every Programmer Should Know\" model at year 2020, the last on its slider (checked Nov 2026). It extrapolates hardware trends from Norvig's ~2002 table, so read orders of magnitude, not benchmarks. The disk rows are the most extrapolated: the classic tables list ~8–10 ms per seek (Norvig, Jeff Dean) and ~20 ms to read 1 MB from disk (Norvig).",
   },
   es: {
@@ -52,7 +53,8 @@ const T = {
     memL1: "Memoria ÷ L1", ssdMem: "Lectura SSD ÷ memoria", wanDc: "Entre continentes ÷ mismo DC",
     caption: (b: string, t: string) => `Escala logarítmica, una línea por cada 10×. Comparado contra: ${b} (${t}).`,
     formula: "latencia ≈ Σ saltos en el camino crítico · memoria ≈ 100× L1 · SSD ≈ 100–1,000× memoria · entre continentes ≈ 300× un round trip en el mismo DC",
-    insight: "La memoria es ~100× más lenta que L1, y salir de la máquina es otro mundo: un round trip California ↔ Países Bajos cuesta lo mismo que ~150 millones de lecturas de L1. Diseña alrededor de los round trips: cachea cerca del lector (un CDN), agrupa llamadas y mantén el camino crítico dentro de un datacenter.",
+    insight: "La memoria es ~100× más lenta que L1, y salir de la máquina es otro mundo: un round trip California ↔ Países Bajos cuesta lo mismo que ~150 millones de lecturas de L1.",
+    advice: "Diseña alrededor de los round trips: cachea cerca del lector (un CDN), agrupa llamadas y mantén el camino crítico dentro de un datacenter.",
     note: "Valores: el modelo interactivo \"Latency Numbers Every Programmer Should Know\" de Colin Scott en el año 2020, el último de su slider (revisado en nov. 2026). Extrapola tendencias de hardware desde la tabla de Norvig de ~2002, así que lee órdenes de magnitud, no benchmarks. Las filas de disco son las más extrapoladas: las tablas clásicas dan ~8–10 ms por seek (Norvig, Jeff Dean) y ~20 ms para leer 1 MB de disco (Norvig).",
   },
 };
@@ -86,55 +88,59 @@ export default function LatencyLab({ locale }: { locale: Locale }) {
             </select>
             <small>{t.tap}</small>
           </label>
-          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: "6px 14px", fontSize: 13, color: "var(--text-2)" }}>
-            {(Object.keys(TIER) as Tier[]).map((k) => (
-              <li key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                <span aria-hidden style={{ width: 12, height: 8, borderRadius: 99, background: TIER[k] }} />{t.tiers[k]}
-              </li>
-            ))}
-          </ul>
         </>
       }
     >
+      <div className="lab-hero">
+        <div className="lat-feel">
+          <button type="button" className="btn btn-primary" onClick={sweep.start}>{clockNs === null ? t.feel : t.again} ▶</button>
+          {clockNs !== null && <span className="lat-clock"><small>{t.clock}</small> <strong>{show(clockNs)}</strong></span>}
+        </div>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: "6px 14px", fontSize: 12.5, color: "var(--text-2)" }}>
+          {(Object.keys(TIER) as Tier[]).map((k) => (
+            <li key={k} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+              <span aria-hidden style={{ width: 12, height: 8, borderRadius: 99, background: TIER[k] }} />{t.tiers[k]}
+            </li>
+          ))}
+        </ul>
+        <div>
+          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 2 }}>
+            {OPS.map((o) => {
+              const on = o.id === base;
+              return (
+                <li key={o.id}>
+                  <button type="button" aria-pressed={on} onClick={() => setBase(o.id)}
+                    style={{ display: "grid", gap: 5, width: "100%", padding: "6px 8px", borderRadius: 10, textAlign: "left", cursor: "pointer", font: "inherit", color: "inherit", border: `1px solid ${on ? "var(--accent)" : "transparent"}`, background: on ? "var(--bg-2)" : "transparent" }}>
+                    <span style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13.5 }}>
+                      <span style={{ color: "var(--text-2)" }}>{o[locale]}</span>
+                      <span style={mono}>~{show(o.ns)} <span style={{ color: on ? "var(--accent)" : "var(--muted)" }}>{on ? "=" : ratio(o.ns)}</span></span>
+                    </span>
+                    <span className={`lb-track${clockNs !== null ? " lat-live" : ""}${clockNs !== null && clockNs >= o.ns ? " lat-done" : ""}`} style={{ display: "block", background: GRID, ["--tc" as string]: TIER[o.tier] } as CSSProperties}>
+                      <span style={{ width: `${clockNs === null ? pct(o.ns) : pct(Math.min(clockNs, o.ns))}%`, background: TIER[o.tier] }} />
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <div aria-hidden style={{ position: "relative", height: 18, margin: "4px 9px 0", fontSize: 11.5, color: "var(--muted)" }}>
+            {TICKS.map((ns, i) => (
+              <span key={ns} style={{ position: "absolute", left: `${pct(ns)}%`, transform: i === TICKS.length - 1 ? "translateX(-100%)" : "translateX(-50%)", whiteSpace: "nowrap" }}>{show(ns)}</span>
+            ))}
+          </div>
+        </div>
+        <p className="lab-note" aria-live="polite">{t.caption(b[locale], show(b.ns))}</p>
+      </div>
       <div className="lab-stats">
         <Stat label={t.memL1} value={times("mem", "l1")} sub={vs("mem", "l1")} />
         <Stat label={t.ssdMem} value={times("ssd", "mem")} sub={vs("ssd", "mem")} />
         <Stat label={t.wanDc} value={times("wan", "dc")} sub={vs("wan", "dc")} />
       </div>
-      <div className="lat-feel">
-        <button type="button" className="btn btn-primary" onClick={sweep.start}>{clockNs === null ? t.feel : t.again} ▶</button>
-        {clockNs !== null && <span className="lat-clock"><small>{t.clock}</small> <strong>{show(clockNs)}</strong></span>}
-      </div>
-      <p className="lab-note" aria-live="polite">{t.caption(b[locale], show(b.ns))}</p>
-      <div>
-        <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "grid", gap: 2 }}>
-          {OPS.map((o) => {
-            const on = o.id === base;
-            return (
-              <li key={o.id}>
-                <button type="button" aria-pressed={on} onClick={() => setBase(o.id)}
-                  style={{ display: "grid", gap: 5, width: "100%", padding: "6px 8px", borderRadius: 10, textAlign: "left", cursor: "pointer", font: "inherit", color: "inherit", border: `1px solid ${on ? "var(--accent)" : "transparent"}`, background: on ? "var(--bg-2)" : "transparent" }}>
-                  <span style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 13.5 }}>
-                    <span style={{ color: "var(--text-2)" }}>{o[locale]}</span>
-                    <span style={mono}>~{show(o.ns)} <span style={{ color: on ? "var(--accent)" : "var(--muted)" }}>{on ? "=" : ratio(o.ns)}</span></span>
-                  </span>
-                  <span className={`lb-track${clockNs !== null ? " lat-live" : ""}${clockNs !== null && clockNs >= o.ns ? " lat-done" : ""}`} style={{ display: "block", background: GRID, ["--tc" as string]: TIER[o.tier] } as CSSProperties}>
-                    <span style={{ width: `${clockNs === null ? pct(o.ns) : pct(Math.min(clockNs, o.ns))}%`, background: TIER[o.tier] }} />
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        <div aria-hidden style={{ position: "relative", height: 18, margin: "4px 9px 0", fontSize: 11.5, color: "var(--muted)" }}>
-          {TICKS.map((ns, i) => (
-            <span key={ns} style={{ position: "absolute", left: `${pct(ns)}%`, transform: i === TICKS.length - 1 ? "translateX(-100%)" : "translateX(-50%)", whiteSpace: "nowrap" }}>{show(ns)}</span>
-          ))}
-        </div>
-      </div>
-      <p className="lab-formula">{t.formula}</p>
       <Insight>{t.insight}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <LabMore locale={locale} formula={t.formula}>
+        <p className="lab-note">{t.advice}</p>
+        <p className="lab-note">{t.note}</p>
+      </LabMore>
     </LabGrid>
   );
 }

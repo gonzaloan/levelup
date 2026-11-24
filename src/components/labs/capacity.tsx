@@ -4,7 +4,7 @@
 // labelled assumptions, not real company numbers.
 import { useState } from "react";
 import type { Locale } from "@/lib/types";
-import { Bar, Insight, LabGrid, LogRange, Range, Seg, Stat, fmtBytes, fmtNum } from "./ui";
+import { Bar, Insight, LabGrid, LabMore, LogRange, Range, Seg, Stat, fmtBytes, fmtNum } from "./ui";
 
 const DAY = 86_400;
 
@@ -69,21 +69,22 @@ export default function CapacityLab({ locale }: { locale: Locale }) {
           </>
         }
       >
-        <div className="lab-stats">
-          <Stat label={t.wqps} value={fmtNum(wqps)} sub={`${t.peakL}: ${fmtNum(wqps * peak)}`} />
-          <Stat label={t.rqps} value={fmtNum(rqps)} sub={`${t.peakL}: ${fmtNum(rqps * peak)}`} />
-          <Stat label={t.perDay} value={fmtBytes(perDay)} />
-          <Stat label={t.total} value={fmtBytes(total * repl)} sub={`${fmtBytes(total)} × ${repl} ${t.withRepl}`} />
-          <Stat label={t.bwIn} value={`${fmtBytes(wqps * s.size)}/s`} />
-          <Stat label={t.bwOut} value={`${fmtBytes(rqps * s.size)}/s`} />
+        <div className="lab-hero">
+          <div className="lab-stats">
+            <Stat label={t.wqps} value={fmtNum(wqps)} sub={`${t.peakL}: ${fmtNum(wqps * peak)}`} />
+            <Stat label={t.rqps} value={fmtNum(rqps)} sub={`${t.peakL}: ${fmtNum(rqps * peak)}`} />
+            <Stat label={t.perDay} value={fmtBytes(perDay)} />
+            <Stat label={t.total} value={fmtBytes(total * repl)} sub={`${fmtBytes(total)} × ${repl} ${t.withRepl}`} />
+            <Stat label={t.bwIn} value={`${fmtBytes(wqps * s.size)}/s`} />
+            <Stat label={t.bwOut} value={`${fmtBytes(rqps * s.size)}/s`} />
+          </div>
+          <div className="lab-bars">
+            <Bar label={`${t.wqps} · ${t.peakL}`} value={wqps * peak} max={maxQps} />
+            <Bar label={`${t.rqps} · ${t.peakL}`} value={rqps * peak} max={maxQps} />
+          </div>
         </div>
-        <div className="lab-bars">
-          <Bar label={`${t.wqps} · ${t.peakL}`} value={wqps * peak} max={maxQps} />
-          <Bar label={`${t.rqps} · ${t.peakL}`} value={rqps * peak} max={maxQps} />
-        </div>
-        <p className="lab-formula">{t.formula}</p>
         <Insight>{t.insight(fmtNum(wqps), fmtNum(rqps))}</Insight>
-        <p className="lab-note">{t.note}</p>
+        <LabMore locale={locale} formula={t.formula}><p className="lab-note">{t.note}</p></LabMore>
       </LabGrid>
     </>
   );

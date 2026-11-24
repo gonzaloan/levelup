@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import type { Locale } from "@/lib/types";
 import { mulberry32 } from "@/lib/practice/rng";
-import { Insight, LabGrid, Range, Seg, Stat } from "./ui";
+import { Insight, LabGrid, LabMore, Range, Seg, Stat } from "./ui";
 
 // Illustrative logits, sorted from most to least likely, so index 0 is always the argmax and
 // every truncation step can walk the tokens in index order.
@@ -116,34 +116,36 @@ export default function SamplingLab({ locale }: { locale: Locale }) {
         </>
       }
     >
+      <div className="lab-hero">
+        <p className="lab-note" style={{ font: "14px ui-monospace, Menlo, monospace", color: "var(--text)" }}>{t.prompt}: “The capital of France is …”</p>
+        <Seg label={t.view} value={step} onChange={setStep} options={t.steps.map((s, i) => ({ value: i, label: `${i + 1} · ${s} (${keptAt(i)})` }))} />
+        <div className="lab-bars">
+          {TOKENS.map((tok, i) => {
+            const gone = cutAt[i] <= step, now = cutAt[i] === step;
+            return (
+              <div key={tok.text} className={`lab-bar${now ? " bad" : ""}`}>
+                <span className="lb-label" style={gone ? { textDecoration: "line-through", color: "var(--muted)" } : undefined}>
+                  “{tok.text}” <small style={{ color: "var(--muted)" }}>{tok.logit.toFixed(1)}</small>
+                </span>
+                <span className="lb-track" style={{ position: "relative" }}>
+                  <span style={{ ...bar(ghost[i]), opacity: 0.3 }} />
+                  <span style={bar(dist[i])} />
+                </span>
+                <span className="lb-text" style={gone ? { color: now ? "var(--bad)" : "var(--muted)" } : undefined}>
+                  {gone ? `✕ ${CUT_BY[cutAt[i]]}` : pct(dist[i])}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <p className="lab-note">{t.ghost}</p>
+      </div>
       <div className="lab-stats" aria-live="polite">
         <Stat label={t.entropy} value={`${entropy(final).toFixed(2)} bits`} sub={t.maxH(Math.log2(N).toFixed(0))} />
         <Stat label={t.kept} value={`${keptAt(3)} / ${N}`} />
         <Stat label={t.top} value={pct(final[0])} />
         <Stat label={t.tail} value={pct(tail)} sub={t.tailSub} tone={tail > 0 ? "warn" : undefined} />
       </div>
-      <p className="lab-note" style={{ font: "14px ui-monospace, Menlo, monospace", color: "var(--text)" }}>{t.prompt}: “The capital of France is …”</p>
-      <Seg label={t.view} value={step} onChange={setStep} options={t.steps.map((s, i) => ({ value: i, label: `${i + 1} · ${s} (${keptAt(i)})` }))} />
-      <div className="lab-bars">
-        {TOKENS.map((tok, i) => {
-          const gone = cutAt[i] <= step, now = cutAt[i] === step;
-          return (
-            <div key={tok.text} className={`lab-bar${now ? " bad" : ""}`}>
-              <span className="lb-label" style={gone ? { textDecoration: "line-through", color: "var(--muted)" } : undefined}>
-                “{tok.text}” <small style={{ color: "var(--muted)" }}>{tok.logit.toFixed(1)}</small>
-              </span>
-              <span className="lb-track" style={{ position: "relative" }}>
-                <span style={{ ...bar(ghost[i]), opacity: 0.3 }} />
-                <span style={bar(dist[i])} />
-              </span>
-              <span className="lb-text" style={gone ? { color: now ? "var(--bad)" : "var(--muted)" } : undefined}>
-                {gone ? `✕ ${CUT_BY[cutAt[i]]}` : pct(dist[i])}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      <p className="lab-note">{t.ghost}</p>
       <div style={{ display: "grid", gap: 8 }}>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
           <button type="button" className="btn" onClick={() => setDraw((d) => d + 1)}>{draw ? t.again : t.sample}</button>
@@ -162,9 +164,8 @@ export default function SamplingLab({ locale }: { locale: Locale }) {
           </>
         )}
       </div>
-      <p className="lab-formula">{t.formula}</p>
       <Insight>{temp === 0 ? t.greedyInsight : t.insight(pct(tail))}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <LabMore locale={locale} formula={t.formula}><p className="lab-note">{t.note}</p></LabMore>
     </LabGrid>
   );
 }

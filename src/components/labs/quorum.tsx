@@ -6,7 +6,7 @@
 // case), then the read fans out to R replicas and keeps the newest version it hears back.
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Locale } from "@/lib/types";
-import { Bar, Insight, LabGrid, Range, Seg, Stat } from "./ui";
+import { Bar, Insight, LabGrid, LabMore, Range, Seg, Stat } from "./ui";
 import { useReducedMotion } from "./motion";
 import s from "./quorum.module.css";
 
@@ -27,9 +27,12 @@ const T = {
     lw: "write set (W)", lr: "read set (R)", lo: "overlap", ld: "down", ls: "stand-in",
     aria: (n: number, d: number) => `${n} replicas, ${d} down`,
     formula: "R + W > N ⇒ every read set overlaps the last write set · writes survive N − W replicas down, reads N − R · an operation waits for the slowest replica it needs",
-    yesI: (s: string) => `${s}: the read set always shares a replica with the last write, so the read can find the newest version. Still not linearizable: sloppy quorums, concurrent writers and last-write-wins can return stale or lost data.`,
-    noI: (s: string) => `${s}: a read can miss the last write entirely. That buys latency and availability; read repair and anti-entropy make the replicas converge later (eventual consistency).`,
-    sloppyI: (hw: number) => `Hinted handoff kept the write available, but only ${hw} of its W copies landed on home replicas: when the down replicas return, a read of R home replicas can miss it until the hints are handed back. R + W > N alone is no longer a guarantee.`,
+    yesI: (s: string) => `${s}: the read set always shares a replica with the last write, so the read can find the newest version.`,
+    yesMore: "Still not linearizable: sloppy quorums, concurrent writers and last-write-wins can return stale or lost data.",
+    noI: (s: string) => `${s}: a read can miss the last write entirely.`,
+    noMore: "That buys latency and availability; read repair and anti-entropy make the replicas converge later (eventual consistency).",
+    sloppyI: (hw: number) => `Hinted handoff kept the write available, but only ${hw} of its W copies landed on home replicas. R + W > N alone is no longer a guarantee.`,
+    sloppyMore: "When the down replicas return, a read of R home replicas can miss the write until the hints are handed back.",
     dynamo: " Dynamo's common (N, R, W) is (3, 2, 2): overlap, and one replica down is tolerated for reads and writes.",
     note: "Replica latencies are illustrative. The write is acked by the first W healthy replicas; the read shows the worst case, the R healthy replicas furthest from it. Facts from the replication, consistency models and key-value store concepts (Dynamo, SOSP 2007).",
     play: "Play", pause: "Pause", restart: "Restart", speed: "Speed", live: "Live: one write, then one read",
@@ -59,9 +62,12 @@ const T = {
     lw: "escritura (W)", lr: "lectura (R)", lo: "solapamiento", ld: "caída", ls: "suplente",
     aria: (n: number, d: number) => `${n} réplicas, ${d} caídas`,
     formula: "R + W > N ⇒ toda lectura se solapa con la última escritura · las escrituras aguantan N − W réplicas caídas; las lecturas, N − R · cada operación espera a la réplica más lenta que necesita",
-    yesI: (s: string) => `${s}: el conjunto de lectura siempre comparte una réplica con la última escritura, así que la lectura puede encontrar la versión más nueva. Igual no es linealizable: sloppy quorums, escritores concurrentes y last-write-wins pueden devolver datos viejos o perdidos.`,
-    noI: (s: string) => `${s}: una lectura puede no ver la última escritura. A cambio ganas latencia y disponibilidad; read repair y anti-entropy hacen que las réplicas converjan después (consistencia eventual).`,
-    sloppyI: (hw: number) => `Hinted handoff mantuvo la escritura disponible, pero solo ${hw} de sus W copias quedaron en réplicas propias: cuando vuelvan las caídas, una lectura de R réplicas propias puede no verla hasta que se devuelvan los hints. R + W > N por sí solo ya no es garantía.`,
+    yesI: (s: string) => `${s}: el conjunto de lectura siempre comparte una réplica con la última escritura, así que la lectura puede encontrar la versión más nueva.`,
+    yesMore: "Igual no es linealizable: sloppy quorums, escritores concurrentes y last-write-wins pueden devolver datos viejos o perdidos.",
+    noI: (s: string) => `${s}: una lectura puede no ver la última escritura.`,
+    noMore: "A cambio ganas latencia y disponibilidad; read repair y anti-entropy hacen que las réplicas converjan después (consistencia eventual).",
+    sloppyI: (hw: number) => `Hinted handoff mantuvo la escritura disponible, pero solo ${hw} de sus W copias quedaron en réplicas propias. R + W > N por sí solo ya no es garantía.`,
+    sloppyMore: "Cuando vuelvan las réplicas caídas, una lectura de R réplicas propias puede no ver la escritura hasta que se devuelvan los hints.",
     dynamo: " El (N, R, W) común de Dynamo es (3, 2, 2): hay solapamiento y tolera una réplica caída en lecturas y escrituras.",
     note: "Las latencias por réplica son ilustrativas. La escritura la confirman las primeras W réplicas sanas; la lectura muestra el peor caso: las R réplicas sanas más lejos de ella. Datos de los conceptos de replicación, modelos de consistencia y key-value store distribuido (Dynamo, SOSP 2007).",
     play: "Reproducir", pause: "Pausar", restart: "Reiniciar", speed: "Velocidad", live: "En vivo: una escritura y luego una lectura",
@@ -86,6 +92,9 @@ type Tx = (typeof T)["en"];
 const Sw = ({ fill, stroke, dash }: { fill: string; stroke: string; dash?: boolean }) => (
   <i aria-hidden style={{ display: "inline-block", width: 11, height: 11, borderRadius: 99, background: fill, border: `2px ${dash ? "dashed" : "solid"} ${stroke}`, margin: "0 4px -1px 0" }} />
 );
+
+/** One legend entry: its swatch never wraps away from its label. */
+const K = ({ children }: { children: ReactNode }) => <span style={{ whiteSpace: "nowrap" }}>{children}</span>;
 
 export default function QuorumLab({ locale }: { locale: Locale }) {
   const t = T[locale];
@@ -150,9 +159,11 @@ export default function QuorumLab({ locale }: { locale: Locale }) {
         <Bar label={t.wWait} value={q.writeOk ? q.wMs : 0} max={STAND_IN_MS} text={q.writeOk ? `${q.wMs} ms` : "—"} />
         <Bar label={t.rWait} value={q.readOk ? q.rMs : 0} max={STAND_IN_MS} text={q.readOk ? `${q.rMs} ms` : "—"} />
       </div>
-      <p className="lab-formula">{t.formula}</p>
-      <Insight>{(r + w <= n ? t.noI(sum) : q.guaranteed ? t.yesI(sum) : t.sloppyI(q.hw)) + t.dynamo}</Insight>
-      <p className="lab-note">{t.note}{t.anim}</p>
+      <Insight>{r + w <= n ? t.noI(sum) : q.guaranteed ? t.yesI(sum) : t.sloppyI(q.hw)}</Insight>
+      <LabMore locale={locale} formula={t.formula}>
+        <p className="lab-note">{r + w <= n ? t.noMore : q.guaranteed ? t.yesMore : t.sloppyMore}{t.dynamo}</p>
+        <p className="lab-note">{t.note}{t.anim}</p>
+      </LabMore>
     </LabGrid>
   );
 }
@@ -363,8 +374,8 @@ function Live({ q, n, w, r, down, pos, stand, toggle, t }: {
         })}
       </svg>
       <p className="lab-note">
-        <Sw fill="color-mix(in srgb, var(--accent) 26%, var(--surface))" stroke="var(--accent)" />{t.lw} · <Sw fill="var(--surface)" stroke="var(--text)" />{t.lr} · <Sw fill="var(--surface)" stroke="var(--good)" />{t.lo} · <Sw fill="var(--bg-2)" stroke="var(--bad)" dash />{t.ld}{stand.length > 0 && <> · <Sw fill="var(--surface)" stroke="var(--accent)" dash />{t.ls}</>}
-        <br /><Sw fill="var(--accent)" stroke="var(--accent)" />{t.lm} · <Sw fill="oklch(0.72 0.15 250)" stroke="oklch(0.72 0.15 250)" />{t.lread} · <Sw fill="var(--muted)" stroke="var(--muted)" />{t.lstale} · <Sw fill="transparent" stroke="var(--accent)" dash />{t.llate}
+        <K><Sw fill="color-mix(in srgb, var(--accent) 26%, var(--surface))" stroke="var(--accent)" />{t.lw}</K> · <K><Sw fill="var(--surface)" stroke="var(--text)" />{t.lr}</K> · <K><Sw fill="var(--surface)" stroke="var(--good)" />{t.lo}</K> · <K><Sw fill="var(--bg-2)" stroke="var(--bad)" dash />{t.ld}</K>{stand.length > 0 && <> · <K><Sw fill="var(--surface)" stroke="var(--accent)" dash />{t.ls}</K></>}
+        <br /><K><Sw fill="var(--accent)" stroke="var(--accent)" />{t.lm}</K> · <K><Sw fill="oklch(0.72 0.15 250)" stroke="oklch(0.72 0.15 250)" />{t.lread}</K> · <K><Sw fill="var(--muted)" stroke="var(--muted)" />{t.lstale}</K> · <K><Sw fill="transparent" stroke="var(--accent)" dash />{t.llate}</K>
       </p>
     </section>
   );

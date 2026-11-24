@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { Locale } from "@/lib/types";
 import { mulberry32 } from "@/lib/practice/rng";
-import { Insight, LabGrid, Plot, Range, Seg, Stat, type PlotLabel } from "./ui";
+import { Insight, LabGrid, LabMore, Plot, Range, Seg, Stat, type PlotLabel } from "./ui";
 import { Ticker, useReducedMotion } from "./motion";
 import s from "./rate-limiter.module.css";
 
@@ -101,6 +101,7 @@ const T = {
     fixedAria: "Fixed windows of 10 s fill up with admitted requests and reset at each boundary",
     slidingAria: "A 10 s window slides with the clock; admitted timestamps inside it count against L",
     legend: "Dots: requests (green admitted, red 429) · amber: tokens · in the windows, the fill is the count against L",
+    token: "token",
     thin: (k: number) => ` · one dot per ${k} requests while many are in flight`, warp: (x: number) => ` · quiet stretches play ${x}× faster (⏩)`,
     zoom: " · on a phone the windows show 30 s at a time",
   },
@@ -128,6 +129,7 @@ const T = {
     fixedAria: "Ventanas fijas de 10 s que se llenan con las requests admitidas y se reinician en cada borde",
     slidingAria: "Una ventana de 10 s se desliza con el reloj; los timestamps admitidos dentro de ella cuentan contra L",
     legend: "Puntos: requests (verde admitida, rojo 429) · ámbar: tokens · en las ventanas, el relleno es lo que cuenta contra L",
+    token: "token",
     thin: (k: number) => ` · un punto cada ${k} requests cuando hay muchas en vuelo`, warp: (x: number) => ` · los tramos sin tráfico van ${x}× más rápido (⏩)`,
     zoom: " · en el teléfono las ventanas muestran 30 s a la vez",
   },
@@ -157,6 +159,9 @@ export default function RateLimiterLab({ locale }: { locale: Locale }) {
     return { ts, level, total: ts.length, rows, top: Math.max(1, ...rows[0].bins.map(([a, r]) => a + r)) };
   }, [pattern, rps, limit, cap, bursts]);
   const fixed = sim.rows[1];
+  // The replay's fine print (how many requests a dot stands for, the phone zoom) lives in LabMore.
+  const stride = useMemo(() => Math.max(1, Math.ceil(busiest(sim.ts, PRE + POST) / MAX_DOTS)), [sim.ts]);
+  const narrow = useNarrow();
 
   return (
     <LabGrid
@@ -200,9 +205,12 @@ export default function RateLimiterLab({ locale }: { locale: Locale }) {
         ))}
         <p className="lab-note"><Sw c="var(--good)" />{t.accepted} · <Sw c="var(--bad)" />429 · <Sw c="var(--accent)" />{t.busiest} · {t.axis}</p>
       </div>
-      <p className="lab-formula">{t.formula(limit, cap)}</p>
-      <Insight>{(fixed.max > limit ? t.over(fixed.max, limit) : t.held(fixed.max)) + t.tail}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <Insight>{fixed.max > limit ? t.over(fixed.max, limit) : t.held(fixed.max)}</Insight>
+      <LabMore locale={locale} formula={t.formula(limit, cap)}>
+        <p className="lab-note">{t.tail.trim()}</p>
+        <p className="lab-note">{t.legend}{stride > 1 ? t.thin(stride) : ""}{t.warp(WARP)}{narrow ? t.zoom : ""}.</p>
+        <p className="lab-note">{t.note}</p>
+      </LabMore>
     </LabGrid>
   );
 }
@@ -312,7 +320,7 @@ function Replay({ sim, limit, cap, t }: { sim: Sim; limit: number; cap: number; 
       <BucketScene {...lane} cap={cap} />
       <WindowLane kind="fixed" {...lane} />
       <WindowLane kind="sliding" {...lane} />
-      <p className="lab-note">{t.legend}{stride > 1 ? t.thin(stride) : ""}{t.warp(WARP)}{narrow ? t.zoom : ""}</p>
+      <p className="lab-note"><Sw c="var(--good)" />{t.accepted} · <Sw c="var(--bad)" />429 · <Sw c="var(--accent)" />{t.token}</p>
     </section>
   );
 }

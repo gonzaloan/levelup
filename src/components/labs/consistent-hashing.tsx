@@ -7,7 +7,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
 import { hashString } from "@/lib/practice/rng";
-import { Bar, Insight, LabGrid, LogRange, Range, Stat } from "./ui";
+import { Bar, Insight, LabGrid, LabMore, LogRange, Range, Stat } from "./ui";
 import { Ticker, useReducedMotion } from "./motion";
 import s from "./consistent-hashing.module.css";
 
@@ -164,8 +164,10 @@ export default function ConsistentHashingLab({ locale }: { locale: Locale }) {
         </>
       }
     >
-      <p className="lab-note">{t.last(prev, n)}</p>
-      <Live n={n} prev={prev} v={v} intro={intro} setIntro={setIntro} t={t} />
+      <div className="lab-hero">
+        <Live n={n} prev={prev} v={v} intro={intro} setIntro={setIntro} t={t} />
+        <p className="lab-note">{t.last(prev, n)}</p>
+      </div>
       <div className="lab-stats" aria-live="polite">
         <Stat label={t.ring} value={pctTick(m.moved)} sub={t.expected(pct(expRing))} tone={m.moved <= m.modMoved ? "good" : undefined} />
         <Stat label={t.mod} value={pctTick(m.modMoved)} sub={t.expected(pct(expMod))} tone={m.modMoved > m.moved ? "bad" : undefined} />
@@ -179,9 +181,11 @@ export default function ConsistentHashingLab({ locale }: { locale: Locale }) {
             label={<><i aria-hidden style={{ ...tint(k, "background"), display: "inline-block", width: 10, height: 10, borderRadius: 3, marginRight: 6 }} />node-{k}</>} />
         ))}
       </div>
-      <p className="lab-formula">{t.formula}</p>
-      <Insight>{t.insight(prev, n, pct(m.moved), pct(m.modMoved)) + (v < 20 ? t.few(`${m.hot.toFixed(1)}×`) : t.many)}</Insight>
-      <p className="lab-note">{t.note}</p>
+      <Insight>{t.insight(prev, n, pct(m.moved), pct(m.modMoved)) + (v < 20 ? t.few(`${m.hot.toFixed(1)}×`) : "")}</Insight>
+      <LabMore locale={locale} formula={t.formula}>
+        {v >= 20 && <p className="lab-note">{t.many.trim()}</p>}
+        <p className="lab-note">{t.note}</p>
+      </LabMore>
     </LabGrid>
   );
 }
