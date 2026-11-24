@@ -18,7 +18,7 @@ learner progress is localStorage-only. Same secure static pattern as
 ## Deploy
 
 ```bash
-npm run build        # strict content gate, then ./out (~380 static pages)
+npm run build        # strict content gate, then ./out (~870 static pages) and the offline lists
 cd deploy && ./deploy.sh
 ```
 
@@ -45,7 +45,7 @@ Upload uses typed passes — HTML, the service worker (`sw.js`), its file lists
 ## Offline mode and its kill switch
 
 `public/sw.js` is a service worker: pages a reader has visited keep working offline, and
-"Save for offline" (footer) downloads the whole guide in one language (~18 MB, about 700
+"Save for offline" (footer) downloads the whole guide in one language (~20 MB, about 800
 requests, once). It only handles same-origin GETs; sign-in and sync never pass through it. Pages are
 network-first, so a deploy shows up on the next online visit. It costs nothing in AWS: the files
 are the same static objects, served by the same CloudFront plan.

@@ -7,8 +7,9 @@ Live: https://levelup.skillrealm.dev
 
 ## What's inside
 
-- **16 topics, ~260 concepts**, in study order: coding interview patterns · distributed systems
-  and building blocks · classic system design (feed, chat, payments, KV store, ride hailing…) ·
+- **16 topics, ~275 concepts**, in study order: coding interview patterns (20, from hash maps to
+  trees, greedy and class design) · distributed systems and building blocks · classic system design
+  (feed, chat, payments, KV store, ride hailing, rate limiter, message queue, leaderboard…) ·
   LLM fundamentals · prompting & context engineering · RAG · agents · evals · fine-tuning ·
   inference & cost · security & governance · AI architecture · AI system-design cases · ML
   foundations · MLOps · Staff/Principal leadership and execution.
@@ -17,9 +18,16 @@ Live: https://levelup.skillrealm.dev
   sliding window stepper, consistent hashing ring, rate limiters, quorums (N/R/W), cache hit ratio
   (LRU + Zipf), utilization vs latency (M/M/c), Bloom filter calculator, GPU memory (weights + KV
   cache) and a sampling playground. Each concept links its lab.
-- **Interview practice beyond reading:** Python coding problems you solve and test in the browser
-  (Pyodide, no server), a timed 45-minute system design round with a rubric, and a STAR story bank
+- **Interview practice beyond reading:** 73 Python coding problems you solve and test in the
+  browser (Pyodide, no server) with graded hints, a mock coding interview (two problems, 45
+  minutes, no hints), a timed 45-minute system design round with a rubric, and a STAR story bank
   with coverage of Amazon's Leadership Principles and Staff themes.
+- **Interview plan:** give it your interview date, your role (Staff SWE, AI Architect or both) and
+  your minutes per day; it tells you what to study today, when to practice and what to leave out
+  if time is short.
+- **Phone-first and offline:** a bottom tab bar on phones, link previews when you share a page, and
+  a service worker: pages you visited work offline, and "Save for offline" stores the whole guide
+  in one language.
 - **Knowledge map:** every concept as a territory by topic, with the bridges between ideas.
 - **Visual:** a color illustration per concept and the logos of the tools and companies it mentions.
 - **Architecture map:** the reference architecture of a production AI system, layer by layer;
@@ -33,9 +41,9 @@ Live: https://levelup.skillrealm.dev
 - **Interview mode:** the 45-minute GenAI system-design framework, worked designs (enterprise RAG,
   support agent, coding assistant, voice agent…), every number worth having at hand, and the full
   question bank.
-- **Study path:** every concept once, in 3 phases and 23 modules, from LLM basics to Staff level,
-  with "continue where you left off".
-- **Practice (the game):** ~1,500 verifiable exercises, no LLM needed to grade them: judgment
+- **Study path:** every concept once, in 3 phases and 30 modules, from coding patterns and LLM
+  basics to Staff level, with "continue where you left off".
+- **Practice (the game):** ~2,100 verifiable exercises, no LLM needed to grade them: judgment
   questions, select-all, ordering, matching, back-of-envelope estimates, complete-the-code,
   rebuild-the-diagram and interview flashcards. Spaced repetition (FSRS) brings each one back
   right before you'd forget it; daily session, weak spots, timed mock interviews, XP, career-ladder
