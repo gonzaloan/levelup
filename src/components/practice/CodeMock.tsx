@@ -9,8 +9,8 @@ import { addActivity, loadState, saveState } from "@/lib/practice/store";
 import { inlineMd } from "@/lib/practice/md";
 import { loadCode, saveCode } from "@/lib/practice/code-store";
 import { CodeRunner } from "./CodeRunner";
+import { pickTwo, type MockProblem as Prob } from "@/lib/practice/mock";
 
-interface Prob { id: string; c: string; ct: string; d: "easy" | "medium" | "hard"; t: string; prompt: string; fn: string; starter: string; tests: { args: unknown[]; expected: unknown; visible?: boolean }[]; compare: string }
 interface Attempt { at: number; minutes: number; results: { id: string; t: string; passed: number; total: number }[] }
 
 const MINUTES = 45;
@@ -34,15 +34,6 @@ const T = {
     start: "Empezar el simulacro", loading: "Cargando…", left: "restantes", over: "pasado del tiempo", finish: "Terminar", problem: "Problema", examples: "Ejemplos",
     done: "Simulacro terminado · +30 XP", solved: "resuelto", partial: (a: number, b: number) => `${a}/${b} tests`, notRun: "sin ejecutar", review: "Ver la solución", again: "Otro simulacro", history: "Tus simulacros", time: "Tiempo", all: "Todos los problemas" },
 };
-
-/** Two problems: an easier and a harder one, different patterns, unsolved first, random among equals. */
-export function pickTwo(all: Prob[], solved: Record<string, number>, rand: () => number): Prob[] {
-  const order = (xs: Prob[]) => xs.map((p) => ({ p, k: (solved[p.id] ? 1 : 0) + rand() })).sort((a, b) => a.k - b.k).map((x) => x.p);
-  const first = order(all.filter((p) => p.d !== "hard"))[0];
-  if (!first) return all.slice(0, 2);
-  const second = order(all.filter((p) => p.d !== "easy" && p.c !== first.c && p.id !== first.id))[0] ?? all.find((p) => p.id !== first.id);
-  return second ? [first, second] : [first];
-}
 
 export function CodeMock({ locale }: { locale: Locale }) {
   const t = T[locale];

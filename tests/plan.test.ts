@@ -1,7 +1,7 @@
 // The interview plan: day kinds, pace, scope per role and what is prioritized when time is short.
 import { describe, expect, it } from "vitest";
 import { buildPlan, dayKinds, daysBetween, inScope, schedule, type PlanConcept } from "@/lib/plan";
-import { pickTwo } from "@/components/practice/CodeMock";
+import { pickTwo } from "@/lib/practice/mock";
 
 const mk = (n: number, domain: string, level = "core"): PlanConcept[] => Array.from({ length: n }, (_, i) => ({ id: `${domain}-${level}-${i}`, domain, level }));
 const none = () => false;
