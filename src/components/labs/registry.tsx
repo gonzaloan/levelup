@@ -9,6 +9,7 @@ type LabProps = { locale: Locale };
 export const LABS: Record<string, ComponentType<LabProps>> = {
   "capacity": dynamic(() => import("./capacity")),
   "latency": dynamic(() => import("./latency")),
+  "loops": dynamic(() => import("./loops")),
   "big-o": dynamic(() => import("./big-o")),
   "sliding-window": dynamic(() => import("./sliding-window")),
   "consistent-hashing": dynamic(() => import("./consistent-hashing")),

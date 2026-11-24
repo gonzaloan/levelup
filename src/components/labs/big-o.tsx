@@ -2,9 +2,10 @@
 // Big-O growth: one slider for n, one bar per complexity class, a 1 s budget line. Everything is
 // computed in log10 space, so 2ⁿ at n = 10⁹ never overflows. The speed (10⁸ simple ops/s) is a
 // labelled assumption at the low end of the concept's "some hundreds of millions".
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import type { Locale } from "@/lib/types";
-import { Insight, LabGrid, LogRange, Seg, Stat, YEAR_S, fmtDuration, fmtNum } from "./ui";
+import { Insight, LabGrid, LogRange, Seg, Stat, YEAR_S, fmtDuration, fmtNum, fmtTime } from "./ui";
+import { useReducedMotion } from "./motion";
 
 const LG_OPS = 8; // log10 of the assumed 10⁸ simple operations per second
 const AXIS = 16; // the track spans 10⁰ … 10¹⁶ steps; the 1 s budget (10⁸ steps) sits at 50%
@@ -35,6 +36,7 @@ const T = {
     n: "Input size n", jump: "CPH limits (~1 s)", step: "step", steps: "steps", years: "years",
     cph: "CPH rule for this n", or: "or", logn: "log₂ n", cheap: "a log factor is cheap",
     fits: "Slowest that fits 1 s", at: "at 10⁸ ops/s",
+    race: "Race them at this n", again: "Race again", clock: "Clock", raceTitle: "The race: one clock for every class (log scale)", never: "still running after 30 years", budget: "1 s",
     formula: "time ≈ steps ÷ 10⁸ simple ops/s  ·  1 s budget ≈ 10⁸ steps  ·  vertical line = 1 s",
     insight: (n: string, fit: string, over?: string, time?: string) => over
       ? `At n = ${n}, ${fit} still fits in ~1 s, but ${over} already takes ${time}. Read the limit on n first: it tells you which algorithm the problem expects.`
@@ -45,6 +47,7 @@ const T = {
     n: "Tamaño de la entrada n", jump: "Límites del CPH (~1 s)", step: "paso", steps: "pasos", years: "años",
     cph: "Regla del CPH para este n", or: "o", logn: "log₂ n", cheap: "un factor log es barato",
     fits: "Lo más lento que cabe en 1 s", at: "a 10⁸ ops/s",
+    race: "Hazlas correr con este n", again: "Correr de nuevo", clock: "Reloj", raceTitle: "La carrera: un mismo reloj para todas las clases (escala log)", never: "sigue corriendo tras 30 años", budget: "1 s",
     formula: "tiempo ≈ pasos ÷ 10⁸ operaciones simples/s  ·  presupuesto de 1 s ≈ 10⁸ pasos  ·  línea vertical = 1 s",
     insight: (n: string, fit: string, over?: string, time?: string) => over
       ? `Con n = ${n}, ${fit} todavía cabe en ~1 s, pero ${over} ya tarda ${time}. Lee primero el límite de n: te dice qué algoritmo espera el problema.`
@@ -106,9 +109,70 @@ export default function BigOLab({ locale }: { locale: Locale }) {
           ))}
         </div>
       </div>
+      <Race rows={rows} n={n} locale={locale} t={t} />
       <p className="lab-formula">{t.formula}</p>
       <Insight>{t.insight(fmtNum(n), fit.label, over?.label, over?.time)}</Insight>
       <p className="lab-note">{t.note}</p>
     </LabGrid>
+  );
+}
+
+/* ------------------------------------------------------------------ the race */
+// One simulated clock sweeps a log time axis from 1 ns to ~30 years in RACE_MS of real time; each
+// lane fills until the clock reaches its finish time (steps ÷ 10⁸/s). Log time is the only way
+// to show O(1) and O(2ⁿ) on one screen; the axis says so.
+const T0 = -9, T1 = Math.log10(30 * YEAR_S), RACE_MS = 7000;
+type Row = { label: string; lgSec: number; tone: keyof typeof TONE; time: string };
+
+function Race({ rows, n, locale, t }: { rows: Row[]; n: number; locale: Locale; t: (typeof T)["en"] }) {
+  const reduced = useReducedMotion();
+  const [clock, setClock] = useState<number | null>(null);
+  const raf = useRef(0);
+  useEffect(() => { cancelAnimationFrame(raf.current); setClock(null); }, [n]);
+  useEffect(() => () => cancelAnimationFrame(raf.current), []);
+  const start = () => {
+    cancelAnimationFrame(raf.current);
+    if (reduced) { setClock(T1); return; }
+    const t0 = performance.now();
+    const tick = (now: number) => {
+      const k = Math.min(1, (now - t0) / RACE_MS);
+      setClock(T0 + (T1 - T0) * k);
+      if (k < 1) raf.current = requestAnimationFrame(tick);
+    };
+    raf.current = requestAnimationFrame(tick);
+  };
+  const pos = (lg: number) => Math.max(0, Math.min(1, (lg - T0) / (T1 - T0))) * 100;
+  const c = clock ?? T0;
+  const clockText = c < 0 ? fmtTime(10 ** (c + 9)) : fmtDuration(10 ** c, locale);
+  return (
+    <section className="race" aria-label={t.raceTitle}>
+      <div className="race-head">
+        <h3 className="section-label">{t.raceTitle}</h3>
+        <button type="button" className="btn btn-primary race-go" onClick={start}>{clock === null ? t.race : t.again} ▶</button>
+      </div>
+      <div className="race-clock" aria-live="off"><span>{t.clock}</span><strong className="mo-ticker">{clock === null ? "—" : clockText}</strong></div>
+      <ul className="race-lanes">
+        {rows.map((r) => {
+          const done = clock !== null && r.lgSec <= c;
+          const never = r.lgSec > T1;
+          const fill = clock === null ? 0 : pos(Math.min(c, r.lgSec));
+          return (
+            <li key={r.label} className={`race-lane${done ? " done" : ""}`} style={{ ["--tone" as string]: TONE[r.tone] } as CSSProperties}>
+              <strong>{r.label}</strong>
+              <span className="race-track">
+                <span className="race-fill" style={{ width: `${fill}%` }} />
+                <span className="race-runner" style={{ left: `${fill}%` }} />
+                <span className="race-budget" style={{ left: `${pos(0)}%` }} />
+              </span>
+              <span className="race-time">{done ? `✓ ${r.time}` : clock !== null && c >= T1 && never ? t.never : ""}</span>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="race-axis" aria-hidden>
+        <span style={{ left: "0%" }}>1 ns</span><span style={{ left: `${pos(-3)}%` }}>1 ms</span><span className="b" style={{ left: `${pos(0)}%` }}>{t.budget}</span>
+        <span style={{ left: `${pos(Math.log10(86_400))}%` }}>{fmtDuration(86_400, locale)}</span><span style={{ left: "100%" }}>{fmtDuration(30 * YEAR_S, locale)}</span>
+      </div>
+    </section>
   );
 }

@@ -5,6 +5,7 @@ import { pageMeta } from "@/lib/meta";
 import { t } from "@/lib/i18n";
 import { getConcept, getLabs } from "@/lib/content";
 import { Icon } from "@/components/Icon";
+import { Spotlight } from "@/components/Spotlight";
 import { Emoji } from "@/components/Visual";
 
 type P = { params: Promise<{ locale: Locale }> };
@@ -25,7 +26,7 @@ export default async function LabsPage({ params }: P) {
           <p className="page-sub">{es ? "Sistemas que puedes tocar: cambia un parámetro y mira qué se mueve. Todo corre en tu navegador." : "Systems you can touch: change one thing and watch what moves. Everything runs in your browser."}</p>
         </div>
       </header>
-      <div className="lab-cards">
+      <Spotlight className="lab-cards">
         {labs.map((l) => (
           <Link key={l.id} href={`/${locale}/labs/${l.id}/`} className="lab-card">
             <span className="lc-art"><Emoji name={l.art} size={40} /><span className="lc-icon"><Icon name={l.icon} size={18} /></span></span>
@@ -34,7 +35,7 @@ export default async function LabsPage({ params }: P) {
             <span className="lc-concepts">{l.concepts.slice(0, 3).map((c) => t(getConcept(c)?.title, locale)).filter(Boolean).join(" · ")}</span>
           </Link>
         ))}
-      </div>
+      </Spotlight>
     </main>
   );
 }
