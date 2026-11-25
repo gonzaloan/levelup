@@ -113,3 +113,22 @@ describe("generated Python matches real Python", () => {
     });
   }, 120_000);
 });
+
+describe("adaptive workout", () => {
+  it("adds one rep of the weakest trained skill, keeps 8 reps, never two of a skill in a row", async () => {
+    const { focusSkill, workoutPlan } = await import("@/lib/gym/workout");
+    expect(focusSkill({})).toBeUndefined();
+    expect(focusSkill({ trace: { ema: 0.4, n: 2 } })).toBeUndefined(); // too few reps to judge
+    expect(focusSkill({ trace: { ema: 0.9, n: 9 } })).toBeUndefined(); // strong enough
+    expect(focusSkill({ trace: { ema: 0.5, n: 5 }, bigo: { ema: 0.3, n: 4 }, explain: { ema: 0, n: 9 } })).toBe("bigo");
+    expect(workoutPlan(undefined)).toEqual(WORKOUT);
+    for (const f of ["estimate", "trace", "bigo", "debug"] as const) {
+      const p = workoutPlan(f);
+      expect(p).toHaveLength(WORKOUT.length);
+      expect(p.at(-1)).toBe("explain");
+      expect(p.filter((k) => k === f).length).toBe(WORKOUT.filter((k) => k === f).length + 1);
+      for (const k of new Set(WORKOUT)) expect(p).toContain(k);
+      p.forEach((k, i) => expect(k).not.toBe(p[i - 1]));
+    }
+  });
+});

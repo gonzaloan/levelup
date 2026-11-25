@@ -18,6 +18,8 @@ detail one tap away. The study path answers one question first: "what do I do ne
   lists (`tools/offline-list.mjs` → `out/offline-<locale>.json`).
 - `npm run diagrams` — re-render Mermaid → SVG (needs Chromium; outputs are committed).
 - `npm run links` — source-URL liveness (curl; 403s from bot-blocking sites are reported apart).
+- `npm run stale` — facts that age (vendor prices, spec versions, product status) with no date or a
+  date older than 12 months: the list to re-verify. Advisory; `--strict` fails on undated prices.
 - `npm run e2e` — Playwright smoke tests against `out/` (build first; always `--workers=1`).
 - `node tools/check-concept.mjs --mermaid <files>` — validate specific concept files.
 
@@ -38,6 +40,8 @@ detail one tap away. The study path answers one question first: "what do I do ne
   renderer tags each node with its kind from its label/shape (`KINDS` in `tools/render-diagrams.mjs`:
   user, model, store, cache, queue, search, security, decision…): `globals.css` colors the kind and
   an emoji sticker marks it. Changing the style means bumping `DIAGRAM_THEME_VERSION` and re-rendering.
+  A left-to-right flowchart also gets a top-to-bottom twin (`<id>.<mode>.n.svg`) that phones show
+  (≤ 640 px), kept only when much narrower; otherwise that file holds just the hash.
 - `tools/content-lib.mjs` — the validator (single source of truth for the content contract).
 - `tools/build-content.mjs` — the gate; also writes `src/generated/` (search + practice indexes,
   gitignored, regenerated on dev/build).
@@ -73,7 +77,9 @@ detail one tap away. The study path answers one question first: "what do I do ne
   does for you — estimate, trace code, spot the bug, Big-O, explain cold, code from a blank page.
   Generators are pure and seeded in `src/lib/gym/` (same date → same workout); `tests/gym.test.ts`
   runs every generated trace/debug snippet in Pyodide, so a shown answer can never be wrong. Paste is
-  blocked in answer fields by design. State: localStorage `fg.gym.v1` (`src/lib/gym/store.ts`).
+  blocked in answer fields by design. State: localStorage `fg.gym.v1` (`src/lib/gym/store.ts`), synced
+  inside the same login item (`y` in the packed blob, `mergeGym`). The workout adds one rep of the
+  weakest trained skill (`focusSkill`, fitness < 0.7 after ≥ 3 reps), chosen when the day starts.
 - `/plan` — interview plan (`src/lib/plan.ts`, pure and unit-tested): date + role + minutes per
   day → today's work and the weeks ahead. Its time model is a labelled assumption.
 - `public/sw.js` + `src/lib/offline.ts` + `src/components/Offline.tsx` — offline mode: visited

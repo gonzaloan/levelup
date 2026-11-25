@@ -34,3 +34,22 @@ describe("sync wire format", () => {
     expect(syncEnabled()).toBe(false);
   });
 });
+
+describe("gym progress in the synced item", () => {
+  it("round-trips through pack/unpack and merges without losing a finished day or a skill", async () => {
+    const { packGym, unpackGym } = await import("@/lib/sync");
+    const { emptyGym, recordRep, finishDay, mergeGym } = await import("@/lib/gym/store");
+    let a = emptyGym();
+    a = recordRep(a, "2026-11-24", { skill: "trace", score: 1, ms: 5 });
+    a = finishDay(a, "2026-11-24", [{ skill: "trace", score: 1, ms: 5 }]);
+    let b = emptyGym();
+    b = recordRep(b, "2026-11-25", { skill: "bigo", score: 0, ms: 3 });
+    const back = unpackGym(JSON.parse(JSON.stringify(packGym(a))));
+    expect(back.days["2026-11-24"]).toMatchObject({ done: true, reps: 1, score: 1 });
+    expect(back.skills.trace!.hist).toEqual([{ d: "2026-11-24", s: 1, k: 1 }]);
+    const m = mergeGym(b, back);
+    expect(Object.keys(m.days)).toEqual(["2026-11-24"]);
+    expect(Object.keys(m.skills).sort()).toEqual(["bigo", "trace"]);
+    expect(mergeGym(m, m)).toEqual(m);
+  });
+});

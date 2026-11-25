@@ -50,3 +50,24 @@ export function gymStreak(s: GymState, now = new Date()): number {
   while (s.days[dayKey(d)]?.done) { n++; d.setDate(d.getDate() - 1); }
   return n;
 }
+
+/** Union of two devices' gym progress (for sync): every day and skill from both, the fuller
+ *  record wins on conflicts, so syncing never loses a finished day or a trained skill. */
+export function mergeGym(a: GymState, b: GymState): GymState {
+  const days: Record<string, DayRec> = { ...a.days };
+  for (const [d, y] of Object.entries(b.days)) {
+    const x = days[d];
+    days[d] = !x ? y : (y.done && !x.done) || (y.done === x.done && y.reps > x.reps) ? y : x;
+  }
+  const skills: GymState["skills"] = { ...a.skills };
+  for (const [k, y] of Object.entries(b.skills) as [Skill, SkillRec][]) {
+    const x = skills[k];
+    if (!x) { skills[k] = y; continue; }
+    const byDay = new Map(x.hist.map((h) => [h.d, h]));
+    for (const h of y.hist) { const o = byDay.get(h.d); if (!o || h.k > o.k) byDay.set(h.d, h); }
+    const hist = [...byDay.values()].sort((p, q) => p.d.localeCompare(q.d)).slice(-HIST_DAYS);
+    const lead = y.n > x.n ? y : x;
+    skills[k] = { ema: lead.ema, n: Math.max(x.n, y.n), hist };
+  }
+  return { v: 1, days, skills, run: a.run };
+}

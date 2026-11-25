@@ -34,13 +34,17 @@ export const conceptsOf = (domainId: string) => (getDomain(domainId)?.concepts ?
 export const titleOf = (id: string) => getConcept(id)?.title;
 
 /** Pre-rendered diagram SVGs (see tools/render-diagrams.mjs). */
-export function getDiagram(id: string): { dark: string; light: string } | null {
+export function getDiagram(id: string): { dark: string; light: string; narrow?: { dark: string; light: string } } | null {
   const read = (mode: string) => {
     const f = path.join(CONTENT, "diagrams", `${id}.${mode}.svg`);
-    return fs.existsSync(f) ? fs.readFileSync(f, "utf8").replace(/^<!--[^>]*-->\n/, "") : null;
+    const svg = fs.existsSync(f) ? fs.readFileSync(f, "utf8").replace(/^<!--[^>]*-->\n/, "") : "";
+    return svg.includes("<svg") ? svg : null;
   };
   const dark = read("dark"), light = read("light");
-  return dark && light ? { dark, light } : null;
+  if (!dark || !light) return null;
+  // The top-to-bottom twin for phones, when the renderer kept one (tools/render-diagrams.mjs).
+  const nd = read("dark.n"), nl = read("light.n");
+  return nd && nl ? { dark, light, narrow: { dark: nd, light: nl } } : { dark, light };
 }
 
 /** The walkthrough of a diagram (see src/lib/diagram-walk.ts): flowcharts from their graph.json,

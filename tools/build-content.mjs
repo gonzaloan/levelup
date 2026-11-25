@@ -4,7 +4,7 @@
 // Usage: node tools/build-content.mjs [--allow-missing]   (runs automatically before dev/build)
 import fs from "node:fs";
 import path from "node:path";
-import { loadDomains, listConceptFiles, validateConcept, conceptPath, diagramHash, readDiagramHash, DIAGRAMS, ROOT, listExerciseFiles, validateExercises, listProblemFiles, validateProblem } from "./content-lib.mjs";
+import { loadDomains, listConceptFiles, validateConcept, conceptPath, diagramHash, readDiagramHash, narrowCode, DIAGRAMS, ROOT, listExerciseFiles, validateExercises, listProblemFiles, validateProblem } from "./content-lib.mjs";
 
 const allowMissing = process.argv.includes("--allow-missing");
 const domains = loadDomains();
@@ -24,8 +24,8 @@ for (const d of domains) for (const id of d.concepts) {
 for (const c of concepts.values()) {
   if (!c.diagram) continue;
   const h = diagramHash(c.diagram.code);
-  for (const mode of ["dark", "light"]) {
-    if (readDiagramHash(path.join(DIAGRAMS, `${c.id}.${mode}.svg`)) !== h) (allowMissing ? warnings : errors).push(`${c.id}: diagram not rendered or stale — run npm run diagrams`);
+  for (const mode of ["dark", "light"]) for (const v of narrowCode(c.diagram.code) ? ["", ".n"] : [""]) {
+    if (readDiagramHash(path.join(DIAGRAMS, `${c.id}.${mode}${v}.svg`)) !== h) { (allowMissing ? warnings : errors).push(`${c.id}: diagram not rendered or stale — run npm run diagrams`); break; }
   }
 }
 

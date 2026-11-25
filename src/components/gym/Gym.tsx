@@ -1,12 +1,13 @@
 "use client";
-// The Gym: today's workout (the same for everyone on a date), six skill meters with their trend,
+// The Gym: today's workout (seeded by the date, with one extra rep of your weakest skill), six
+// skill meters with their trend,
 // and endless drills per skill. Everything is local: the reps are generated in the browser, the
 // progress lives in localStorage (src/lib/gym/store.ts).
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Locale } from "@/lib/types";
 import type { Rep, Skill } from "@/lib/gym/types";
 import { SKILLS } from "@/lib/gym/types";
-import { dailyBonus, dailyWorkout, drillRep, type Pools } from "@/lib/gym/workout";
+import { dailyBonus, dailyWorkout, drillRep, focusSkill, type Pools } from "@/lib/gym/workout";
 import { finishDay, gymStreak, loadGym, recordRep, saveGym, today, type GymState, type RepResult } from "@/lib/gym/store";
 import { shuffle } from "@/lib/practice/rng";
 import { addActivity, loadState, saveState } from "@/lib/practice/store";
@@ -30,7 +31,7 @@ const T = {
     today: "Today's workout", reps: "8 reps · ~12 min", start: "Start", resume: (n: number) => `Resume (${n}/8)`, doneToday: (p: number) => `Done today · ${p}%`, again: "Do it again",
     bonus: "Bonus: from a blank page", drill: "10 reps", fitness: "fitness", noData: "not trained yet", streak: (n: number) => `${n}-day gym streak`, noStreak: "No gym streak yet",
     rules: ["No AI", "No calculator", "Don't run the code"], close: "Leave", time: "time", score: "Score", summary: "Workout done", drillDone: "Drill done", back: "Back to the gym",
-    xp: (n: number) => `+${n} XP`, loading: "Loading…", one: "1 problem",
+    xp: (n: number) => `+${n} XP`, loading: "Loading…", one: "1 problem", focus: (k: string) => `Extra rep today: ${k}`,
   },
   es: {
     skills: { estimate: "Estimar a mano", trace: "Leer código", debug: "Encontrar el bug", bigo: "Big-O a ojo", explain: "Explicar sin mirar", blank: "Código desde cero" } as Record<Skill, string>,
@@ -38,7 +39,7 @@ const T = {
     today: "Entrenamiento de hoy", reps: "8 ejercicios · ~12 min", start: "Empezar", resume: (n: number) => `Seguir (${n}/8)`, doneToday: (p: number) => `Hecho hoy · ${p}%`, again: "Hacerlo otra vez",
     bonus: "Bonus: código desde cero", drill: "10 seguidos", fitness: "estado", noData: "sin entrenar todavía", streak: (n: number) => `Racha de ${n} día${n === 1 ? "" : "s"} en el gimnasio`, noStreak: "Aún sin racha en el gimnasio",
     rules: ["Sin IA", "Sin calculadora", "Sin correr el código"], close: "Salir", time: "tiempo", score: "Puntaje", summary: "Entrenamiento terminado", drillDone: "Serie terminada", back: "Volver al gimnasio",
-    xp: (n: number) => `+${n} XP`, loading: "Cargando…", one: "1 problema",
+    xp: (n: number) => `+${n} XP`, loading: "Cargando…", one: "1 problema", focus: (k: string) => `Ejercicio extra hoy: ${k}`,
   },
 };
 
@@ -81,7 +82,7 @@ export function Gym({ locale }: { locale: Locale }) {
   const day = g.days[date];
   const run = g.run?.date === date ? g.run : undefined;
   const startDay = () => {
-    if (!run) update((x) => ({ ...x, run: { date, reps: dailyWorkout(date, pools), results: [] } }));
+    if (!run) update((x) => ({ ...x, run: { date, reps: dailyWorkout(date, pools, focusSkill(x.skills)), results: [] } }));
     setMode({ kind: "day" });
   };
   const xpFor = (score: number) => 2 + Math.round(10 * score);
@@ -109,6 +110,7 @@ export function Gym({ locale }: { locale: Locale }) {
   }
 
   const streak = gymStreak(g);
+  const focus = !day?.done && !run ? focusSkill(g.skills) : undefined;
   return (
     <div className={s.home}>
       <ul className={s.rules}>{t.rules.map((r) => <li key={r}>{r}</li>)}</ul>
@@ -117,6 +119,7 @@ export function Gym({ locale }: { locale: Locale }) {
           <span className={s.eyebrow}>{t.today}</span>
           <strong className={s.todayTitle}>{day?.done ? t.doneToday(Math.round(day.score * 100)) : t.reps}</strong>
           <span className={s.streak}>{streak ? `🔥 ${t.streak(streak)}` : t.noStreak}</span>
+          {focus && <span className={s.focus}>🎯 {t.focus(t.skills[focus])}</span>}
         </div>
         <div className={s.todayActions}>
           {!day?.done && <button type="button" className={`btn btn-primary ${s.big}`} onClick={startDay}>{run?.results.length ? t.resume(run.results.length) : t.start} →</button>}

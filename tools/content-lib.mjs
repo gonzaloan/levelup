@@ -124,6 +124,9 @@ export const DIAGRAMS = path.join(CONTENT, "diagrams");
 export function diagramHash(code) {
   return crypto.createHash("sha1").update(DIAGRAM_THEME_VERSION + "\n" + code).digest("hex").slice(0, 12);
 }
+/** The top-to-bottom twin of a left-to-right flowchart (shown on phones), or null. */
+const SIDEWAYS = /^(\s*(?:flowchart|graph))\s+(?:LR|RL)\b/;
+export const narrowCode = (code) => SIDEWAYS.test(code) ? code.replace(SIDEWAYS, "$1 TB") : null;
 export function readDiagramHash(file) {
   if (!fs.existsSync(file)) return null;
   const m = fs.readFileSync(file, "utf8").match(/^<!-- h:([0-9a-f]+) -->/);

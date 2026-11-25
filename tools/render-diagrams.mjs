@@ -4,7 +4,7 @@
 // hash comment of its source; unchanged diagrams are skipped. Usage: npm run diagrams [-- --force]
 import fs from "node:fs";
 import path from "node:path";
-import { listConceptFiles, launchBrowser, diagramHash, readDiagramHash, DIAGRAMS, ROOT } from "./content-lib.mjs";
+import { listConceptFiles, launchBrowser, diagramHash, readDiagramHash, narrowCode, DIAGRAMS, ROOT } from "./content-lib.mjs";
 
 const force = process.argv.includes("--force");
 // --only a,b re-renders just those concepts (for previewing a style change).
@@ -63,6 +63,12 @@ const KINDS = [
 const emojiSet = JSON.parse(fs.readFileSync(path.join(ROOT, "node_modules/@iconify-json/fluent-emoji-flat/icons.json"), "utf8"));
 const STICKERS = Object.fromEntries([...KINDS.map(([k, e]) => [k, e]), ["decision", "red-question-mark"]].map(([k, e]) => [k, emojiSet.icons[e].body]));
 
+// Phones: a left-to-right flowchart becomes a long strip you scroll sideways. Its top-to-bottom
+// twin (<id>.<mode>.n.svg) is shown instead on narrow screens (globals.css), kept only when it is
+// much narrower; otherwise the file holds just the hash, so "not worth it" is remembered too.
+const widthOf = (svg) => Number(svg.match(/viewBox="[\d.-]+ [\d.-]+ ([\d.]+)/)?.[1] ?? 0);
+const NARROW_MAX = 640;
+
 fs.mkdirSync(DIAGRAMS, { recursive: true });
 const jobs = [];
 const graphJobs = [];
@@ -72,10 +78,15 @@ for (const f of listConceptFiles()) {
   if (!c.diagram?.code) continue;
   if (only && !only.has(c.id)) { for (const m of ["dark", "light"]) wanted.add(`${c.id}.${m}.svg`); wanted.add(`${c.id}.graph.json`); continue; }
   const h = diagramHash(c.diagram.code);
+  const narrow = narrowCode(c.diagram.code);
   for (const mode of ["dark", "light"]) {
     const out = path.join(DIAGRAMS, `${c.id}.${mode}.svg`);
     wanted.add(path.basename(out));
     if (force || readDiagramHash(out) !== h) jobs.push({ id: c.id, mode, code: c.diagram.code, out, h });
+    if (!narrow) continue;
+    const nout = path.join(DIAGRAMS, `${c.id}.${mode}.n.svg`);
+    wanted.add(path.basename(nout));
+    if (force || readDiagramHash(nout) !== h) jobs.push({ id: c.id, mode, code: narrow, out: nout, h, wide: out });
   }
   // The node/edge graph powers the "rebuild the diagram" exercise (flowcharts only).
   if (/^\s*(flowchart|graph)\b/.test(c.diagram.code)) {
@@ -95,14 +106,14 @@ await page.setContent(`<html><body style="font-family:${FONT}"></body></html>`);
 await page.addScriptTag({ path: path.join(ROOT, "node_modules/mermaid/dist/mermaid.min.js") });
 let failed = 0;
 for (const j of jobs) {
-  const res = await page.evaluate(async ({ id, mode, code, theme, kinds, stickers }) => {
+  const res = await page.evaluate(async ({ id, mode, code, theme, kinds, stickers, tag }) => {
     try {
       mermaid.initialize({
         startOnLoad: false, theme: "base", themeVariables: theme, securityLevel: "strict",
         flowchart: { htmlLabels: false, padding: 14, nodeSpacing: 40, rankSpacing: 46, curve: "basis" },
         sequence: { useMaxWidth: true, mirrorActors: false, actorMargin: 40 },
       });
-      const { svg } = await mermaid.render(`dg-${id}-${mode}`, code);
+      const { svg } = await mermaid.render(`dg-${id}-${mode}${tag}`, code);
       const host = document.createElement("div");
       host.style.cssText = "position:absolute;left:-99999px;top:0";
       host.innerHTML = svg;
@@ -117,7 +128,7 @@ for (const j of jobs) {
       };
       let n = 0;
       const sticker = (target, kind, x, y) => {
-        const pre = `${id}-${mode}-s${n++}-`;
+        const pre = `${id}-${mode}${tag}-s${n++}-`;
         const g = document.createElementNS(NS, "g");
         g.setAttribute("class", "dg-sticker");
         g.setAttribute("transform", `translate(${x.toFixed(1)}, ${y.toFixed(1)})`);
@@ -169,11 +180,15 @@ for (const j of jobs) {
       host.remove();
       return { svg: out };
     } catch (e) { return { error: String(e.message || e) }; }
-  }, { id: j.id, mode: j.mode, code: j.code, theme: THEMES[j.mode], kinds: KINDS, stickers: STICKERS });
+  }, { id: j.id, mode: j.mode, code: j.code, theme: THEMES[j.mode], kinds: KINDS, stickers: STICKERS, tag: j.wide ? "n" : "" });
   if (res.error) { failed++; console.log(`✗ ${j.id} (${j.mode}): ${res.error.split("\n").slice(0, 3).join(" | ")}`); continue; }
   // Mermaid renders a label like "1. ok" as the literal text "Unsupported markdown: list".
   if (/Unsupported markdown/.test(res.svg)) { failed++; console.log(`✗ ${j.id} (${j.mode}): a label was parsed as markdown (e.g. "1. x") — reword it`); continue; }
   const svg = res.svg.replace(/<svg /, `<svg aria-hidden="true" focusable="false" `);
+  if (j.wide) {
+    const wn = widthOf(svg), ww = widthOf(fs.readFileSync(j.wide, "utf8"));
+    if (!(wn <= NARROW_MAX && wn < 0.6 * ww)) { fs.writeFileSync(j.out, `<!-- h:${j.h} -->\n`); continue; }
+  }
   fs.writeFileSync(j.out, `<!-- h:${j.h} -->\n${svg}\n`);
 }
 for (const g of graphJobs) {
