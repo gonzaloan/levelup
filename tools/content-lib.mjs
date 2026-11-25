@@ -119,7 +119,7 @@ export async function launchBrowser() {
 
 import crypto from "node:crypto";
 /** Bump when the diagram theme changes so every SVG re-renders. */
-export const DIAGRAM_THEME_VERSION = "1";
+export const DIAGRAM_THEME_VERSION = "5"; // 5: kinds, colors and emoji stickers (tools/render-diagrams.mjs)
 export const DIAGRAMS = path.join(CONTENT, "diagrams");
 export function diagramHash(code) {
   return crypto.createHash("sha1").update(DIAGRAM_THEME_VERSION + "\n" + code).digest("hex").slice(0, 12);

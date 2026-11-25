@@ -34,7 +34,10 @@ detail one tap away. The study path answers one question first: "what do I do ne
 - `content/concepts/<domain>/<id>.json` — one concept per file. Schema: `src/lib/types.ts`.
   Authoring rules and limits: `docs/AUTHORING.md`. Gold example: `content/concepts/rag/reranking.json`.
 - `content/diagrams/<id>.{dark,light}.svg` — pre-rendered diagrams (generated, committed; each file
-  starts with a hash of its source, so stale ones fail the build).
+  starts with a hash of its source + `DIAGRAM_THEME_VERSION`, so stale ones fail the build). The
+  renderer tags each node with its kind from its label/shape (`KINDS` in `tools/render-diagrams.mjs`:
+  user, model, store, cache, queue, search, security, decision…): `globals.css` colors the kind and
+  an emoji sticker marks it. Changing the style means bumping `DIAGRAM_THEME_VERSION` and re-rendering.
 - `tools/content-lib.mjs` — the validator (single source of truth for the content contract).
 - `tools/build-content.mjs` — the gate; also writes `src/generated/` (search + practice indexes,
   gitignored, regenerated on dev/build).

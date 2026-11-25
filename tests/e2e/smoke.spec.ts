@@ -24,8 +24,11 @@ test("concept page has every section and a rendered diagram", async ({ page }) =
   await expect(page.locator(".pitfalls")).toBeHidden();
   // Exactly one variant of the diagram is visible: the one matching the active theme.
   const theme = await page.evaluate(() => document.documentElement.dataset.theme);
-  await expect(page.locator(`.dg-${theme} svg`)).toBeVisible();
-  await expect(page.locator(`.dg-${theme === "dark" ? "light" : "dark"} svg`)).toBeHidden();
+  await expect(page.locator(`.dg-${theme} > svg`)).toBeVisible();
+  await expect(page.locator(`.dg-${theme === "dark" ? "light" : "dark"} > svg`)).toBeHidden();
+  // Style v2: nodes carry their kind (color) and an emoji sticker.
+  await expect(page.locator(`.dg-${theme} svg.dg-v2 .dg-k`).first()).toBeAttached();
+  await expect(page.locator(`.dg-${theme} svg .dg-sticker`).first()).toBeAttached();
   await page.locator("#interview > summary").click();
   await page.locator(".qa summary").first().click();
   await expect(page.locator(".qa-a").first()).toBeVisible();
@@ -53,7 +56,7 @@ test("theme toggle switches the diagram variant", async ({ page }) => {
   await page.locator('button[aria-label="Toggle theme"]').click();
   const after = await page.evaluate(() => document.documentElement.dataset.theme);
   expect(after).not.toBe(before);
-  await expect(page.locator(after === "light" ? ".dg-light svg" : ".dg-dark svg")).toBeVisible();
+  await expect(page.locator(after === "light" ? ".dg-light > svg" : ".dg-dark > svg")).toBeVisible();
 });
 
 test("diagram walkthrough lights one step at a time, in flow order", async ({ page }) => {
@@ -61,16 +64,16 @@ test("diagram walkthrough lights one step at a time, in flow order", async ({ pa
   await page.goto("/en/c/reranking/");
   await page.getByRole("button", { name: "Walk through" }).click();
   const theme = await page.evaluate(() => document.documentElement.dataset.theme);
-  const lit = page.locator(`.dg-${theme} svg .node.wk-on`);
+  const lit = page.locator(`.dg-${theme} > svg .node.wk-on`);
   await expect(lit).toHaveCount(1);
   await expect(page.locator(".wk-cap")).toContainText("User query");
   await expect(page.getByRole("button", { name: "Play" })).toHaveCount(0);
   for (let k = 0; k < 2; k++) await page.getByRole("button", { name: "Next step" }).click();
   // Both inputs come before the step that needs them; the edges that led there light up too.
   await expect(page.locator(".wk-cap")).toContainText("Hybrid retrieval");
-  await expect(page.locator(`.dg-${theme} svg path.wk-on`)).toHaveCount(2);
+  await expect(page.locator(`.dg-${theme} > svg path.wk-on`)).toHaveCount(2);
   await page.getByRole("button", { name: "Exit walkthrough" }).click();
-  await expect(page.locator(`.dg-${theme} svg .wk-on`)).toHaveCount(0);
+  await expect(page.locator(`.dg-${theme} > svg .wk-on`)).toHaveCount(0);
 });
 
 test("language switch keeps the page", async ({ page }) => {
