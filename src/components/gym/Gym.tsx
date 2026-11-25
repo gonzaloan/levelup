@@ -9,6 +9,7 @@ import type { Rep, Skill } from "@/lib/gym/types";
 import { SKILLS } from "@/lib/gym/types";
 import { dailyBonus, dailyWorkout, drillRep, focusSkill, type Pools } from "@/lib/gym/workout";
 import { finishDay, gymStreak, loadGym, recordRep, saveGym, today, type GymState, type RepResult } from "@/lib/gym/store";
+import { beats, clock, gymNumber, parseChallenge, shareText, summaryOf, type Challenge } from "@/lib/gym/share";
 import { shuffle } from "@/lib/practice/rng";
 import { addActivity, loadState, saveState } from "@/lib/practice/store";
 import { loadCode } from "@/lib/practice/code-store";
@@ -32,6 +33,10 @@ const T = {
     bonus: "Bonus: from a blank page", drill: "10 reps", fitness: "fitness", noData: "not trained yet", streak: (n: number) => `${n}-day gym streak`, noStreak: "No gym streak yet",
     rules: ["No AI", "No calculator", "Don't run the code"], close: "Leave", time: "time", score: "Score", summary: "Workout done", drillDone: "Drill done", back: "Back to the gym",
     xp: (n: number) => `+${n} XP`, loading: "Loading…", one: "1 problem", focus: (k: string) => `Extra rep today: ${k}`,
+    share: "Share", copied: "Copied: paste it in a chat",
+    vsToday: (p: number, c: string) => `A friend scored ${p}% in ${c} on today's workout. Beat it.`,
+    vsOld: (n: number, p: number, c: string) => `Challenge from Gym #${n}: ${p}% in ${c}. Today's workout is new: try to beat it anyway.`,
+    you: "You", friend: "Friend", win: "🏆 You win", lose: "Your friend wins this one: tomorrow's a new workout",
   },
   es: {
     skills: { estimate: "Estimar a mano", trace: "Leer código", debug: "Encontrar el bug", bigo: "Big-O a ojo", explain: "Explicar sin mirar", blank: "Código desde cero" } as Record<Skill, string>,
@@ -40,6 +45,10 @@ const T = {
     bonus: "Bonus: código desde cero", drill: "10 seguidos", fitness: "estado", noData: "sin entrenar todavía", streak: (n: number) => `Racha de ${n} día${n === 1 ? "" : "s"} en el gimnasio`, noStreak: "Aún sin racha en el gimnasio",
     rules: ["Sin IA", "Sin calculadora", "Sin correr el código"], close: "Salir", time: "tiempo", score: "Puntaje", summary: "Entrenamiento terminado", drillDone: "Serie terminada", back: "Volver al gimnasio",
     xp: (n: number) => `+${n} XP`, loading: "Cargando…", one: "1 problema", focus: (k: string) => `Ejercicio extra hoy: ${k}`,
+    share: "Compartir", copied: "Copiado: pégalo en un chat",
+    vsToday: (p: number, c: string) => `Un amigo hizo ${p}% en ${c} en el entrenamiento de hoy. ¿Le ganas?`,
+    vsOld: (n: number, p: number, c: string) => `Reto del Gym #${n}: ${p}% en ${c}. El entrenamiento de hoy es otro: intenta ganarle igual.`,
+    you: "Tú", friend: "Amigo", win: "🏆 Ganaste", lose: "Esta vez gana tu amigo: mañana hay otro entrenamiento",
   },
 };
 
@@ -53,7 +62,9 @@ export function Gym({ locale }: { locale: Locale }) {
   const [mode, setMode] = useState<Mode | null>(null);
   const [data, setData] = useState<{ concepts: GymConcept[]; probs: MockProblem[] } | null>(null);
   const date = useMemo(() => today(), []);
-  useEffect(() => { setG(loadGym()); }, []);
+  // A friend's challenge arrives in the link (?vs=…, see src/lib/gym/share.ts).
+  const [vs, setVs] = useState<Challenge | null>(null);
+  useEffect(() => { setG(loadGym()); setVs(parseChallenge(new URLSearchParams(window.location.search).get("vs"))); }, []);
   useEffect(() => {
     void Promise.all([GYM[locale](), PROBS[locale]()]).then(([a, b]) => setData({ concepts: a.default as GymConcept[], probs: b.default as MockProblem[] }));
   }, [locale]);
@@ -96,6 +107,7 @@ export function Gym({ locale }: { locale: Locale }) {
     const st = loadState(); addActivity(st, new Date(), xpFor(score), score >= 0.6); saveState(st);
   };
 
+  const link = `${window.location.origin}/${locale}/gym/`;
   if (mode) {
     const reps = mode.kind === "day" ? (run?.reps ?? dailyWorkout(date, pools)) : mode.reps;
     const startAt = mode.kind === "day" ? (run?.results.length ?? 0) : 0;
@@ -105,6 +117,8 @@ export function Gym({ locale }: { locale: Locale }) {
         onRep={onRep}
         onFinish={(results) => { if (mode.kind === "day") update((x) => finishDay(x, date, x.run?.results ?? results)); }}
         onClose={() => setMode(null)}
+        share={mode.kind === "day" ? (rs) => shareText(summaryOf(date, rs), rs.map((r) => r.score), gymStreak(g), link, locale) : undefined}
+        vs={mode.kind === "day" ? vs : null}
         streak={gymStreak(g)} doneLabel={mode.kind === "day" ? t.summary : t.drillDone} />
     );
   }
@@ -120,10 +134,13 @@ export function Gym({ locale }: { locale: Locale }) {
           <strong className={s.todayTitle}>{day?.done ? t.doneToday(Math.round(day.score * 100)) : t.reps}</strong>
           <span className={s.streak}>{streak ? `🔥 ${t.streak(streak)}` : t.noStreak}</span>
           {focus && <span className={s.focus}>🎯 {t.focus(t.skills[focus])}</span>}
+          {vs && !day?.done && <span className={s.vs}>🥊 {vs.date === date ? t.vsToday(vs.pct, clock(vs.secs)) : t.vsOld(gymNumber(vs.date), vs.pct, clock(vs.secs))}</span>}
+          {vs && day?.done && <Versus me={{ date, pct: Math.round(day.score * 100), secs: Math.round(day.ms / 1000) }} them={vs} locale={locale} />}
         </div>
         <div className={s.todayActions}>
           {!day?.done && <button type="button" className={`btn btn-primary ${s.big}`} onClick={startDay}>{run?.results.length ? t.resume(run.results.length) : t.start} →</button>}
           {day?.done && <button type="button" className={`btn btn-primary ${s.big}`} onClick={() => setMode({ kind: "bonus", reps: [dailyBonus(date, pools)] })}>{t.bonus} →</button>}
+          {day?.done && day.r && <ShareButton text={shareText({ date, pct: Math.round(day.score * 100), secs: Math.round(day.ms / 1000) }, day.r, streak, link, locale)} locale={locale} />}
         </div>
         <Week g={g} date={date} />
       </section>
@@ -148,6 +165,34 @@ export function Gym({ locale }: { locale: Locale }) {
         })}
       </section>
     </div>
+  );
+}
+
+/** Native share sheet on phones, clipboard elsewhere. */
+function ShareButton({ text, locale }: { text: string; locale: Locale }) {
+  const t = T[locale];
+  const [copied, setCopied] = useState(false);
+  const onClick = async () => {
+    try {
+      if (navigator.share) { await navigator.share({ text }); return; }
+    } catch (e) { if ((e as Error).name === "AbortError") return; }
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2500); } catch { /* no clipboard */ }
+  };
+  return (
+    <button type="button" className="btn" onClick={onClick} aria-live="polite">
+      <Icon name={copied ? "check" : "share"} size={18} /> {copied ? t.copied : t.share}
+    </button>
+  );
+}
+
+/** You against the friend whose link you opened. */
+function Versus({ me, them, locale }: { me: Challenge; them: Challenge; locale: Locale }) {
+  const t = T[locale];
+  return (
+    <span className={s.vs}>
+      🥊 {t.you} {me.pct}% · {clock(me.secs)} — {t.friend} {them.pct}% · {clock(them.secs)}
+      <b>{beats(me, them) ? t.win : t.lose}</b>
+    </span>
   );
 }
 
@@ -180,9 +225,10 @@ function Spark({ hist }: { hist: { d: string; s: number }[] }) {
 }
 
 /* ------------------------------------------------------------------ a session of reps */
-function Session({ reps, startAt, prior, data, locale, title, onRep, onFinish, onClose, streak, doneLabel }: {
+function Session({ reps, startAt, prior, data, locale, title, onRep, onFinish, onClose, streak, doneLabel, share, vs }: {
   reps: Rep[]; startAt: number; prior: RepResult[]; data: { concepts: GymConcept[]; probs: MockProblem[] }; locale: Locale; title: string;
   onRep: (rep: Rep, score: number, ms: number) => void; onFinish: (results: RepResult[]) => void; onClose: () => void; streak: number; doneLabel: string;
+  share?: (results: RepResult[]) => string; vs?: Challenge | null;
 }) {
   const t = T[locale];
   const [i, setI] = useState(startAt);
@@ -216,7 +262,11 @@ function Session({ reps, startAt, prior, data, locale, title, onRep, onFinish, o
             <li key={k}><Icon name={ICON[r.skill]} size={16} /><span>{t.skills[r.skill]}</span><b className={r.score === 1 ? s.goodText : r.score > 0 ? s.midText : s.badText}>{Math.round(r.score * 100)}%</b></li>
           ))}
         </ul>
-        <button type="button" className="btn btn-primary" onClick={onClose}>{t.back} →</button>
+        {vs && <Versus me={summaryOf(vs.date, results)} them={vs} locale={locale} />}
+        <div className={s.sumActions}>
+          {share && <ShareButton text={share(results)} locale={locale} />}
+          <button type="button" className="btn btn-primary" onClick={onClose}>{t.back} →</button>
+        </div>
       </div>
     );
   }

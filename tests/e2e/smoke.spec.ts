@@ -357,8 +357,14 @@ test("reduced motion: labs open on the finished picture and a race ends at once"
   await expect(page.locator(".race-lane.done")).not.toHaveCount(0);
 });
 
-test("gym: today's workout, by hand, end to end", async ({ page }) => {
-  await page.goto("/en/gym/");
+test("gym: today's workout, by hand, end to end", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  // Opened from a friend's challenge link: the dare shows before starting.
+  const d = new Date(), ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+  await page.goto(`/en/gym/?vs=${ymd}.101.60`);
+  await expect(page.getByText(/A friend scored/)).toHaveCount(0); // a forged score (101%) is ignored
+  await page.goto(`/en/gym/?vs=${ymd}.40.600`);
+  await expect(page.getByText("A friend scored 40% in 10:00 on today's workout. Beat it.")).toBeVisible();
   await page.getByRole("button", { name: /^Start/ }).click();
   for (let k = 0; k < 8; k++) {
     const head = (await page.locator('[class*="repHead"]').textContent()) ?? "";
@@ -388,6 +394,14 @@ test("gym: today's workout, by hand, end to end", async ({ page }) => {
   }
   await expect(page.getByText("Workout done")).toBeVisible();
   await expect(page.locator('[class*="recap"] li')).toHaveCount(8);
+  await expect(page.getByText(/You \d+% · \d+:\d\d — Friend 40% · 10:00/)).toBeVisible();
+  // Sharing gives squares and a challenge link, never the answers.
+  await page.evaluate(() => { Object.defineProperty(navigator, "share", { value: undefined, configurable: true }); });
+  await page.getByRole("button", { name: "Share" }).click();
+  await expect(page.getByRole("button", { name: /Copied/ })).toBeVisible();
+  const shared = await page.evaluate(() => navigator.clipboard.readText());
+  expect(shared).toMatch(/^levelup Gym #\d+ · \d+% · \d+:\d\d\n[🟩🟨🟥]{8}\n/u);
+  expect(shared).toMatch(new RegExp(`/en/gym/\\?vs=${ymd}\\.\\d+\\.\\d+$`));
   await page.getByRole("button", { name: /Back to the gym/ }).click();
   await expect(page.getByText(/Done today/)).toBeVisible();
   const state = await page.evaluate(() => JSON.parse(localStorage.getItem("fg.gym.v1") ?? "{}"));

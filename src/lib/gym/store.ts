@@ -7,7 +7,7 @@ export const ALPHA = 0.3;
 const HIST_DAYS = 60;
 
 export interface RepResult { skill: Skill; score: number; ms: number }
-export interface DayRec { score: number; reps: number; ms: number; done: boolean }
+export interface DayRec { score: number; reps: number; ms: number; done: boolean; /** each rep's score, for sharing */ r?: number[] }
 export interface SkillRec { ema: number; n: number; hist: { d: string; s: number; k: number }[] }
 export interface GymState { v: 1; days: Record<string, DayRec>; skills: Partial<Record<Skill, SkillRec>>; run?: { date: string; reps: Rep[]; results: RepResult[] } }
 
@@ -36,7 +36,8 @@ export function recordRep(s: GymState, date: string, r: RepResult): GymState {
 /** Close the day's workout: its mean score, reps and time. */
 export function finishDay(s: GymState, date: string, results: RepResult[]): GymState {
   const score = results.length ? results.reduce((a, b) => a + b.score, 0) / results.length : 0;
-  return { ...s, days: { ...s.days, [date]: { score, reps: results.length, ms: results.reduce((a, b) => a + b.ms, 0), done: true } }, run: undefined };
+  const r = results.map((x) => Math.round(x.score * 100) / 100);
+  return { ...s, days: { ...s.days, [date]: { score, reps: results.length, ms: results.reduce((a, b) => a + b.ms, 0), done: true, r } }, run: undefined };
 }
 
 const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

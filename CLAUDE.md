@@ -80,6 +80,8 @@ detail one tap away. The study path answers one question first: "what do I do ne
   blocked in answer fields by design. State: localStorage `fg.gym.v1` (`src/lib/gym/store.ts`), synced
   inside the same login item (`y` in the packed blob, `mergeGym`). The workout adds one rep of the
   weakest trained skill (`focusSkill`, fitness < 0.7 after ≥ 3 reps), chosen when the day starts.
+  A finished day shares Wordle-style (`src/lib/gym/share.ts`: squares, no answers) with a `?vs=`
+  challenge link; the Gym compares you with that friend. No server: a challenge is a claim.
 - `/plan` — interview plan (`src/lib/plan.ts`, pure and unit-tested): date + role + minutes per
   day → today's work and the weeks ahead. Its time model is a labelled assumption.
 - `public/sw.js` + `src/lib/offline.ts` + `src/components/Offline.tsx` — offline mode: visited

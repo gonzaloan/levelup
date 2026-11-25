@@ -34,6 +34,7 @@ const P: Record<string, string> = {
   close: "M6 6l12 12M18 6 6 18",
   shuffle: "M4 7h3.5c4 0 5 10 9 10H20M17 14l3 3-3 3M4 17h3.5c1.4 0 2.4-1.2 3.2-2.8M13.3 9.8c.8-1.6 1.8-2.8 3.2-2.8H20M17 4l3 3-3 3",
   printer: "M7 9V3h10v6M7 17H4v-7h16v7h-3M7 14h10v7H7z",
+  share: "M12 3v12M7.5 7.5 12 3l4.5 4.5M5 12v7a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-7",
   external: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
 };
 

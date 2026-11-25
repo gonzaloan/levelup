@@ -45,7 +45,7 @@ describe("gym progress in the synced item", () => {
     let b = emptyGym();
     b = recordRep(b, "2026-11-25", { skill: "bigo", score: 0, ms: 3 });
     const back = unpackGym(JSON.parse(JSON.stringify(packGym(a))));
-    expect(back.days["2026-11-24"]).toMatchObject({ done: true, reps: 1, score: 1 });
+    expect(back.days["2026-11-24"]).toMatchObject({ done: true, reps: 1, score: 1, r: [1] });
     expect(back.skills.trace!.hist).toEqual([{ d: "2026-11-24", s: 1, k: 1 }]);
     const m = mergeGym(b, back);
     expect(Object.keys(m.days)).toEqual(["2026-11-24"]);

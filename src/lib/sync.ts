@@ -190,7 +190,7 @@ export function unpack(p: Partial<Packed> | null | undefined): StudyState {
 
 export function packGym(g: GymState): PackedGym {
   const d: PackedGym["d"] = {};
-  for (const [k, v] of Object.entries(g.days)) d[k] = [r3(v.score), v.reps, v.ms, v.done ? 1 : 0];
+  for (const [k, v] of Object.entries(g.days)) d[k] = [r3(v.score), v.reps, v.ms, v.done ? 1 : 0, ...(v.r ?? [])];
   const sk: PackedGym["s"] = {};
   for (const [k, v] of Object.entries(g.skills)) if (v) sk[k] = [r3(v.ema), v.n, v.hist.map((h) => [h.d, r3(h.s), h.k])];
   return { d, s: sk };
@@ -198,7 +198,7 @@ export function packGym(g: GymState): PackedGym {
 export function unpackGym(p: PackedGym | undefined): GymState {
   const g = emptyGym();
   if (!p) return g;
-  for (const [k, a] of Object.entries(p.d ?? {})) g.days[k] = { score: a[0], reps: a[1], ms: a[2], done: a[3] === 1 };
+  for (const [k, a] of Object.entries(p.d ?? {})) g.days[k] = { score: a[0], reps: a[1], ms: a[2], done: a[3] === 1, ...(a.length > 4 ? { r: a.slice(4) } : {}) };
   for (const [k, a] of Object.entries(p.s ?? {})) (g.skills as Record<string, unknown>)[k] = { ema: a[0], n: a[1], hist: a[2].map(([d, sc, n]) => ({ d, s: sc, k: n })) };
   return g;
 }
