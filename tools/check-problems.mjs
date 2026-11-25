@@ -44,7 +44,9 @@ for (const f of files) {
     if (!start.error && start.results.every((r) => r.ok)) errors.push("starter passes every test: the tests check nothing");
     if (p.perf && !errors.length) {
       const perf = (code) => runPerf(py, { code, fn: p.fn, compare: p.compare ?? "exact", perf: p.perf });
-      const ref = await perf(p.solution);
+      // Best of three: a busy machine adds noise, never speed, so the minimum is the honest time.
+      let ref = await perf(p.solution);
+      for (let k = 0; k < 2 && ref.right; k++) { const again = await perf(p.solution); if (again.ms < ref.ms) ref = again; }
       if (ref.error) errors.push(`perf: reference fails on the large input: ${ref.error}`);
       else if (!ref.right) errors.push(`perf: reference digest ${ref.digest} ≠ perf.sha ${p.perf.sha} (rerun with --write-sha after changing gen)`);
       else if (ref.ms * HEADROOM > p.perf.limitMs) errors.push(`perf: reference takes ${ref.ms} ms; the limit (${p.perf.limitMs} ms) needs ${HEADROOM}× headroom: raise limitMs or shrink gen`);
