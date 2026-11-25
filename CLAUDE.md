@@ -83,7 +83,9 @@ detail one tap away. The study path answers one question first: "what do I do ne
   A finished day shares Wordle-style (`src/lib/gym/share.ts`: squares, no answers) with a `?vs=`
   challenge link; the Gym compares you with that friend. No server: a challenge is a claim.
 - `/plan` — interview plan (`src/lib/plan.ts`, pure and unit-tested): date + role + minutes per
-  day → today's work and the weeks ahead. Its time model is a labelled assumption.
+  day → today's work and the weeks ahead. Its time model is a labelled assumption. "Add to calendar"
+  downloads an .ics (`src/lib/calendar.ts`): a daily study block with an alarm until the day before,
+  plus the interview day — the reminder without a server.
 - `public/sw.js` + `src/lib/offline.ts` + `src/components/Offline.tsx` — offline mode: visited
   pages work offline (network-first, cached copies gzipped), "Save for offline" stores a whole
   language. The cache names are shared between the worker and `offline.ts`. Kill switch:

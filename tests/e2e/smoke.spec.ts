@@ -292,8 +292,20 @@ test("interview plan: a date gives a pace, today's concepts and the weeks ahead"
   const before = await reach();
   await page.getByRole("group", { name: "Minutes per day" }).getByRole("button", { name: "120" }).click();
   expect(await reach()).toBeGreaterThanOrEqual(before);
+  // The reminder is a calendar file: a daily block until the day before, plus the interview day.
+  await page.getByLabel("Daily reminder").fill("07:15");
+  const [dl] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Add to calendar" }).click()]);
+  expect(dl.suggestedFilename()).toBe("levelup-plan.ics");
+  const ics = (await (await import("node:fs/promises")).readFile(await dl.path())).toString().replace(/\r\n /g, "");
+  const eve = new Date(d.getFullYear(), d.getMonth(), d.getDate() - 1);
+  const ymd = (x: Date) => `${x.getFullYear()}${String(x.getMonth() + 1).padStart(2, "0")}${String(x.getDate()).padStart(2, "0")}`;
+  expect(ics).toMatch(/DTSTART:\d{8}T071500/);
+  expect(ics).toContain("DURATION:PT120M");
+  expect(ics).toContain(`RRULE:FREQ=DAILY;UNTIL=${ymd(eve)}T235959`);
+  expect(ics).toContain(`DTSTART;VALUE=DATE:${ymd(d)}`);
   await page.reload();
   await expect(page.locator(".plan-date input")).toHaveValue(iso);
+  await expect(page.getByLabel("Daily reminder")).toHaveValue("07:15");
 });
 
 test("mock coding interview: two problems, a clock, and results that survive a reload", async ({ page }) => {

@@ -7,6 +7,7 @@ import Link from "next/link";
 import type { Locale } from "@/lib/types";
 import { buildPlan, daysBetween, inScope, schedule, MINUTE_OPTIONS, MIN_PER_CONCEPT, REVIEW_SHARE, type DayKind, type Role } from "@/lib/plan";
 import { isDue } from "@/lib/practice/store";
+import { studyCalendar } from "@/lib/calendar";
 import { useStudyState } from "./practice/usePractice";
 import { statusOf } from "./Mastered";
 import { Seg } from "./labs/ui";
@@ -14,7 +15,7 @@ import { Ill } from "./Ill";
 import { Icon } from "./Icon";
 
 export interface PlanItem { id: string; t: string; domain: string; level: string; module: string }
-interface Saved { date: string; role: Role; minutes: number }
+interface Saved { date: string; role: Role; minutes: number; /** daily reminder time, HH:MM */ at: string }
 const KEY = "fg.plan.v1";
 const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const parse = (s: string) => { const [y, m, d] = s.split("-").map(Number); return new Date(y, m - 1, d); };
@@ -41,6 +42,7 @@ const T = {
     later: (n: number) => `Left for later (${n})`, laterSub: "Lower priority for an interview: study these if you get ahead.",
     assume: `The pace assumes about ${MIN_PER_CONCEPT} minutes per new concept and ${Math.round(REVIEW_SHARE * 100)}% of each study day for review.`,
     reset: "Clear plan",
+    remind: "Daily reminder", remindSub: "A study block every day at this time, until the day before the interview, plus the interview day. Your calendar app does the reminding.", addCal: "Add to calendar",
   },
   es: {
     date: "Fecha de la entrevista", role: "Rol objetivo", minutes: "Minutos al día",
@@ -63,17 +65,18 @@ const T = {
     later: (n: number) => `Queda para después (${n})`, laterSub: "Menor prioridad para una entrevista: estúdialos si te adelantas.",
     assume: `El ritmo supone unos ${MIN_PER_CONCEPT} minutos por concepto nuevo y un ${Math.round(REVIEW_SHARE * 100)}% de cada día de estudio para repasar.`,
     reset: "Borrar plan",
+    remind: "Recordatorio diario", remindSub: "Un bloque de estudio cada día a esta hora, hasta el día antes de la entrevista, más el día de la entrevista. Tu app de calendario te avisa.", addCal: "Agregar al calendario",
   },
 };
 
 export function PlanView({ items, locale }: { items: PlanItem[]; locale: Locale }) {
   const t = T[locale];
   const [s] = useStudyState();
-  const [cfg, setCfg] = useState<Saved>({ date: "", role: "swe", minutes: 60 });
+  const [cfg, setCfg] = useState<Saved>({ date: "", role: "swe", minutes: 60, at: "19:00" });
   const [today, setToday] = useState<Date | null>(null);
   useEffect(() => {
     setToday(new Date());
-    try { const v = JSON.parse(localStorage.getItem(KEY) ?? "null"); if (v?.role) setCfg({ date: v.date ?? "", role: v.role, minutes: v.minutes ?? 60 }); } catch { /* ignore */ }
+    try { const v = JSON.parse(localStorage.getItem(KEY) ?? "null"); if (v?.role) setCfg({ date: v.date ?? "", role: v.role, minutes: v.minutes ?? 60, at: /^\d\d:\d\d$/.test(v.at ?? "") ? v.at : "19:00" }); } catch { /* ignore */ }
   }, []);
   const set = (patch: Partial<Saved>) => {
     const next = { ...cfg, ...patch };
@@ -126,6 +129,7 @@ export function PlanView({ items, locale }: { items: PlanItem[]; locale: Locale 
         <strong>{t.left(daysLeft)}</strong>
         <span>{!plan.remaining ? t.doneAll : plan.fits ? t.fits(plan.perDay) : `${t.tight(plan.queue.length, plan.remaining, plan.capacity)} ${t.more}`}</span>
       </div>
+      <Reminder cfg={cfg} today={now} locale={locale} onTime={(at) => set({ at })} />
 
       <section className="plan-today">
         <h2><span className="hub-label">{t.todayTitle}</span>{t.kind[kind]}</h2>
@@ -183,6 +187,30 @@ export function PlanView({ items, locale }: { items: PlanItem[]; locale: Locale 
         <p className="lab-note">{t.assume}</p>
         <button type="button" className="link-btn" onClick={() => set({ date: "" })}>{t.reset}</button>
       </section>
+    </div>
+  );
+}
+
+/** The plan as a calendar file: the reminder is the calendar's own alarm (src/lib/calendar.ts). */
+function Reminder({ cfg, today, locale, onTime }: { cfg: Saved; today: Date; locale: Locale; onTime: (at: string) => void }) {
+  const t = T[locale];
+  const download = () => {
+    const [h, m] = cfg.at.split(":").map(Number);
+    // Today's block only if its time has not passed yet.
+    const first = new Date(today.getFullYear(), today.getMonth(), today.getDate() + (today.getHours() * 60 + today.getMinutes() < h * 60 + m ? 0 : 1));
+    const ics = studyCalendar({ from: iso(first), interview: cfg.date, at: cfg.at, minutes: cfg.minutes, locale, origin: window.location.origin });
+    const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar;charset=utf-8" }));
+    const a = Object.assign(document.createElement("a"), { href: url, download: "levelup-plan.ics" });
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+  return (
+    <div className="plan-remind">
+      <div><strong>📅 {t.remind}</strong><span>{t.remindSub}</span></div>
+      <div className="plan-remind-row">
+        <input type="time" aria-label={t.remind} value={cfg.at} onChange={(e) => e.target.value && onTime(e.target.value)} />
+        <button type="button" className="btn" onClick={download}><Icon name="calendar" size={18} /> {t.addCal}</button>
+      </div>
     </div>
   );
 }
