@@ -224,7 +224,7 @@ export function BlankCard({ prob, seed, onDone, locale }: { prob: MockProblem; s
       <p className={s.eyebrow}>{t.blankHelp}</p>
       <p className={s.concept}>{prob.t}</p>
       <div className={s.md} dangerouslySetInnerHTML={{ __html: inlineMd(prob.prompt) }} />
-      <CodeRunner id={prob.id} draftId={`gym:${seed}`} fn={prob.fn} starter={prob.starter} tests={prob.tests} compare={prob.compare} concept={prob.c} locale={locale} noPaste
+      <CodeRunner id={prob.id} draftId={`gym:${seed}`} fn={prob.fn} starter={prob.starter} tests={prob.tests} compare={prob.compare} concept={prob.c} locale={locale} perf={prob.perf} noPaste
         onResult={(p, n) => { if (!best.current || p >= best.current.p) best.current = { p, n }; }} />
       <div className={s.row}>
         <button type="button" className="btn btn-primary" onClick={() => onDone(best.current ? best.current.p / best.current.n : 0)}>{t.finish} →</button>

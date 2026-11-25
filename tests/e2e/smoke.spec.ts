@@ -207,6 +207,19 @@ test("python coding: a correct solution passes every test in the browser", async
   await page.locator(".code-runner textarea").fill("def longest_unique(s):\n    last, left, best = {}, 0, 0\n    for r, ch in enumerate(s):\n        if ch in last and last[ch] >= left:\n            left = last[ch] + 1\n        last[ch] = r\n        best = max(best, r - left + 1)\n    return best\n");
   await page.getByRole("button", { name: "Run tests" }).click();
   await expect(page.locator(".cr-summary")).toHaveText(/All tests pass/, { timeout: 60_000 });
+  await expect(page.locator(".cr-perf.ok")).toContainText("Large input");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("fg.code.v1") ?? "{}").solved?.["longest-run-without-repeats"])).toBeTruthy();
+});
+
+test("python coding: brute force passes the tests but misses the large input's time limit", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto("/en/practice/code/pair-indices-for-target/");
+  await expect(page.locator(".problem-perf")).toContainText("brute force won't pass");
+  await page.locator(".code-runner textarea").fill("def pair_indices(nums, target):\n    for i in range(len(nums)):\n        for j in range(i + 1, len(nums)):\n            if nums[i] + nums[j] == target:\n                return [i, j]\n    return []\n");
+  await page.getByRole("button", { name: "Run tests" }).click();
+  await expect(page.locator(".cr-perf.bad")).toContainText("too slow at scale", { timeout: 60_000 });
+  await expect(page.locator(".cr-summary")).toHaveText("All tests pass, but too slow on the large input");
+  expect(await page.evaluate(() => JSON.parse(localStorage.getItem("fg.code.v1") ?? "{}").solved?.["pair-indices-for-target"])).toBeFalsy();
 });
 
 test("system design round: phases, rubric and a saved attempt", async ({ page }) => {

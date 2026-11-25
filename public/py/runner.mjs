@@ -2,7 +2,7 @@
 // worker (public/py/worker.mjs) and the content gate (tools/check-problems.mjs), so a reference
 // solution is checked by exactly the code that will grade the learner.
 export const HARNESS = String.raw`
-import json, time, copy, traceback, io, contextlib, math
+import json, time, copy, traceback, io, contextlib, math, hashlib
 
 def __norm(x):
     return json.loads(json.dumps(x, default=lambda v: sorted(v, key=repr) if isinstance(v, (set, frozenset)) else list(v)))
@@ -59,6 +59,46 @@ def __run(payload_json):
             shown = repr(got)
         results.append({"ok": err is None and __eq(got, t["expected"], p.get("compare", "exact")), "got": shown, "error": err, "ms": round(ms, 2)})
     return json.dumps({"results": results, "stdout": out.getvalue()[-2000:]})
+
+# Performance test (like an online judge's time limit): one large input, built by the problem's
+# gen(), run once and timed. Its expected answer is stored as a digest, so the page never ships
+# the large output; the digest normalizes like __eq (unordered lists sorted, floats rounded).
+def __digest(x, mode):
+    g = __norm(x)
+    if mode in ("unordered", "unordered-nested") and isinstance(g, list):
+        if mode == "unordered-nested":
+            g = [sorted(v, key=__key) if isinstance(v, list) else v for v in g]
+        g = sorted(g, key=__key)
+    if mode == "float" and isinstance(g, (int, float)):
+        g = round(float(g), 6)
+    return hashlib.sha256(json.dumps(g, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
+
+def __perf(payload_json):
+    p = json.loads(payload_json)
+    ns, gns = {"__name__": "solution"}, {"__name__": "gen"}
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            exec(compile(p["code"], "solution.py", "exec"), ns)
+    except Exception as e:
+        return json.dumps({"error": f"{type(e).__name__}: {e}{__where(e.__traceback__)}"})
+    f = ns.get(p["fn"])
+    if not callable(f):
+        return json.dumps({"error": f"Define a function named {p['fn']}"})
+    exec(compile(p["perf"]["gen"], "gen.py", "exec"), gns)
+    args = gns["gen"]()
+    err, got = None, None
+    t0 = time.perf_counter()
+    try:
+        with contextlib.redirect_stdout(out):
+            got = f(*args)
+    except Exception as e:
+        err = f"{type(e).__name__}: {e}{__where(e.__traceback__)}"
+    ms = (time.perf_counter() - t0) * 1000
+    digest = None if err else __digest(got, p.get("compare", "exact"))
+    right = err is None and digest == p["perf"].get("sha")
+    fast = ms <= p["perf"]["limitMs"]
+    return json.dumps({"ok": right and fast, "ms": round(ms, 1), "right": right, "fast": fast, "digest": digest, "error": err})
 `;
 
 /** payload: { code, fn, tests: [{ args, expected }], compare } → { results } | { error } */
@@ -66,4 +106,11 @@ export async function runTests(pyodide, payload) {
   pyodide.runPython(HARNESS);
   pyodide.globals.set("__payload", JSON.stringify(payload));
   return JSON.parse(pyodide.runPython("__run(__payload)"));
+}
+
+/** payload: { code, fn, compare, perf: { gen, sha, limitMs } } → { ok, ms, right, fast, digest, error } */
+export async function runPerf(pyodide, payload) {
+  pyodide.runPython(HARNESS);
+  pyodide.globals.set("__payload", JSON.stringify(payload));
+  return JSON.parse(pyodide.runPython("__perf(__payload)"));
 }

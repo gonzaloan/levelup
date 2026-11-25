@@ -265,7 +265,16 @@ export function validateProblem(p, ids) {
   if (!Array.isArray(p.hints) || p.hints.length < 1 || p.hints.length > 3) E("hints: want 1-3");
   else p.hints.forEach((h, i) => both(`hints[${i}]`, h, 4, 40));
   if (!p.complexity?.time || !p.complexity?.space) E("complexity needs time and space");
-  const known = new Set(["id", "concept", "difficulty", "title", "prompt", "fn", "starter", "tests", "compare", "hints", "solution", "complexity", "explain"]);
+  if (p.perf !== undefined) {
+    const q = p.perf;
+    if (typeof q.gen !== "string" || !q.gen.includes("def gen(")) E("perf.gen must define def gen(): returning the args list");
+    if (typeof q.naive !== "string" || !q.naive.includes(`def ${p.fn}(`)) E(`perf.naive must define def ${p.fn}( (a correct but slow solution)`);
+    if (!Number.isInteger(q.limitMs) || q.limitMs < 50 || q.limitMs > 2000) E("perf.limitMs: an integer, 50-2000");
+    if (!/^[0-9a-f]{16}$/.test(q.sha ?? "")) E("perf.sha: run node tools/check-problems.mjs --write-sha <file>");
+    both("perf.size", q.size, 1, 6);
+    for (const k of Object.keys(q)) if (!["gen", "naive", "limitMs", "sha", "size"].includes(k)) E(`perf: unknown field "${k}"`);
+  }
+  const known = new Set(["id", "concept", "difficulty", "title", "prompt", "fn", "starter", "tests", "compare", "hints", "solution", "complexity", "explain", "perf"]);
   for (const k of Object.keys(p)) if (!known.has(k)) E(`unknown field "${k}"`);
   return errors;
 }

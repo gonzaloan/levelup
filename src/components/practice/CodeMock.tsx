@@ -126,7 +126,7 @@ export function CodeMock({ locale }: { locale: Locale }) {
               </ul>
             </article>
             <section className="problem-code">
-              <CodeRunner id={p.id} draftId={`mock:${p.id}`} fn={p.fn} starter={p.starter} tests={p.tests} compare={p.compare} concept={p.c} locale={locale}
+              <CodeRunner id={p.id} draftId={`mock:${p.id}`} fn={p.fn} starter={p.starter} tests={p.tests} compare={p.compare} concept={p.c} locale={locale} perf={p.perf}
                 onResult={(passed, total) => record(p.id, passed, total)} />
             </section>
           </div>

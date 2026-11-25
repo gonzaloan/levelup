@@ -44,6 +44,9 @@ export default async function ProblemPage({ params }: P) {
             <h1>{t(p.title, locale)}</h1>
           </header>
           <Markdown src={t(p.prompt, locale)} locale={locale} />
+          {p.perf && <p className="problem-perf">⚡ {es
+            ? <>Además de los tests, una entrada grande ({t(p.perf.size, locale)}) con límite de {p.perf.limitMs} ms: la fuerza bruta no pasa.</>
+            : <>Besides the tests, one large input ({t(p.perf.size, locale)}) with a {p.perf.limitMs} ms limit: brute force won&apos;t pass.</>}</p>}
           <h2 className="section-label">{es ? "Ejemplos" : "Examples"}</h2>
           <ul className="examples">
             {examples.map((x, i) => <li key={i}><code>{p.fn}({x.args.map((a) => JSON.stringify(a)).join(", ")})</code> → <code>{JSON.stringify(x.expected)}</code></li>)}
@@ -61,7 +64,8 @@ export default async function ProblemPage({ params }: P) {
           {lab && <p className="problem-lab"><Link href={`/${locale}/labs/${lab.id}/`}>{es ? "Lab relacionado" : "Related lab"}: {t(lab.title, locale)} →</Link></p>}
         </article>
         <section className="problem-code" aria-label={es ? "Tu solución" : "Your solution"}>
-          <CodeRunner id={p.id} fn={p.fn} starter={p.starter} tests={p.tests} compare={p.compare ?? "exact"} concept={p.concept} nextId={next?.id} locale={locale} />
+          <CodeRunner id={p.id} fn={p.fn} starter={p.starter} tests={p.tests} compare={p.compare ?? "exact"} concept={p.concept} nextId={next?.id} locale={locale}
+            perf={p.perf && { gen: p.perf.gen, sha: p.perf.sha, limitMs: p.perf.limitMs, size: t(p.perf.size, locale) }} />
         </section>
       </div>
     </main>

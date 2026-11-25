@@ -261,7 +261,7 @@ for (const lang of ["en", "es"]) {
 }
 
 // Coding problems for the timed mock (/practice/code/mock): what the page needs to pose and run a
-// problem, without hints or solutions. Loaded lazily, only on that page.
+// problem, without hints or solutions (nor the slow `perf.naive`). Loaded lazily, only on that page.
 {
   const order = new Map(domains.flatMap((d) => d.concepts).map((id, i) => [id, i]));
   const all = listProblemFiles().map((f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } })
@@ -273,6 +273,7 @@ for (const lang of ["en", "es"]) {
     fs.writeFileSync(path.join(outDir, `problems-${lang}.json`), JSON.stringify(all.map((p) => ({
       id: p.id, c: p.concept, ct: concepts.get(p.concept).title[lang], d: p.difficulty, t: p.title[lang], prompt: p.prompt[lang],
       fn: p.fn, starter: noHints(p.starter), tests: p.tests, compare: p.compare ?? "exact",
+      ...(p.perf ? { perf: { gen: p.perf.gen, sha: p.perf.sha, limitMs: p.perf.limitMs, size: p.perf.size[lang] } } : {}),
     }))));
   }
 }

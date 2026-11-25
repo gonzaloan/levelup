@@ -128,6 +128,8 @@ export interface Problem {
   id: string; concept: string; difficulty: "easy" | "medium" | "hard"; title: I18n; prompt: I18n; fn: string; starter: string;
   tests: { args: unknown[]; expected: unknown; visible?: boolean }[]; compare?: string; hints: I18n[]; solution: string;
   complexity: { time: string; space: string }; explain: I18n;
+  /** One large, timed input (tools/check-problems.mjs proves the naive solution misses the limit). */
+  perf?: { gen: string; naive: string; limitMs: number; sha: string; size: I18n };
 }
 let problems: Problem[] | null = null;
 export function getProblems(): Problem[] {

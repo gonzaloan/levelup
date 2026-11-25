@@ -2,6 +2,7 @@
 export interface MockProblem {
   id: string; c: string; ct: string; d: "easy" | "medium" | "hard"; t: string; prompt: string; fn: string; starter: string;
   tests: { args: unknown[]; expected: unknown; visible?: boolean }[]; compare: string;
+  perf?: { gen: string; sha: string; limitMs: number; size: string };
 }
 
 /** Two problems: an easier and a harder one, different patterns, unsolved first, random among equals. */
