@@ -21,7 +21,8 @@ const build = fs.existsSync(path.join(OUT, "_next", "static")) ? fs.readdirSync(
 
 // A language folder is a two-letter directory with its own home page (not "py", the Python runner).
 for (const locale of fs.readdirSync(OUT).filter((d) => /^[a-z]{2}$/.test(d) && fs.existsSync(path.join(OUT, d, "index.html")))) {
-  const html = walk(path.join(OUT, locale)).filter((f) => path.basename(f) === "index.html");
+  // Interviewer sheets are used live, on a call: they stay out of the offline download.
+  const html = walk(path.join(OUT, locale)).filter((f) => path.basename(f) === "index.html" && !f.includes(`${path.sep}interviewer${path.sep}`));
   // "/es/c/rag/index.html" is served, and cached, as "/es/c/rag/".
   const pages = html.map((f) => url(f).replace(/index\.html$/, "")).sort();
   const bytes = html.reduce((n, f) => n + gz(f), 0) + assetBytes;

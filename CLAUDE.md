@@ -89,7 +89,9 @@ detail one tap away. The study path answers one question first: "what do I do ne
   language. The cache names are shared between the worker and `offline.ts`. Kill switch:
   `deploy/sw-kill.js` (see `deploy/README.md`).
 - `/practice/design/<case>` — 45-minute system design round (`src/lib/design-round.ts` phases +
-  rubric; references come from the case's own file). `/interview/stories` — STAR story bank
+  rubric; references come from the case's own file, built by `src/components/practice/designCase.tsx`);
+  `/practice/design/<case>/interviewer/` is the same round for a friend who interviews you (peer
+  mock): reference open, push-back questions, rubric → `feedbackText` to send. `/interview/stories` — STAR story bank
   (`src/lib/stories.ts`: Amazon's 16 LPs, checked 2026-11-22, + Staff themes). Both local-only.
 - `src/lib/sync.ts` — optional login + sync, reusing get-certified's Cognito user pool. Inert
   without `NEXT_PUBLIC_*` config (see `.env.example`, `deploy/sync-config.sh`). The browser writes

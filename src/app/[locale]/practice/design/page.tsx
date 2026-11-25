@@ -27,8 +27,8 @@ export default async function DesignIndex({ params }: P) {
         <div>
           <h1>{es ? "Ronda de system design" : "System design round"}</h1>
           <p className="page-sub">{es
-            ? `Un simulacro de ${TOTAL_MINUTES} minutos: requisitos, estimaciones, API y datos, arquitectura, deep dives y cierre. Al final te evalúas con una rúbrica y ves tu punto más débil.`
-            : `A ${TOTAL_MINUTES}-minute mock: requirements, estimates, API and data, architecture, deep dives and wrap-up. Then a rubric shows your weakest dimension.`}</p>
+            ? `Un simulacro de ${TOTAL_MINUTES} minutos: requisitos, estimaciones, API y datos, arquitectura, deep dives y cierre. Al final te evalúas con una rúbrica y ves tu punto más débil. Mejor aún con un amigo: cada caso trae una hoja para quien entrevista.`
+            : `A ${TOTAL_MINUTES}-minute mock: requirements, estimates, API and data, architecture, deep dives and wrap-up. Then a rubric shows your weakest dimension. Better with a friend: every case has a sheet for the interviewer.`}</p>
           <RandomCase ids={groups.flatMap((g) => g.cases.map((c) => c.id))} locale={locale} label={es ? "Caso al azar" : "Random case"} />
         </div>
       </header>

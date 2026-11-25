@@ -66,3 +66,36 @@ export const RUBRIC: RubricDim[] = [
     { en: "Hard to follow", es: "Difícil de seguir" }, { en: "Followable, interviewer led", es: "Se sigue, guiado por el entrevistador" },
     { en: "Structured, checked in", es: "Estructurado, confirma con el entrevistador" }, { en: "Led the room, managed time", es: "Condujo la sesión y manejó el tiempo" }] },
 ];
+
+interface FeedbackInput {
+  title: string; minutes: number; locale: "en" | "es"; origin: string;
+  rubric: { id: string; title: string; levels: string[]; study: { id: string; title: string }[] }[];
+  scores: Record<string, number>; phases: { id: string; title: string }[]; notes: Record<string, string>;
+}
+
+/** The interviewer's write-up for the candidate (peer mock): score and level per dimension, the
+ *  notes taken per phase, and what to study for the weakest dimension. Plain text, for any chat. */
+export function feedbackText(f: FeedbackInput): string {
+  const es = f.locale === "es";
+  const lines = [`${es ? "Mock de system design" : "System design mock"}: ${f.title} · ${f.minutes} min (levelup)`, ""];
+  for (const d of f.rubric) {
+    const s = f.scores[d.id];
+    lines.push(`${d.title}: ${s ? `${s}/4 · ${d.levels[s - 1]}` : "–"}`);
+  }
+  const scored = f.rubric.filter((d) => f.scores[d.id]);
+  if (scored.length) {
+    const mean = scored.reduce((n, d) => n + f.scores[d.id], 0) / scored.length;
+    const weak = [...scored].sort((a, b) => f.scores[a.id] - f.scores[b.id])[0];
+    lines.push("", `${es ? "Promedio" : "Average"}: ${mean.toFixed(1)}/4`);
+    if (f.scores[weak.id] < 4) {
+      lines.push(`${es ? "A trabajar" : "To work on"}: ${weak.title}`);
+      for (const c of weak.study) lines.push(`  · ${c.title}: ${f.origin}/${f.locale}/c/${c.id}/`);
+    }
+  }
+  const notes = f.phases.filter((p) => f.notes[p.id]?.trim());
+  if (notes.length) {
+    lines.push("", es ? "Notas" : "Notes");
+    for (const p of notes) lines.push(`- ${p.title}: ${f.notes[p.id].trim().replace(/\s*\n\s*/g, " / ")}`);
+  }
+  return lines.join("\n");
+}

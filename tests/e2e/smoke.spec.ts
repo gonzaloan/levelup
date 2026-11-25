@@ -219,6 +219,32 @@ test("system design round: phases, rubric and a saved attempt", async ({ page })
   await expect(page.locator(".dr-history tbody tr")).toHaveCount(1);
 });
 
+test("peer mock: the interviewer sheet runs the round and writes feedback for the candidate", async ({ page }) => {
+  await page.goto("/en/practice/design/case-url-shortener/");
+  await expect(page.locator(".dr-peer code")).toHaveText(/\/en\/practice\/design\/case-url-shortener\/interviewer\/$/);
+  await page.goto("/en/practice/design/case-url-shortener/interviewer/");
+  await expect(page.locator(".dr-peer code")).toHaveText(/\/en\/practice\/design\/case-url-shortener\/$/);
+  await page.getByRole("button", { name: "Start the round" }).click();
+  await page.locator(".dr-notes textarea").fill("Asked about custom aliases\nand expiry");
+  for (let i = 0; i < 5; i++) {
+    // The interviewer sees the reference without unfolding anything.
+    await expect(page.locator(".dr-ref > div")).toBeVisible();
+    await page.getByRole("button", { name: /Next phase/ }).click();
+  }
+  await page.getByRole("button", { name: "Finish and assess" }).click();
+  await expect(page.getByRole("heading", { name: "Score the candidate" })).toBeVisible();
+  const dims = await page.locator(".dr-rubric fieldset").all();
+  for (const [k, fs] of dims.entries()) await fs.locator("button").nth(k === 1 ? 1 : 3).click();
+  await page.getByRole("button", { name: "Write the feedback" }).click();
+  const fb = page.locator(".dr-feedback");
+  await expect(fb).toContainText("System design mock:");
+  await expect(fb).toContainText("To work on: Estimation");
+  await expect(fb).toContainText("/en/c/back-of-envelope/");
+  await expect(fb).toContainText("Asked about custom aliases / and expiry");
+  // The candidate's scores are theirs: nothing lands in the interviewer's own attempt history.
+  expect(await page.evaluate(() => localStorage.getItem("fg.design.v1"))).toBeNull();
+});
+
 test("story bank: a tagged story fills its competency in coverage", async ({ page }) => {
   await page.goto("/en/interview/stories/");
   await page.getByRole("button", { name: "+ New story" }).click();
