@@ -70,7 +70,9 @@ detail one tap away. The study path answers one question first: "what do I do ne
   solved in the browser at `/practice/code`: Pyodide (MPL-2.0, self-hosted from node_modules into
   `public/pyodide/` by the build) runs in a module Web Worker (`public/py/worker.mjs`) with a 5 s
   limit; `public/py/runner.mjs` is the harness, shared with `tools/check-problems.mjs` (part of
-  `npm run verify`): every reference solution must pass and every starter must fail.
+  `npm run verify`): every reference solution must pass and every starter must fail. A `perf` block
+  adds one large timed input (online-judge style): the gate proves the reference passes with 20×
+  headroom and the brute force (`perf.naive`) misses the limit; correct but too slow is not solved.
 - `/practice/code/mock` — mock coding interview (two problems, 45 minutes, no hints) from the lazy
   `src/generated/problems-<locale>.json`; every `CodeRunner` on a page shares one Python worker.
 - `/gym` — the Gym (spec: `docs/specs/gym.md`): a daily workout of manual reps for the skills AI

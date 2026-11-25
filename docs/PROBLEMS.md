@@ -37,3 +37,25 @@ or class the learner writes, and converts the result back. Mark the two parts wi
 - Class design: a list of operations (`[["put", 1, 1], ["get", 1]]`); the driver returns the list
   of results (`null` for operations that return nothing).
 The 25-line limit applies to the learner's part of the solution.
+
+## Performance test (`perf`)
+Optional but expected wherever brute force is the trap: one large input, timed, like an online
+judge's time limit. The learner sees it after the tests pass; correct but too slow is not solved.
+```json
+"perf": {
+  "size": { "en": "5,000 days", "es": "5.000 días" },
+  "limitMs": 200,
+  "sha": "<16 hex, filled by the checker>",
+  "gen": "def gen():\n    return [[50] * 4999 + [51]]\n",
+  "naive": "def days_until_warmer(temps):\n    ... the O(n²) double loop ...\n"
+}
+```
+- `gen()` returns the args list, deterministic (`random.Random(seed)` is fine), the brute force's worst case.
+- `naive` is the plausible brute force, correct on every test. The browser never receives it.
+- The expected answer is stored as a digest (`sha`), so the page never ships a large output.
+- The checker proves the limit means something: the reference runs with ≥ 20× headroom (slow phones,
+  other correct styles) and `naive` takes ≥ 2× the limit. Keep `naive` ≤ ~3 s: the gate runs it.
+- Insert without reformatting: `node tools/set-perf.mjs <id> <perf.json>`, then
+  `node tools/check-problems.mjs --write-sha content/problems/<id>.json`.
+- Skip it when the only slower approach is a C-speed builtin barely slower than the reference
+  (O(n) `list.index` vs O(log n) binary search): a timer can't tell them apart in Pyodide.

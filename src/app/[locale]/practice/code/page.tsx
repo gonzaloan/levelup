@@ -49,6 +49,7 @@ export default async function CodeIndex({ params }: P) {
                 <li key={p.id}>
                   <Link href={`/${locale}/practice/code/${p.id}/`}>
                     <span className="cl-title">{t(p.title, locale)}</span>
+                    {p.perf && <span className="perf-mark" role="img" aria-label={es ? "Con test de rendimiento" : "Has a performance test"} title={es ? "Con test de rendimiento" : "Has a performance test"}>⚡</span>}
                     <span className={`diff diff-${p.difficulty}`}>{DIFF[p.difficulty][locale]}</span>
                     <SolvedMark id={p.id} />
                   </Link>
