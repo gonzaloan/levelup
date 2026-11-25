@@ -128,7 +128,7 @@ export function Gym({ locale }: { locale: Locale }) {
         {SKILLS.map((sk) => {
           const rec = g.skills[sk];
           return (
-            <article key={sk} className={s.skill}>
+            <article key={sk} className={`${s.skill} ${s["sk_" + sk]}`}>
               <header><Icon name={ICON[sk]} size={20} /><strong>{t.skills[sk]}</strong></header>
               <p>{t.blurbs[sk]}</p>
               <div className={s.meter}>
