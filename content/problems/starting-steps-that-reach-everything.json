@@ -1,0 +1,46 @@
+{
+  "id": "starting-steps-that-reach-everything",
+  "concept": "topological-sort",
+  "difficulty": "easy",
+  "title": { "en": "Starting steps that reach everything", "es": "Pasos iniciales que alcanzan todo" },
+  "prompt": {
+    "en": "A workflow has `n` steps numbered `0` to `n - 1`. Each pair `[a, b]` in `triggers` means that when step `a` runs, it sets off step `b`. The triggers never form a cycle. You launch some steps by hand, and every step they set off, directly or down a chain, runs too. Return, in increasing order, the smallest set of steps to launch so that every step runs.\n\nPairs may repeat, and `triggers` may be empty.",
+    "es": "Un flujo de trabajo tiene `n` pasos numerados de `0` a `n - 1`. Cada par `[a, b]` en `triggers` significa que cuando corre el paso `a`, dispara el paso `b`. Los disparos nunca forman un ciclo. Tú lanzas algunos pasos a mano, y todo paso que ellos disparen, directo o en cadena, también corre. Devuelve, en orden creciente, el conjunto más chico de pasos que debes lanzar para que corran todos.\n\nLos pares pueden repetirse y `triggers` puede venir vacío."
+  },
+  "fn": "starting_steps",
+  "starter": "def starting_steps(n: int, triggers: list[list[int]]) -> list[int]:\n    # In a DAG, which steps does nothing fire? Count incoming triggers.\n    return []\n",
+  "tests": [
+    { "args": [6, [[0, 1], [0, 2], [2, 5], [3, 4], [4, 2]]], "expected": [0, 3], "visible": true },
+    { "args": [5, [[0, 1], [2, 1], [3, 1], [1, 4], [2, 4]]], "expected": [0, 2, 3], "visible": true },
+    { "args": [3, []], "expected": [0, 1, 2], "visible": true },
+    { "args": [1, []], "expected": [0] },
+    { "args": [5, [[3, 4], [2, 3], [1, 2], [0, 1]]], "expected": [0] },
+    { "args": [5, [[4, 3], [3, 2], [2, 1], [1, 0]]], "expected": [4] },
+    { "args": [3, [[0, 1], [0, 1], [1, 2]]], "expected": [0] },
+    { "args": [4, [[0, 1], [0, 2], [1, 3], [2, 3]]], "expected": [0] },
+    { "args": [7, [[0, 1], [2, 3], [3, 4], [5, 4]]], "expected": [0, 2, 5, 6] },
+    { "args": [5, [[0, 4], [1, 4], [2, 4], [3, 4]]], "expected": [0, 1, 2, 3] },
+    { "args": [5, [[2, 0], [2, 1], [2, 3], [2, 4]]], "expected": [2] },
+    { "args": [4, [[0, 1], [1, 2], [0, 2], [2, 3], [0, 3]]], "expected": [0] },
+    { "args": [8, [[7, 3], [3, 0], [6, 0], [6, 5], [5, 1], [1, 2], [4, 2]]], "expected": [4, 6, 7] },
+    { "args": [9, [[8, 7], [1, 7], [7, 0], [2, 0], [3, 4], [4, 5], [3, 5], [6, 5]]], "expected": [1, 2, 3, 6, 8] }
+  ],
+  "compare": "exact",
+  "hints": [
+    { "en": "A step that some trigger points at will run anyway if you launch whatever fires it. Which steps can nothing set off?", "es": "Un paso al que apunta algún disparo va a correr igual si lanzas lo que lo dispara. ¿Qué pasos no puede disparar nada?" },
+    { "en": "Those are the in-degree-0 steps, the ones Kahn's algorithm queues first. With no cycle, walking any step's triggers backwards always ends at one of them.", "es": "Son los pasos con in-degree 0, los que el algoritmo de Kahn encola primero. Sin ciclos, recorrer hacia atrás los disparos de cualquier paso siempre termina en uno de ellos." }
+  ],
+  "solution": "def starting_steps(n: int, triggers: list[list[int]]) -> list[int]:\n    fired = [False] * n                  # fired[s]: some trigger points at s (in-degree > 0)\n    for _, b in triggers:\n        fired[b] = True\n    return [s for s in range(n) if not fired[s]]\n",
+  "complexity": { "time": "O(n + E), E = len(triggers)", "space": "O(n)" },
+  "explain": {
+    "en": "A step with an incoming trigger never needs launching: follow its triggers backwards and, because there is no cycle, the walk must stop at a step nothing fires. So the in-degree-0 steps reach everything, and each of them must be launched, since nothing else sets it off. That is exactly where Kahn's algorithm starts. The trap is simulating: launching each step and running a BFS to see what it covers is O(n·(n + E)).",
+    "es": "Un paso con un disparo entrante nunca hace falta lanzarlo: sigue sus disparos hacia atrás y, como no hay ciclos, el recorrido tiene que parar en un paso que nada dispara. Así que los pasos con in-degree 0 alcanzan todo, y hay que lanzar cada uno, porque nada más los dispara. Es justo donde parte el algoritmo de Kahn. La trampa es simular: lanzar cada paso y correr un BFS para ver qué cubre es O(n·(n + E))."
+  },
+  "perf": {
+    "size": { "en": "3,000 steps, 6,000 triggers", "es": "3.000 pasos, 6.000 disparos" },
+    "limitMs": 100,
+    "sha": "36d10905076f98a8",
+    "gen": "import random\n\n\ndef gen():\n    n, rng = 3000, random.Random(7)\n    triggers = [[i, i + 1] for i in range(40, n - 1)]          # one long chain of steps\n    triggers += [[i, rng.randint(i + 1, n - 1)] for i in range(40, n - 1)]\n    triggers += [[s, rng.randint(40, n - 1)] for s in range(0, 40, 2)]\n    rng.shuffle(triggers)\n    return [n, triggers]\n",
+    "naive": "from collections import deque\n\n\ndef starting_steps(n: int, triggers: list[list[int]]) -> list[int]:\n    fires = [[] for _ in range(n)]\n    for a, b in triggers:\n        fires[a].append(b)\n    reached = [False] * n                # set off by some other step\n    for start in range(n):               # launch each step and see what it sets off\n        seen = [False] * n\n        queue = deque([start])\n        while queue:\n            u = queue.popleft()\n            for v in fires[u]:\n                if not seen[v]:\n                    seen[v] = reached[v] = True\n                    queue.append(v)\n    return [s for s in range(n) if not reached[s]]\n"
+  }
+}
