@@ -2,7 +2,8 @@
 // starter must fail at least one, using the exact harness the browser runs (public/py/runner.mjs)
 // on Pyodide in Node. A problem with `perf` (one large, timed input) must also show the time limit
 // means something: the reference passes it with ≥ 20× headroom (slow phones, other correct styles)
-// and `perf.naive`, correct on every test, takes ≥ 2× the limit.
+// and `perf.naive`, correct on every test, takes ≥ 2× the limit. Limits are scaled to this machine's
+// speed by the harness's benchmark (as in the browser), so the verdict doesn't depend on the machine.
 // Usage: node tools/check-problems.mjs [--write-sha] [files...]
 import fs from "node:fs";
 import path from "node:path";
@@ -49,13 +50,13 @@ for (const f of files) {
       for (let k = 0; k < 2 && ref.right; k++) { const again = await perf(p.solution); if (again.ms < ref.ms) ref = again; }
       if (ref.error) errors.push(`perf: reference fails on the large input: ${ref.error}`);
       else if (!ref.right) errors.push(`perf: reference digest ${ref.digest} ≠ perf.sha ${p.perf.sha} (rerun with --write-sha after changing gen)`);
-      else if (ref.ms * HEADROOM > p.perf.limitMs) errors.push(`perf: reference takes ${ref.ms} ms; the limit (${p.perf.limitMs} ms) needs ${HEADROOM}× headroom: raise limitMs or shrink gen`);
+      else if (ref.ms * HEADROOM > ref.limit) errors.push(`perf: reference takes ${ref.ms} ms; the limit (${p.perf.limitMs} ms, ${ref.limit} ms on this machine) needs ${HEADROOM}× headroom: raise limitMs or shrink gen`);
       const nt = await run(p.perf.naive);
       if (nt.error || !nt.results.every((r) => r.ok)) errors.push("perf.naive must pass every test (it is correct, only slow)");
       else {
         const nv = await perf(p.perf.naive);
-        if (nv.ms < NAIVE_OVER * p.perf.limitMs) errors.push(`perf: the naive solution takes only ${nv.ms} ms, under ${NAIVE_OVER}× the ${p.perf.limitMs} ms limit: grow gen or lower limitMs`);
-        else if (!errors.length) perfNote = ` · perf ${ref.ms} ms vs naive ${nv.ms} ms, limit ${p.perf.limitMs} ms`;
+        if (nv.ms < NAIVE_OVER * nv.limit) errors.push(`perf: the naive solution takes only ${nv.ms} ms, under ${NAIVE_OVER}× the limit (${p.perf.limitMs} ms, ${nv.limit} ms on this machine): grow gen or lower limitMs`);
+        else if (!errors.length) perfNote = ` · perf ${ref.ms} ms vs naive ${nv.ms} ms, limit ${p.perf.limitMs} ms (×${ref.scale} here)`;
       }
     }
   }

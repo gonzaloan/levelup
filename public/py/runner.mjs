@@ -73,6 +73,23 @@ def __digest(x, mode):
         g = round(float(g), 6)
     return hashlib.sha256(json.dumps(g, sort_keys=True, separators=(",", ":")).encode()).hexdigest()[:16]
 
+# Devices differ several-fold in speed, so a fixed limit would be too strict on a slow phone and
+# let brute force through on a fast laptop. limitMs is in "reference machine" milliseconds; this
+# small benchmark measures how fast this device runs Python and scales the limit to it. The gate
+# (tools/check-problems.mjs) scales the same way, so it gives the same verdict on any machine.
+__BENCH_REF_MS = 6.3  # __bench() on the machine where the limits were calibrated (Nov 2026)
+
+def __bench():
+    best = 1e9
+    for _ in range(5):
+        t0 = time.perf_counter()
+        s, d = 0, {}
+        for i in range(60000):
+            s += i % 7
+            d[i & 255] = s
+        best = min(best, (time.perf_counter() - t0) * 1000)
+    return best
+
 def __perf(payload_json):
     p = json.loads(payload_json)
     ns, gns = {"__name__": "solution"}, {"__name__": "gen"}
@@ -87,6 +104,8 @@ def __perf(payload_json):
         return json.dumps({"error": f"Define a function named {p['fn']}"})
     exec(compile(p["perf"]["gen"], "gen.py", "exec"), gns)
     args = gns["gen"]()
+    scale = min(8.0, max(0.25, __bench() / __BENCH_REF_MS))
+    limit = p["perf"]["limitMs"] * scale
     err, got = None, None
     t0 = time.perf_counter()
     try:
@@ -97,8 +116,8 @@ def __perf(payload_json):
     ms = (time.perf_counter() - t0) * 1000
     digest = None if err else __digest(got, p.get("compare", "exact"))
     right = err is None and digest == p["perf"].get("sha")
-    fast = ms <= p["perf"]["limitMs"]
-    return json.dumps({"ok": right and fast, "ms": round(ms, 1), "right": right, "fast": fast, "digest": digest, "error": err})
+    fast = ms <= limit
+    return json.dumps({"ok": right and fast, "ms": round(ms, 1), "right": right, "fast": fast, "digest": digest, "error": err, "limit": round(limit, 1), "scale": round(scale, 2)})
 `;
 
 /** payload: { code, fn, tests: [{ args, expected }], compare } → { results } | { error } */
@@ -108,7 +127,7 @@ export async function runTests(pyodide, payload) {
   return JSON.parse(pyodide.runPython("__run(__payload)"));
 }
 
-/** payload: { code, fn, compare, perf: { gen, sha, limitMs } } → { ok, ms, right, fast, digest, error } */
+/** payload: { code, fn, compare, perf: { gen, sha, limitMs } } → { ok, ms, right, fast, digest, error, limit, scale } */
 export async function runPerf(pyodide, payload) {
   pyodide.runPython(HARNESS);
   pyodide.globals.set("__payload", JSON.stringify(payload));

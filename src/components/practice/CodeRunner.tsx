@@ -15,20 +15,20 @@ type Test = { args: unknown[]; expected: unknown; visible?: boolean };
 type Result = { ok: boolean; got: unknown; error: string | null; ms: number };
 type Outcome = { results?: Result[]; error?: string; stdout?: string };
 export type Perf = { gen: string; sha: string; limitMs: number; size: string };
-type PerfOut = { ok: boolean; ms: number | null; right: boolean; fast: boolean; error: string | null };
+type PerfOut = { ok: boolean; ms: number | null; right: boolean; fast: boolean; error: string | null; limit?: number };
 
 const T = {
   en: { run: "Run tests", running: "Running…", loading: "Loading Python (~13 MB, first time only)…", reset: "Reset", passed: "All tests pass", partly: (n: number, t: number) => `${n}/${t} tests pass`,
     hidden: "Hidden test", input: "Input", expected: "Expected", got: "Got", timeout: "Time limit exceeded (5 s): an infinite loop, or a solution too slow for one of the tests.", stdout: "Printed output",
     xp: "+20 XP · marked solved", next: "Next problem", tip: "Ctrl/⌘ + Enter runs · Tab indents", failed: "Python could not start in this browser.", solvedBefore: "Solved before", noPaste: "Manual mode: type it yourself, pasting is off here.",
-    perf: "Large input", perfRunning: "Timing the large input…", limit: (ms: number) => `limit ${ms} ms`,
+    perf: "Large input", perfRunning: "Timing the large input…", limit: (ms: number) => `limit ${ms} ms on this device`,
     slow: "Correct on the small tests, but too slow at scale: look for a better complexity (the reference takes a few ms).",
     wrong: "Fast, but a wrong answer on the large input: an edge case that only shows at scale.",
     perfTimeout: (s: number) => `Over ${s} s on the large input: far too slow (or stuck).`, tooSlow: "All tests pass, but too slow on the large input" },
   es: { run: "Ejecutar tests", running: "Ejecutando…", loading: "Cargando Python (~13 MB, solo la primera vez)…", reset: "Reiniciar", passed: "Pasan todos los tests", partly: (n: number, t: number) => `Pasan ${n}/${t} tests`,
     hidden: "Test oculto", input: "Entrada", expected: "Esperado", got: "Obtenido", timeout: "Límite de tiempo excedido (5 s): un loop infinito, o una solución demasiado lenta para alguno de los tests.", stdout: "Salida impresa",
     xp: "+20 XP · marcado como resuelto", next: "Siguiente problema", tip: "Ctrl/⌘ + Enter ejecuta · Tab indenta", failed: "Python no pudo iniciar en este navegador.", solvedBefore: "Ya lo resolviste", noPaste: "Modo manual: escríbelo tú, pegar está desactivado aquí.",
-    perf: "Entrada grande", perfRunning: "Midiendo la entrada grande…", limit: (ms: number) => `límite ${ms} ms`,
+    perf: "Entrada grande", perfRunning: "Midiendo la entrada grande…", limit: (ms: number) => `límite ${ms} ms en este equipo`,
     slow: "Correcto en los tests chicos, pero demasiado lento a escala: busca una mejor complejidad (la referencia tarda pocos ms).",
     wrong: "Rápido, pero da una respuesta incorrecta con la entrada grande: un caso borde que solo aparece a escala.",
     perfTimeout: (s: number) => `Más de ${s} s con la entrada grande: demasiado lento (o se quedó pegado).`, tooSlow: "Pasan todos los tests, pero es lento con la entrada grande" },
@@ -216,7 +216,7 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
         <div className={`cr-perf ${perfOut.ok ? "ok" : "bad"}`}>
           <span className="cr-mark">{perfOut.ok ? "✓" : "✗"}</span>
           <span><strong>⚡ {t.perf}</strong> · {perf.size}{!perfOut.ok && <small>{perfOut.error ?? (!perfOut.right ? t.wrong : t.slow)}</small>}</span>
-          <span className="cr-ms">{perfOut.ms !== null ? `${perfOut.ms.toFixed(1)} ms · ` : ""}{t.limit(perf.limitMs)}</span>
+          <span className="cr-ms">{perfOut.ms !== null ? `${perfOut.ms.toFixed(1)} ms · ` : ""}{t.limit(Math.round(perfOut.limit ?? perf.limitMs))}</span>
         </div>
       )}
       {out?.stdout && <details className="cr-stdout"><summary>{t.stdout}</summary><pre>{out.stdout}</pre></details>}

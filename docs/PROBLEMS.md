@@ -53,6 +53,9 @@ judge's time limit. The learner sees it after the tests pass; correct but too sl
 - `gen()` returns the args list, deterministic (`random.Random(seed)` is fine), the brute force's worst case.
 - `naive` is the plausible brute force, correct on every test. The browser never receives it.
 - The expected answer is stored as a digest (`sha`), so the page never ships a large output.
+- `limitMs` is in reference-machine milliseconds: the harness times a small Python benchmark and
+  scales the limit to the device (a slow phone gets more time, a fast laptop less), and the checker
+  scales the same way, so its verdict doesn't depend on the machine it runs on.
 - The checker proves the limit means something: the reference runs with ≥ 20× headroom (slow phones,
   other correct styles) and `naive` takes ≥ 2× the limit. Keep `naive` ≤ ~3 s: the gate runs it.
 - Insert without reformatting: `node tools/set-perf.mjs <id> <perf.json>`, then

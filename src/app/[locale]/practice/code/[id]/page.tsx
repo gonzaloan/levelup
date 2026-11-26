@@ -45,8 +45,8 @@ export default async function ProblemPage({ params }: P) {
           </header>
           <Markdown src={t(p.prompt, locale)} locale={locale} />
           {p.perf && <p className="problem-perf">⚡ {es
-            ? <>Además de los tests, una entrada grande ({t(p.perf.size, locale)}) con límite de {p.perf.limitMs} ms: la fuerza bruta no pasa.</>
-            : <>Besides the tests, one large input ({t(p.perf.size, locale)}) with a {p.perf.limitMs} ms limit: brute force won&apos;t pass.</>}</p>}
+            ? <>Además de los tests, una entrada grande ({t(p.perf.size, locale)}) con límite de ~{p.perf.limitMs} ms (se ajusta a la velocidad de tu equipo): la fuerza bruta no pasa.</>
+            : <>Besides the tests, one large input ({t(p.perf.size, locale)}) with a ~{p.perf.limitMs} ms limit (scaled to your device&apos;s speed): brute force won&apos;t pass.</>}</p>}
           <h2 className="section-label">{es ? "Ejemplos" : "Examples"}</h2>
           <ul className="examples">
             {examples.map((x, i) => <li key={i}><code>{p.fn}({x.args.map((a) => JSON.stringify(a)).join(", ")})</code> → <code>{JSON.stringify(x.expected)}</code></li>)}
