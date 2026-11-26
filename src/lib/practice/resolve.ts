@@ -38,3 +38,16 @@ export function nextDue(solved: Record<string, number>, reviews: Reviews): numbe
   const ds = Object.keys(solved).map((id) => recOf(id, solved, reviews)!.due);
   return ds.length ? Math.min(...ds) : null;
 }
+
+/** Two devices' coding progress (for sync): every solved problem keeps its first solve; each
+ *  schedule keeps the further-along record (more cold re-solves, then the later due date). */
+export function mergeCode(a: { solved: Record<string, number>; reviews: Reviews }, b: { solved: Record<string, number>; reviews: Reviews }) {
+  const solved = { ...a.solved };
+  for (const [id, t] of Object.entries(b.solved)) solved[id] = solved[id] ? Math.min(solved[id], t) : t;
+  const reviews: Reviews = { ...a.reviews };
+  for (const [id, r] of Object.entries(b.reviews)) {
+    const x = reviews[id];
+    if (!x || r.n > x.n || (r.n === x.n && r.due > x.due)) reviews[id] = r;
+  }
+  return { solved, reviews };
+}

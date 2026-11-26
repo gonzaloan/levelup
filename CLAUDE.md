@@ -75,7 +75,8 @@ detail one tap away. The study path answers one question first: "what do I do ne
   headroom and the brute force (`perf.naive`) misses the limit; correct but too slow is not solved.
 - `/practice/code/review` — re-solve from memory: a solved problem comes back after 3, 7, 16, 35 and
   75 days (`src/lib/practice/resolve.ts`, a Leitner ladder; forgetting restarts it tomorrow), blank
-  starter, no paste. Schedule in `fg.code.v1` (`reviews`); the count shows on Coding, Practice and /plan.
+  starter, no paste. Schedule in `fg.code.v1` (`reviews`), synced with the solved marks in the login
+  item (`k`, `mergeCode`); the count shows on Coding, Practice and /plan.
 - `/practice/code/mock` — mock coding interview (two problems, 45 minutes, no hints) from the lazy
   `src/generated/problems-<locale>.json`; every `CodeRunner` on a page shares one Python worker.
 - `/gym` — the Gym (spec: `docs/specs/gym.md`): a daily workout of manual reps for the skills AI

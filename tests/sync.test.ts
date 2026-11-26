@@ -53,3 +53,18 @@ describe("gym progress in the synced item", () => {
     expect(mergeGym(m, m)).toEqual(m);
   });
 });
+
+describe("coding progress in the synced item", () => {
+  it("round-trips solved problems and their re-solve schedule, and merges two devices", async () => {
+    const { packCode, unpackCode } = await import("@/lib/sync");
+    const { mergeCode } = await import("@/lib/practice/resolve");
+    const a = { solved: { x: 100, y: 300 }, reviews: { x: { due: 900, n: 1 } } };
+    const b = { solved: { y: 200, z: 50 }, reviews: { x: { due: 500, n: 2 }, z: { due: 70, n: 0 } } };
+    expect(unpackCode(JSON.parse(JSON.stringify(packCode(a))))).toEqual(a);
+    const m = mergeCode(a, b);
+    expect(m.solved).toEqual({ x: 100, y: 200, z: 50 });
+    expect(m.reviews).toEqual({ x: { due: 500, n: 2 }, z: { due: 70, n: 0 } });
+    expect(mergeCode(m, m)).toEqual(m);
+    expect(unpackCode(undefined)).toEqual({ solved: {}, reviews: {} });
+  });
+});

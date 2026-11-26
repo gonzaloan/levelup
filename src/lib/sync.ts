@@ -10,6 +10,8 @@
 // Lambda in front would bill every request. Budget: deploy/get-certified/README.md.
 import { emptyState, loadState, merge, saveState, type CardRec, type StudyState } from "./practice/store";
 import { emptyGym, loadGym, mergeGym, saveGym, type GymState } from "./gym/store";
+import { loadCode, saveCode } from "./practice/code-store";
+import { mergeCode, type Reviews } from "./practice/resolve";
 
 export const SYNC_CONFIG = {
   domain: process.env.NEXT_PUBLIC_COGNITO_DOMAIN ?? "",
@@ -159,7 +161,14 @@ async function ddb<T = Record<string, unknown>>(op: Op, body: Record<string, unk
 /* ------------------------------------------------------------------ compact wire format
  * Cards as arrays of numbers (minutes, 3-decimal floats), then gzip: every write costs capacity by
  * the KB, so smaller items mean more syncs inside the fixed budget. */
-type Packed = { v: 1; c: Record<string, number[]>; d: Record<string, number[]>; r: Record<string, number>; g: number; u: number; y?: PackedGym };
+type Packed = { v: 1; c: Record<string, number[]>; d: Record<string, number[]>; r: Record<string, number>; g: number; u: number; y?: PackedGym; k?: PackedCode };
+/** Coding progress: solved problems and their re-solve schedule (drafts stay on the device). */
+export type CodeProgress = { solved: Record<string, number>; reviews: Reviews };
+type PackedCode = { s: Record<string, number>; r: Record<string, [number, number]> };
+export const packCode = (k: CodeProgress): PackedCode => ({ s: k.solved, r: Object.fromEntries(Object.entries(k.reviews).map(([id, v]) => [id, [v.due, v.n]])) });
+export const unpackCode = (p: PackedCode | undefined): CodeProgress => ({
+  solved: { ...(p?.s ?? {}) }, reviews: Object.fromEntries(Object.entries(p?.r ?? {}).map(([id, [due, n]]) => [id, { due, n }])),
+});
 /** The Gym rides in the same item (no new attribute, so the IAM policy is unchanged). */
 type PackedGym = { d: Record<string, number[]>; s: Record<string, [number, number, [string, number, number][]]> };
 const min = (iso?: string) => (iso ? Math.round(Date.parse(iso) / 60000) : 0);
@@ -204,14 +213,14 @@ export function unpackGym(p: PackedGym | undefined): GymState {
 }
 
 /** What two states hold, ignoring when they were saved: equal content means no write is needed. */
-const contentOf = (s: StudyState, g?: GymState) => { const p = pack(s); return JSON.stringify([p.c, p.d, p.r, p.g, g ? packGym(g) : null]); };
+const contentOf = (s: StudyState, g?: GymState, k?: CodeProgress) => { const p = pack(s); return JSON.stringify([p.c, p.d, p.r, p.g, g ? packGym(g) : null, k ? packCode(k) : null]); };
 
 const toB64 = (bytes: Uint8Array) => { let s = ""; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(s); };
 const fromB64 = (b: string) => Uint8Array.from(atob(b), (ch) => ch.charCodeAt(0));
 
 type Attr = { S?: string; B?: string; N?: string };
-export async function encode(s: StudyState, gym?: GymState): Promise<Record<string, Attr>> {
-  const json = JSON.stringify(gym ? { ...pack(s), y: packGym(gym) } : pack(s));
+export async function encode(s: StudyState, gym?: GymState, code?: CodeProgress): Promise<Record<string, Attr>> {
+  const json = JSON.stringify({ ...pack(s), ...(gym ? { y: packGym(gym) } : {}), ...(code ? { k: packCode(code) } : {}) });
   if (typeof CompressionStream === "undefined") return { j: { S: json } };
   const gz = new Blob([json]).stream().pipeThrough(new CompressionStream("gzip"));
   return { s: { B: toB64(new Uint8Array(await new Response(gz).arrayBuffer())) } };
@@ -228,10 +237,10 @@ export async function decode(item: Record<string, Attr> | undefined): Promise<St
   const p = await rawOf(item);
   return p ? unpack(p) : emptyState();
 }
-/** Study state and gym progress from one synced item. */
-export async function decodeAll(item: Record<string, Attr> | undefined): Promise<{ study: StudyState; gym: GymState }> {
+/** Study state, gym and coding progress from one synced item. */
+export async function decodeAll(item: Record<string, Attr> | undefined): Promise<{ study: StudyState; gym: GymState; code: CodeProgress }> {
   const p = await rawOf(item);
-  return { study: p ? unpack(p) : emptyState(), gym: unpackGym(p?.y) };
+  return { study: p ? unpack(p) : emptyState(), gym: unpackGym(p?.y), code: unpackCode(p?.k) };
 }
 
 /* ------------------------------------------------------------------ sync */
@@ -251,10 +260,13 @@ export async function syncNow(retry = true): Promise<boolean> {
     const remote = await decodeAll(got.Item);
     const merged = merge(loadState(), remote.study);
     const gym = mergeGym(loadGym(), remote.gym);
+    const local = loadCode();
+    const code = mergeCode(local, remote.code);
     saveState(merged, { silent: true });
     saveGym(gym);
-    if (!got.Item || contentOf(merged, gym) !== contentOf(remote.study, remote.gym)) {
-      await ddb("PutItem", { Item: { ...Key, ...(await encode(merged, gym)), u: { N: String(Date.now()) } } }, c);
+    saveCode({ ...local, ...code });
+    if (!got.Item || contentOf(merged, gym, code) !== contentOf(remote.study, remote.gym, remote.code)) {
+      await ddb("PutItem", { Item: { ...Key, ...(await encode(merged, gym, code)), u: { N: String(Date.now()) } } }, c);
     }
     lastSynced = Date.now();
     try { window.dispatchEvent(new Event(AUTH_EVENT)); } catch { /* ignore */ }
