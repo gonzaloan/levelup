@@ -31,3 +31,17 @@ describe("gym share", () => {
     expect(parseChallenge(text.match(/\?vs=(\S+)/)![1])).toEqual(summaryOf("2026-11-25", results));
   });
 });
+
+describe("gym share card", () => {
+  it("lays out one square per rep, centered, inside the card, wrapping after 10", async () => {
+    const { squaresLayout, squareColor, CARD } = await import("@/lib/gym/card");
+    const eight = squaresLayout(8);
+    expect(eight).toHaveLength(8);
+    const left = eight[0].x, right = eight[7].x + eight[7].size;
+    expect(Math.round(left)).toBe(Math.round(CARD.w - right)); // centered
+    const twelve = squaresLayout(12);
+    expect(twelve[10].y).toBeGreaterThan(twelve[9].y); // wrapped
+    for (const p of twelve) { expect(p.x).toBeGreaterThanOrEqual(0); expect(p.x + p.size).toBeLessThanOrEqual(CARD.w); expect(p.y + p.size).toBeLessThan(500); }
+    expect([squareColor(1), squareColor(0.5), squareColor(0)]).toEqual(["#4ade80", "#fbbf24", "#f87171"]);
+  });
+});

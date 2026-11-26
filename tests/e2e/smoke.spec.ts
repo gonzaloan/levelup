@@ -492,6 +492,11 @@ test("gym: today's workout, by hand, end to end", async ({ page, context }) => {
   const shared = await page.evaluate(() => navigator.clipboard.readText());
   expect(shared).toMatch(/^levelup Gym #\d+ · \d+% · \d+:\d\d\n[🟩🟨🟥]{8}\n/u);
   expect(shared).toMatch(new RegExp(`/en/gym/\\?vs=${ymd}\\.\\d+\\.\\d+$`));
+  // The same result as a picture: a 1200×630 PNG (downloaded where the share sheet can't take files).
+  const [png] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Image" }).click()]);
+  expect(png.suggestedFilename()).toMatch(/^levelup-gym-\d+\.png$/);
+  const bytes = await (await import("node:fs/promises")).readFile(await png.path());
+  expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([1200, 630]);
   await page.getByRole("button", { name: /Back to the gym/ }).click();
   await expect(page.getByText(/Done today/)).toBeVisible();
   const state = await page.evaluate(() => JSON.parse(localStorage.getItem("fg.gym.v1") ?? "{}"));

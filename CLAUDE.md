@@ -89,7 +89,8 @@ detail one tap away. The study path answers one question first: "what do I do ne
   inside the same login item (`y` in the packed blob, `mergeGym`). The workout adds one rep of the
   weakest trained skill (`focusSkill`, fitness < 0.7 after ≥ 3 reps), chosen when the day starts.
   A finished day shares Wordle-style (`src/lib/gym/share.ts`: squares, no answers) with a `?vs=`
-  challenge link; the Gym compares you with that friend. No server: a challenge is a claim.
+  challenge link, or as a 1200×630 image (`src/lib/gym/card.ts`, canvas → share sheet or download);
+  the Gym compares you with that friend. No server: a challenge is a claim.
 - `/plan` — interview plan (`src/lib/plan.ts`, pure and unit-tested): date + role + minutes per
   day → today's work and the weeks ahead. Its time model is a labelled assumption. "Add to calendar"
   downloads an .ics (`src/lib/calendar.ts`): a daily study block with an alarm until the day before,
