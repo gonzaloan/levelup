@@ -157,17 +157,21 @@ const shards: Gen = (r, seed) => {
   };
 };
 
-const JOBS = [{ en: "re-index", es: "reindexar" }, { en: "back up", es: "respaldar" }, { en: "copy to another region", es: "copiar a otra región" }];
+const JOBS: ((d: string) => { en: string; es: string })[] = [
+  (d) => ({ en: `re-index ${d}`, es: `reindexar ${d}` }),
+  (d) => ({ en: `back up ${d}`, es: `respaldar ${d}` }),
+  (d) => ({ en: `copy ${d} to another region`, es: `copiar ${d} a otra región` }),
+];
 const transfer: Gen = (r, seed) => {
-  const data = pick(r, [1e12, 5e12, 10e12, 50e12, 100e12, 500e12, 1e15]), hours = pick(r, [1, 2, 4, 8, 12, 24]), job = pick(r, JOBS);
+  const data = pick(r, [1e12, 5e12, 10e12, 50e12, 100e12, 500e12, 1e15]), hours = pick(r, [1, 2, 4, 8, 12, 24]), job = pick(r, JOBS)(human(data, "bytes"));
   const secs = hours * 3_600, bw = data / secs;
   // Links are sold in bits per second: the same rate, × 8.
   const bits = human(bw * 8, "bps").replace("B/s", "bit/s");
   return {
     skill: "estimate", seed, unit: "bps", answer: bw,
     prompt: {
-      en: `You must ${job.en} ${human(data, "bytes")} within ${hours} hour${hours > 1 ? "s" : ""}. Sustained throughput needed?`,
-      es: `Tienes que ${job.es} ${human(data, "bytes")} en ${hours} hora${hours > 1 ? "s" : ""}. ¿Qué throughput sostenido necesitas?`,
+      en: `You must ${job.en} within ${hours} hour${hours > 1 ? "s" : ""}. Sustained throughput needed?`,
+      es: `Tienes que ${job.es} en ${hours} hora${hours > 1 ? "s" : ""}. ¿Qué throughput sostenido necesitas?`,
     },
     steps: [
       { en: `${hours} h × 3,600 s = ${comma(secs)} s`, es: `${hours} h × 3,600 s = ${comma(secs)} s` },
