@@ -21,6 +21,8 @@ detail one tap away. The study path answers one question first: "what do I do ne
 - `npm run stale` — facts that age (vendor prices, spec versions, product status) with no date or a
   date older than 12 months: the list to re-verify. Advisory; `--strict` fails on undated prices.
 - `npm run e2e` — Playwright smoke tests against `out/` (build first; always `--workers=1`).
+- CI: `.github/workflows/ci.yml` runs `verify`, then `build` + `e2e`, on every push and PR
+  (read-only token, actions pinned to SHAs). Deploys stay manual.
 - `node tools/check-concept.mjs --mermaid <files>` — validate specific concept files.
 
 ## Where things live
