@@ -20,6 +20,8 @@ detail one tap away. The study path answers one question first: "what do I do ne
 - `npm run links` — source-URL liveness (curl; 403s from bot-blocking sites are reported apart).
 - `npm run stale` — facts that age (vendor prices, spec versions, product status) with no date or a
   date older than 12 months: the list to re-verify. Advisory; `--strict` fails on undated prices.
+- `npm run review` — regenerates `docs/review/checklist.md`: every concept (core first) with its
+  facts and sources and four boxes, for a human expert's pass. Tick boxes there and commit.
 - `npm run e2e` — Playwright smoke tests against `out/` (build first; always `--workers=1`), plus
   `tests/e2e/a11y.spec.ts`: axe on the key screens in both themes, no serious/critical WCAG A/AA issue.
 - CI: `.github/workflows/ci.yml` runs `verify`, then `build` + `e2e`, on every push and PR
