@@ -6,12 +6,13 @@ import type { DebugRep, Rand } from "./types";
 import { int, pick } from "./types";
 import { floorDiv, pyList } from "./trace";
 
-const py = (v: number | boolean) => (typeof v === "boolean" ? (v ? "True" : "False") : String(v));
+/** What Python prints for a value; a string is already Python's printed form (a list, a tuple). */
+const py = (v: number | boolean | string) => (typeof v === "boolean" ? (v ? "True" : "False") : String(v));
 
 interface Tpl {
   task: I18n; correct: string[]; bugLine: number; bug: string; why: I18n;
   /** Arguments as Python source, and the two results. */
-  call: string; expected: number | boolean; got: number | boolean;
+  call: string; expected: number | boolean | string; got: number | boolean | string;
 }
 
 function make(seed: string, t: Tpl): DebugRep {
@@ -160,5 +161,114 @@ const multiples: Gen = (r, seed) => {
   });
 };
 
-export const DEBUG_GENS: Gen[] = [biggest, inclusive, palindrome, vowels, windowSum, search, counting, factorial, multiples];
+/** n different ints from [lo, hi], in draw order. */
+const distinct = (r: Rand, n: number, lo: number, hi: number) => {
+  const out: number[] = [];
+  while (out.length < n) { const v = int(r, lo, hi); if (!out.includes(v)) out.push(v); }
+  return out;
+};
+/** A seeded Fisher–Yates shuffle (a copy). */
+const shuffled = <T,>(r: Rand, xs: readonly T[]) => {
+  const out = [...xs];
+  for (let i = out.length - 1; i > 0; i--) { const j = int(r, 0, i); [out[i], out[j]] = [out[j], out[i]]; }
+  return out;
+};
+
+const mutableDefault: Gen = (r, seed) => {
+  const xs = distinct(r, int(r, 2, 3), 1, 9);
+  return make(seed, {
+    task: { en: "Add x to a cart; with no cart given, start a new empty one.", es: "Agrega x a un carrito; si no te pasan uno, empieza uno nuevo y vacío." },
+    correct: ["def add_item(x, cart=None):", "    if cart is None:", "        cart = []", "    cart.append(x)", "    return cart"],
+    bugLine: 0, bug: "def add_item(x, cart=[]):",
+    // Every buggy call returns the same list, printed once all the appends are done.
+    call: `(${xs.map((x) => `add_item(${x})`).join(", ")})`,
+    expected: `(${xs.map((x) => pyList([x])).join(", ")})`, got: `(${xs.map(() => pyList(xs)).join(", ")})`,
+    why: { en: "A default value is built once, when def runs, and every call shares it: the same [] fills up call after call. Default to None and create the list inside.", es: "El valor por defecto se crea una sola vez, cuando corre el def, y todas las llamadas lo comparten: la misma [] se va llenando llamada tras llamada. Usa None por defecto y crea la lista adentro." },
+  });
+};
+
+const removeWhileLooping: Gen = (r, seed) => {
+  let xs: number[] = [], good: number[] = [], bad: number[] = [];
+  for (let tries = 0; tries < 100 && good.length === bad.length; tries++) {
+    xs = distinct(r, int(r, 5, 7), 1, 20);
+    good = xs.filter((x) => x % 2 !== 0);
+    // Python's list iterator walks an index; remove() shifts the rest left under it (values are distinct).
+    bad = [...xs];
+    for (let i = 0; i < bad.length; i++) if (bad[i] % 2 === 0) bad.splice(i, 1);
+  }
+  return make(seed, {
+    task: { en: "Remove the even numbers from the list and return it.", es: "Quita los números pares de la lista y devuélvela." },
+    correct: ["def drop_evens(xs):", "    for x in xs[:]:", "        if x % 2 == 0:", "            xs.remove(x)", "    return xs"],
+    bugLine: 1, bug: "    for x in xs:",
+    call: `drop_evens(${pyList(xs)})`, expected: pyList(good), got: pyList(bad),
+    why: { en: "Removing an item while a for loop walks the same list shifts the next one into the slot already visited, so it is skipped. Loop over a copy (xs[:]) or build a new list.", es: "Si borras un elemento mientras un for recorre la misma lista, el siguiente se corre al lugar ya visitado y se salta. Recorre una copia (xs[:]) o arma una lista nueva." },
+  });
+};
+
+const divideLast: Gen = (r, seed) => {
+  const n = int(r, 3, 6), k = int(r, 1, n - 1);
+  const oks = shuffled(r, Array.from({ length: n }, (_, i) => i < k));
+  return make(seed, {
+    task: { en: "Return the percentage of tests that passed, rounded down.", es: "Devuelve el porcentaje de tests que pasaron, redondeado hacia abajo." },
+    correct: ["def pct_passed(results):", "    passed = 0", "    for ok in results:", "        if ok:", "            passed += 1", "    return passed * 100 // len(results)"],
+    bugLine: 5, bug: "    return passed // len(results) * 100",
+    call: `pct_passed([${oks.map(py).join(", ")}])`, expected: floorDiv(k * 100, n), got: floorDiv(k, n) * 100,
+    why: { en: "passed is smaller than len(results), so passed // len(results) is already 0 before the × 100. With integer division, multiply first and divide last.", es: "passed es menor que len(results), así que passed // len(results) ya da 0 antes del × 100. Con división entera, multiplica primero y divide al final." },
+  });
+};
+
+const orDefault: Gen = (r, seed) => {
+  // null = an order with no qty; at least one of those and one real 0.
+  const qs = shuffled(r, [0, null, ...Array.from({ length: int(r, 1, 2) }, () => int(r, 2, 9))]);
+  const total = (q: (n: number | null) => number) => qs.reduce<number>((s, n) => s + q(n), 0);
+  return make(seed, {
+    task: { en: "Add up the quantities; an order with no qty counts as 1.", es: "Suma las cantidades; un pedido sin qty cuenta como 1." },
+    correct: ["def total_qty(orders):", "    total = 0", "    for o in orders:", '        q = o.get("qty", 1)', "        total += q", "    return total"],
+    bugLine: 3, bug: '        q = o.get("qty") or 1',
+    call: `total_qty([${qs.map((n) => (n === null ? "{}" : `{"qty": ${n}}`)).join(", ")}])`,
+    expected: total((n) => n ?? 1), got: total((n) => n || 1),
+    why: { en: "x or 1 replaces every falsy value, and 0 is falsy: a real quantity of 0 turns into 1. Replace only what is missing: .get's default, or an `is None` check.", es: "x or 1 reemplaza cualquier valor falsy, y 0 es falsy: una cantidad real de 0 se vuelve 1. Reemplaza solo lo que falta: el default de .get, o un chequeo `is None`." },
+  });
+};
+
+const gridAlias: Gen = (r, seed) => {
+  let n = 0, cells: [number, number][] = [], cols = 0;
+  for (let tries = 0; tries < 50 && n * cols === cells.length; tries++) {
+    n = int(r, 3, 5);
+    const k = int(r, 2, 3);
+    cells = [];
+    while (cells.length < k) {
+      const a = int(r, 0, n - 1), b = int(r, 0, n - 1);
+      if (!cells.some(([x, y]) => x === a && y === b)) cells.push([a, b]);
+    }
+    cols = new Set(cells.map(([, c]) => c)).size;
+  }
+  return make(seed, {
+    task: { en: "Mark the given cells on an n × n grid and return how many are marked.", es: "Marca las celdas dadas en una cuadrícula de n × n y devuelve cuántas quedaron marcadas." },
+    correct: ["def count_marked(n, cells):", "    g = [[0] * n for _ in range(n)]", "    for r, c in cells:", "        g[r][c] = 1", "    return sum(sum(row) for row in g)"],
+    bugLine: 1, bug: "    g = [[0] * n] * n",
+    // The buggy grid is one row seen n times: each marked column counts once per row.
+    call: `count_marked(${n}, [${cells.map(([a, b]) => `(${a}, ${b})`).join(", ")}])`, expected: cells.length, got: n * cols,
+    why: { en: "[[0] * n] * n repeats a reference to ONE row n times, so marking a cell marks its whole column. Build each row on its own, in a comprehension.", es: "[[0] * n] * n repite n veces la referencia a UNA sola fila, así que marcar una celda marca toda su columna. Crea cada fila por separado, en una comprensión." },
+  });
+};
+
+const selfPair: Gen = (r, seed) => {
+  let xs: number[] = [], target = 0, real = true;
+  const pairs = () => xs.some((a, i) => xs.some((b, j) => i < j && a + b === target));
+  for (let tries = 0; tries < 50 && real; tries++) {
+    xs = distinct(r, int(r, 3, 5), 1, 15);
+    target = 2 * pick(r, xs);
+    real = pairs();
+  }
+  return make(seed, {
+    task: { en: "Return True if two different items add up to target.", es: "Devuelve True si dos elementos distintos suman target." },
+    correct: ["def has_pair(xs, target):", "    seen = set()", "    for x in xs:", "        if target - x in seen:", "            return True", "        seen.add(x)", "    return False"],
+    bugLine: 1, bug: "    seen = set(xs)",
+    call: `has_pair(${pyList(xs)}, ${target})`, expected: pairs(), got: xs.some((x) => xs.includes(target - x)),
+    why: { en: "Filling seen up front lets an item pair with itself (x + x = target). Add each item after checking it, so it only meets the ones before it.", es: "Llenar seen desde el principio deja que un elemento se empareje consigo mismo (x + x = target). Agrega cada elemento después de revisarlo, así solo se cruza con los anteriores." },
+  });
+};
+
+export const DEBUG_GENS: Gen[] = [biggest, inclusive, palindrome, vowels, windowSum, search, counting, factorial, multiples, mutableDefault, removeWhileLooping, divideLast, orDefault, gridAlias, selfPair];
 export const debugRep = (r: Rand, seed: string): DebugRep => DEBUG_GENS[int(r, 0, DEBUG_GENS.length - 1)](r, seed);

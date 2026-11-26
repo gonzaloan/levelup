@@ -1,7 +1,9 @@
 // Back-of-the-envelope reps with fresh numbers every time. The recipe is the back-of-envelope
 // concept's own: QPS = DAU × actions ÷ 86,400 s, peak = 2–5× average, storage = items × bytes ×
-// days × replication, bandwidth = QPS × payload. Graded by how many times off you are, because the
-// power of ten is what decides a design.
+// days × replication, bandwidth = QPS × payload; and its uses: a hot set's cache size, nodes =
+// ⌈data ÷ node size⌉ shards × replicas, throughput = bytes ÷ window (× 8 for bits). The scenario
+// numbers are toy values. Graded by how many times off you are, because the power of ten is what
+// decides a design.
 import type { EstimateRep, Rand, Unit } from "./types";
 import { int, pick } from "./types";
 
@@ -122,6 +124,59 @@ const servers: Gen = (r, seed) => {
   };
 };
 
-const GENS: Gen[] = [avgQps, peakQps, storage, bandwidth, servers];
+const hotCache: Gen = (r, seed) => {
+  const items = pick(r, [1e6, 10e6, 50e6, 100e6, 500e6, 1e9]), size = pick(r, [200, 500, 1_000, 2_000, 5_000]), pct = pick(r, [1, 5, 10, 20]);
+  const hot = (items * pct) / 100, b = hot * size;
+  return {
+    skill: "estimate", seed, unit: "bytes", answer: b,
+    prompt: {
+      en: `A catalogue of ${human(items, "count")} items, ${human(size, "bytes")} each. You keep the hottest ${pct}% in an in-memory cache. Cache size?`,
+      es: `Un catálogo de ${human(items, "count")} ítems, de ${human(size, "bytes")} cada uno. Guardas el ${pct}% más consultado en una caché en memoria. ¿Tamaño de la caché?`,
+    },
+    steps: [
+      { en: `Hot items: ${human(items, "count")} × ${pct}% = ${human(hot, "count")}`, es: `Ítems calientes: ${human(items, "count")} × ${pct}% = ${human(hot, "count")}` },
+      { en: `× ${human(size, "bytes")} = ${human(b, "bytes")} (before per-key overhead)`, es: `× ${human(size, "bytes")} = ${human(b, "bytes")} (sin contar el overhead por clave)` },
+    ],
+  };
+};
+
+const shards: Gen = (r, seed) => {
+  const rows = pick(r, [1e9, 2e9, 5e9, 10e9, 20e9, 50e9]), size = pick(r, [500, 1_000, 2_000, 5_000]), cap = pick(r, [1e12, 2e12, 4e12, 8e12]), rep = pick(r, [2, 3]);
+  const raw = rows * size, n = Math.max(1, Math.ceil(raw / cap)), nodes = n * rep;
+  return {
+    skill: "estimate", seed, unit: "servers", answer: nodes,
+    prompt: {
+      en: `${human(rows, "count")} rows of ${human(size, "bytes")} each. A node stores up to ${human(cap, "bytes")}, and every shard keeps ${rep} replicas on different nodes. How many nodes?`,
+      es: `${human(rows, "count")} filas de ${human(size, "bytes")} cada una. Un nodo guarda hasta ${human(cap, "bytes")}, y cada shard tiene ${rep} réplicas en nodos distintos. ¿Cuántos nodos?`,
+    },
+    steps: [
+      { en: `Data: ${human(rows, "count")} × ${human(size, "bytes")} = ${human(raw, "bytes")}`, es: `Datos: ${human(rows, "count")} × ${human(size, "bytes")} = ${human(raw, "bytes")}` },
+      { en: `÷ ${human(cap, "bytes")} per node → ${n} shard${n > 1 ? "s" : ""} (round up)`, es: `÷ ${human(cap, "bytes")} por nodo → ${n} shard${n > 1 ? "s" : ""} (redondea hacia arriba)` },
+      { en: `× ${rep} replicas → ${nodes} nodes (before headroom)`, es: `× ${rep} réplicas → ${nodes} nodos (antes de dejar margen)` },
+    ],
+  };
+};
+
+const JOBS = [{ en: "re-index", es: "reindexar" }, { en: "back up", es: "respaldar" }, { en: "copy to another region", es: "copiar a otra región" }];
+const transfer: Gen = (r, seed) => {
+  const data = pick(r, [1e12, 5e12, 10e12, 50e12, 100e12, 500e12, 1e15]), hours = pick(r, [1, 2, 4, 8, 12, 24]), job = pick(r, JOBS);
+  const secs = hours * 3_600, bw = data / secs;
+  // Links are sold in bits per second: the same rate, × 8.
+  const bits = human(bw * 8, "bps").replace("B/s", "bit/s");
+  return {
+    skill: "estimate", seed, unit: "bps", answer: bw,
+    prompt: {
+      en: `You must ${job.en} ${human(data, "bytes")} within ${hours} hour${hours > 1 ? "s" : ""}. Sustained throughput needed?`,
+      es: `Tienes que ${job.es} ${human(data, "bytes")} en ${hours} hora${hours > 1 ? "s" : ""}. ¿Qué throughput sostenido necesitas?`,
+    },
+    steps: [
+      { en: `${hours} h × 3,600 s = ${comma(secs)} s`, es: `${hours} h × 3,600 s = ${comma(secs)} s` },
+      { en: `${human(data, "bytes")} ÷ ${comma(secs)} s ≈ ${human(bw, "bps")}`, es: `${human(data, "bytes")} ÷ ${comma(secs)} s ≈ ${human(bw, "bps")}` },
+      { en: `On the wire: × 8 bits ≈ ${bits}`, es: `En la red: × 8 bits ≈ ${bits}` },
+    ],
+  };
+};
+
+const GENS: Gen[] = [avgQps, peakQps, storage, bandwidth, servers, hotCache, shards, transfer];
 /** Which recipe is picked from the seed's first draw, so every recipe shows up over a week. */
 export const estimateRep = (r: Rand, seed: string): EstimateRep => GENS[int(r, 0, GENS.length - 1)](r, seed);
