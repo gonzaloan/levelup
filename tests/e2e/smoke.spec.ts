@@ -222,6 +222,35 @@ test("python coding: brute force passes the tests but misses the large input's t
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("fg.code.v1") ?? "{}").solved?.["pair-indices-for-target"])).toBeFalsy();
 });
 
+test("re-solve from memory: a problem solved days ago comes back, blank, and climbs the ladder", async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.goto("/en/practice/code/");
+  const old = Date.now() - 4 * 86_400_000;
+  await page.evaluate((old) => localStorage.setItem("fg.code.v1", JSON.stringify({
+    solved: { "longest-run-without-repeats": old, "pair-indices-for-target": old },
+    drafts: { "longest-run-without-repeats": "def longest_unique(s):\n    return 'my old solution'\n" }, reviews: {},
+  })), old);
+  await page.reload();
+  await expect(page.locator(".resolve-promo")).toContainText("2 problems to re-solve from memory");
+  await page.locator(".resolve-promo").click();
+  await expect(page.getByText("1 of 2 due")).toBeVisible();
+  // Recall, not copy: the old draft is not pre-filled.
+  await expect(page.locator(".code-runner textarea")).not.toHaveValue(/my old solution/);
+  const first = (await page.locator(".cm-title").textContent()) ?? "";
+  if (/repeat/i.test(first)) {
+    await page.locator(".code-runner textarea").fill("def longest_unique(s):\n    last, left, best = {}, 0, 0\n    for r, ch in enumerate(s):\n        if ch in last and last[ch] >= left:\n            left = last[ch] + 1\n        last[ch] = r\n        best = max(best, r - left + 1)\n    return best\n");
+  } else {
+    await page.locator(".code-runner textarea").fill("def pair_indices(nums, target):\n    seen = {}\n    for j, x in enumerate(nums):\n        if target - x in seen:\n            return [seen[target - x], j]\n        seen[x] = j\n    return []\n");
+  }
+  await page.getByRole("button", { name: "Run tests" }).click();
+  await expect(page.locator(".cr-review.ok")).toContainText("back in 7 days", { timeout: 60_000 });
+  await page.getByRole("button", { name: /Next problem/ }).click();
+  await page.getByRole("button", { name: "I don't remember it" }).click();
+  await expect(page.locator(".cr-review.bad")).toContainText("comes back tomorrow");
+  const reviews = await page.evaluate(() => JSON.parse(localStorage.getItem("fg.code.v1") ?? "{}").reviews);
+  expect(Object.values(reviews as Record<string, { n: number }>).map((r) => r.n).sort()).toEqual([0, 1]);
+});
+
 test("system design round: phases, rubric and a saved attempt", async ({ page }) => {
   await page.goto("/en/practice/design/case-url-shortener/");
   await page.getByRole("button", { name: "Start the round" }).click();

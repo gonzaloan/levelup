@@ -24,6 +24,7 @@ const UI = {
   navQuestions: { en: "Question bank", es: "Banco de preguntas" },
   pCode: { en: "Python coding", es: "Coding en Python" },
   pCodeSub: { en: "Write the function, run the tests in your browser.", es: "Escribe la función y corre los tests en tu navegador." },
+  pResolve: { en: "Problems you solved, due to re-solve from memory.", es: "Problemas que resolviste, para re-resolver de memoria." },
   pDesign: { en: "System design round", es: "Ronda de system design" },
   pDesignSub: { en: "A timed 45-minute mock with a rubric.", es: "Un simulacro cronometrado de 45 minutos con rúbrica." },
   pStories: { en: "STAR story bank", es: "Banco de historias STAR" },

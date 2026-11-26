@@ -8,6 +8,7 @@ import type { Locale } from "@/lib/types";
 import { buildPlan, daysBetween, inScope, schedule, MINUTE_OPTIONS, MIN_PER_CONCEPT, REVIEW_SHARE, type DayKind, type Role } from "@/lib/plan";
 import { isDue } from "@/lib/practice/store";
 import { studyCalendar } from "@/lib/calendar";
+import { useResolveDue } from "./practice/ResolveDue";
 import { useStudyState } from "./practice/usePractice";
 import { statusOf } from "./Mastered";
 import { Seg } from "./labs/ui";
@@ -42,6 +43,7 @@ const T = {
     later: (n: number) => `Left for later (${n})`, laterSub: "Lower priority for an interview: study these if you get ahead.",
     assume: `The pace assumes about ${MIN_PER_CONCEPT} minutes per new concept and ${Math.round(REVIEW_SHARE * 100)}% of each study day for review.`,
     reset: "Clear plan",
+    resolve: (n: number) => `Re-solve ${n} problem${n === 1 ? "" : "s"}`, resolveSub: "From memory: what you solved days ago.",
     remind: "Daily reminder", remindSub: "A study block every day at this time, until the day before the interview, plus the interview day. Your calendar app does the reminding.", addCal: "Add to calendar",
   },
   es: {
@@ -65,6 +67,7 @@ const T = {
     later: (n: number) => `Queda para después (${n})`, laterSub: "Menor prioridad para una entrevista: estúdialos si te adelantas.",
     assume: `El ritmo supone unos ${MIN_PER_CONCEPT} minutos por concepto nuevo y un ${Math.round(REVIEW_SHARE * 100)}% de cada día de estudio para repasar.`,
     reset: "Borrar plan",
+    resolve: (n: number) => `Re-resuelve ${n} problema${n === 1 ? "" : "s"}`, resolveSub: "De memoria: lo que resolviste hace días.",
     remind: "Recordatorio diario", remindSub: "Un bloque de estudio cada día a esta hora, hasta el día antes de la entrevista, más el día de la entrevista. Tu app de calendario te avisa.", addCal: "Agregar al calendario",
   },
 };
@@ -74,6 +77,7 @@ export function PlanView({ items, locale }: { items: PlanItem[]; locale: Locale 
   const [s] = useStudyState();
   const [cfg, setCfg] = useState<Saved>({ date: "", role: "swe", minutes: 60, at: "19:00" });
   const [today, setToday] = useState<Date | null>(null);
+  const resolveDue = useResolveDue();
   useEffect(() => {
     setToday(new Date());
     try { const v = JSON.parse(localStorage.getItem(KEY) ?? "null"); if (v?.role) setCfg({ date: v.date ?? "", role: v.role, minutes: v.minutes ?? 60, at: /^\d\d:\d\d$/.test(v.at ?? "") ? v.at : "19:00" }); } catch { /* ignore */ }
@@ -135,6 +139,7 @@ export function PlanView({ items, locale }: { items: PlanItem[]; locale: Locale 
         <h2><span className="hub-label">{t.todayTitle}</span>{t.kind[kind]}</h2>
         <div className="plan-acts">
           {kind !== "eve" && <Act href={`/${locale}/practice/play/?mode=daily`} icon="cycle" title={t.review(due)} sub={t.reviewSub} />}
+          {kind !== "eve" && wantsCode && resolveDue > 0 && <Act href={`/${locale}/practice/code/review/`} icon="code" title={t.resolve(resolveDue)} sub={t.resolveSub} />}
           {kind === "practice" && (wantsCode
             ? <Act href={`/${locale}/practice/code/mock/`} icon="code" title={t.mockCode} sub={t.mockCodeSub} />
             : <Act href={`/${locale}/practice/design/`} icon="server" title={t.design} sub={t.designSub} />)}

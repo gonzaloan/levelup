@@ -9,6 +9,7 @@ import Link from "next/link";
 import type { Locale } from "@/lib/types";
 import { addActivity, loadState, saveState } from "@/lib/practice/store";
 import { loadCode, saveCode } from "@/lib/practice/code-store";
+import { afterSolve } from "@/lib/practice/resolve";
 
 type Test = { args: unknown[]; expected: unknown; visible?: boolean };
 type Result = { ok: boolean; got: unknown; error: string | null; ms: number };
@@ -120,7 +121,7 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
       const all = testsOk && perfOk;
       if (res.results) onResult?.(res.results.filter((r) => r.ok).length + (perf && perfOk && testsOk ? 1 : 0), res.results.length + (perf ? 1 : 0));
       if (all && !solvedAt) {
-        const s = loadCode(); s.solved[id] = Date.now(); saveCode(s); setSolvedAt(s.solved[id]);
+        const s = loadCode(); s.solved[id] = Date.now(); s.reviews[id] ??= afterSolve(s.solved[id]); saveCode(s); setSolvedAt(s.solved[id]);
         const st = loadState(); addActivity(st, new Date(), 20, true); st.read[concept] ??= Date.now(); saveState(st);
         setNotice(t.xp);
       }

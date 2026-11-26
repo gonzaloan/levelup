@@ -7,6 +7,7 @@ import { getConcept, getProblems } from "@/lib/content";
 import { Emoji, Illustration } from "@/components/Visual";
 import { Icon } from "@/components/Icon";
 import { SolvedMark } from "@/components/practice/SolvedMark";
+import { ResolveDue } from "@/components/practice/ResolveDue";
 
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
@@ -30,6 +31,7 @@ export default async function CodeIndex({ params }: P) {
             : `${problems.length} interview problems by pattern. Write the function and run it against the tests right here: Python runs in your browser.`}</p>
         </div>
       </header>
+      <ResolveDue locale={locale} />
       <Link href={`/${locale}/practice/code/mock/`} className="lab-promo-card code-mock-promo">
         <Emoji name="stopwatch" size={34} />
         <span>
