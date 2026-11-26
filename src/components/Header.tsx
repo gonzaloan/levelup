@@ -25,6 +25,7 @@ export function Header({ locale }: { locale: Locale }) {
     { href: `/${locale}/plan/`, icon: "chart", label: L("navPlan") },
     { href: `/${locale}/graph/`, icon: "network", label: L("navGraph") },
     { href: `/${locale}/questions/`, icon: "message", label: L("navQuestions") },
+    { href: `/${locale}/pro/`, icon: "star", label: L("navPro") },
   ];
   return (
     <>

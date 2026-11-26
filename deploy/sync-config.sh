@@ -29,11 +29,17 @@ if [[ -z "$CLIENT" || "$CLIENT" == "None" ]]; then
   exit 1
 fi
 
+# The Pro waitlist link (docs/business/stage-1.md) lives in the same file: keep it across rewrites,
+# or set it with PRO_FORM_URL=https://... ./deploy/sync-config.sh
+PRO_LINE="$(grep -E '^NEXT_PUBLIC_PRO_FORM_URL=' "$ROOT/.env.production.local" 2>/dev/null || true)"
+[[ -n "${PRO_FORM_URL:-}" ]] && PRO_LINE="NEXT_PUBLIC_PRO_FORM_URL=$PRO_FORM_URL"
+
 cat > "$ROOT/.env.production.local" <<ENV
 NEXT_PUBLIC_COGNITO_DOMAIN=$DOMAIN
 NEXT_PUBLIC_COGNITO_CLIENT_ID=$CLIENT
 NEXT_PUBLIC_COGNITO_USER_POOL_ID=$POOL
 NEXT_PUBLIC_IDENTITY_POOL_ID=$IDENTITY_POOL
 NEXT_PUBLIC_SYNC_TABLE=$TABLE
+${PRO_LINE}
 ENV
 echo "✓ wrote .env.production.local (client $CLIENT, table $TABLE). Now: npm run build && cd deploy && ./deploy.sh"

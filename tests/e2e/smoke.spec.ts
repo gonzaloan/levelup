@@ -251,6 +251,16 @@ test("re-solve from memory: a problem solved days ago comes back, blank, and cli
   expect(Object.values(reviews as Record<string, { n: number }>).map((r) => r.n).sort()).toEqual([0, 1]);
 });
 
+test("pro page: what stays free, what Pro would add, and a waitlist that is honest when it isn't open", async ({ page }) => {
+  await page.goto("/es/pro/");
+  await expect(page.getByRole("heading", { name: "levelup Pro" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Gratis, siempre" })).toBeVisible();
+  await expect(page.locator(".pro-plus li")).toHaveCount(4);
+  // Built without NEXT_PUBLIC_PRO_FORM_URL: no dead link, just "opens soon".
+  await expect(page.locator(".pro-cta [aria-disabled='true']")).toHaveText("La lista de espera abre pronto");
+  await expect(page.locator(".pro-cta a")).toHaveCount(0);
+});
+
 test("system design round: phases, rubric and a saved attempt", async ({ page }) => {
   await page.goto("/en/practice/design/case-url-shortener/");
   await page.getByRole("button", { name: "Start the round" }).click();

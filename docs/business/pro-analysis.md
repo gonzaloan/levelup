@@ -111,6 +111,11 @@ mide uso**, así que no hay base para proyectar: eso es lo primero que hay que a
 métrica mínima, anónima y sin datos personales (se puede reutilizar el sistema de eventos de
 get-certified, con sus mismas reglas de privacidad).
 
+**Actualización (2026-11-26):** el plan gratis de CloudFront no incluye logs, y reusar los eventos
+de get-certified exigiría un servicio por request que el navegador puede llamar (contra la regla de
+levelup). La etapa 1 mide con el formulario, `deploy/usage.sh` (cuentas que sincronizan) y Google
+Search Console: ver `stage-1.md`.
+
 ## 6. Riesgos y cómo mitigarlos
 | Riesgo | Mitigación |
 |---|---|

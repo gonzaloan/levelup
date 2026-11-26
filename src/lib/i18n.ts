@@ -20,6 +20,7 @@ const UI = {
   pGym: { en: "Gym: today's workout", es: "Gimnasio: entrenamiento de hoy" },
   pGymSub: { en: "15 minutes, by hand, no AI: estimate, read code, spot bugs, explain.", es: "15 minutos, a mano, sin IA: estimar, leer código, encontrar bugs, explicar." },
   navPlan: { en: "Interview plan", es: "Plan de entrevista" },
+  navPro: { en: "Pro (waitlist)", es: "Pro (lista de espera)" },
   navGraph: { en: "Knowledge map", es: "Mapa del conocimiento" },
   navQuestions: { en: "Question bank", es: "Banco de preguntas" },
   pCode: { en: "Python coding", es: "Coding en Python" },

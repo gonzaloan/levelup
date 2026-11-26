@@ -101,6 +101,10 @@ detail one tap away. The study path answers one question first: "what do I do ne
   `/practice/design/<case>/interviewer/` is the same round for a friend who interviews you (peer
   mock): reference open, push-back questions, rubric → `feedbackText` to send. `/interview/stories` — STAR story bank
   (`src/lib/stories.ts`: Amazon's 16 LPs, checked 2026-11-22, + Staff themes). Both local-only.
+- `/pro` — levelup Pro, stage 1 only: what stays free, what Pro would add, and a waitlist link to an
+  external form (`NEXT_PUBLIC_PRO_FORM_URL`; empty → "opens soon"). Pro itself would be a separate
+  private repo with a backend; this repo stays free and static. Runbook: `docs/business/stage-1.md`
+  (form, `deploy/usage.sh` counts, Search Console; CloudFront's free plan has no logs).
 - `src/lib/sync.ts` — optional login + sync, reusing get-certified's Cognito user pool. Inert
   without `NEXT_PUBLIC_*` config (see `.env.example`, `deploy/sync-config.sh`). The browser writes
   its own item in a PROVISIONED DynamoDB table via an identity pool (no API, no Lambda): the
