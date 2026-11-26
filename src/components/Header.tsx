@@ -31,7 +31,7 @@ export function Header({ locale }: { locale: Locale }) {
     <>
       <header className="site-header">
         <div className="header-inner">
-          <Link href={`/${locale}/`} className="brand" aria-label={L("brand")}>
+          <Link href={`/${locale}/`} className="brand" title={L("brand")}>
             <span className="brand-mark" aria-hidden="true">◆</span>
             <span className="brand-name">levelup</span>
             <span className="brand-sub">{L("brandShort")}</span>

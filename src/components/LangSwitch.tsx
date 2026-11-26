@@ -9,7 +9,7 @@ export function LangSwitch({ locale, label }: { locale: Locale; label: string })
   const other: Locale = locale === "es" ? "en" : "es";
   const href = path.replace(/^\/(en|es)(?=\/|$)/, `/${other}`);
   return (
-    <Link className="icon-btn lang" href={href} hrefLang={other} title={label} aria-label={label}>
+    <Link className="icon-btn lang" href={href} hrefLang={other} title={label} aria-label={`${other.toUpperCase()} · ${label}`}>
       <Icon name="globe" size={18} />
       <span>{other.toUpperCase()}</span>
     </Link>
