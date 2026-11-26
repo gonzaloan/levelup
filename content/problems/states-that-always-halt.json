@@ -1,0 +1,46 @@
+{
+  "id": "states-that-always-halt",
+  "concept": "topological-sort",
+  "difficulty": "medium",
+  "title": { "en": "States that always halt", "es": "Estados que siempre terminan" },
+  "prompt": {
+    "en": "A program is a state machine with states `0` to `n - 1`, where `n = len(moves)`. `moves[i]` lists the states it can jump to from state `i`; the list may repeat a state or include `i` itself. A state with no moves halts. A state is *safe* if the program is sure to halt from it whichever moves it takes, so no sequence of moves from it goes on forever. Return every safe state in increasing order.",
+    "es": "Un programa es una máquina de estados con estados de `0` a `n - 1`, donde `n = len(moves)`. `moves[i]` lista los estados a los que puede saltar desde el estado `i`; la lista puede repetir un estado o incluir al propio `i`. Un estado sin movimientos se detiene. Un estado es *seguro* si el programa termina con certeza desde él, tome los movimientos que tome, así que ninguna secuencia de movimientos desde él sigue para siempre. Devuelve todos los estados seguros en orden creciente."
+  },
+  "fn": "safe_states",
+  "starter": "def safe_states(moves: list[list[int]]) -> list[int]:\n    # Work backwards from the halting states: reverse the moves and peel with Kahn's algorithm.\n    return []\n",
+  "tests": [
+    { "args": [[[1], [2], [0, 3], [], [3], [4, 1]]], "expected": [3, 4], "visible": true },
+    { "args": [[[], [0], [1, 1]]], "expected": [0, 1, 2], "visible": true },
+    { "args": [[[0]]], "expected": [], "visible": true },
+    { "args": [[[]]], "expected": [0] },
+    { "args": [[[1], [2], [3], [4], []]], "expected": [0, 1, 2, 3, 4] },
+    { "args": [[[1], [2], [3], [1], []]], "expected": [4] },
+    { "args": [[[1, 2], [3], [3], [3]]], "expected": [] },
+    { "args": [[[1, 2], [], [2]]], "expected": [1] },
+    { "args": [[[1, 2], [], []]], "expected": [0, 1, 2] },
+    { "args": [[[1], [0], [3], [2], [0, 2], []]], "expected": [5] },
+    { "args": [[[4], [4, 2], [3], [], [3], [5], [5, 3]]], "expected": [0, 1, 2, 3, 4] },
+    { "args": [[[3, 1], [2], [], [1, 4], [5], [3]]], "expected": [1, 2] },
+    { "args": [[[], [], [], []]], "expected": [0, 1, 2, 3] },
+    { "args": [[[2, 5], [0], [6], [6], [1, 2], [], [], [3, 7], [7]]], "expected": [0, 1, 2, 3, 4, 5, 6] }
+  ],
+  "compare": "exact",
+  "hints": [
+    { "en": "A state is safe exactly when every one of its moves leads to a safe state. Halting states are safe for free: start from them and work backwards.", "es": "Un estado es seguro justo cuando cada uno de sus movimientos lleva a un estado seguro. Los que se detienen son seguros de entrada: parte de ellos y trabaja hacia atrás." },
+    { "en": "Reverse every move and run Kahn's algorithm on out-degrees: when a state's last unproven move is proven safe, queue it. States never queued can reach a loop.", "es": "Invierte cada movimiento y corre el algoritmo de Kahn sobre los out-degrees: cuando el último movimiento sin probar de un estado resulta seguro, encólalo. Los estados que nunca se encolan pueden llegar a un ciclo." }
+  ],
+  "solution": "from collections import deque\n\n\ndef safe_states(moves: list[list[int]]) -> list[int]:\n    n = len(moves)\n    came_from = [[] for _ in range(n)]\n    unproven = [len(m) for m in moves]       # moves not yet known to lead somewhere safe\n    for u, targets in enumerate(moves):\n        for v in targets:\n            came_from[v].append(u)           # reversed edge v -> u\n    queue = deque(u for u in range(n) if unproven[u] == 0)   # halting states\n    safe = [False] * n\n    while queue:\n        v = queue.popleft()\n        safe[v] = True\n        for u in came_from[v]:\n            unproven[u] -= 1\n            if unproven[u] == 0:             # every move from u is now proven safe\n                queue.append(u)\n    return [u for u in range(n) if safe[u]]\n",
+  "complexity": { "time": "O(n + E), E = total moves", "space": "O(n + E)" },
+  "explain": {
+    "en": "This is Kahn's algorithm run backwards. Count each state's unproven moves (its out-degree) and queue the halting states; popping a safe state takes one unproven move off every state that jumps into it, and reaching zero proves that state safe. A state on a loop, or one with a move toward a loop, never reaches zero. Traps: one safe move is not enough, all of them must be; and a separate DFS from every state is O(n·(n + E)).",
+    "es": "Es el algoritmo de Kahn corrido hacia atrás. Cuenta los movimientos sin probar de cada estado (su out-degree) y encola los estados que se detienen; sacar un estado seguro le quita un movimiento sin probar a cada estado que salta a él, y llegar a cero prueba que ese estado es seguro. Un estado en un ciclo, o con un movimiento hacia un ciclo, nunca llega a cero. Trampas: no basta un movimiento seguro, tienen que serlo todos; y un DFS aparte desde cada estado es O(n·(n + E))."
+  },
+  "perf": {
+    "size": { "en": "2,600 states, 5,200 moves", "es": "2.600 estados, 5.200 movimientos" },
+    "limitMs": 150,
+    "sha": "64279a4882e2e557",
+    "gen": "import random\n\n\ndef gen():\n    n, rng = 2600, random.Random(7)\n    moves = [[i + 1, rng.randint(i + 1, n - 1)] for i in range(n - 1)] + [[]]\n    moves[500].append(400)                   # a loop: 400 -> ... -> 500 -> 400\n    for m in moves:\n        rng.shuffle(m)\n    return [moves]\n",
+    "naive": "def safe_states(moves: list[list[int]]) -> list[int]:\n    n = len(moves)\n    safe = []\n    for start in range(n):                   # explore from each state on its own\n        mark = [0] * n                       # 0 new, 1 on the current path, 2 finished\n        mark[start] = 1\n        stack, loops = [(start, 0)], False\n        while stack and not loops:\n            u, i = stack.pop()\n            if i == len(moves[u]):\n                mark[u] = 2\n                continue\n            stack.append((u, i + 1))\n            v = moves[u][i]\n            if mark[v] == 1:\n                loops = True                 # back onto the current path: a loop\n            elif mark[v] == 0:\n                mark[v] = 1\n                stack.append((v, 0))\n        if not loops:\n            safe.append(start)\n    return safe\n"
+  }
+}
