@@ -4,12 +4,13 @@
 // so an infinite loop never freezes the tab. Drafts and solved marks live in localStorage.
 // A problem with `perf` adds one large, timed input once the tests pass (an online judge's time
 // limit): correct but too slow is not solved.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import type { Locale } from "@/lib/types";
 import { addActivity, loadState, saveState } from "@/lib/practice/store";
 import { loadCode, saveCode } from "@/lib/practice/code-store";
 import { afterSolve } from "@/lib/practice/resolve";
+import { tokenize } from "@/lib/practice/pyhl";
 
 type Test = { args: unknown[]; expected: unknown; visible?: boolean };
 type Result = { ok: boolean; got: unknown; error: string | null; ms: number };
@@ -82,6 +83,10 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
   const [notice, setNotice] = useState<string | null>(null);
   const [solvedAt, setSolvedAt] = useState<number | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  const hl = useRef<HTMLPreElement>(null);
+  const tokens = useMemo(() => tokenize(code), [code]);
+  // The colored copy under the textarea follows its scroll, so they stay aligned.
+  const syncScroll = () => { if (hl.current && area.current) { hl.current.scrollTop = area.current.scrollTop; hl.current.scrollLeft = area.current.scrollLeft; } };
 
   useEffect(() => {
     const s = loadCode();
@@ -171,7 +176,8 @@ export function CodeRunner({ id, fn, starter, tests, compare, concept, nextId, l
   return (
     <div className="code-runner">
       <div className="cr-editor">
-        <textarea ref={area} value={code} onChange={(e) => edit(e.target.value)} onKeyDown={onKey} onFocus={() => void boot().catch(() => undefined)}
+        <pre ref={hl} className="cr-hl" aria-hidden="true">{tokens.map((tk, i) => (tk.k ? <span key={i} className={`t-${tk.k}`}>{tk.s}</span> : tk.s))}{"\n"}</pre>
+        <textarea ref={area} value={code} onChange={(e) => edit(e.target.value)} onKeyDown={onKey} onScroll={syncScroll} wrap="off" onFocus={() => void boot().catch(() => undefined)}
           onPaste={noPaste ? (e) => { e.preventDefault(); setNotice(t.noPaste); } : undefined}
           spellCheck={false} autoCapitalize="off" autoComplete="off" autoCorrect="off" aria-label="Python" rows={Math.max(12, code.split("\n").length + 2)} />
       </div>
