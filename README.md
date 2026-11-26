@@ -21,9 +21,10 @@ Live: https://levelup.skillrealm.dev
   messages and acks in flight, cache hit ratio (a live LRU), utilization vs latency (a live M/M/c
   queue), Bloom filter beams, GPU memory (weights + KV cache) and a sampling playground. Each
   concept links its lab; motion respects "reduce motion".
-- **Interview practice beyond reading:** 73 Python coding problems you solve and test in the
-  browser (Pyodide, no server) with graded hints, a mock coding interview (two problems, 45
-  minutes, no hints), a timed 45-minute system design round with a rubric, and a STAR story bank
+- **Interview practice beyond reading:** ~150 Python coding problems across 19 patterns that you
+  solve and test in the browser (Pyodide, no server) with graded hints, online-judge style time
+  limits on a large input (brute force doesn't pass), spaced re-solving from memory (3, 7, 16, 35,
+  75 days), a mock coding interview (two problems, 45 minutes, no hints), a timed 45-minute system design round with a rubric, and a STAR story bank
   with coverage of Amazon's Leadership Principles and Staff themes.
 - **Gym (no AI allowed):** 15 minutes a day of what an assistant now does for you, done by hand:
   back-of-the-envelope estimates without a calculator, predicting what code prints, spotting the

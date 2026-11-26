@@ -4,7 +4,7 @@
 // means something: the reference passes it with ≥ 20× headroom (slow phones, other correct styles)
 // and `perf.naive`, correct on every test, takes ≥ 2× the limit. Limits are scaled to this machine's
 // speed by the harness's benchmark (as in the browser), so the verdict doesn't depend on the machine.
-// Usage: node tools/check-problems.mjs [--write-sha] [files...]
+// Usage: node tools/check-problems.mjs [--strict] [--write-sha] [files...]  (author with --strict)
 import fs from "node:fs";
 import path from "node:path";
 import { ROOT, listProblemFiles, loadDomains, validateProblem } from "./content-lib.mjs";
@@ -13,8 +13,11 @@ import { runPerf, runTests } from "../public/py/runner.mjs";
 const writeSha = process.argv.includes("--write-sha");
 const argFiles = process.argv.slice(2).filter((a) => !a.startsWith("--"));
 const files = argFiles.length ? argFiles.map((f) => path.resolve(f)) : listProblemFiles();
-// The reference needs this much headroom under the limit; the naive solution must exceed it by this.
-const HEADROOM = 20, NAIVE_OVER = 2;
+// Authoring (--strict) proves the limit is well placed: the reference needs 20× headroom under it
+// and the naive takes ≥ 2× it. The everyday gate only catches real breakage (a slow reference, a
+// naive that got fast) with wide tolerances, so timing noise on a busy machine can't turn it red.
+const STRICT = process.argv.includes("--strict") || writeSha;
+const HEADROOM = STRICT ? 20 : 8, NAIVE_OVER = STRICT ? 2 : 1.25;
 const ids = new Set(loadDomains().flatMap((d) => d.concepts));
 const { loadPyodide } = await import(path.join(ROOT, "node_modules", "pyodide", "pyodide.mjs"));
 const py = await loadPyodide({ indexURL: path.join(ROOT, "node_modules", "pyodide") + "/" });

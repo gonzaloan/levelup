@@ -81,7 +81,7 @@ __BENCH_REF_MS = 6.3  # __bench() on the machine where the limits were calibrate
 
 def __bench():
     best = 1e9
-    for _ in range(5):
+    for _ in range(7):
         t0 = time.perf_counter()
         s, d = 0, {}
         for i in range(60000):

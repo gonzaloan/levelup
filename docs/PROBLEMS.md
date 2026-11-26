@@ -59,6 +59,8 @@ judge's time limit. The learner sees it after the tests pass; correct but too sl
 - The checker proves the limit means something: the reference runs with ≥ 20× headroom (slow phones,
   other correct styles) and `naive` takes ≥ 2× the limit. Keep `naive` ≤ ~3 s: the gate runs it.
 - Insert without reformatting: `node tools/set-perf.mjs <id> <perf.json>`, then
-  `node tools/check-problems.mjs --write-sha content/problems/<id>.json`.
+  `node tools/check-problems.mjs --write-sha content/problems/<id>.json` (`--write-sha` and `--strict`
+  apply the authoring margins: 20× and 2×; the everyday gate uses wide tolerances, 8× and 1.25×,
+  so timing noise never turns it red). Keep both strict margins ≥ ~1.5× when you author.
 - Skip it when the only slower approach is a C-speed builtin barely slower than the reference
   (O(n) `list.index` vs O(log n) binary search): a timer can't tell them apart in Pyodide.
