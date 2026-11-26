@@ -1,0 +1,49 @@
+{
+  "id": "most-repeated-label-on-a-path",
+  "concept": "topological-sort",
+  "difficulty": "hard",
+  "title": { "en": "Most repeated label on a path", "es": "La etiqueta más repetida en un camino" },
+  "prompt": {
+    "en": "A directed graph has `n = len(labels)` nodes numbered `0` to `n - 1`. Node `i` carries the lowercase letter `labels[i]`, and each pair `[a, b]` in `edges` is an edge from `a` to `b`. A path is any sequence of nodes where each step follows an edge; a single node counts. Its score is how many times its most frequent letter appears on it. Return the highest score of any path, or `-1` if the graph has a cycle anywhere (a path could then loop forever).\n\n`labels` is not empty; edges may repeat, and a self-loop is a cycle.",
+    "es": "Un grafo dirigido tiene `n = len(labels)` nodos numerados de `0` a `n - 1`. El nodo `i` lleva la letra minúscula `labels[i]`, y cada par `[a, b]` en `edges` es una arista de `a` a `b`. Un camino es cualquier secuencia de nodos donde cada paso sigue una arista; un solo nodo también cuenta. Su puntaje es cuántas veces aparece en él su letra más frecuente. Devuelve el puntaje más alto de cualquier camino, o `-1` si el grafo tiene un ciclo en cualquier parte (ahí un camino podría dar vueltas para siempre).\n\n`labels` no viene vacío; las aristas pueden repetirse y un lazo sobre un nodo es un ciclo."
+  },
+  "fn": "most_repeated_label",
+  "starter": "def most_repeated_label(labels: str, edges: list[list[int]]) -> int:\n    # Kahn's order, carrying 26 counts per node: the most of each letter on a path ending there.\n    return 0\n",
+  "tests": [
+    { "args": ["abaca", [[0, 1], [0, 2], [2, 3], [3, 4]]], "expected": 3, "visible": true },
+    { "args": ["ab", [[0, 1], [1, 0]]], "expected": -1, "visible": true },
+    { "args": ["xyz", []], "expected": 1, "visible": true },
+    { "args": ["q", [[0, 0]]], "expected": -1 },
+    { "args": ["abcde", [[0, 1], [2, 3], [3, 4], [4, 2]]], "expected": -1 },
+    { "args": ["abbb", [[0, 1], [0, 2], [2, 3]]], "expected": 2 },
+    { "args": ["aab", [[0, 1], [1, 2]]], "expected": 2 },
+    { "args": ["ababab", [[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]]], "expected": 3 },
+    { "args": ["aaaa", [[0, 1], [0, 2], [1, 3], [2, 3]]], "expected": 3 },
+    { "args": ["aa", [[0, 1], [0, 1]]], "expected": 2 },
+    { "args": ["aaba", [[0, 2], [1, 2], [2, 3]]], "expected": 2 },
+    { "args": ["abcdzz", [[0, 1], [1, 2], [2, 3], [4, 5]]], "expected": 2 },
+    { "args": ["cbaab", [[4, 3], [3, 2], [2, 1], [1, 0], [4, 0]]], "expected": 2 },
+    { "args": ["babcab", [[0, 1], [1, 2], [0, 3], [3, 4], [2, 5], [4, 5]]], "expected": 3 },
+    { "args": ["eeaee", [[0, 1], [1, 2], [2, 3], [3, 4], [4, 1]]], "expected": -1 },
+    { "args": ["bacbbcab", [[0, 1], [0, 2], [1, 3], [2, 3], [3, 4], [2, 5], [5, 6], [4, 7], [6, 7]]], "expected": 4 }
+  ],
+  "compare": "exact",
+  "hints": [
+    { "en": "The number of paths can grow exponentially, so don't walk them. A path ending at v is a best path ending at one of v's predecessors, plus v.", "es": "La cantidad de caminos puede crecer en forma exponencial, así que no los recorras. Un camino que termina en v es un mejor camino que termina en un predecesor de v, más v." },
+    { "en": "Process nodes in Kahn's order, keeping 26 counts per node: the most of each letter on any path ending there. Pass them along each edge with an element-wise max.", "es": "Procesa los nodos en el orden de Kahn, guardando 26 conteos por nodo: lo máximo de cada letra en cualquier camino que termine ahí. Pásalos por cada arista con un máximo elemento a elemento." },
+    { "en": "Add one for the node's own letter only when you pop it, once all its predecessors are in. If fewer than n nodes come out, there is a cycle: return -1.", "es": "Suma uno por la letra del propio nodo solo cuando lo sacas, cuando ya llegaron todos sus predecesores. Si salen menos de n nodos, hay un ciclo: devuelve -1." }
+  ],
+  "solution": "from collections import deque\n\n\ndef most_repeated_label(labels: str, edges: list[list[int]]) -> int:\n    n = len(labels)\n    out, indeg = [[] for _ in range(n)], [0] * n\n    for a, b in edges:\n        out[a].append(b)\n        indeg[b] += 1\n    most = [[0] * 26 for _ in range(n)]     # most[v][c]: most c's on a path ending at v\n    queue = deque(v for v in range(n) if indeg[v] == 0)\n    done = best = 0\n    while queue:\n        v = queue.popleft()\n        done += 1\n        c = ord(labels[v]) - 97\n        most[v][c] += 1                     # every path into v is already folded in\n        best = max(best, most[v][c])\n        for w in out[v]:\n            most[w] = [max(x, y) for x, y in zip(most[w], most[v])]   # max, never sum\n            indeg[w] -= 1\n            if indeg[w] == 0:\n                queue.append(w)\n    return best if done == n else -1        # nodes left over sit on or behind a cycle\n",
+  "complexity": { "time": "O(26·(n + E)), E = len(edges)", "space": "O(26·n + E)" },
+  "explain": {
+    "en": "It is a longest-path DP on a DAG, one per letter, run in topological order. Kahn's algorithm pops a node only after all its predecessors, so its 26 counts are final then: add its own letter and push the counts forward. Traps: summing counts from two predecessors (a diamond of four `a`s scores 3, not 4); tracking only the single best letter, since another can win later; and enumerating paths, which is exponential. A short Kahn order means a cycle.",
+    "es": "Es una DP de camino más largo en un DAG, una por letra, en orden topológico. El algoritmo de Kahn saca un nodo solo después de todos sus predecesores, así que ahí sus 26 conteos son definitivos: suma su propia letra y empuja los conteos hacia adelante. Trampas: sumar los conteos de dos predecesores (un diamante de cuatro `a` da 3, no 4); guardar solo la mejor letra, porque otra puede ganar más adelante; y enumerar caminos, que es exponencial. Si el orden de Kahn queda corto, hay un ciclo."
+  },
+  "perf": {
+    "size": { "en": "40 nodes, over 4 million paths", "es": "40 nodos, más de 4 millones de caminos" },
+    "limitMs": 100,
+    "sha": "3fdba35f04dc8c46",
+    "gen": "import random\n\n\ndef gen():\n    rng, layers = random.Random(7), 20\n    labels = \"\".join(rng.choice(\"abcde\") for _ in range(2 * layers))\n    edges = []\n    for i in range(layers - 1):              # two nodes per layer, each linked to both in the next\n        for a in (2 * i, 2 * i + 1):\n            edges += [[a, 2 * i + 2], [a, 2 * i + 3]]\n    rng.shuffle(edges)\n    return [labels, edges]\n",
+    "naive": "def most_repeated_label(labels: str, edges: list[list[int]]) -> int:\n    n = len(labels)\n    out = [[] for _ in range(n)]\n    for a, b in edges:\n        out[a].append(b)\n    mark = [0] * n                           # 0 new, 1 on the current path, 2 done\n\n    def has_cycle(u: int) -> bool:\n        mark[u] = 1\n        for v in out[u]:\n            if mark[v] == 1 or (mark[v] == 0 and has_cycle(v)):\n                return True\n        mark[u] = 2\n        return False\n\n    if any(mark[u] == 0 and has_cycle(u) for u in range(n)):\n        return -1\n    count, best = [0] * 26, 0\n\n    def walk(u: int) -> None:                # try every path, from every start\n        nonlocal best\n        c = ord(labels[u]) - 97\n        count[c] += 1\n        best = max(best, count[c])\n        for v in out[u]:\n            walk(v)\n        count[c] -= 1\n\n    for u in range(n):\n        walk(u)\n    return best\n"
+  }
+}
