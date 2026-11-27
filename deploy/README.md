@@ -30,6 +30,48 @@ Upload uses typed passes — HTML, the service worker (`sw.js`), its file lists
 `--delete` sync to remove orphans.
 `DRYRUN=1 ./deploy.sh` prints planned AWS actions without calling AWS.
 
+## Deploy from CI (automatic on every push to `main`)
+
+`.github/workflows/ci.yml` runs `verify`, then `build` + `e2e`; on a push to `main`, once both are
+green, its `deploy` job builds with the login settings, runs `SITE_ONLY=1 deploy/deploy.sh`
+(upload + invalidation only) and waits until the live `offline-es.json` reports this build. It uses
+a short-lived OIDC role, never stored keys. Until the role is configured the job is skipped and
+`main` stays green. One-time setup (≈ 10 minutes):
+
+1. **AWS role** (`deploy/github-oidc.yaml`: can only sync this bucket and invalidate this
+   distribution). If get-certified already created the account's GitHub OIDC provider, reuse it:
+   ```bash
+   aws iam list-open-id-connect-providers
+   ```
+   ```bash
+   aws cloudformation deploy --region us-east-1 --stack-name levelup-github-oidc \
+     --template-file deploy/github-oidc.yaml --capabilities CAPABILITY_NAMED_IAM \
+     --parameter-overrides ExistingOidcProviderArn=arn:aws:iam::201735383261:oidc-provider/token.actions.githubusercontent.com
+   ```
+   (If the list was empty, drop the `--parameter-overrides` line: the stack creates the provider.)
+   ```bash
+   aws cloudformation describe-stacks --region us-east-1 --stack-name levelup-github-oidc \
+     --query "Stacks[0].Outputs[?OutputKey=='SiteDeployRoleArn'].OutputValue" --output text
+   ```
+2. **GitHub environment:** repository Settings → Environments → New environment `production` →
+   Deployment branches and tags: *Selected branches*, add `main`. The role trusts only jobs in this
+   environment.
+3. **GitHub variables** (Settings → Secrets and variables → Actions → *Variables*, not secrets: all
+   of these are public, they end up in the browser bundle):
+   - `AWS_DEPLOY_ROLE_ARN` — the output of step 1.
+   - `NEXT_PUBLIC_COGNITO_DOMAIN`, `NEXT_PUBLIC_COGNITO_CLIENT_ID`, `NEXT_PUBLIC_COGNITO_USER_POOL_ID`,
+     `NEXT_PUBLIC_IDENTITY_POOL_ID`, `NEXT_PUBLIC_SYNC_TABLE` — copy them from your
+     `.env.production.local` (`deploy/sync-config.sh` writes it), or with the GitHub CLI:
+     ```bash
+     gh variable set --env-file .env.production.local --repo gonzaloan/levelup
+     ```
+   - `NEXT_PUBLIC_PRO_FORM_URL` — leave it unset until the waitlist form exists (`/pro` then says
+     the list opens soon).
+4. Push to `main` (or re-run the last workflow): Actions shows `gate`, `site` and `deploy`.
+
+Manual deploys keep working (`npm run build` then `cd deploy && ./deploy.sh`), and are still
+the way to change infrastructure; CI never creates or changes it.
+
 ## Notes / gotchas
 
 - Run on Windows git-bash: `HERE_W` (`pwd -W`) supplies native `C:\…` paths for

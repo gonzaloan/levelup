@@ -1,6 +1,8 @@
 # The gate on every push and pull request: content + problems + types + lint + unit tests, then the
-# static build and the Playwright smoke tests against it. Read-only token; actions pinned to SHAs
-# (the same versions get-certified pins). Deploys stay manual (deploy/README.md).
+# static build and the Playwright smoke tests against it. On a push to main, once both are green,
+# the deploy job ships the site (S3 sync + CDN invalidation) with a short-lived OIDC role, no stored
+# keys, and checks the live site serves this build. Read-only token elsewhere; actions pinned to
+# SHAs (the same versions get-certified pins). One-time setup: deploy/README.md, "Deploy from CI".
 name: ci
 
 on:
@@ -11,9 +13,10 @@ on:
 permissions:
   contents: read
 
+# A newer push cancels an older run, except on main: a deploy is never cut off halfway.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   gate:
@@ -49,3 +52,47 @@ jobs:
           name: e2e-results
           path: test-results/
           retention-days: 7
+
+  deploy:
+    name: deploy (main → levelup.skillrealm.dev)
+    needs: [gate, site]
+    # Only pushes to main, and only once the AWS role is configured (until then main stays green).
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://levelup.skillrealm.dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      # Public values (they end up in the browser bundle): repository variables, not secrets.
+      NEXT_PUBLIC_COGNITO_DOMAIN: ${{ vars.NEXT_PUBLIC_COGNITO_DOMAIN }}
+      NEXT_PUBLIC_COGNITO_CLIENT_ID: ${{ vars.NEXT_PUBLIC_COGNITO_CLIENT_ID }}
+      NEXT_PUBLIC_COGNITO_USER_POOL_ID: ${{ vars.NEXT_PUBLIC_COGNITO_USER_POOL_ID }}
+      NEXT_PUBLIC_IDENTITY_POOL_ID: ${{ vars.NEXT_PUBLIC_IDENTITY_POOL_ID }}
+      NEXT_PUBLIC_SYNC_TABLE: ${{ vars.NEXT_PUBLIC_SYNC_TABLE }}
+      NEXT_PUBLIC_PRO_FORM_URL: ${{ vars.NEXT_PUBLIC_PRO_FORM_URL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - run: SITE_ONLY=1 bash deploy/deploy.sh
+      - name: the live site serves this build
+        run: |
+          want="$(node -p "require('./out/offline-es.json').build")"
+          for i in $(seq 1 30); do
+            got="$(curl -fsS -H 'Cache-Control: no-cache' "https://levelup.skillrealm.dev/offline-es.json?ci=${GITHUB_SHA}" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).build" || true)"
+            if [ "$got" = "$want" ]; then echo "✓ live build $got"; exit 0; fi
+            echo "waiting for the CDN ($i/30): live '$got', want '$want'"; sleep 10
+          done
+          echo "✗ the live site still serves another build" >&2; exit 1

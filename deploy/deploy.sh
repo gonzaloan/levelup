@@ -12,6 +12,8 @@
 #   Usage:   cd deploy && ./deploy.sh
 #
 #   DRYRUN=1 ./deploy.sh   -> print planned actions, no AWS calls.
+#   SITE_ONLY=1 ./deploy.sh -> only upload out/ and invalidate the CDN (what CI does on main,
+#                              with the narrow role in deploy/github-oidc.yaml); no infra calls.
 # ============================================================
 set -euo pipefail
 
@@ -32,6 +34,8 @@ OUT="$ROOT/out"
 HERE_W="$(cd "$HERE" && pwd -W 2>/dev/null || echo "$HERE")"
 
 DRYRUN="${DRYRUN:-0}"
+SITE_ONLY="${SITE_ONLY:-0}"
+SITE_DIST_ID="${SITE_DIST_ID:-EKDH4IJNSZLJQ}"
 aws() {
   if [[ "$DRYRUN" == "1" ]]; then echo "DRYRUN: aws $*" >&2; return 0; fi
   command aws "$@"
@@ -45,6 +49,12 @@ if [[ ! -f "$OUT/index.html" ]]; then
   exit 1
 fi
 
+if [[ "$SITE_ONLY" == "1" ]]; then
+  # The infrastructure already exists (bucket, OAC, function, distribution, DNS): skip to the
+  # upload, so the CI role needs only s3 sync + invalidation.
+  DIST_ID="$SITE_DIST_ID"; DIST_DOMAIN="(existing)"
+  echo "▶ SITE_ONLY: upload + invalidate distribution $DIST_ID"
+else
 # 1) Private S3 bucket (idempotent). Block ALL public access; CloudFront OAC reads it.
 if ! aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
   echo "▶ Creating bucket $BUCKET"
@@ -164,6 +174,8 @@ JSON
   aws s3api put-bucket-policy --bucket "$BUCKET" --policy "file://$HERE_W/.bucket-policy.json"
 fi
 
+fi # SITE_ONLY skips 1-5
+
 # 6) Upload the out/ tree with correct content-types + cache headers.
 #    Only _next/ is content-hashed, so only it may be cached as immutable; everything else
 #    (diagrams, illustrations, the Python worker, Pyodide) keeps its name across deploys and
@@ -202,7 +214,7 @@ if [[ "$DRYRUN" != "1" ]]; then
 fi
 
 # 7) Route53 A + AAAA alias records -> CloudFront (Z2FDTNDATAQYW2 = CloudFront hosted zone).
-if [[ "$DRYRUN" != "1" ]]; then
+if [[ "$DRYRUN" != "1" && "$SITE_ONLY" != "1" ]]; then
   cat > "$HERE/.dns.json" <<JSON
 {
   "Comment": "levelup.skillrealm.dev -> CloudFront $DIST_ID",

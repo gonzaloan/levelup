@@ -25,7 +25,7 @@ detail one tap away. The study path answers one question first: "what do I do ne
 - `npm run e2e` — Playwright smoke tests against `out/` (build first; always `--workers=1`), plus
   `tests/e2e/a11y.spec.ts`: axe on the key screens in both themes, no serious/critical WCAG A/AA issue.
 - CI: `.github/workflows/ci.yml` runs `verify`, then `build` + `e2e`, on every push and PR
-  (read-only token, actions pinned to SHAs). Deploys stay manual.
+  (read-only token, actions pinned to SHAs); on `main` it then deploys (see Deploy).
 - `node tools/check-concept.mjs --mermaid <files>` — validate specific concept files.
 
 ## Where things live
@@ -167,4 +167,7 @@ service a browser can call (API Gateway, Lambda, on-demand tables), CloudFront o
 flat-rate plan. State the worst-case math before adding any AWS resource.
 
 ## Deploy
-The owner deploys (`deploy/README.md`). Prepare code and a runbook; don't run the deploy.
+Automatic on every push to `main` once CI is green (`deploy` job in `.github/workflows/ci.yml`: OIDC
+role from `deploy/github-oidc.yaml`, `SITE_ONLY=1 deploy/deploy.sh`, then it checks the live build).
+Infrastructure changes stay manual and are the owner's (`deploy/README.md`). Merging to `main` is
+deploying: never push to `main` without the owner's go-ahead. Don't run deploys or `aws` yourself.

@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  levelup: GitHub Actions deploys the static site with no stored keys. GitHub mints a short-lived
+  OIDC token per job; this role trusts it only when the job runs in the "production" GitHub
+  Environment of gonzaloan/levelup, and it can only sync the site bucket and invalidate its CDN.
+  Cost: IAM is free; each deploy is ~2k S3 requests (~US$0.01) and one invalidation path (the first
+  1,000 paths a month are free).
+
+Parameters:
+  GitHubRepo:
+    Type: String
+    Default: gonzaloan/levelup
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ""
+    Description: >
+      ARN of the account's token.actions.githubusercontent.com provider if it already exists (an
+      account holds one per URL; get-certified may have created it). Empty creates it here.
+  SiteBucketName:
+    Type: String
+    Default: levelup-skillrealm-201735383261
+  DistributionId:
+    Type: String
+    Default: EKDH4IJNSZLJQ
+
+Conditions:
+  CreateOidcProvider: !Equals [!Ref ExistingOidcProviderArn, ""]
+
+Resources:
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList: [sts.amazonaws.com]
+
+  SiteDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: levelup-gh-site-deploy
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If [CreateOidcProvider, !Ref GitHubOidcProvider, !Ref ExistingOidcProviderArn]
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub "repo:${GitHubRepo}:environment:production"
+      Policies:
+        - PolicyName: site-deploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ListSiteBucket
+                Effect: Allow
+                Action: s3:ListBucket
+                Resource: !Sub "arn:aws:s3:::${SiteBucketName}"
+              - Sid: SyncSiteObjects
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+                Resource: !Sub "arn:aws:s3:::${SiteBucketName}/*"
+              - Sid: InvalidateCdn
+                Effect: Allow
+                Action: [cloudfront:CreateInvalidation, cloudfront:GetInvalidation]
+                Resource: !Sub "arn:aws:cloudfront::${AWS::AccountId}:distribution/${DistributionId}"
+
+Outputs:
+  SiteDeployRoleArn:
+    Description: Put this in the GitHub repository variable AWS_DEPLOY_ROLE_ARN.
+    Value: !GetAtt SiteDeployRole.Arn
