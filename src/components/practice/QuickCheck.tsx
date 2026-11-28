@@ -8,7 +8,7 @@ import type { Locale } from "@/lib/types";
 import type { PItem, Response } from "@/lib/practice/types";
 import { grade } from "@/lib/practice/grade";
 import { inlineMd } from "@/lib/practice/md";
-import { learn, loadState, saveState } from "@/lib/practice/store";
+import { learn, LEARN_XP, loadState, saveState } from "@/lib/practice/store";
 import { m, type UIKey } from "@/lib/i18n";
 import { ChoiceView, MatchView, MultiView, NumericView, OrderView, type ViewProps } from "./ItemViews";
 
@@ -16,9 +16,12 @@ const VIEWS: Record<string, (p: ViewProps) => React.ReactNode> = {
   multi: MultiView, order: OrderView, match: MatchView, numeric: NumericView,
 };
 
-function markRead(id: string) {
+/** Marks the concept learned; true when this is the first time (it paid LEARN_XP). */
+function markRead(id: string): boolean {
   const s = loadState();
-  if (learn(s, id, new Date())) saveState(s);
+  const first = learn(s, id, new Date());
+  if (first) saveState(s);
+  return first;
 }
 
 export function QuickCheck({ items, conceptId, locale }: { items: PItem[]; conceptId: string; locale: Locale }) {
@@ -28,6 +31,7 @@ export function QuickCheck({ items, conceptId, locale }: { items: PItem[]; conce
   const [response, setResponse] = useState<Response | null>(null);
   const [result, setResult] = useState<{ score: number; correct: boolean } | null>(null);
   const [right, setRight] = useState(0);
+  const [earned, setEarned] = useState(false);
   if (!items.length) return null;
 
   const finished = idx >= items.length;
@@ -37,7 +41,7 @@ export function QuickCheck({ items, conceptId, locale }: { items: PItem[]; conce
     const r = grade(item, response);
     setResult(r);
     if (r.correct) setRight((n) => n + 1);
-    markRead(conceptId);
+    if (markRead(conceptId)) setEarned(true);
   };
   const next = () => { setIdx((i) => i + 1); setResponse(null); setResult(null); };
   const again = () => { setIdx(0); setRound((r) => r + 1); setRight(0); setResponse(null); setResult(null); };
@@ -45,7 +49,7 @@ export function QuickCheck({ items, conceptId, locale }: { items: PItem[]; conce
   if (finished) return (
     <div className="qc qc-done">
       <p className="qc-score"><strong>{right}/{items.length}</strong> {L("checkScore")}</p>
-      <p>{L("checkDone")}</p>
+      <p>{earned && <strong className="qc-xp">+{LEARN_XP} XP · </strong>}{L("checkDone")}</p>
       <div className="qc-actions">
         {/* A full load, so Hoy opens at the top with its new count (the reward moment). */}
         <a className="btn btn-primary" href={`/${locale}/`}>{locale === "es" ? "Seguir con tu día" : "Continue your day"} →</a>

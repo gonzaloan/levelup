@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { missionOf, isToday, REVIEW_SESSION } from "@/lib/today";
+import { missionOf, isToday } from "@/lib/today";
 
-const base = { learnedToday: false, canReview: false, due: 0, reviewedToday: 0, gymDone: false };
+const base = { learnedToday: false, canReview: false, due: 0, reviewedToday: 0, reviewSessionDone: false, gymDone: false };
 
 describe("today's mission", () => {
   it("a brand-new reader: learn first, review is locked, the gym is open", () => {
@@ -23,9 +23,14 @@ describe("today's mission", () => {
   it("nothing due but nothing done today is not a free tick", () => {
     expect(missionOf({ ...base, canReview: true, due: 0 }).tasks[1].state).toBe("todo");
   });
-  it("one full session counts even when more cards are still due", () => {
-    expect(missionOf({ ...base, canReview: true, due: 80, reviewedToday: REVIEW_SESSION - 1 }).tasks[1].state).toBe("todo");
-    expect(missionOf({ ...base, canReview: true, due: 80, reviewedToday: REVIEW_SESSION }).tasks[1].state).toBe("done");
+  it("a finished session stays done when its new cards come due again minutes later", () => {
+    const after = { ...base, learnedToday: true, canReview: true, reviewedToday: 5, reviewSessionDone: true };
+    expect(missionOf({ ...after, due: 0 }).tasks[1].state).toBe("done");
+    expect(missionOf({ ...after, due: 4 }).tasks[1].state).toBe("done");
+    expect(missionOf({ ...after, due: 4, reviewSessionDone: false }).tasks[1].state).toBe("todo");
+  });
+  it("after a week away, one session is the day's review even with many still due", () => {
+    expect(missionOf({ ...base, canReview: true, due: 80, reviewedToday: 15, reviewSessionDone: true }).tasks[1].state).toBe("done");
   });
   it("learning the first concept unlocks review the same day", () => {
     const m = missionOf({ ...base, learnedToday: true, canReview: true });
@@ -33,7 +38,7 @@ describe("today's mission", () => {
     expect(m.next).toBe("review");
   });
   it("all three done: no next task", () => {
-    const m = missionOf({ learnedToday: true, canReview: true, due: 0, reviewedToday: 3, gymDone: true });
+    const m = missionOf({ ...base, learnedToday: true, canReview: true, due: 0, reviewedToday: 3, gymDone: true });
     expect(m.next).toBeNull();
     expect(m.done).toBe(3);
   });

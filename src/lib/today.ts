@@ -13,17 +13,17 @@ export interface MissionInput {
   due: number;
   /** Cards reviewed today. */
   reviewedToday: number;
+  /** A daily review session was finished today. */
+  reviewSessionDone: boolean;
   /** Today's Gym workout is finished. */
   gymDone: boolean;
 }
 export interface Mission { tasks: { id: TaskId; state: TaskState }[]; next: TaskId | null; done: number }
 
-/** One review session's worth: after a week away 100 cards can be due, and a day that needs seven
- *  sessions to count teaches people to quit. The rest stays due for tomorrow. */
-export const REVIEW_SESSION = 15;
-
 export function missionOf(m: MissionInput): Mission {
-  const reviewed = m.reviewedToday > 0 && (m.due === 0 || m.reviewedToday >= REVIEW_SESSION);
+  // One finished session is the day's review: after a week away 100 cards can be due, and new cards
+  // come back within minutes (short-term steps). A tick that comes undone teaches people to quit.
+  const reviewed = m.reviewSessionDone || (m.reviewedToday > 0 && m.due === 0);
   const review: TaskState = !m.canReview ? "locked" : reviewed ? "done" : "todo";
   const tasks: Mission["tasks"] = [
     { id: "learn", state: m.learnedToday ? "done" : "todo" },

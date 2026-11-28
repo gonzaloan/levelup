@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { grade, parseNumber } from "@/lib/practice/grade";
 import { derange, shuffle } from "@/lib/practice/rng";
-import { emptyState, merge, review, streakOf, toRating, levelOf, addActivity, dayKey, isDue, pruneOrphans, learn, totalXp, LEARN_XP } from "@/lib/practice/store";
+import { emptyState, merge, review, streakOf, toRating, levelOf, addActivity, dayKey, isDue, pruneOrphans, learn, totalXp, LEARN_XP, finishReview } from "@/lib/practice/store";
 import { buildSession, conceptStatus, interleave } from "@/lib/practice/session";
 import type { PItem, PracticeData } from "@/lib/practice/types";
 
@@ -75,6 +75,16 @@ describe("scheduling", () => {
     expect(learn(s, "big-o", now)).toBe(false);
     expect(totalXp(s)).toBe(LEARN_XP);
     expect(streakOf(s, now).days).toBe(1);
+  });
+  it("a finished review session survives more reviews and a sync merge", () => {
+    const now = new Date("2026-11-09T10:00:00Z");
+    const a = emptyState();
+    finishReview(a, now);
+    addActivity(a, now, 10, true);
+    expect(a.days[dayKey(now)].rs).toBe(1);
+    const b = emptyState();
+    addActivity(b, now, 30, true);
+    expect(merge(a, b).days[dayKey(now)]).toMatchObject({ xp: 30, rs: 1 });
   });
   it("cards of items that no longer exist are dropped, so due counts agree everywhere", () => {
     const now = new Date("2026-11-09T10:00:00Z");

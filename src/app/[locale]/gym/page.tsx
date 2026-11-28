@@ -7,8 +7,8 @@ type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
   return locale === "es"
-    ? pageMeta(locale, "/gym/", "Gimnasio", "15 minutos al día de lo que la IA hace por ti, hecho a mano: estimar, leer código, encontrar bugs, Big-O, explicar y programar desde cero.")
-    : pageMeta(locale, "/gym/", "Gym", "15 minutes a day of what AI does for you, done by hand: estimating, reading code, spotting bugs, Big-O, explaining and coding from a blank page.");
+    ? pageMeta(locale, "/gym/", "Gimnasio", "~12 minutos al día de lo que la IA hace por ti, hecho a mano: estimar, leer código, encontrar bugs, Big-O, explicar y programar desde cero.")
+    : pageMeta(locale, "/gym/", "Gym", "~12 minutes a day of what AI does for you, done by hand: estimating, reading code, spotting bugs, Big-O, explaining and coding from a blank page.");
 }
 
 const SOURCE = "https://www.anthropic.com/research/AI-assistance-coding-skills";
@@ -22,8 +22,8 @@ export default async function GymPage({ params }: P) {
         <div>
           <h1>{es ? "Gimnasio" : "Gym"}</h1>
           <p className="page-sub">{es
-            ? "Lo que la IA hace por ti, hecho a mano. 15 minutos al día para que no se oxide."
-            : "What AI does for you, done by hand. 15 minutes a day so it doesn't rust."}</p>
+            ? "Lo que la IA hace por ti, hecho a mano. ~12 minutos al día para que no se oxide."
+            : "What AI does for you, done by hand. ~12 minutes a day so it doesn't rust."}</p>
         </div>
       </header>
       <Gym locale={locale} />

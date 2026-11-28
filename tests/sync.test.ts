@@ -6,7 +6,8 @@ describe("sync wire format", () => {
   it("round-trips cards, days and reads (to the minute)", () => {
     const s = emptyState();
     review(s, "rag.a1", toRating(1, 1), new Date("2026-11-09T10:00:00Z"));
-    s.days["2026-11-09"] = { xp: 40, n: 4, ok: 3 };
+    s.days["2026-11-09"] = { xp: 40, n: 4, ok: 3, rs: 1 };
+    s.days["2026-11-10"] = { xp: 20, n: 0, ok: 0 };
     s.read.rag = 1762682400000;
     s.goal = 100;
     const back = unpack(JSON.parse(JSON.stringify(pack(s))));

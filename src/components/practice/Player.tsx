@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { Locale } from "@/lib/types";
 import type { Confidence, PItem, Response } from "@/lib/practice/types";
 import { grade } from "@/lib/practice/grade";
-import { addActivity, learn, review, toRating, xpFor, levelOf, totalXp, streakOf } from "@/lib/practice/store";
+import { addActivity, finishReview, learn, review, toRating, xpFor, levelOf, totalXp, streakOf } from "@/lib/practice/store";
 import { buildSession, type Mode } from "@/lib/practice/session";
 import { inlineMd } from "@/lib/practice/md";
 import { m, type UIKey } from "@/lib/i18n";
@@ -59,6 +59,8 @@ export function Player({ locale, mode, id }: { locale: Locale; mode: Mode; id?: 
   // Practicing a whole concept counts as having studied it: it joins the daily review.
   useEffect(() => {
     if (finished && mode === "concept" && id) update((s) => { learn(s, id, new Date()); });
+    // Finishing the daily session is today's "review" task (Hoy), whatever comes due later.
+    if (finished && mode === "daily") update((s) => { finishReview(s, new Date()); });
   }, [finished, mode, id, update]);
 
   const record = useCallback((it: PItem, score: number, correct: boolean, rating: 1 | 2 | 3 | 4, xp: number) => {
@@ -222,8 +224,12 @@ function Summary({ locale, log, total, L, mode, id }: { locale: Locale; log: Out
         </>
       )}
       <div className="p-actions">
-        <a className="btn btn-primary" href={again}>{L("pAnother")}</a>
-        <Link className="btn" href={`/${locale}/practice/`}>{L("pBackHub")}</Link>
+        {mode === "daily"
+          ? <>{/* The daily session is a mission task: back to Hoy (a full load, at the top) for the next one. */}
+            <a className="btn btn-primary" href={`/${locale}/`}>{locale === "es" ? "Seguir con tu día" : "Continue your day"} →</a>
+            <a className="btn" href={again}>{L("pAnother")}</a></>
+          : <><a className="btn btn-primary" href={again}>{L("pAnother")}</a>
+            <Link className="btn" href={`/${locale}/practice/`}>{L("pBackHub")}</Link></>}
       </div>
     </div>
   );

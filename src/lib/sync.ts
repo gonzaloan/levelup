@@ -179,7 +179,7 @@ export function pack(s: StudyState): Packed {
   const c: Packed["c"] = {};
   for (const [k, v] of Object.entries(s.cards)) c[k] = [min(v.due), r3(v.stability), r3(v.difficulty), v.scheduled_days, v.reps, v.lapses, v.learning_steps, v.state, min(v.last_review)];
   const d: Packed["d"] = {};
-  for (const [k, v] of Object.entries(s.days)) d[k] = [v.xp, v.n, v.ok];
+  for (const [k, v] of Object.entries(s.days)) d[k] = [v.xp, v.n, v.ok, ...(v.rs ? [v.rs] : [])];
   return { v: 1, c, d, r: s.read, g: s.goal, u: s.updatedAt };
 }
 
@@ -190,7 +190,7 @@ export function unpack(p: Partial<Packed> | null | undefined): StudyState {
     const card: CardRec = { due: iso(a[0])!, stability: a[1], difficulty: a[2], scheduled_days: a[3], reps: a[4], lapses: a[5], learning_steps: a[6], state: a[7], last_review: iso(a[8]) };
     s.cards[k] = card;
   }
-  for (const [k, a] of Object.entries(p.d ?? {})) s.days[k] = { xp: a[0], n: a[1], ok: a[2] };
+  for (const [k, a] of Object.entries(p.d ?? {})) s.days[k] = { xp: a[0], n: a[1], ok: a[2], ...(a[3] ? { rs: a[3] } : {}) };
   s.read = { ...(p.r ?? {}) };
   s.goal = p.g ?? s.goal;
   s.updatedAt = p.u ?? 0;

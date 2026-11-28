@@ -120,7 +120,7 @@ export function Gym({ locale }: { locale: Locale }) {
         onClose={() => setMode(null)}
         share={mode.kind === "day" ? (rs) => shareText(summaryOf(date, rs), rs.map((r) => r.score), gymStreak(g), link, locale) : undefined}
         vs={mode.kind === "day" ? vs : null}
-        streak={gymStreak(g)} doneLabel={mode.kind === "day" ? t.summary : t.drillDone} />
+        streak={gymStreak(g)} doneLabel={mode.kind === "day" ? t.summary : t.drillDone} home={mode.kind === "day" ? `/${locale}/` : undefined} />
     );
   }
 
@@ -133,7 +133,6 @@ export function Gym({ locale }: { locale: Locale }) {
         <div>
           <span className={s.eyebrow}>{t.today}</span>
           <strong className={s.todayTitle}>{day?.done ? t.doneToday(Math.round(day.score * 100)) : t.reps}</strong>
-          <span className={s.streak}>{streak ? `🔥 ${t.streak(streak)}` : t.noStreak}</span>
           {focus && <span className={s.focus}>🎯 {t.focus(t.skills[focus])}</span>}
           {vs && !day?.done && <span className={s.vs}>🥊 {vs.date === date ? t.vsToday(vs.pct, clock(vs.secs)) : t.vsOld(gymNumber(vs.date), vs.pct, clock(vs.secs))}</span>}
           {vs && day?.done && <Versus me={{ date, pct: Math.round(day.score * 100), secs: Math.round(day.ms / 1000) }} them={vs} locale={locale} />}
@@ -249,10 +248,10 @@ function Spark({ hist }: { hist: { d: string; s: number }[] }) {
 }
 
 /* ------------------------------------------------------------------ a session of reps */
-function Session({ reps, startAt, prior, data, locale, title, onRep, onFinish, onClose, streak, doneLabel, share, vs }: {
+function Session({ reps, startAt, prior, data, locale, title, onRep, onFinish, onClose, streak, doneLabel, share, vs, home }: {
   reps: Rep[]; startAt: number; prior: RepResult[]; data: { concepts: GymConcept[]; probs: MockProblem[] }; locale: Locale; title: string;
   onRep: (rep: Rep, score: number, ms: number) => void; onFinish: (results: RepResult[]) => void; onClose: () => void; streak: number; doneLabel: string;
-  share?: (results: RepResult[]) => string; vs?: Challenge | null;
+  share?: (results: RepResult[]) => string; vs?: Challenge | null; home?: string;
 }) {
   const t = T[locale];
   const [i, setI] = useState(startAt);
@@ -280,7 +279,7 @@ function Session({ reps, startAt, prior, data, locale, title, onRep, onFinish, o
       <div className={s.summary}>
         <span className={s.eyebrow}>{doneLabel}</span>
         <strong className={s.big}>{Math.round(mean * 100)}%</strong>
-        <p>{mmss(results.reduce((a, b) => a + b.ms, 0))} {t.time} · {t.xp(xp)}{streak ? ` · 🔥 ${t.streak(streak)}` : ""}</p>
+        <p>{mmss(results.reduce((a, b) => a + b.ms, 0))} {t.time} · {t.xp(xp)}</p>
         <ul className={s.recap}>
           {results.map((r, k) => (
             <li key={k}><Icon name={ICON[r.skill]} size={16} /><span>{t.skills[r.skill]}</span><b className={r.score === 1 ? s.goodText : r.score > 0 ? s.midText : s.badText}>{Math.round(r.score * 100)}%</b></li>
@@ -290,7 +289,9 @@ function Session({ reps, startAt, prior, data, locale, title, onRep, onFinish, o
         <div className={s.sumActions}>
           {share && <ShareButton text={share(results)} locale={locale} />}
           {share && <ShareImage c={summaryOf(today(), results)} scores={results.map((r) => r.score)} streak={streak} text={share(results)} locale={locale} />}
-          <button type="button" className="btn btn-primary" onClick={onClose}>{t.back} →</button>
+          {/* Today's workout is a mission task: its primary goes back to Hoy (a full load, at the top). */}
+          {home && <a className="btn btn-primary" href={home}>{locale === "es" ? "Seguir con tu día" : "Continue your day"} →</a>}
+          <button type="button" className={home ? "btn" : "btn btn-primary"} onClick={onClose}>{t.back}</button>
         </div>
       </div>
     );

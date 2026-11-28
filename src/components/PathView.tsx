@@ -47,7 +47,7 @@ export function PathView({ phases, locale }: { phases: PathPhaseView[]; locale: 
             <div className="ns-actions"><Link className="btn btn-primary" href={`/${locale}/practice/play/?mode=daily`}><Icon name="cycle" size={16} /> {es ? "Repaso de hoy" : "Today's review"}</Link></div>
           </>
         )}
-        <p className="ns-how">{es ? "Un concepto a la vez: léelo, pruébate y vuelve mañana al repaso." : "One concept at a time: read it, check yourself, come back tomorrow to review."}</p>
+        <p className="ns-how">{es ? "Un concepto a la vez: léelo, pruébate y repásalo el mismo día." : "One concept at a time: read it, check yourself, review it the same day."}</p>
       </section>
 
       {phases.map((p, i) => (

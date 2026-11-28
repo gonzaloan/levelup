@@ -204,6 +204,22 @@ test("day one: Today → learn a concept → back to Today at 1/3, review unlock
   await expect(page.locator(".today-meta")).toContainText("1-day streak");
 });
 
+test("finishing today's review session ticks the review task, and it stays ticked", async ({ page }) => {
+  await page.addInitScript((id) => { if (!localStorage.getItem("fg.study.v1")) localStorage.setItem("fg.study.v1", JSON.stringify({ v: 1, cards: {}, days: {}, read: { [id]: Date.now() }, goal: 60, updatedAt: 0 })); }, PATH[0]);
+  await page.goto("/en/practice/play/?mode=daily");
+  await page.locator(".p-opt").first().click();
+  await page.keyboard.press("Enter"); // check
+  await expect(page.locator(".p-feedback")).toBeVisible();
+  await page.keyboard.press("Enter"); // next
+  while (await page.locator(".p-skip").count()) await page.locator(".p-skip").first().click();
+  await expect(page.getByRole("heading", { name: "Session complete" })).toBeVisible();
+  await expect(page.locator(".p-summary .btn-primary")).toHaveAttribute("href", "/en/");
+  await page.goto("/en/");
+  // Learn + review done; the card just answered comes due again within minutes, the tick stays.
+  await expect(page.locator(".today-count")).toHaveText("2/3");
+  await expect(page.locator(".tt.next")).toContainText("Gym");
+});
+
 test("a concept read on an earlier day ends with the next one on the path", async ({ page }) => {
   await page.addInitScript((id) => localStorage.setItem("fg.study.v1", JSON.stringify({ v: 1, cards: {}, days: {}, read: { [id]: Date.now() - 3 * 86_400_000 }, goal: 60, updatedAt: 0 })), PATH[0]);
   await page.goto(`/en/c/${PATH[0]}/`);
@@ -557,6 +573,8 @@ test("gym: today's workout, by hand, end to end", async ({ page, context }) => {
   expect(png.suggestedFilename()).toMatch(/^levelup-gym-\d+\.png$/);
   const bytes = await (await import("node:fs/promises")).readFile(await png.path());
   expect([bytes.readUInt32BE(16), bytes.readUInt32BE(20)]).toEqual([1200, 630]);
+  // Today's workout is a mission task: its primary goes back to Today.
+  await expect(page.getByRole("link", { name: /Continue your day/ })).toHaveAttribute("href", "/en/");
   await page.getByRole("button", { name: /Back to the gym/ }).click();
   await expect(page.getByText(/Done today/)).toBeVisible();
   const state = await page.evaluate(() => JSON.parse(localStorage.getItem("fg.gym.v1") ?? "{}"));

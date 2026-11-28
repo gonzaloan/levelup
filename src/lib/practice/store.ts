@@ -18,7 +18,8 @@ export interface CardRec {
   state: number;
   last_review?: string;
 }
-export interface DayRec { xp: number; n: number; ok: number }
+/** One study day: XP, reviews, correct reviews, and review sessions finished (rs, optional). */
+export interface DayRec { xp: number; n: number; ok: number; rs?: number }
 export interface StudyState {
   v: 1;
   cards: Record<string, CardRec>;
@@ -110,7 +111,15 @@ export function xpFor(score: number, confidence: Confidence, isRecall: boolean):
 export function addActivity(s: StudyState, now: Date, xp: number, ok: boolean) {
   const k = dayKey(now);
   const d = s.days[k] ?? { xp: 0, n: 0, ok: 0 };
-  s.days[k] = { xp: d.xp + xp, n: d.n + 1, ok: d.ok + (ok ? 1 : 0) };
+  s.days[k] = { ...d, xp: d.xp + xp, n: d.n + 1, ok: d.ok + (ok ? 1 : 0) };
+}
+
+/** A daily review session was finished: today's "review" task is done for the day, even though
+ *  the cards just learned come back in minutes (FSRS short-term steps). */
+export function finishReview(s: StudyState, now: Date) {
+  const k = dayKey(now);
+  const d = s.days[k] ?? { xp: 0, n: 0, ok: 0 };
+  s.days[k] = { ...d, rs: (d.rs ?? 0) + 1 };
 }
 
 /** XP for learning a concept (first read): the mission's first task earns like ~2 good reviews. */
@@ -179,7 +188,8 @@ export function merge(a: StudyState, b: StudyState): StudyState {
   for (const k of new Set([...Object.keys(a.cards), ...Object.keys(b.cards)])) out.cards[k] = later(a.cards[k], b.cards[k]);
   for (const k of new Set([...Object.keys(a.days), ...Object.keys(b.days)])) {
     const x = a.days[k], y = b.days[k];
-    out.days[k] = !x ? y : !y ? x : { xp: Math.max(x.xp, y.xp), n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok) };
+    const rs = Math.max(x?.rs ?? 0, y?.rs ?? 0);
+    out.days[k] = !x ? y : !y ? x : { xp: Math.max(x.xp, y.xp), n: Math.max(x.n, y.n), ok: Math.max(x.ok, y.ok), ...(rs ? { rs } : {}) };
   }
   for (const k of new Set([...Object.keys(a.read), ...Object.keys(b.read)])) {
     out.read[k] = Math.min(a.read[k] ?? Infinity, b.read[k] ?? Infinity);
