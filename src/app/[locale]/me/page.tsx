@@ -28,18 +28,19 @@ export default async function Me({ params }: P) {
       <header className="page-head plain"><div><h1>{es ? "Tú" : "You"}</h1></div></header>
       <MeStats locale={locale} total={allConcepts().length} />
       <Link className="me-card me-link" href={`/${locale}/library/`}>
-        <span className="hub-label">📚 {es ? "Biblioteca" : "Library"}</span>
+        <span className="hub-label">{es ? "Biblioteca" : "Library"}</span>
         <strong>{es ? "Todos los temas, mapa, cheatsheet, preguntas y labs" : "Every topic, map, cheatsheet, questions and labs"}</strong>
         <Icon name="right" size={16} />
       </Link>
       <section className="me-card me-settings">
-        <span className="hub-label">⚙️ {es ? "Ajustes" : "Settings"}</span>
+        <span className="hub-label">{es ? "Ajustes" : "Settings"}</span>
         <div className="me-row"><span>{es ? "Tema" : "Theme"}</span><ThemeToggle label={m("theme", locale)} /></div>
         <AccountRow locale={locale} label={es ? "Cuenta y sincronización" : "Account and sync"} />
         <Offline locale={locale} />
         <MeBackup locale={locale} />
       </section>
-      <p className="me-pro"><Link href={`/${locale}/pro/`}>levelup Pro ({es ? "lista de espera" : "waitlist"}) →</Link></p>
+      <Link className="me-quiet" href={`/${locale}/pro/`}><span>levelup Pro · {es ? "lista de espera" : "waitlist"}</span><Icon name="right" size={16} /></Link>
+      <p className="me-foot">{m("footer", locale)}</p>
     </main>
   );
 }

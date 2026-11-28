@@ -32,6 +32,14 @@ export const emptyState = (): StudyState => ({ v: 1, cards: {}, days: {}, read: 
 
 const scheduler = fsrs(generatorParameters({ request_retention: 0.9, enable_fuzz: false, maximum_interval: 365 }));
 
+/** Drops cards whose item no longer exists (content renamed or removed an item). They would stay
+ *  "due" forever while no session can serve them. Returns whether anything was removed. */
+export function pruneOrphans(s: StudyState, itemIds: Set<string>): boolean {
+  let removed = false;
+  for (const id of Object.keys(s.cards)) if (!itemIds.has(id)) { delete s.cards[id]; removed = true; }
+  return removed;
+}
+
 /* ------------------------------------------------------------------ storage */
 export function loadState(): StudyState {
   try {

@@ -28,7 +28,7 @@ export default async function PathPage({ params }: P) {
       <header className="page-head plain">
         <div>
           <h1>{es ? "Ruta de estudio" : "Study path"}</h1>
-          <p className="page-sub">{es ? "Todo el temario en el orden en que conviene aprenderlo, de los fundamentos al nivel Staff." : "The whole syllabus in the order worth learning it, from foundations to Staff level."}</p>
+          <p className="page-sub">{es ? "De los fundamentos al nivel Staff, en el orden en que conviene aprender." : "From foundations to Staff level, in the order worth learning."}</p>
         </div>
       </header>
       <PathView phases={phases} locale={locale} />

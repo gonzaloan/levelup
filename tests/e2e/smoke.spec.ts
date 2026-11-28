@@ -3,6 +3,8 @@ import fs from "node:fs";
 
 // Derived from the data, never hardcoded: a new topic must not break the suite.
 const DOMAINS: { id: string; concepts: string[] }[] = JSON.parse(fs.readFileSync("content/domains.json", "utf8"));
+const PATH: string[] = (JSON.parse(fs.readFileSync("content/path.json", "utf8")) as { phases: { modules: { concepts: string[] }[] }[] })
+  .phases.flatMap((p) => p.modules.flatMap((m) => m.concepts));
 
 test("today: a new reader gets one mission and one button; search opens a concept", async ({ page }) => {
   await page.goto("/es/");
@@ -98,11 +100,11 @@ test("language switch keeps the page", async ({ page }) => {
 
 test("mark as read persists across reloads", async ({ page }) => {
   await page.goto("/en/c/reranking/");
-  const btn = page.locator(".rail-right .mastered-btn");
+  const btn = page.locator(".concept-end .mastered-btn");
   await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "true");
   await page.reload();
-  await expect(page.locator(".rail-right .mastered-btn")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".concept-end .mastered-btn")).toHaveAttribute("aria-pressed", "true");
 });
 
 test("cheatsheet filter narrows rows", async ({ page }) => {
@@ -144,10 +146,17 @@ test("practice: rebuild-the-diagram places components over the real diagram", as
   await expect(page.locator(".p-feedback")).toBeVisible();
 });
 
-test("study path lists every concept once and links to practice", async ({ page }) => {
+test("study path lists every concept once; a started module offers practice", async ({ page }) => {
   await page.goto("/es/path/");
   const total = DOMAINS.reduce((n, d) => n + d.concepts.length, 0);
   await expect(page.locator(".module-list li")).toHaveCount(total);
+  // Untouched modules stay quiet: no zero bars, no practice button.
+  await expect(page.locator(".mr-bar")).toHaveCount(0);
+  await expect(page.locator(".module-practice")).toHaveCount(0);
+  const first = PATH[0];
+  await page.evaluate((id) => localStorage.setItem("fg.study.v1", JSON.stringify({ v: 1, cards: {}, days: {}, read: { [id]: Date.now() }, goal: 60, updatedAt: 0 })), first);
+  await page.reload();
+  await expect(page.locator(".module-row[open] .ml-n.ok")).toHaveCount(1);
   await expect(page.locator(".module-practice").first()).toHaveAttribute("href", /mode=module/);
 });
 
@@ -159,18 +168,31 @@ test("architecture map links every box to a concept", async ({ page }) => {
   await expect(page).toHaveURL(/\/en\/c\/[a-z0-9-]+\/$/);
 });
 
-test("arrow keys move between concepts in a topic", async ({ page }) => {
-  const rag = DOMAINS.find((d) => d.id === "rag")!.concepts;
-  const title = (id: string) => JSON.parse(fs.readFileSync(`content/concepts/rag/${id}.json`, "utf8")).title.en;
-  await page.goto(`/en/c/${rag[1]}/`, { waitUntil: "networkidle" });
+test("arrow keys move along the study path", async ({ page }) => {
+  const domainOf = (id: string) => DOMAINS.find((d) => d.concepts.includes(id))!.id;
+  const title = (id: string) => JSON.parse(fs.readFileSync(`content/concepts/${domainOf(id)}/${id}.json`, "utf8")).title.en;
+  await page.goto(`/en/c/${PATH[1]}/`, { waitUntil: "networkidle" });
   await page.keyboard.press("ArrowRight");
-  await expect(page).toHaveURL(new RegExp(`/en/c/${rag[2]}/$`));
+  await expect(page).toHaveURL(new RegExp(`/en/c/${PATH[2]}/$`));
   // Wait for the new page to render (its listener mounts with it) before the next key.
-  await expect(page.locator("h1")).toHaveText(title(rag[2]));
+  await expect(page.locator("h1")).toHaveText(title(PATH[2]));
   await page.waitForLoadState("networkidle");
   await page.keyboard.press("ArrowLeft");
-  await expect(page).toHaveURL(new RegExp(`/en/c/${rag[1]}/$`));
-  await expect(page.locator("h1")).toHaveText(title(rag[1]));
+  await expect(page).toHaveURL(new RegExp(`/en/c/${PATH[1]}/$`));
+  await expect(page.locator("h1")).toHaveText(title(PATH[1]));
+});
+
+test("a concept ends with one next step: the next on the path, then back to today once learned", async ({ page }) => {
+  await page.goto(`/en/c/${PATH[0]}/`);
+  const go = page.locator(".concept-end .ce-go");
+  await expect(go).toHaveCount(1);
+  await expect(go).toHaveAttribute("href", `/en/c/${PATH[1]}/`);
+  // "Check yourself" comes before everything folded.
+  const order = await page.evaluate(() => [...document.querySelectorAll("#how, #check, .deeper")].map((e) => e.id || "deeper"));
+  expect(order).toEqual(["how", "check", "deeper"]);
+  await page.locator(".concept-end .mastered-btn").click();
+  await expect(go).toHaveAttribute("href", "/en/");
+  await expect(page.locator(".concept-end .ce-next")).toHaveAttribute("href", `/en/c/${PATH[1]}/`);
 });
 
 const LABS: { id: string }[] = JSON.parse(fs.readFileSync("content/labs.json", "utf8"));
@@ -187,7 +209,7 @@ test("labs index lists every lab and a lab reacts to its controls", async ({ pag
 
 test("a concept links to its lab", async ({ page }) => {
   await page.goto("/en/c/back-of-envelope/");
-  await page.locator(".lab-promo-card").first().click();
+  await page.locator(".deeper a.fold-link").first().click();
   await expect(page).toHaveURL(/\/en\/labs\/[a-z-]+\/$/);
 });
 
@@ -331,6 +353,15 @@ test("four places: Today, Path, Practice, You — tabs on phones, links on deskt
   await expect(nav.filter({ hasText: "Practice" })).toHaveAttribute("aria-current", "page");
   await page.goto("/en/library/");
   await expect(nav.filter({ hasText: "You" })).toHaveAttribute("aria-current", "page");
+});
+
+test("no screen scrolls sideways (phones first)", async ({ page }) => {
+  for (const url of ["/es/", "/es/path/", "/es/practice/", "/es/me/", "/es/interview/", "/es/library/", `/es/c/${PATH[0]}/`]) {
+    await page.goto(url, { waitUntil: "networkidle" });
+    // A phone widens its layout viewport to fit wide content, so measure against the screen too.
+    const over = await page.evaluate(() => document.documentElement.scrollWidth - Math.min(window.innerWidth, screen.width));
+    expect(over, url).toBeLessThanOrEqual(0);
+  }
 });
 
 test("practice is four cards; mocks are three", async ({ page }) => {

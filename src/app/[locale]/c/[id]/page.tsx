@@ -5,13 +5,14 @@ import type { Locale } from "@/lib/types";
 import { pageMeta } from "@/lib/meta";
 import { DIFF, LOCALES, m, t } from "@/lib/i18n";
 import { allConcepts, checkItemsFor, conceptsOf, domainIndex, getConcept, getDomain, labsFor, neighbors, pathPosition, problemsFor } from "@/lib/content";
+import type { Concept } from "@/lib/types";
 import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
 import { Markdown } from "@/components/Markdown";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Diagram } from "@/components/Diagram";
 import { DomainChip, LevelBadge } from "@/components/Bits";
-import { MasteredDot, MasteredToggle } from "@/components/Mastered";
+import { ConceptEnd, MasteredDot } from "@/components/Mastered";
 import { Toc } from "@/components/Toc";
 import { KeyNav } from "@/components/KeyNav";
 import { QuickCheck } from "@/components/practice/QuickCheck";
@@ -35,13 +36,14 @@ export default async function ConceptPage({ params }: P) {
   const L = (k: Parameters<typeof m>[0]) => m(k, locale);
   const d = getDomain(c.domain)!;
   const { prev, next } = neighbors(id);
-  const siblings = conceptsOf(d.id);
+  const pos = pathPosition(id);
+  // The rail lists the path module you're in (the same order as Hoy, Ruta and the next button).
+  const siblings = pos ? pos.module.concepts.map(getConcept).filter((x): x is Concept => !!x) : conceptsOf(d.id);
   const related = c.related.map(getConcept).filter((x): x is NonNullable<typeof x> => !!x);
   const hue = hueFor(domainIndex(d.id));
   const checks = checkItemsFor(id, locale);
   const labs = labsFor(id);
   const problems = problemsFor(id);
-  const pos = pathPosition(id);
   // Design cases lead with the building blocks they use (their related concepts), like a course.
   const isCase = c.domain === "design" || c.domain === "sysdesign";
 
@@ -51,6 +53,7 @@ export default async function ConceptPage({ params }: P) {
     c.diagram && { id: "diagram", label: L("diagram") },
     { id: "how", label: L("howItWorks") },
     checks.length && { id: "check", label: L("checkTitle") },
+    problems.length && { id: "problems", label: L("solveIt") },
     c.keyPoints?.length && { id: "full", label: L("fullExplanation") },
     c.code && { id: "code", label: L("code") },
     { id: "example", label: L("example") },
@@ -64,8 +67,10 @@ export default async function ConceptPage({ params }: P) {
 
   return (
     <main className="concept-layout" style={{ ["--h" as string]: hue }}>
-      <aside className="rail rail-left" aria-label={L("conceptsInDomain")}>
-        <Link href={`/${locale}/d/${d.id}/`} className="rail-title rail-domain"><Icon name={d.icon} size={16} /> {t(d.title, locale)}</Link>
+      <aside className="rail rail-left" aria-label={pos ? (locale === "es" ? "En este módulo" : "In this module") : L("conceptsInDomain")}>
+        {pos
+          ? <Link href={`/${locale}/path/`} className="rail-title rail-domain"><Icon name="compass" size={16} /> {locale === "es" ? "Módulo" : "Module"} {String(pos.moduleNo).padStart(2, "0")} · {t(pos.module.title, locale)}</Link>
+          : <Link href={`/${locale}/d/${d.id}/`} className="rail-title rail-domain"><Icon name={d.icon} size={16} /> {t(d.title, locale)}</Link>}
         <ol className="sibling-list">
           {siblings.map((s) => (
             <li key={s.id}>
@@ -87,7 +92,6 @@ export default async function ConceptPage({ params }: P) {
             <Illustration id={c.id} size={60} className="head-ill" />
             <h1>{t(c.title, locale)}</h1>
           </div>
-          {c.aliases.length > 0 && <p className="aliases">{c.aliases.join(" · ")}</p>}
         </header>
 
         <section id="tldr" className="tldr">
@@ -121,51 +125,7 @@ export default async function ConceptPage({ params }: P) {
           {c.keyPoints?.length
             ? <ul className="keypoints">{c.keyPoints.map((p, i) => <li key={i}><Markdown inline src={t(p, locale)} locale={locale} /></li>)}</ul>
             : <Markdown src={t(c.explain, locale)} locale={locale} />}
-          <StackRow concept={c} locale={locale} />
         </section>
-
-        {labs.length > 0 && (
-          <section className="lab-promo" aria-label="Labs">
-            {labs.map((l) => (
-              <Link key={l.id} href={`/${locale}/labs/${l.id}/`} className="lab-promo-card">
-                <Emoji name={l.art} size={34} />
-                <span><small>{L("tryLab")}</small><strong>{t(l.title, locale)}</strong><span>{t(l.blurb, locale)}</span></span>
-                <Icon name="right" size={18} />
-              </Link>
-            ))}
-          </section>
-        )}
-
-        {(isCase || id === "behavioral-star") && (
-          <section className="lab-promo" aria-label="Practice">
-            <Link href={isCase ? `/${locale}/practice/design/${id}/` : `/${locale}/interview/stories/`} className="lab-promo-card">
-              <Emoji name={isCase ? "stopwatch" : "open-book"} size={34} />
-              <span>
-                <small>{isCase ? L("pDesign") : L("pStories")}</small>
-                <strong>{isCase ? (locale === "es" ? "Haz esta ronda en 45 minutos" : "Do this round in 45 minutes") : (locale === "es" ? "Escribe y practica tus historias" : "Write and practice your stories")}</strong>
-                <span>{isCase ? L("pDesignSub") : L("pStoriesSub")}</span>
-              </span>
-              <Icon name="right" size={18} />
-            </Link>
-          </section>
-        )}
-
-        {problems.length > 0 && (
-          <section className="solve" aria-label={L("solveIt")}>
-            <h2 className="section-label"><Emoji name="laptop" size={20} /> {L("solveIt")}</h2>
-            <ul className="code-list">
-              {problems.map((p) => (
-                <li key={p.id}>
-                  <Link href={`/${locale}/practice/code/${p.id}/`}>
-                    <span className="cl-title">{t(p.title, locale)}</span>
-                    <span className={`diff diff-${p.difficulty}`}>{DIFF[p.difficulty][locale]}</span>
-                    <SolvedMark id={p.id} />
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
 
         {checks.length > 0 && (
           <section id="check" className="check">
@@ -178,6 +138,35 @@ export default async function ConceptPage({ params }: P) {
         <section className="deeper" aria-label={L("goDeeper")}>
           <h2>{L("goDeeper")}</h2>
           <p className="hint">{L("goDeeperHint")}</p>
+
+          {labs.map((l) => (
+            <Link key={l.id} href={`/${locale}/labs/${l.id}/`} className="fold fold-link">
+              <Emoji name={l.art} size={22} /><span>{t(l.title, locale)} <small>{L("tryLab")}</small></span><Icon name="right" size={18} />
+            </Link>
+          ))}
+          {(isCase || id === "behavioral-star") && (
+            <Link href={isCase ? `/${locale}/practice/design/${id}/` : `/${locale}/interview/stories/`} className="fold fold-link">
+              <Emoji name={isCase ? "stopwatch" : "open-book"} size={22} />
+              <span>{isCase ? (locale === "es" ? "Haz esta ronda en 45 minutos" : "Do this round in 45 minutes") : (locale === "es" ? "Escribe y practica tus historias" : "Write and practice your stories")} <small>{isCase ? L("pDesign") : L("pStories")}</small></span>
+              <Icon name="right" size={18} />
+            </Link>
+          )}
+          {problems.length > 0 && (
+            <details id="problems" className="fold">
+              <summary>{L("solveIt")} <small>{problems.length}</small></summary>
+              <ul className="code-list">
+                {problems.map((p) => (
+                  <li key={p.id}>
+                    <Link href={`/${locale}/practice/code/${p.id}/`}>
+                      <span className="cl-title">{t(p.title, locale)}</span>
+                      <span className={`diff diff-${p.difficulty}`}>{DIFF[p.difficulty][locale]}</span>
+                      <SolvedMark id={p.id} />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
 
           {!!c.keyPoints?.length && (
             <details id="full" className="fold">
@@ -265,6 +254,7 @@ export default async function ConceptPage({ params }: P) {
               </Link>
             ))}
           </div>
+          <StackRow concept={c} locale={locale} />
           <h3 className="sources-title">{L("sources")}</h3>
           <ul className="sources">
             {c.sources.map((s) => (
@@ -273,28 +263,11 @@ export default async function ConceptPage({ params }: P) {
           </ul>
         </section>
 
-        <details className="topic-nav only-narrow">
-          <summary><Icon name={d.icon} size={16} /> {L("conceptsInDomain")}: {t(d.title, locale)} <span>({siblings.findIndex((s) => s.id === id) + 1}/{siblings.length})</span></summary>
-          <ol className="sibling-list">
-            {siblings.map((s) => (
-              <li key={s.id}>
-                <Link href={`/${locale}/c/${s.id}/`} className={s.id === id ? "current" : ""} aria-current={s.id === id ? "page" : undefined}>
-                  <MasteredDot id={s.id} />{t(s.title, locale)}
-                </Link>
-              </li>
-            ))}
-          </ol>
-        </details>
-
-        <nav className="pager">
-          {prev ? <Link href={`/${locale}/c/${prev.id}/`}><Icon name="left" size={16} /><span><small>{L("prev")}</small>{t(prev.title, locale)}</span></Link> : <span />}
-          {next ? <Link href={`/${locale}/c/${next.id}/`} className="next"><span><small>{L("next")}</small>{t(next.title, locale)}</span><Icon name="right" size={16} /></Link> : <span />}
-        </nav>
+        <ConceptEnd id={c.id} locale={locale} next={next ? { id: next.id, title: t(next.title, locale) } : null} />
       </article>
 
       <KeyNav self={`/${locale}/c/${id}/`} prev={prev ? `/${locale}/c/${prev.id}/` : undefined} next={next ? `/${locale}/c/${next.id}/` : undefined} />
       <aside className="rail rail-right">
-        <MasteredToggle id={c.id} locale={locale} />
         <Toc items={toc} title={L("onThisPage")} />
       </aside>
     </main>

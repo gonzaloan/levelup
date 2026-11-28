@@ -11,15 +11,20 @@ export interface MissionInput {
   hasCards: boolean;
   /** Cards due now. */
   due: number;
-  /** At least one card was reviewed today. */
-  reviewedToday: boolean;
+  /** Cards reviewed today. */
+  reviewedToday: number;
   /** Today's Gym workout is finished. */
   gymDone: boolean;
 }
 export interface Mission { tasks: { id: TaskId; state: TaskState }[]; next: TaskId | null; done: number }
 
+/** One review session's worth: after a week away 100 cards can be due, and a day that needs seven
+ *  sessions to count teaches people to quit. The rest stays due for tomorrow. */
+export const REVIEW_SESSION = 15;
+
 export function missionOf(m: MissionInput): Mission {
-  const review: TaskState = !m.hasCards ? "locked" : m.due === 0 && m.reviewedToday ? "done" : "todo";
+  const reviewed = m.reviewedToday > 0 && (m.due === 0 || m.reviewedToday >= REVIEW_SESSION);
+  const review: TaskState = !m.hasCards ? "locked" : reviewed ? "done" : "todo";
   const tasks: Mission["tasks"] = [
     { id: "learn", state: m.learnedToday ? "done" : "todo" },
     { id: "review", state: review },

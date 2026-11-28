@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Locale } from "@/lib/types";
 import type { PracticeData } from "@/lib/practice/types";
-import { loadState, saveState, STUDY_EVENT, type StudyState } from "@/lib/practice/store";
+import { loadState, pruneOrphans, saveState, STUDY_EVENT, type StudyState } from "@/lib/practice/store";
 
 const loaders: Record<Locale, () => Promise<{ default: unknown }>> = {
   en: () => import("@/generated/practice-en.json"),
@@ -15,7 +15,14 @@ export function usePracticeData(locale: Locale) {
   const [data, setData] = useState<PracticeData | null>(cache[locale] ?? null);
   useEffect(() => {
     if (cache[locale]) return;
-    loaders[locale]().then((m) => { cache[locale] = m.default as PracticeData; setData(cache[locale]!); });
+    loaders[locale]().then((m) => {
+      const d = m.default as PracticeData;
+      // One place where the bank meets the stored cards: drop the orphans so every due count agrees.
+      const s = loadState();
+      if (pruneOrphans(s, new Set(d.items.map((i) => i.id)))) saveState(s);
+      cache[locale] = d;
+      setData(d);
+    });
   }, [locale]);
   return data;
 }

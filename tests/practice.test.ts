@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { grade, parseNumber } from "@/lib/practice/grade";
 import { derange, shuffle } from "@/lib/practice/rng";
-import { emptyState, merge, review, streakOf, toRating, levelOf, addActivity, dayKey, isDue } from "@/lib/practice/store";
+import { emptyState, merge, review, streakOf, toRating, levelOf, addActivity, dayKey, isDue, pruneOrphans } from "@/lib/practice/store";
 import { buildSession, conceptStatus, interleave } from "@/lib/practice/session";
 import type { PItem, PracticeData } from "@/lib/practice/types";
 
@@ -67,6 +67,15 @@ describe("scheduling", () => {
     review(b, "x.a1", toRating(0, 1), now);
     expect(Date.parse(a.cards["x.a1"].due)).toBeGreaterThanOrEqual(Date.parse(b.cards["x.a1"].due));
     expect(isDue(b.cards["x.a1"], new Date("2026-11-10T10:00:00Z"))).toBe(true);
+  });
+  it("cards of items that no longer exist are dropped, so due counts agree everywhere", () => {
+    const now = new Date("2026-11-09T10:00:00Z");
+    const s = emptyState();
+    review(s, "x.a1", 1, now);
+    review(s, "x.gone", 1, now);
+    expect(pruneOrphans(s, new Set(["x.a1"]))).toBe(true);
+    expect(Object.keys(s.cards)).toEqual(["x.a1"]);
+    expect(pruneOrphans(s, new Set(["x.a1"]))).toBe(false);
   });
 });
 

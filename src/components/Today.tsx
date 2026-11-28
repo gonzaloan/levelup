@@ -8,20 +8,20 @@ import type { Locale } from "@/lib/types";
 import { useStudyState } from "./practice/usePractice";
 import { isDue, levelOf, streakOf, totalXp } from "@/lib/practice/store";
 import { loadGym, today as gymToday } from "@/lib/gym/store";
-import { isToday, missionOf, type TaskId } from "@/lib/today";
+import { isToday, missionOf, REVIEW_SESSION, type TaskId } from "@/lib/today";
 import { Icon } from "./Icon";
 
 export interface PathStop { id: string; t: string; m: string }
 
 const T = {
   en: { mission: "Today's mission", dayDone: "Day complete 🔥", dayDoneSub: "Come back tomorrow to keep your streak. Want more? Practice anything.", more: "Practice more",
-    learn: "Learn a concept", review: (n: number) => (n ? `Review ${n} card${n === 1 ? "" : "s"}` : "Review"), reviewSub: "What you're about to forget", gym: "Gym", gymSub: "8 reps by hand, ~12 min",
-    locked: "Unlocks after your first concept", go: { learn: "Start", review: "Review now", gym: "Go to the Gym" } as Record<TaskId, string>,
-    level: "Level", streak: (n: number) => `${n}-day streak`, noStreak: "No streak yet", path: "Your path", pathDone: "Path complete!", see: "See the path" },
+    learn: "Learn a concept", learnHow: "read it and answer “Check yourself”", review: (n: number) => (n ? `Review ${Math.min(n, REVIEW_SESSION)} card${n === 1 ? "" : "s"}` : "Review"), reviewSub: "What you're about to forget, ~5 min", gym: "Gym", gymSub: "8 reps by hand, ~12 min",
+    locked: "After your first concept", go: { learn: "Learn", review: "Review now", gym: "Go to the Gym" } as Record<TaskId, string>,
+    level: "Level", streak: (n: number) => `${n}-day streak`, path: "Your path", pathDone: "Path complete!", studied: "studied" },
   es: { mission: "Misión de hoy", dayDone: "Día completo 🔥", dayDoneSub: "Vuelve mañana para mantener tu racha. ¿Quieres más? Practica lo que quieras.", more: "Practicar más",
-    learn: "Aprende un concepto", review: (n: number) => (n ? `Repasa ${n} tarjeta${n === 1 ? "" : "s"}` : "Repasa"), reviewSub: "Lo que estás por olvidar", gym: "Gimnasio", gymSub: "8 ejercicios a mano, ~12 min",
-    locked: "Se desbloquea con tu primer concepto", go: { learn: "Empezar", review: "Repasar ahora", gym: "Ir al Gimnasio" } as Record<TaskId, string>,
-    level: "Nivel", streak: (n: number) => `Racha de ${n} día${n === 1 ? "" : "s"}`, noStreak: "Sin racha todavía", path: "Tu ruta", pathDone: "¡Ruta completa!", see: "Ver la ruta" },
+    learn: "Aprende un concepto", learnHow: "léelo y responde «Pruébate»", review: (n: number) => (n ? `Repasa ${Math.min(n, REVIEW_SESSION)} tarjeta${n === 1 ? "" : "s"}` : "Repasa"), reviewSub: "Lo que estás por olvidar, ~5 min", gym: "Gimnasio", gymSub: "8 ejercicios a mano, ~12 min",
+    locked: "Tras tu primer concepto", go: { learn: "Aprender", review: "Repasar ahora", gym: "Ir al Gimnasio" } as Record<TaskId, string>,
+    level: "Nivel", streak: (n: number) => `Racha de ${n} día${n === 1 ? "" : "s"}`, path: "Tu ruta", pathDone: "¡Ruta completa!", studied: "estudiados" },
 };
 const ICON: Record<TaskId, string> = { learn: "book", review: "cycle", gym: "zap" };
 
@@ -42,13 +42,15 @@ export function Today({ order, locale }: { order: PathStop[]; locale: Locale }) 
     const mission = missionOf({
       learnedToday: Object.values(s.read).some((ms) => isToday(ms, now)),
       hasCards: cards.length > 0, due, gymDone,
-      reviewedToday: cards.some((c) => isToday(c.last_review, now)),
+      reviewedToday: cards.filter((c) => isToday(c.last_review, now)).length,
     });
     // The module you're in: its stops in order and how many you've done.
     const mod = next ? order.filter((c) => c.m === next.m) : [];
     const modDone = mod.filter((c) => s.read[c.id] || practiced.has(c.id)).length;
     const xp = totalXp(s);
-    return { next, idx: idx < 0 ? order.length : idx, due, mission, mod, modDone, lvl: levelOf(xp), streak: streakOf(s, now).days };
+    // "x/N" means studied (read or practiced), the same count Ruta and Tú show.
+    const studied = order.filter((c) => s.read[c.id] || practiced.has(c.id)).length;
+    return { next, studied, due, mission, mod, modDone, xp, lvl: levelOf(xp), streak: streakOf(s, now).days };
   }, [s, order, now, gymDone]);
 
   if (!view) return <div className="today-card skeleton" aria-busy="true" />;
@@ -59,7 +61,8 @@ export function Today({ order, locale }: { order: PathStop[]; locale: Locale }) 
     gym: `/${locale}/gym/`,
   };
   const label = (id: TaskId) => (id === "learn" ? t.learn : id === "review" ? t.review(view.due) : t.gym);
-  const sub = (id: TaskId, locked: boolean) => (locked ? t.locked : id === "learn" ? next?.t ?? t.pathDone : id === "review" ? t.reviewSub : t.gymSub);
+  const sub = (id: TaskId, locked: boolean) => (locked ? t.locked : id === "learn" ? (next ? `${next.t} · ${t.learnHow}` : t.pathDone) : id === "review" ? t.reviewSub : t.gymSub);
+  const go = (id: TaskId) => (id === "learn" && next ? `${t.go.learn}: ${next.t}` : t.go[id]);
 
   return (
     <>
@@ -68,10 +71,12 @@ export function Today({ order, locale }: { order: PathStop[]; locale: Locale }) 
           <h2 id="mission">{mission.next ? t.mission : t.dayDone}</h2>
           <span className="today-count" aria-label={`${mission.done}/3`}>{mission.done}/3</span>
         </div>
-        <p className="today-meta">
-          <span>🔥 {view.streak ? t.streak(view.streak) : t.noStreak}</span>
-          <span>{t.level} {view.lvl.index + 1} · {locale === "es" ? view.lvl.es : view.lvl.en}</span>
-        </p>
+        {view.xp > 0 && (
+          <p className="today-meta">
+            {view.streak > 0 && <span>🔥 {t.streak(view.streak)}</span>}
+            <span>{t.level} {view.lvl.index + 1} · {locale === "es" ? view.lvl.es : view.lvl.en}</span>
+          </p>
+        )}
         <ol className="today-tasks">
           {mission.tasks.map((task) => {
             const locked = task.state === "locked", isNext = task.id === mission.next;
@@ -90,16 +95,15 @@ export function Today({ order, locale }: { order: PathStop[]; locale: Locale }) 
           })}
         </ol>
         {mission.next
-          ? <Link className="btn btn-primary today-go" href={href[mission.next]}>{t.go[mission.next]} <Icon name="right" size={18} /></Link>
+          ? <Link className="btn btn-primary today-go" href={href[mission.next]}><span>{go(mission.next)}</span> <Icon name="right" size={18} /></Link>
           : <><p className="today-sub">{t.dayDoneSub}</p><Link className="btn today-go" href={`/${locale}/practice/`}>{t.more} <Icon name="right" size={18} /></Link></>}
       </section>
 
       <Link className="today-path" href={`/${locale}/path/`}>
-        <span className="hub-label">{t.path} · {view.idx}/{order.length}</span>
+        <span className="hub-label">{t.path} · {view.studied}/{order.length} {t.studied}</span>
         <strong>{next ? next.m : t.pathDone}</strong>
         {next && <span className="today-bar" aria-hidden="true"><span style={{ width: `${Math.round((100 * view.modDone) / Math.max(1, view.mod.length))}%` }} /></span>}
         {next && <small>{view.modDone}/{view.mod.length}</small>}
-        <span className="today-see">{t.see} <Icon name="right" size={14} /></span>
       </Link>
     </>
   );

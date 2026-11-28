@@ -8,7 +8,6 @@ import { hueFor } from "@/lib/hue";
 import { Icon } from "@/components/Icon";
 import { ProgressMeter } from "@/components/Mastered";
 
-
 // The syllabus in three tracks. A topic missing here lands in the last one, so a new domain
 // still shows up.
 const TRACKS: { id: string; en: string; es: string; domains: string[] }[] = [
@@ -20,8 +19,8 @@ const TRACKS: { id: string; en: string; es: string; domains: string[] }[] = [
 export async function generateMetadata({ params }: { params: Promise<{ locale: Locale }> }): Promise<Metadata> {
   const { locale } = await params;
   return locale === "es"
-    ? pageMeta(locale, "/library/", "Biblioteca", "Todos los temas, el mapa de arquitectura, el cheatsheet, las preguntas, los labs y el mapa del conocimiento.")
-    : pageMeta(locale, "/library/", "Library", "Every topic, the architecture map, the cheatsheet, the questions, the labs and the knowledge map.");
+    ? pageMeta(locale, "/library/", "Biblioteca", "Todos los temas, el mapa de arquitectura, el cheatsheet, las preguntas, los labs y el grafo de conceptos.")
+    : pageMeta(locale, "/library/", "Library", "Every topic, the architecture map, the cheatsheet, the questions, the labs and the concept graph.");
 }
 
 export default async function Library({ params }: { params: Promise<{ locale: Locale }> }) {
@@ -37,7 +36,7 @@ export default async function Library({ params }: { params: Promise<{ locale: Lo
   ] as const;
 
   return (
-    <main className="home library">
+    <main className="page library">
       <header className="page-head plain">
         <div>
           <h1>{locale === "es" ? "Biblioteca" : "Library"}</h1>
@@ -51,7 +50,7 @@ export default async function Library({ params }: { params: Promise<{ locale: Lo
           ["questions", "message", locale === "es" ? `Preguntas (${stats[3][0]})` : `Questions (${stats[3][0]})`],
           ["labs", "sliders", `Labs (${getLabs().length})`],
           ["numbers", "chart", locale === "es" ? "Números para saber" : "Numbers to know"],
-          ["graph", "network", locale === "es" ? "Mapa del conocimiento" : "Knowledge map"],
+          ["graph", "network", locale === "es" ? "Grafo de conceptos" : "Concept graph"],
         ].map(([href, icon, label]) => (
           <Link key={href} href={`/${locale}/${href}/`} className="lib-tool"><Icon name={icon} size={20} /><span>{label}</span><Icon name="right" size={14} /></Link>
         ))}
@@ -78,7 +77,6 @@ export default async function Library({ params }: { params: Promise<{ locale: Lo
           </section>
         );
       })}
-      <p className="legend">{L("levelLegend")}</p>
     </main>
   );
 }

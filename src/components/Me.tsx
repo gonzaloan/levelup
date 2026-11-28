@@ -10,11 +10,11 @@ import { Heatmap } from "./practice/Hub";
 import { Icon } from "./Icon";
 
 const T = {
-  en: { level: "Level", xp: "XP", next: (n: number, l: string) => `${n.toLocaleString()} XP to ${l}`, streak: "Day streak", forgive: "One missed day a week is forgiven.",
-    read: "Concepts studied", activity: "Activity", plan: "Your interview", planSet: (d: string) => `Interview on ${d}: see today's plan`, planNone: "Set your interview date: get a day-by-day plan",
+  en: { level: "Level", xp: "XP", next: (n: number, l: string) => `${n.toLocaleString()} XP to ${l}`, streak: "Streak", forgive: "One missed day a week is forgiven.",
+    read: "Concepts", readSub: "studied on your path", activity: "Activity", plan: "Your interview", planSet: (d: string) => `Interview on ${d}: see today's plan`, planNone: "Set your interview date: get a day-by-day plan",
     backupT: "Backup and reset", exportB: "Download backup", importB: "Restore backup", reset: "Reset all progress", resetQ: "Reset all progress? This can't be undone." },
-  es: { level: "Nivel", xp: "XP", next: (n: number, l: string) => `${n.toLocaleString()} XP para ${l}`, streak: "Días de racha", forgive: "Se perdona un día sin estudiar por semana.",
-    read: "Conceptos estudiados", activity: "Actividad", plan: "Tu entrevista", planSet: (d: string) => `Entrevista el ${d}: mira el plan de hoy`, planNone: "Pon la fecha de tu entrevista y te armo un plan día a día",
+  es: { level: "Nivel", xp: "XP", next: (n: number, l: string) => `${n.toLocaleString()} XP para ${l}`, streak: "Racha", forgive: "Se perdona un día sin estudiar por semana.",
+    read: "Conceptos", readSub: "estudiados de tu ruta", activity: "Actividad", plan: "Tu entrevista", planSet: (d: string) => `Entrevista el ${d}: mira el plan de hoy`, planNone: "Pon la fecha de tu entrevista y te armo un plan día a día",
     backupT: "Respaldo y reinicio", exportB: "Descargar respaldo", importB: "Restaurar respaldo", reset: "Borrar todo el progreso", resetQ: "¿Borrar todo el progreso? No se puede deshacer." },
 };
 
@@ -37,15 +37,15 @@ export function MeStats({ locale, total }: { locale: Locale; total: number }) {
         <small>{xp.toLocaleString()} {t.xp}{lvl.next ? ` · ${t.next(lvl.next.xp - xp, locale === "es" ? lvl.next.es : lvl.next.en)}` : ""}</small>
       </section>
       <div className="me-pair">
-        <section className="me-card"><span className="hub-label">🔥 {t.streak}</span><strong className="me-big">{streak}</strong><small>{t.forgive}</small></section>
-        <section className="me-card"><span className="hub-label">📘 {t.read}</span><strong className="me-big">{read}<small>/{total}</small></strong></section>
+        <section className="me-card"><span className="hub-label">{t.streak}</span><strong className="me-big">🔥 {streak}</strong><small>{t.forgive}</small></section>
+        <section className="me-card"><span className="hub-label">{t.read}</span><strong className="me-big">{read}<small>/{total}</small></strong><small>{t.readSub}</small></section>
       </div>
       <section className="me-card">
         <span className="hub-label">{t.activity}</span>
         <Heatmap state={s} now={now} />
       </section>
       <Link className="me-card me-link" href={`/${locale}/plan/`}>
-        <span className="hub-label">📅 {t.plan}</span>
+        <span className="hub-label">{t.plan}</span>
         <strong>{planDate ? t.planSet(fmt(planDate)) : t.planNone}</strong>
         <Icon name="right" size={16} />
       </Link>

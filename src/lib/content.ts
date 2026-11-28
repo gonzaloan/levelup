@@ -78,11 +78,11 @@ export function getArchitectureMap(): ArchitectureMap {
   return { ...m, layers: m.layers.map(keep), crosscutting: m.crosscutting.map(keep) };
 }
 
+/** Previous and next concept on the study path: the order Hoy and Ruta follow. */
 export function neighbors(id: string) {
-  const c = getConcept(id);
-  if (!c) return { prev: undefined, next: undefined };
-  const list = getDomain(c.domain)!.concepts;
+  const list = getPath().flatMap((ph) => ph.modules.flatMap((m) => m.concepts));
   const i = list.indexOf(id);
+  if (i < 0) return { prev: undefined, next: undefined };
   return { prev: list[i - 1] ? getConcept(list[i - 1]) : undefined, next: list[i + 1] ? getConcept(list[i + 1]) : undefined };
 }
 

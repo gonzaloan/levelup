@@ -1,8 +1,8 @@
 "use client";
 // "Check yourself" on a concept page: the concept's own exercises, one at a time, graded in the
 // browser with the same deterministic graders as practice mode. It does not touch the spaced-
-// repetition schedule (no confidence is asked here); it marks the concept as read and points to
-// a real practice session.
+// repetition schedule (no confidence is asked here); it marks the concept as read (today's learn
+// task) and sends you back to the rest of today's mission.
 import { useState } from "react";
 import Link from "next/link";
 import type { Locale } from "@/lib/types";
@@ -44,14 +44,13 @@ export function QuickCheck({ items, conceptId, locale }: { items: PItem[]; conce
   };
   const next = () => { setIdx((i) => i + 1); setResponse(null); setResult(null); };
   const again = () => { setIdx(0); setRound((r) => r + 1); setRight(0); setResponse(null); setResult(null); };
-  const practice = `/${locale}/practice/play/?mode=concept&id=${conceptId}`;
 
   if (finished) return (
     <div className="qc qc-done">
       <p className="qc-score"><strong>{right}/{items.length}</strong> {L("checkScore")}</p>
       <p>{L("checkDone")}</p>
       <div className="qc-actions">
-        <Link className="btn btn-primary" href={practice}>{L("pPracticeConcept")} →</Link>
+        <Link className="btn btn-primary" href={`/${locale}/`}>{locale === "es" ? "Seguir con tu día" : "Continue your day"} →</Link>
         <button type="button" className="link-btn" onClick={again}>{L("checkAgain")}</button>
       </div>
     </div>

@@ -19,9 +19,6 @@ export default async function LocaleLayout({ children, params }: { children: Rea
       <a className="skip" href="#main">{locale === "es" ? "Saltar al contenido" : "Skip to content"}</a>
       <Header locale={locale} />
       <div id="main" className="site-main">{children}</div>
-      <footer className="site-footer">
-        <p>{m("footer", locale)}</p>
-      </footer>
       <SyncAgent />
       <OfflineAgent locale={locale} />
       <SearchPalette locale={locale} domains={domains}

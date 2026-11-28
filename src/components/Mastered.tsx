@@ -5,6 +5,7 @@ import type { Locale } from "@/lib/types";
 import { m } from "@/lib/i18n";
 import { useStudyState } from "./practice/usePractice";
 import type { StudyState } from "@/lib/practice/store";
+import { isToday } from "@/lib/today";
 import { Icon } from "./Icon";
 
 type Status = "none" | "read" | "practiced" | "solid";
@@ -36,19 +37,26 @@ export function ProgressMeter({ ids, label }: { ids: string[]; label: string }) 
   );
 }
 
-/** Concept page actions: practice it now, and mark it read (it enters the daily review). */
-export function MasteredToggle({ id, locale }: { id: string; locale: Locale; label?: string; doneLabel?: string }) {
+/** End of a concept page: one primary step. Learned today → back to today's mission; otherwise the
+ *  next concept on the path. "Mark as read" is the quiet secondary (it enters the daily review). */
+export function ConceptEnd({ id, locale, next }: { id: string; locale: Locale; next: Stop | null }) {
   const [s, update] = useStudyState();
   const read = !!s?.read[id];
+  const today = read && isToday(s!.read[id], new Date());
+  const es = locale === "es";
   return (
-    <div className="concept-actions">
-      <a className="btn btn-primary" href={`/${locale}/practice/play/?mode=concept&id=${id}`}><Icon name="cards" size={16} /> {m("pPracticeConcept", locale)}</a>
+    <nav className="concept-end" aria-label={es ? "Siguiente paso" : "Next step"}>
+      {today && <p className="ce-done"><Icon name="check" size={16} /> {es ? "Lo aprendiste hoy: entra a tu repaso." : "Learned today: it joins your review."}</p>}
+      {today
+        ? <Link className="btn btn-primary ce-go" href={`/${locale}/`}>{es ? "Seguir con tu día" : "Continue your day"} <Icon name="right" size={18} /></Link>
+        : next && <Link className="btn btn-primary ce-go" href={`/${locale}/c/${next.id}/`}><span><small>{es ? "Siguiente en tu ruta" : "Next on your path"}</small>{next.title}</span><Icon name="right" size={18} /></Link>}
       <button type="button" className={`mastered-btn${read ? " on" : ""}`} aria-pressed={read}
         onClick={() => update((st) => { if (st.read[id]) delete st.read[id]; else st.read[id] = Date.now(); })}>
         <Icon name="check" size={16} />
         <span>{read ? m("pIsRead", locale) : m("pMarkRead", locale)}</span>
       </button>
-      <Link href={`/${locale}/practice/`} className="link-btn">{m("pHubTitle", locale)} →</Link>
-    </div>
+      {today && next && <Link className="link-btn ce-next" href={`/${locale}/c/${next.id}/`}>{es ? "Siguiente concepto" : "Next concept"}: {next.title} <Icon name="right" size={14} /></Link>}
+    </nav>
   );
 }
+type Stop = { id: string; title: string };

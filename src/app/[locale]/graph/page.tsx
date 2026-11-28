@@ -10,7 +10,7 @@ import { knowledgeGraph } from "@/lib/graph";
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return pageMeta(locale, "/graph/", locale === "es" ? "Mapa del conocimiento" : "Knowledge map", locale === "es" ? "Todos los conceptos como un mapa: territorios por tema y puentes entre ideas." : "Every concept as a map: territories by topic and bridges between ideas.");
+  return pageMeta(locale, "/graph/", locale === "es" ? "Grafo de conceptos" : "Concept graph", locale === "es" ? "Todos los conceptos como un mapa: territorios por tema y puentes entre ideas." : "Every concept as a map: territories by topic and bridges between ideas.");
 }
 
 // Hub concepts (most connected) keep their label visible; the rest show it on hover/focus.
@@ -26,7 +26,7 @@ export default async function GraphPage({ params }: P) {
     <main className="page graph-page">
       <header className="page-head plain">
         <div>
-          <h1>{es ? "Mapa del conocimiento" : "Knowledge map"}</h1>
+          <h1>{es ? "Grafo de conceptos" : "Concept graph"}</h1>
           <p className="page-sub">{es
             ? `Los ${g.nodes.length} conceptos como un territorio: cada color es un tema y cada línea une ideas relacionadas. Toca un punto para abrirlo.`
             : `All ${g.nodes.length} concepts as a territory: each color is a topic and each line links related ideas. Tap a dot to open it.`}</p>
