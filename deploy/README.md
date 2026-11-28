@@ -49,6 +49,11 @@ a short-lived OIDC role, never stored keys. Until the role is configured the job
      --parameter-overrides ExistingOidcProviderArn=arn:aws:iam::201735383261:oidc-provider/token.actions.githubusercontent.com
    ```
    (If the list was empty, drop the `--parameter-overrides` line: the stack creates the provider.)
+   The role trusts the token's `sub`, and this repo uses GitHub's **immutable subject**
+   (`repo:gonzaloan@18615019/levelup@1301843917:environment:production`), the template's default.
+   If `configure-aws-credentials` says "Not authorized to perform sts:AssumeRoleWithWebIdentity",
+   compare `gh api repos/gonzaloan/levelup/actions/oidc/customization/sub` (its `sub_claim_prefix`)
+   with the role's trust condition and pass `GitHubRepo=<prefix without "repo:">` if they differ.
    ```bash
    aws cloudformation describe-stacks --region us-east-1 --stack-name levelup-github-oidc \
      --query "Stacks[0].Outputs[?OutputKey=='SiteDeployRoleArn'].OutputValue" --output text
