@@ -36,11 +36,15 @@ three cards, no 120k-px reference wall (that content lives in its concepts and t
 | Task | Done when | Locked when |
 |---|---|---|
 | Aprende 1 concepto (the next on the path) | a concept was first read today (+20 XP, counts for the streak) | never |
-| Repasa | reviewed today, and no cards due or one full session (15) done | nothing read and no cards yet ("after your first concept") |
+| Repasa | a daily review session was finished today, or cards were reviewed and none are due | nothing read and no cards yet ("after your first concept") |
 | Gimnasio | today's workout is finished | never |
 
 The big button goes to the first unfinished, unlocked task. All three done: "Día completo 🔥".
 Every due count reads the same cards: orphans (items content removed) are pruned when the bank loads.
+Every task's end screen (concept, Pruébate, review session, Gym workout) has "Seguir con tu día" as
+its primary: a full load of Hoy, at the top, so the new count is the reward. One streak (Hoy's).
+
+**Status:** approved by two independent reviewers (round 4, 2026-11-28) after three rounds of changes.
 
 ## Concept page (the learn task)
 Essentials, then the check that completes the task, then everything else folded: TL;DR → diagram →

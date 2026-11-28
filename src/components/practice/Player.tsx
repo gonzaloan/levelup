@@ -215,6 +215,7 @@ function Summary({ locale, log, total, L, mode, id }: { locale: Locale; log: Out
         {streak && <div><strong>🔥 {streak.days}</strong><span>{L("pStreak")}</span></div>}
         {lvl && <div><strong>{locale === "es" ? lvl.es : lvl.en}</strong><span>{L("pLevel")}</span></div>}
       </div>
+      {log.length > 0 && ok / log.length < 0.6 && <p className="hint">{locale === "es" ? "Las que fallaste vuelven antes. Así se aprende." : "The ones you missed come back sooner. That's how it sticks."}</p>}
       {missed.length > 0 && (
         <>
           <h3>{L("pMissed")}</h3>
