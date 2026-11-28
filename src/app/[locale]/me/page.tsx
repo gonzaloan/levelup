@@ -5,7 +5,6 @@ import { pageMeta } from "@/lib/meta";
 import { m } from "@/lib/i18n";
 import { allConcepts } from "@/lib/content";
 import { MeBackup, MeStats } from "@/components/Me";
-import { LangSwitch } from "@/components/LangSwitch";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AccountRow } from "@/components/Account";
 import { Offline } from "@/components/Offline";
@@ -35,7 +34,6 @@ export default async function Me({ params }: P) {
       </Link>
       <section className="me-card me-settings">
         <span className="hub-label">⚙️ {es ? "Ajustes" : "Settings"}</span>
-        <div className="me-row"><span>{es ? "Idioma" : "Language"}</span><LangSwitch locale={locale} label={m("language", locale)} /></div>
         <div className="me-row"><span>{es ? "Tema" : "Theme"}</span><ThemeToggle label={m("theme", locale)} /></div>
         <AccountRow locale={locale} label={es ? "Cuenta y sincronización" : "Account and sync"} />
         <Offline locale={locale} />

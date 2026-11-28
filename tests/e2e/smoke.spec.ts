@@ -62,12 +62,13 @@ test("a link to a folded section opens it", async ({ page }) => {
   await expect(page.locator(".pitfalls")).toBeVisible();
 });
 
-test("theme toggle switches the diagram variant", async ({ page }) => {
-  await page.goto("/en/c/reranking/");
+test("theme toggle (in You) switches the diagram variant", async ({ page }) => {
+  await page.goto("/en/me/");
   const before = await page.evaluate(() => document.documentElement.dataset.theme);
   await page.locator('button[aria-label="Toggle theme"]').click();
   const after = await page.evaluate(() => document.documentElement.dataset.theme);
   expect(after).not.toBe(before);
+  await page.goto("/en/c/reranking/");
   await expect(page.locator(`.dg-${after}:visible > svg`)).toHaveCount(1);
   await expect(page.locator(".dg:visible > svg")).toHaveCount(1);
 });
@@ -121,8 +122,9 @@ test("practice: answer, get feedback, earn XP and schedule the card", async ({ p
   await expect(page.locator(".p-xp")).toContainText("XP");
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem("fg.study.v1") || "{}"));
   expect(Object.keys(saved.cards ?? {})).toContain("reranking.def");
-  await page.goto("/en/practice/");
-  await expect(page.locator(".hub-stat.goal")).toContainText("XP");
+  // The XP shows up in Today's level line and in You.
+  await page.goto("/en/me/");
+  await expect(page.locator(".me-level")).toContainText("XP");
 });
 
 test("practice: rebuild-the-diagram places components over the real diagram", async ({ page }) => {
