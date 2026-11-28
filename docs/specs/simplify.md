@@ -35,8 +35,8 @@ three cards, no 120k-px reference wall (that content lives in its concepts and t
 ## Daily mission (gamified, pure logic in `src/lib/today.ts`, unit-tested)
 | Task | Done when | Locked when |
 |---|---|---|
-| Aprende 1 concepto (the next on the path) | a concept was marked read today | never |
-| Repasa | reviewed today, and no cards due or one full session (15) done | no cards yet ("after your first concept") |
+| Aprende 1 concepto (the next on the path) | a concept was first read today (+20 XP, counts for the streak) | never |
+| Repasa | reviewed today, and no cards due or one full session (15) done | nothing read and no cards yet ("after your first concept") |
 | Gimnasio | today's workout is finished | never |
 
 The big button goes to the first unfinished, unlocked task. All three done: "Día completo 🔥".
@@ -45,9 +45,10 @@ Every due count reads the same cards: orphans (items content removed) are pruned
 ## Concept page (the learn task)
 Essentials, then the check that completes the task, then everything else folded: TL;DR → diagram →
 how it works → **Pruébate** → Profundiza (labs, design round, problems, then the reading folds) →
-related, stack, sources → **one primary button**: "Siguiente en tu ruta: X", or, once learned today,
-"Seguir con tu día" (back to Hoy) with the next concept as a quiet link. "Marcar como leído" is the
-only secondary. Prev/next and the rail follow the path module, not the topic.
+related, stack, sources → **one primary button**: unread → "Listo, lo leí" (marks it, pays the XP and
+shows the reward in place); learned today → "Seguir con tu día" (back to Hoy, at the top); read
+before → "Siguiente en tu ruta: X". Read is never unset there (it would undo the day). Prev/next and
+the rail follow the path module, not the topic.
 
 ## Acceptance (two independent reviewers must approve)
 Each reviewer gets screenshots at 390 px (and 1280 px) of Hoy (new and returning reader), Ruta,

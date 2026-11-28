@@ -4,7 +4,7 @@ import Link from "next/link";
 import type { Locale } from "@/lib/types";
 import type { Confidence, PItem, Response } from "@/lib/practice/types";
 import { grade } from "@/lib/practice/grade";
-import { addActivity, review, toRating, xpFor, levelOf, totalXp, streakOf } from "@/lib/practice/store";
+import { addActivity, learn, review, toRating, xpFor, levelOf, totalXp, streakOf } from "@/lib/practice/store";
 import { buildSession, type Mode } from "@/lib/practice/session";
 import { inlineMd } from "@/lib/practice/md";
 import { m, type UIKey } from "@/lib/i18n";
@@ -58,7 +58,7 @@ export function Player({ locale, mode, id }: { locale: Locale; mode: Mode; id?: 
 
   // Practicing a whole concept counts as having studied it: it joins the daily review.
   useEffect(() => {
-    if (finished && mode === "concept" && id) update((s) => { if (!s.read[id]) s.read[id] = Date.now(); });
+    if (finished && mode === "concept" && id) update((s) => { learn(s, id, new Date()); });
   }, [finished, mode, id, update]);
 
   const record = useCallback((it: PItem, score: number, correct: boolean, rating: 1 | 2 | 3 | 4, xp: number) => {

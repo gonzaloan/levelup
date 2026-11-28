@@ -11,10 +11,10 @@ import { Icon } from "./Icon";
 
 const T = {
   en: { level: "Level", xp: "XP", next: (n: number, l: string) => `${n.toLocaleString()} XP to ${l}`, streak: "Streak", forgive: "One missed day a week is forgiven.",
-    read: "Concepts", readSub: "studied on your path", activity: "Activity", plan: "Your interview", planSet: (d: string) => `Interview on ${d}: see today's plan`, planNone: "Set your interview date: get a day-by-day plan",
+    read: "Concepts", readSub: "studied on your path", activity: "Activity · last 18 weeks", start: "Finish your first mission in Today to start earning XP and a streak.", plan: "Your interview", planSet: (d: string) => `Interview on ${d}: see today's plan`, planNone: "Set your interview date: get a day-by-day plan",
     backupT: "Backup and reset", exportB: "Download backup", importB: "Restore backup", reset: "Reset all progress", resetQ: "Reset all progress? This can't be undone." },
   es: { level: "Nivel", xp: "XP", next: (n: number, l: string) => `${n.toLocaleString()} XP para ${l}`, streak: "Racha", forgive: "Se perdona un día sin estudiar por semana.",
-    read: "Conceptos", readSub: "estudiados de tu ruta", activity: "Actividad", plan: "Tu entrevista", planSet: (d: string) => `Entrevista el ${d}: mira el plan de hoy`, planNone: "Pon la fecha de tu entrevista y te armo un plan día a día",
+    read: "Conceptos", readSub: "estudiados de tu ruta", activity: "Actividad · últimas 18 semanas", start: "Completa tu primera misión en Hoy para empezar a sumar XP y racha.", plan: "Tu entrevista", planSet: (d: string) => `Entrevista el ${d}: mira el plan de hoy`, planNone: "Pon la fecha de tu entrevista y te armo un plan día a día",
     backupT: "Respaldo y reinicio", exportB: "Descargar respaldo", importB: "Restaurar respaldo", reset: "Borrar todo el progreso", resetQ: "¿Borrar todo el progreso? No se puede deshacer." },
 };
 
@@ -34,8 +34,10 @@ export function MeStats({ locale, total }: { locale: Locale; total: number }) {
         <span className="hub-label">{t.level} {lvl.index + 1}</span>
         <strong className="me-big">{locale === "es" ? lvl.es : lvl.en}</strong>
         <span className="today-bar" aria-hidden="true"><span style={{ width: `${Math.round(lvl.progress * 100)}%` }} /></span>
-        <small>{xp.toLocaleString()} {t.xp}{lvl.next ? ` · ${t.next(lvl.next.xp - xp, locale === "es" ? lvl.next.es : lvl.next.en)}` : ""}</small>
+        <small>{xp ? `${xp.toLocaleString()} ${t.xp}${lvl.next ? ` · ${t.next(lvl.next.xp - xp, locale === "es" ? lvl.next.es : lvl.next.en)}` : ""}` : t.start}</small>
       </section>
+      {/* No zero stats: streak and activity appear with the first XP. */}
+      {xp > 0 && <>
       <div className="me-pair">
         <section className="me-card"><span className="hub-label">{t.streak}</span><strong className="me-big">🔥 {streak}</strong><small>{t.forgive}</small></section>
         <section className="me-card"><span className="hub-label">{t.read}</span><strong className="me-big">{read}<small>/{total}</small></strong><small>{t.readSub}</small></section>
@@ -44,6 +46,7 @@ export function MeStats({ locale, total }: { locale: Locale; total: number }) {
         <span className="hub-label">{t.activity}</span>
         <Heatmap state={s} now={now} />
       </section>
+      </>}
       <Link className="me-card me-link" href={`/${locale}/plan/`}>
         <span className="hub-label">{t.plan}</span>
         <strong>{planDate ? t.planSet(fmt(planDate)) : t.planNone}</strong>

@@ -2,9 +2,8 @@
 // Per-concept study status in lists and pages, read from the practice state (local-first).
 import Link from "next/link";
 import type { Locale } from "@/lib/types";
-import { m } from "@/lib/i18n";
 import { useStudyState } from "./practice/usePractice";
-import type { StudyState } from "@/lib/practice/store";
+import { learn, LEARN_XP, type StudyState } from "@/lib/practice/store";
 import { isToday } from "@/lib/today";
 import { Icon } from "./Icon";
 
@@ -37,25 +36,27 @@ export function ProgressMeter({ ids, label }: { ids: string[]; label: string }) 
   );
 }
 
-/** End of a concept page: one primary step. Learned today → back to today's mission; otherwise the
- *  next concept on the path. "Mark as read" is the quiet secondary (it enters the daily review). */
+/** End of a concept page: one primary step.
+ *  Unread → "Done reading" (marks it, pays XP, and shows the reward right here).
+ *  Learned today → back to today's mission (a full load, so Hoy opens at the top with its new count).
+ *  Read before → the next concept on the path. Read is never unset here: it would undo the day. */
 export function ConceptEnd({ id, locale, next }: { id: string; locale: Locale; next: Stop | null }) {
   const [s, update] = useStudyState();
-  const read = !!s?.read[id];
-  const today = read && isToday(s!.read[id], new Date());
   const es = locale === "es";
+  if (!s) return <nav className="concept-end" aria-busy="true" />;
+  const read = !!s.read[id];
+  const today = read && isToday(s.read[id], new Date());
   return (
     <nav className="concept-end" aria-label={es ? "Siguiente paso" : "Next step"}>
-      {today && <p className="ce-done"><Icon name="check" size={16} /> {es ? "Lo aprendiste hoy: entra a tu repaso." : "Learned today: it joins your review."}</p>}
-      {today
-        ? <Link className="btn btn-primary ce-go" href={`/${locale}/`}>{es ? "Seguir con tu día" : "Continue your day"} <Icon name="right" size={18} /></Link>
-        : next && <Link className="btn btn-primary ce-go" href={`/${locale}/c/${next.id}/`}><span><small>{es ? "Siguiente en tu ruta" : "Next on your path"}</small>{next.title}</span><Icon name="right" size={18} /></Link>}
-      <button type="button" className={`mastered-btn${read ? " on" : ""}`} aria-pressed={read}
-        onClick={() => update((st) => { if (st.read[id]) delete st.read[id]; else st.read[id] = Date.now(); })}>
-        <Icon name="check" size={16} />
-        <span>{read ? m("pIsRead", locale) : m("pMarkRead", locale)}</span>
-      </button>
-      {today && next && <Link className="link-btn ce-next" href={`/${locale}/c/${next.id}/`}>{es ? "Siguiente concepto" : "Next concept"}: {next.title} <Icon name="right" size={14} /></Link>}
+      {!read && (
+        <button type="button" className="btn btn-primary ce-go ce-mark" onClick={() => update((st) => { learn(st, id, new Date()); })}>
+          <span>{es ? "Listo, lo leí" : "Done reading"}</span><Icon name="check" size={18} />
+        </button>
+      )}
+      {today && <p className="ce-done" role="status"><Icon name="check" size={16} /> {es ? `Lo aprendiste hoy (+${LEARN_XP} XP). Ya está en tu repaso.` : `Learned today (+${LEARN_XP} XP). It's in your review now.`}</p>}
+      {today && <a className="btn btn-primary ce-go" href={`/${locale}/`}><span>{es ? "Seguir con tu día" : "Continue your day"}</span><Icon name="right" size={18} /></a>}
+      {read && !today && next && <Link className="btn btn-primary ce-go" href={`/${locale}/c/${next.id}/`}><span><small>{es ? "Siguiente en tu ruta" : "Next on your path"}</small>{next.title}</span><Icon name="right" size={18} /></Link>}
+      {(today || !read) && next && <Link className="link-btn ce-next" href={`/${locale}/c/${next.id}/`}>{es ? "Siguiente concepto" : "Next concept"}: {next.title} <Icon name="right" size={14} /></Link>}
     </nav>
   );
 }

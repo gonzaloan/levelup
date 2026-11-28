@@ -112,8 +112,8 @@ const UI = {
   theme: { en: "Toggle theme", es: "Cambiar tema" },
   language: { en: "Español", es: "English" },
   footer: {
-    en: "No tracking. Your progress lives in this browser and, if you sign in, in your account.",
-    es: "Sin tracking. Tu progreso vive en este navegador y, si inicias sesión, en tu cuenta.",
+    en: "No tracking. Your progress is saved in this browser.",
+    es: "Sin tracking. Tu progreso se guarda en este navegador.",
   },
   notFound: { en: "Page not found", es: "Página no encontrada" },
   backHome: { en: "Back to the guide", es: "Volver a la guía" },

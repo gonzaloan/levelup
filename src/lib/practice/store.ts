@@ -113,6 +113,20 @@ export function addActivity(s: StudyState, now: Date, xp: number, ok: boolean) {
   s.days[k] = { xp: d.xp + xp, n: d.n + 1, ok: d.ok + (ok ? 1 : 0) };
 }
 
+/** XP for learning a concept (first read): the mission's first task earns like ~2 good reviews. */
+export const LEARN_XP = 20;
+
+/** Marks a concept read the first time and pays the XP once (read is never unset; merge keeps the
+ *  earliest). Returns whether it was new. Learning a concept counts for the day and the streak. */
+export function learn(s: StudyState, id: string, now: Date): boolean {
+  if (s.read[id]) return false;
+  s.read[id] = now.getTime();
+  const k = dayKey(now);
+  const d = s.days[k] ?? { xp: 0, n: 0, ok: 0 };
+  s.days[k] = { ...d, xp: d.xp + LEARN_XP };
+  return true;
+}
+
 export const totalXp = (s: StudyState) => Object.values(s.days).reduce((n, d) => n + d.xp, 0);
 
 /** Career-ladder levels: you level up the way you'd like to in real life. */

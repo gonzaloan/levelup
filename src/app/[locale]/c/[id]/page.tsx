@@ -11,7 +11,7 @@ import { Icon } from "@/components/Icon";
 import { Markdown } from "@/components/Markdown";
 import { CodeBlock } from "@/components/CodeBlock";
 import { Diagram } from "@/components/Diagram";
-import { DomainChip, LevelBadge } from "@/components/Bits";
+import { DomainChip } from "@/components/Bits";
 import { ConceptEnd, MasteredDot } from "@/components/Mastered";
 import { Toc } from "@/components/Toc";
 import { KeyNav } from "@/components/KeyNav";
@@ -48,20 +48,13 @@ export default async function ConceptPage({ params }: P) {
   const isCase = c.domain === "design" || c.domain === "sysdesign";
 
   // Essentials first (one idea, one picture, how it works, a check); the rest is folded, one tap away.
+  // The table of contents names the page's sections, not every fold inside "Go deeper".
   const toc = [
     { id: "tldr", label: L("tldr") },
     c.diagram && { id: "diagram", label: L("diagram") },
     { id: "how", label: L("howItWorks") },
     checks.length && { id: "check", label: L("checkTitle") },
-    problems.length && { id: "problems", label: L("solveIt") },
-    c.keyPoints?.length && { id: "full", label: L("fullExplanation") },
-    c.code && { id: "code", label: L("code") },
-    { id: "example", label: L("example") },
-    { id: "tradeoffs", label: L("tradeoffs") },
-    c.numbers?.length && { id: "numbers", label: L("numbers") },
-    { id: "pitfalls", label: L("pitfalls") },
-    { id: "interview", label: L("interview") },
-    c.deepDive?.length && { id: "deep", label: L("deepDive") },
+    { id: "deeper", label: L("goDeeper") },
     { id: "related", label: L("related") },
   ].filter(Boolean) as { id: string; label: string }[];
 
@@ -85,7 +78,7 @@ export default async function ConceptPage({ params }: P) {
       <article className="concept">
         <header className="concept-head">
           <div className="crumbs">
-            <DomainChip id={d.id} locale={locale} /><LevelBadge level={c.level} locale={locale} />
+            <DomainChip id={d.id} locale={locale} />
             {pos && <Link className="path-pos" href={`/${locale}/path/`}>{locale === "es" ? "Módulo" : "Module"} {String(pos.moduleNo).padStart(2, "0")} · {pos.index}/{pos.size}</Link>}
           </div>
           <div className="title-row">
@@ -135,7 +128,7 @@ export default async function ConceptPage({ params }: P) {
           </section>
         )}
 
-        <section className="deeper" aria-label={L("goDeeper")}>
+        <section id="deeper" className="deeper" aria-label={L("goDeeper")}>
           <h2>{L("goDeeper")}</h2>
           <p className="hint">{L("goDeeperHint")}</p>
 

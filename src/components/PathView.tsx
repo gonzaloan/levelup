@@ -33,7 +33,7 @@ export function PathView({ phases, locale }: { phases: PathPhaseView[]; locale: 
       <section className="next-step">
         {next ? (
           <>
-            <span className="hub-label">{started ? (es ? `Tu siguiente paso · ${done}/${all.length}` : `Your next step · ${done}/${all.length}`) : (es ? "Empieza aquí" : "Start here")}</span>
+            <span className="hub-label">{started ? (es ? `Tu siguiente paso · ${done}/${all.length} estudiados` : `Your next step · ${done}/${all.length} studied`) : (es ? "Empieza aquí" : "Start here")}</span>
             <strong className="ns-title"><Ill id={next.id} size={44} className="ns-ill" />{next.t}</strong>
             <span className="hub-sub">{next.phase.t} · {next.module.t}</span>
             <div className="ns-actions">
@@ -74,7 +74,7 @@ export function PathView({ phases, locale }: { phases: PathPhaseView[]; locale: 
                     n++;
                     const st = statusOf(s, c.id);
                     return (
-                      <li key={c.id} style={{ ["--h" as string]: c.h }} className={c.id === next?.id ? "is-next" : undefined}>
+                      <li key={c.id} style={{ ["--h" as string]: c.h }} className={c.id === next?.id ? "is-next" : st !== "none" ? "done" : undefined}>
                         <Link href={`/${locale}/c/${c.id}/`}>
                           <span className={`ml-n${st !== "none" ? " ok" : ""}`}>{st !== "none" ? "✓" : n}</span>
                           <Ill id={c.id} size={20} />

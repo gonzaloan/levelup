@@ -4,12 +4,11 @@
 // repetition schedule (no confidence is asked here); it marks the concept as read (today's learn
 // task) and sends you back to the rest of today's mission.
 import { useState } from "react";
-import Link from "next/link";
 import type { Locale } from "@/lib/types";
 import type { PItem, Response } from "@/lib/practice/types";
 import { grade } from "@/lib/practice/grade";
 import { inlineMd } from "@/lib/practice/md";
-import { loadState, saveState } from "@/lib/practice/store";
+import { learn, loadState, saveState } from "@/lib/practice/store";
 import { m, type UIKey } from "@/lib/i18n";
 import { ChoiceView, MatchView, MultiView, NumericView, OrderView, type ViewProps } from "./ItemViews";
 
@@ -19,9 +18,7 @@ const VIEWS: Record<string, (p: ViewProps) => React.ReactNode> = {
 
 function markRead(id: string) {
   const s = loadState();
-  if (s.read[id]) return;
-  s.read[id] = Date.now();
-  saveState(s);
+  if (learn(s, id, new Date())) saveState(s);
 }
 
 export function QuickCheck({ items, conceptId, locale }: { items: PItem[]; conceptId: string; locale: Locale }) {
@@ -50,7 +47,8 @@ export function QuickCheck({ items, conceptId, locale }: { items: PItem[]; conce
       <p className="qc-score"><strong>{right}/{items.length}</strong> {L("checkScore")}</p>
       <p>{L("checkDone")}</p>
       <div className="qc-actions">
-        <Link className="btn btn-primary" href={`/${locale}/`}>{locale === "es" ? "Seguir con tu día" : "Continue your day"} →</Link>
+        {/* A full load, so Hoy opens at the top with its new count (the reward moment). */}
+        <a className="btn btn-primary" href={`/${locale}/`}>{locale === "es" ? "Seguir con tu día" : "Continue your day"} →</a>
         <button type="button" className="link-btn" onClick={again}>{L("checkAgain")}</button>
       </div>
     </div>

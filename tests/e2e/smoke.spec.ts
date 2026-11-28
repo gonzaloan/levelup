@@ -98,13 +98,13 @@ test("language switch keeps the page", async ({ page }) => {
   await expect(page).toHaveURL(/\/en\/c\/reranking\/$/);
 });
 
-test("mark as read persists across reloads", async ({ page }) => {
+test("done reading persists across reloads", async ({ page }) => {
   await page.goto("/en/c/reranking/");
-  const btn = page.locator(".concept-end .mastered-btn");
-  await btn.click();
-  await expect(btn).toHaveAttribute("aria-pressed", "true");
+  await page.locator(".concept-end .ce-mark").click();
+  await expect(page.locator(".concept-end .ce-done")).toBeVisible();
   await page.reload();
-  await expect(page.locator(".concept-end .mastered-btn")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".concept-end .ce-done")).toBeVisible();
+  await expect(page.locator(".concept-end .ce-mark")).toHaveCount(0);
 });
 
 test("cheatsheet filter narrows rows", async ({ page }) => {
@@ -182,17 +182,33 @@ test("arrow keys move along the study path", async ({ page }) => {
   await expect(page.locator("h1")).toHaveText(title(PATH[1]));
 });
 
-test("a concept ends with one next step: the next on the path, then back to today once learned", async ({ page }) => {
-  await page.goto(`/en/c/${PATH[0]}/`);
-  const go = page.locator(".concept-end .ce-go");
-  await expect(go).toHaveCount(1);
-  await expect(go).toHaveAttribute("href", `/en/c/${PATH[1]}/`);
+test("day one: Today → learn a concept → back to Today at 1/3, review unlocked, XP and a streak", async ({ page }) => {
+  await page.goto("/en/");
+  await expect(page.locator(".today-count")).toHaveText("0/3");
+  await page.locator(".today-go").click();
+  await expect(page).toHaveURL(new RegExp(`/en/c/${PATH[0]}/$`));
   // "Check yourself" comes before everything folded.
-  const order = await page.evaluate(() => [...document.querySelectorAll("#how, #check, .deeper")].map((e) => e.id || "deeper"));
+  const order = await page.evaluate(() => [...document.querySelectorAll("#how, #check, #deeper")].map((e) => e.id));
   expect(order).toEqual(["how", "check", "deeper"]);
-  await page.locator(".concept-end .mastered-btn").click();
-  await expect(go).toHaveAttribute("href", "/en/");
+  // Reading to the end: one primary button marks it learned and shows the reward right there.
+  await page.locator(".concept-end .ce-mark").click();
+  await expect(page.locator(".concept-end .ce-done")).toContainText("XP");
   await expect(page.locator(".concept-end .ce-next")).toHaveAttribute("href", `/en/c/${PATH[1]}/`);
+  await page.locator(".concept-end a.ce-go").click();
+  await expect(page).toHaveURL(/\/en\/$/);
+  await expect(page.locator(".today-count")).toHaveText("1/3");
+  const first = DOMAINS.find((d) => d.concepts.includes(PATH[0]))!.id;
+  await expect(page.locator(".tt.done")).toContainText(JSON.parse(fs.readFileSync(`content/concepts/${first}/${PATH[0]}.json`, "utf8")).title.en);
+  await expect(page.locator(".tt.next")).toContainText("Review");
+  await expect(page.locator(".tt.locked")).toHaveCount(0);
+  await expect(page.locator(".today-meta")).toContainText("1-day streak");
+});
+
+test("a concept read on an earlier day ends with the next one on the path", async ({ page }) => {
+  await page.addInitScript((id) => localStorage.setItem("fg.study.v1", JSON.stringify({ v: 1, cards: {}, days: {}, read: { [id]: Date.now() - 3 * 86_400_000 }, goal: 60, updatedAt: 0 })), PATH[0]);
+  await page.goto(`/en/c/${PATH[0]}/`);
+  await expect(page.locator(".concept-end .ce-mark")).toHaveCount(0);
+  await expect(page.locator(".concept-end .ce-go")).toHaveAttribute("href", `/en/c/${PATH[1]}/`);
 });
 
 const LABS: { id: string }[] = JSON.parse(fs.readFileSync("content/labs.json", "utf8"));

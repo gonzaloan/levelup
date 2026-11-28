@@ -7,8 +7,8 @@ export type TaskState = "done" | "todo" | "locked";
 export interface MissionInput {
   /** A concept was first read today. */
   learnedToday: boolean;
-  /** The reader has at least one review card (else there is nothing to review yet). */
-  hasCards: boolean;
+  /** There is something to review: a card, or a concept read (its items come as new cards). */
+  canReview: boolean;
   /** Cards due now. */
   due: number;
   /** Cards reviewed today. */
@@ -24,7 +24,7 @@ export const REVIEW_SESSION = 15;
 
 export function missionOf(m: MissionInput): Mission {
   const reviewed = m.reviewedToday > 0 && (m.due === 0 || m.reviewedToday >= REVIEW_SESSION);
-  const review: TaskState = !m.hasCards ? "locked" : reviewed ? "done" : "todo";
+  const review: TaskState = !m.canReview ? "locked" : reviewed ? "done" : "todo";
   const tasks: Mission["tasks"] = [
     { id: "learn", state: m.learnedToday ? "done" : "todo" },
     { id: "review", state: review },
