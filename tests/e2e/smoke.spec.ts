@@ -4,15 +4,25 @@ import fs from "node:fs";
 // Derived from the data, never hardcoded: a new topic must not break the suite.
 const DOMAINS: { id: string; concepts: string[] }[] = JSON.parse(fs.readFileSync("content/domains.json", "utf8"));
 
-test("home lists every topic and search opens a concept", async ({ page }) => {
+test("today: a new reader gets one mission and one button; search opens a concept", async ({ page }) => {
   await page.goto("/es/");
-  await expect(page.locator(".domain-card")).toHaveCount(DOMAINS.length);
-  await page.locator(".search-hero").click();
+  await expect(page.locator(".today-tasks .tt")).toHaveCount(3);
+  // Brand new: learn first, review locked until there is something to review.
+  await expect(page.locator(".tt.next")).toContainText("Aprende un concepto");
+  await expect(page.locator(".tt.locked")).toContainText("Repasa");
+  await expect(page.locator(".today-go")).toHaveCount(1);
+  await page.locator(".search-btn").click();
   await page.keyboard.type("hnsw");
   await expect(page.locator(".palette-results li").first()).toContainText(/HNSW/);
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/\/es\/c\/ann-indexes\/$/);
   await expect(page.locator("h1")).toContainText("HNSW");
+});
+
+test("library lists every topic and the reference tools", async ({ page }) => {
+  await page.goto("/es/library/");
+  await expect(page.locator(".domain-card")).toHaveCount(DOMAINS.length);
+  await expect(page.locator(".lib-tool")).toHaveCount(6);
 });
 
 test("concept page has every section and a rendered diagram", async ({ page }, info) => {
@@ -307,25 +317,26 @@ test("story bank: a tagged story fills its competency in coverage", async ({ pag
   await expect(page.locator(".sb-cov li.ok")).toHaveCount(1);
 });
 
-test("phones get a bottom tab bar with names, and the rest under More", async ({ page, isMobile }) => {
+test("four places: Today, Path, Practice, You — tabs on phones, links on desktop", async ({ page, isMobile }) => {
   await page.goto("/en/");
-  if (!isMobile) {
-    await expect(page.locator(".tabbar")).toBeHidden();
-    await expect(page.locator(".main-nav a").first()).toBeVisible();
-    return;
-  }
-  await expect(page.locator(".main-nav")).toBeHidden();
-  const tabs = page.locator(".tabbar .tab");
-  // Path, Practice, Gym, Labs, Interview + More.
-  await expect(tabs).toHaveCount(6);
-  for (const tab of await tabs.all()) await expect(tab.locator("span")).not.toBeEmpty();
-  await page.locator(".tabbar a.tab", { hasText: "Practice" }).click();
+  const nav = isMobile ? page.locator(".tabbar a.tab") : page.locator(".main-nav a");
+  await expect(isMobile ? page.locator(".main-nav") : page.locator(".tabbar")).toBeHidden();
+  await expect(nav).toHaveText(["Today", "Path", "Practice", "You"]);
+  await nav.filter({ hasText: "Practice" }).click();
   await expect(page).toHaveURL(/\/en\/practice\/$/);
-  await expect(page.locator('.tabbar a.tab[aria-current="page"]')).toHaveText("Practice");
-  await page.locator(".tabbar button.tab").click();
-  await page.locator(".tab-sheet a", { hasText: "Interview plan" }).click();
-  await expect(page).toHaveURL(/\/en\/plan\/$/);
-  await expect(page.locator(".tab-sheet")).toHaveCount(0);
+  // Practice owns the Gym and the mocks, so its tab stays lit there.
+  await page.goto("/en/gym/");
+  await expect(nav.filter({ hasText: "Practice" })).toHaveAttribute("aria-current", "page");
+  await page.goto("/en/library/");
+  await expect(nav.filter({ hasText: "You" })).toHaveAttribute("aria-current", "page");
+});
+
+test("practice is four cards; mocks are three", async ({ page }) => {
+  await page.goto("/en/practice/");
+  await expect(page.locator(".hub .pc")).toHaveCount(4);
+  await expect(page.locator(".hub .btn-primary")).toHaveCount(1);
+  await page.goto("/en/interview/");
+  await expect(page.locator(".hub .pc")).toHaveCount(3);
 });
 
 test("interview plan: a date gives a pace, today's concepts and the weeks ahead", async ({ page }) => {
@@ -406,7 +417,7 @@ test("offline: visited pages keep working, and Save for offline brings the rest"
   await page.goto("/en/c/consistent-hashing/");
   await expect(page.locator("h1")).toContainText("Offline");
   await context.setOffline(false);
-  await page.goto("/en/");
+  await page.goto("/en/me/");
   await page.getByRole("button", { name: "Save for offline" }).click();
   await expect(page.locator(".offline")).toContainText("Available offline", { timeout: 150_000 });
   await context.setOffline(true);

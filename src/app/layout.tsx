@@ -12,7 +12,7 @@ export const viewport: Viewport = {
 };
 
 // Runs before paint: theme (stored or system) and <html lang> from the URL, so there is no flash.
-const BOOT = `(function(){var d=document.documentElement;try{var t=localStorage.getItem('fg.theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';d.dataset.theme=t}catch(e){d.dataset.theme='dark'}var l=location.pathname.split('/')[1];if(l==='en'||l==='es')d.lang=l})();`;
+const BOOT = `(function(){var d=document.documentElement;try{var t=localStorage.getItem('fg.theme');if(!t)t=matchMedia('(prefers-color-scheme: light)').matches?'light':'dark';d.dataset.theme=t}catch(e){d.dataset.theme='dark'}var l=location.pathname.split('/')[1];if(l==='en'||l==='es')d.lang=l;try{if(localStorage.getItem('fg.study.v1'))d.dataset.returning='1'}catch(e){}})();`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (

@@ -14,6 +14,8 @@ const UI = {
   navCheatsheet: { en: "Cheatsheet", es: "Cheatsheet" },
   navInterview: { en: "Interview", es: "Entrevista" },
   navPractice: { en: "Practice", es: "Práctica" },
+  navToday: { en: "Today", es: "Hoy" },
+  navMe: { en: "You", es: "Tú" },
   navLabs: { en: "Labs", es: "Labs" },
   navMore: { en: "More", es: "Más" },
   navGym: { en: "Gym", es: "Gimnasio" },

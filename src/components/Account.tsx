@@ -69,3 +69,11 @@ export function AccountButton({ locale }: { locale: Locale }) {
     </div>
   );
 }
+
+/** The account row in Tú's settings: shown only where login is configured. */
+export function AccountRow({ locale, label }: { locale: Locale; label: string }) {
+  const [on, setOn] = useState(false);
+  useEffect(() => { setOn(syncEnabled()); }, []);
+  if (!on) return null;
+  return <div className="me-row"><span>{label}</span><AccountButton locale={locale} /></div>;
+}

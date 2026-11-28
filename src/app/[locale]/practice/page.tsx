@@ -17,7 +17,6 @@ export default async function Practice({ params }: P) {
       <header className="page-head plain">
         <div>
           <h1>{m("pHubTitle", locale)}</h1>
-          <p className="page-sub">{m("pHubSub", locale)}</p>
         </div>
       </header>
       <Hub locale={locale} />

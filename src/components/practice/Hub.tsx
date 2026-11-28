@@ -1,164 +1,69 @@
 "use client";
-import { useMemo, useRef } from "react";
+// Practicar: four ways to practice, one card each, with what's waiting in it (docs/specs/simplify.md).
+// Review is the daily habit, so it carries the accent; stats, activity and backup live in Tú.
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { Locale } from "@/lib/types";
-import { m, type UIKey } from "@/lib/i18n";
-import { dayKey, emptyState, levelOf, merge, saveState, streakOf, totalXp, type StudyState } from "@/lib/practice/store";
-import { buildSession, conceptStatus, dueItems, indexByConcept, nextConcept, type ConceptStatus } from "@/lib/practice/session";
+import { dayKey, type StudyState } from "@/lib/practice/store";
+import { buildSession, dueItems } from "@/lib/practice/session";
+import { loadGym, today as gymToday } from "@/lib/gym/store";
 import { usePracticeData, useStudyState } from "./usePractice";
-import { Icon } from "../Icon";
 import { useResolveDue } from "./ResolveDue";
+import { Icon } from "../Icon";
+
+const T = {
+  en: { review: "Review", reviewSub: "Spaced repetition: each card comes back just before you'd forget it.", due: (d: number, n: number) => (d || n ? `${d} due · ${n} new` : "All caught up"),
+    start: "Start review", code: "Coding", codeSub: "Interview problems in Python, run in your browser.", codeDue: (n: number) => `${n} to re-solve today`,
+    gym: "Gym", gymSub: "Today's 8 reps by hand: estimate, trace, spot the bug.", gymDone: "Done today ✓",
+    mocks: "Mock interviews", mocksSub: "Coding round, system design round, behavioral stories.", loading: "Loading…" },
+  es: { review: "Repaso", reviewSub: "Repaso espaciado: cada tarjeta vuelve justo antes de que la olvides.", due: (d: number, n: number) => (d || n ? `${d} pendientes · ${n} nuevas` : "Al día"),
+    start: "Empezar repaso", code: "Coding", codeSub: "Problemas de entrevista en Python, en tu navegador.", codeDue: (n: number) => `${n} para re-resolver hoy`,
+    gym: "Gimnasio", gymSub: "Los 8 ejercicios de hoy a mano: estimar, leer código, encontrar el bug.", gymDone: "Hecho hoy ✓",
+    mocks: "Simulacros", mocksSub: "Ronda de coding, ronda de system design e historias conductuales.", loading: "Cargando…" },
+};
 
 export function Hub({ locale }: { locale: Locale }) {
-  const L = (k: string) => m(k as UIKey, locale);
+  const t = T[locale];
   const data = usePracticeData(locale);
-  const [state, update] = useStudyState();
+  const [state] = useStudyState();
   const now = useMemo(() => new Date(), []);
-  const fileRef = useRef<HTMLInputElement>(null);
-
   const resolveDue = useResolveDue();
-  const view = useMemo(() => {
+  const [gymDone, setGymDone] = useState(false);
+  useEffect(() => { setGymDone(!!loadGym().days[gymToday()]?.done); }, []);
+  const counts = useMemo(() => {
     if (!data || !state) return null;
-    const byC = indexByConcept(data);
-    const status = new Map<string, ConceptStatus>();
-    for (const c of Object.keys(data.meta)) status.set(c, conceptStatus(data, state, c, byC));
-    const due = dueItems(data, state, now).length;
     const daily = buildSession(data, state, { mode: "daily" }, now);
-    const newCount = daily.filter((i) => !state.cards[i.id]).length;
-    const weak = buildSession(data, state, { mode: "weak" }, now).length;
-    return { status, due, daily: daily.length, newCount, weak, next: nextConcept(data, state) };
+    return { due: dueItems(data, state, now).length, fresh: daily.filter((i) => !state.cards[i.id]).length };
   }, [data, state, now]);
-
-  if (!data || !state || !view) return <div className="p-card skeleton">{L("pLoading")}</div>;
-
-  const xp = totalXp(state);
-  const lvl = levelOf(xp);
-  const streak = streakOf(state, now);
-  const today = state.days[dayKey(now)]?.xp ?? 0;
-  const goalPct = Math.min(1, today / state.goal);
-  const play = (q: string) => `/${locale}/practice/play/?${q}`;
-  const nextMeta = view.next ? data.meta[view.next] : null;
-
-  const exportData = () => {
-    const blob = new Blob([JSON.stringify(state)], { type: "application/json" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `levelup-progress-${dayKey(now)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-  const importData = (f: File) => f.text().then((t) => {
-    try { const incoming = JSON.parse(t) as StudyState; if (incoming?.v === 1) update((s) => Object.assign(s, merge(s, incoming))); } catch { /* ignore bad file */ }
-  });
 
   return (
     <div className="hub">
-      <section className="hub-stats">
-        <div className="hub-stat level">
-          <span className="hub-label">{L("pLevel")} {lvl.index + 1}</span>
-          <strong>{locale === "es" ? lvl.es : lvl.en}</strong>
-          <div className="meter-bar"><span style={{ width: `${Math.round(lvl.progress * 100)}%` }} /></div>
-          <span className="hub-sub">{xp.toLocaleString()} XP{lvl.next ? ` · ${(lvl.next.xp - xp).toLocaleString()} → ${locale === "es" ? lvl.next.es : lvl.next.en}` : ""}</span>
-        </div>
-        <div className="hub-stat streak" title={L("pFreeze")}>
-          <span className="hub-label">🔥 {L("pStreak")}</span>
-          <strong>{streak.days}</strong>
-          <span className="hub-sub">{L("pFreeze")}</span>
-        </div>
-        <div className="hub-stat goal">
-          <svg viewBox="0 0 36 36" className="ring" aria-hidden="true">
-            <circle cx="18" cy="18" r="15.5" className="ring-bg" />
-            <circle cx="18" cy="18" r="15.5" className="ring-fg" strokeDasharray={`${goalPct * 97.4} 97.4`} />
-          </svg>
-          <div>
-            <span className="hub-label">{L("pGoal")}</span>
-            <strong>{today}/{state.goal} XP</strong>
-            <span className="hub-sub goal-pick">
-              {[30, 60, 100].map((g) => (
-                <button key={g} type="button" className={`link-btn${state.goal === g ? " on" : ""}`} onClick={() => update((s) => { s.goal = g; })}>{g}</button>
-              ))}
-            </span>
-          </div>
-        </div>
+      <section className="pc pc-main">
+        <span className="pc-icon"><Icon name="cycle" size={22} /></span>
+        <div className="pc-text"><h2>{t.review}</h2><p>{t.reviewSub}</p><strong className="pc-status">{counts ? t.due(counts.due, counts.fresh) : t.loading}</strong></div>
+        <a className="btn btn-primary pc-go" href={`/${locale}/practice/play/?mode=daily`}>{t.start} <Icon name="right" size={18} /></a>
       </section>
-
-      <section className="hub-today">
-        <div>
-          <h2>{L("pToday")}</h2>
-          <p>{view.daily ? <><strong>{view.due}</strong> {L("pDue")} · <strong>{view.newCount}</strong> {L("pNew")}</> : L("pAllDone")}</p>
-        </div>
-        <a className="btn btn-primary big" href={play("mode=daily")}>{L("pStart")} <Icon name="right" size={18} /></a>
-      </section>
-
-      {view.next && nextMeta && (
-        <section className="hub-next">
-          <span className="hub-label">{L("pContinue")}</span>
-          <strong>{nextMeta.t}</strong>
-          <div className="hub-next-actions">
-            <Link className="btn" href={`/${locale}/c/${view.next}/`}><Icon name="book" size={16} /> {L("pRead")}</Link>
-            <a className="btn" href={play(`mode=concept&id=${view.next}`)}><Icon name="cards" size={16} /> {L("pPracticeIt")}</a>
-          </div>
-        </section>
-      )}
-
-      <section>
-        <h2 className="section-label">{L("pModes")}</h2>
-        <div className="mode-grid">
-          <a className="mode-card" href={play("mode=mock")}><Icon name="mic" size={22} /><strong>{L("pMock")}</strong><span>{L("pMockSub")}</span></a>
-          <a className="mode-card" href={play("mode=weak")}><Icon name="zap" size={22} /><strong>{L("pWeak")} {view.weak ? `(${view.weak})` : ""}</strong><span>{L("pWeakSub")}</span></a>
-          <a className="mode-card" href={play("mode=cards")}><Icon name="cards" size={22} /><strong>{L("pCards")}</strong><span>{L("pCardsSub")}</span></a>
-          <a className="mode-card mode-gym" href={`/${locale}/gym/`}><Icon name="zap" size={22} /><strong>{L("pGym")}</strong><span>{L("pGymSub")}</span></a>
-          <a className="mode-card" href={`/${locale}/practice/code/${resolveDue ? "review/" : ""}`}><Icon name="code" size={22} /><strong>{L("pCode")} {resolveDue ? `(${resolveDue})` : ""}</strong><span>{resolveDue ? L("pResolve") : L("pCodeSub")}</span></a>
-          <a className="mode-card" href={`/${locale}/practice/design/`}><Icon name="server" size={22} /><strong>{L("pDesign")}</strong><span>{L("pDesignSub")}</span></a>
-          <a className="mode-card" href={`/${locale}/interview/stories/`}><Icon name="book" size={22} /><strong>{L("pStories")}</strong><span>{L("pStoriesSub")}</span></a>
-        </div>
-      </section>
-
-      <section>
-        <h2 className="section-label">{L("pActivity")}</h2>
-        <Heatmap state={state} now={now} />
-      </section>
-
-      <section>
-        <h2 className="section-label">{L("pProgress")}</h2>
-        {data.phases.map((p) => (
-          <div key={p.id} className="hub-phase">
-            <h3>{p.t}</h3>
-            {p.modules.map((mod) => {
-              const counts = { mastered: 0, review: 0, learning: 0, new: 0 };
-              mod.c.forEach((c) => counts[view.status.get(c) ?? "new"]++);
-              const n = mod.c.length || 1;
-              return (
-                <a key={mod.id} className="hub-module" href={play(`mode=module&id=${mod.id}`)}>
-                  <span className="hm-title">{mod.t}</span>
-                  <span className="hm-bar" aria-hidden="true">
-                    <span className="s-mastered" style={{ width: `${(100 * counts.mastered) / n}%` }} />
-                    <span className="s-review" style={{ width: `${(100 * counts.review) / n}%` }} />
-                    <span className="s-learning" style={{ width: `${(100 * counts.learning) / n}%` }} />
-                  </span>
-                  <span className="hm-count">{counts.mastered + counts.review}/{mod.c.length}</span>
-                </a>
-              );
-            })}
-          </div>
-        ))}
-        <p className="legend">
-          <span className="lg s-mastered" /> {L("pMastered")} · <span className="lg s-review" /> {L("pInReview")} · <span className="lg s-learning" /> {L("pLearning")}
-        </p>
-      </section>
-
-      <section className="hub-backup">
-        <button type="button" className="btn" onClick={exportData}><Icon name="external" size={15} /> {L("pExport")}</button>
-        <button type="button" className="btn" onClick={() => fileRef.current?.click()}>{L("pImport")}</button>
-        <input ref={fileRef} type="file" accept="application/json" hidden onChange={(e) => e.target.files?.[0] && importData(e.target.files[0])} />
-        <button type="button" className="link-btn" onClick={() => { if (confirm(L("pReset") + "?")) { saveState(emptyState()); location.reload(); } }}>{L("pReset")}</button>
-      </section>
+      <Link className="pc" href={`/${locale}/practice/code/${resolveDue ? "review/" : ""}`}>
+        <span className="pc-icon"><Icon name="code" size={22} /></span>
+        <div className="pc-text"><h2>{t.code}</h2><p>{t.codeSub}</p>{resolveDue > 0 && <strong className="pc-status">{t.codeDue(resolveDue)}</strong>}</div>
+        <Icon name="right" size={18} />
+      </Link>
+      <Link className="pc" href={`/${locale}/gym/`}>
+        <span className="pc-icon"><Icon name="zap" size={22} /></span>
+        <div className="pc-text"><h2>{t.gym}</h2><p>{t.gymSub}</p>{gymDone && <strong className="pc-status ok">{t.gymDone}</strong>}</div>
+        <Icon name="right" size={18} />
+      </Link>
+      <Link className="pc" href={`/${locale}/interview/`}>
+        <span className="pc-icon"><Icon name="mic" size={22} /></span>
+        <div className="pc-text"><h2>{t.mocks}</h2><p>{t.mocksSub}</p></div>
+        <Icon name="right" size={18} />
+      </Link>
     </div>
   );
 }
 
 /** GitHub-style activity grid for the last 18 weeks. */
-function Heatmap({ state, now }: { state: StudyState; now: Date }) {
+export function Heatmap({ state, now }: { state: StudyState; now: Date }) {
   const weeks = 18;
   const end = new Date(now);
   end.setDate(end.getDate() + (6 - end.getDay()));

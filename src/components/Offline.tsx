@@ -1,6 +1,7 @@
 "use client";
-// Registers the service worker (pages you visit keep working offline) and offers to save the
-// whole guide in the current language for the subway, a flight or a bad connection.
+// OfflineAgent (every page, in the layout) registers the service worker, so pages you visit keep
+// working offline, and says so when you are offline. Offline (in Tú) saves the whole guide in the
+// current language for the subway, a flight or a bad connection.
 import { useEffect, useRef, useState } from "react";
 import type { Locale } from "@/lib/types";
 import { clearOffline, loadSaved, offlineSupported, saveForOffline, swEnabled, type Saved } from "@/lib/offline";
@@ -63,4 +64,17 @@ export function Offline({ locale }: { locale: Locale }) {
       {error && <p className="offline-note">{t.failed}</p>}
     </div>
   );
+}
+
+export function OfflineAgent({ locale }: { locale: Locale }) {
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    if (!offlineSupported() || !swEnabled()) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    setOnline(navigator.onLine);
+    const on = () => setOnline(true), off = () => setOnline(false);
+    window.addEventListener("online", on); window.addEventListener("offline", off);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); };
+  }, []);
+  return online ? null : <p className="offline-note offline-banner" role="status">{T[locale].offline}</p>;
 }

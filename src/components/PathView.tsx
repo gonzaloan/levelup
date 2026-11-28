@@ -38,7 +38,6 @@ export function PathView({ phases, locale }: { phases: PathPhaseView[]; locale: 
             <span className="hub-sub">{next.phase.t} · {next.module.t}</span>
             <div className="ns-actions">
               <Link className="btn btn-primary" href={`/${locale}/c/${next.id}/`}><Icon name="book" size={16} /> {started ? (es ? "Continuar" : "Continue") : (es ? "Empezar" : "Start")}</Link>
-              {started && <Link className="btn" href={`/${locale}/practice/play/?mode=daily`}><Icon name="cycle" size={16} /> {es ? "Repaso de hoy" : "Today's review"}</Link>}
             </div>
           </>
         ) : (
@@ -48,8 +47,7 @@ export function PathView({ phases, locale }: { phases: PathPhaseView[]; locale: 
             <div className="ns-actions"><Link className="btn btn-primary" href={`/${locale}/practice/play/?mode=daily`}><Icon name="cycle" size={16} /> {es ? "Repaso de hoy" : "Today's review"}</Link></div>
           </>
         )}
-        <p className="ns-how">{es ? "Un concepto a la vez: léelo, pruébate y vuelve mañana al repaso." : "One concept at a time: read it, check yourself, come back tomorrow to review."}{" "}
-          <Link href={`/${locale}/plan/`}>{es ? "¿Tienes fecha de entrevista? Arma tu plan →" : "Have an interview date? Build your plan →"}</Link></p>
+        <p className="ns-how">{es ? "Un concepto a la vez: léelo, pruébate y vuelve mañana al repaso." : "One concept at a time: read it, check yourself, come back tomorrow to review."}</p>
       </section>
 
       <ol className="phase-steps" aria-label={es ? "Fases" : "Phases"}>

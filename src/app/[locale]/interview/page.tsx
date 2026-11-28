@@ -2,98 +2,45 @@ import Link from "next/link";
 import type { Metadata } from "next";
 import type { Locale } from "@/lib/types";
 import { pageMeta } from "@/lib/meta";
-import { m, t } from "@/lib/i18n";
-import { conceptsOf, getConcept, getDomains } from "@/lib/content";
-import { hueFor } from "@/lib/hue";
-import { norm } from "@/lib/search";
-import { Markdown } from "@/components/Markdown";
-import { Diagram } from "@/components/Diagram";
-import { Filter } from "@/components/Filter";
 import { Icon } from "@/components/Icon";
-import { ConceptCard } from "@/components/Bits";
 
+// Simulacros: the three rounds of a real loop, one card each (docs/specs/simplify.md). The
+// reference material that used to live here is in its concepts, the question bank and the Library.
 type P = { params: Promise<{ locale: Locale }> };
 export async function generateMetadata({ params }: P): Promise<Metadata> {
   const { locale } = await params;
-  return pageMeta(locale, "/interview/", m("interviewTitle", locale), m("interviewSub", locale));
+  return locale === "es"
+    ? pageMeta(locale, "/interview/", "Simulacros de entrevista", "Una ronda de coding, una de system design y tus historias conductuales, cronometradas como en la entrevista real.")
+    : pageMeta(locale, "/interview/", "Mock interviews", "A coding round, a system design round and your behavioral stories, timed like the real interview.");
 }
 
 export default async function Interview({ params }: P) {
   const { locale } = await params;
-  const L = (k: Parameters<typeof m>[0]) => m(k, locale);
-  const domains = getDomains();
-  const fw = getConcept("design-framework");
-  const cases = conceptsOf("design").filter((c) => c.id !== "design-framework");
-  const behavioral = ["behavioral-star", "staff-role", "influence", "tradeoff-communication", "ai-assisted-engineering", "one-way-doors"].map(getConcept).filter((c): c is NonNullable<typeof c> => !!c);
-  const totalQ = domains.reduce((n, d) => n + conceptsOf(d.id).reduce((k, c) => k + c.interview.length, 0), 0);
-
+  const es = locale === "es";
+  const cards = es
+    ? [["practice/code/mock/", "code", "Ronda de coding", "Dos problemas, 45 minutos, sin pistas."],
+       ["practice/design/", "server", "Ronda de system design", "Un caso real, 45 minutos con fases y rúbrica. También con un amigo."],
+       ["interview/stories/", "mic", "Historias conductuales", "Tus historias STAR, cubiertas por competencia, practicadas en voz alta."]]
+    : [["practice/code/mock/", "code", "Coding round", "Two problems, 45 minutes, no hints."],
+       ["practice/design/", "server", "System design round", "A real case, 45 minutes with phases and a rubric. Also with a friend."],
+       ["interview/stories/", "mic", "Behavioral stories", "Your STAR stories, covered by competency, practiced out loud."]];
   return (
     <main className="page interview">
       <header className="page-head plain">
         <div>
-          <h1>{L("interviewTitle")}</h1>
-          <p className="page-sub">{L("interviewSub")}</p>
-          <div className="hero-ctas">
-            <a className="btn btn-primary" href={`/${locale}/practice/play/?mode=mock`}><Icon name="mic" size={16} /> {L("pMock")}</a>
-            <Link className="btn" href={`/${locale}/plan/`}><Icon name="chart" size={16} /> {L("navPlan")}</Link>
-            <a className="btn" href={`/${locale}/practice/design/`}><Icon name="server" size={16} /> {L("pDesign")}</a>
-            <a className="btn" href={`/${locale}/practice/code/`}><Icon name="code" size={16} /> {L("pCode")}</a>
-            <a className="btn" href={`/${locale}/interview/stories/`}><Icon name="book" size={16} /> {L("pStories")}</a>
-            <Link className="btn" href={`/${locale}/practice/`}><Icon name="cards" size={16} /> {L("practiceQuestions")}</Link>
-            <Link className="btn" href={`/${locale}/questions/`}><Icon name="list" size={16} /> {L("questionBank")} ({totalQ})</Link>
-          </div>
+          <h1>{es ? "Simulacros" : "Mock interviews"}</h1>
+          <p className="page-sub">{es ? "Las tres rondas de un loop real. Elige una." : "The three rounds of a real loop. Pick one."}</p>
         </div>
       </header>
-
-      {fw && (
-        <section className="framework">
-          <h2>{L("framework")}</h2>
-          <p className="tldr-text">{t(fw.tldr, locale)}</p>
-          <Markdown src={t(fw.explain, locale)} locale={locale} />
-          {fw.diagram && <Diagram id={fw.id} caption={t(fw.diagram.caption, locale)} zoomLabel="Expand" closeLabel="Close" />}
-          {fw.deepDive && (
-            <div className="deep-grid">
-              {fw.deepDive.map((x, i) => (
-                <div key={i} className="deep-item"><h3>{t(x.title, locale)}</h3><Markdown src={t(x.body, locale)} locale={locale} /></div>
-              ))}
-            </div>
-          )}
-          <p><Link href={`/${locale}/c/${fw.id}/`}>{L("openConcept")} →</Link></p>
-        </section>
-      )}
-
-      <section>
-        <h2>{L("cases")}</h2>
-        <div className="concept-grid">{cases.map((c) => <ConceptCard key={c.id} c={c} locale={locale} />)}</div>
-      </section>
-
-      {behavioral.length > 0 && (
-        <section>
-          <h2>{locale === "es" ? "Liderazgo y conductual" : "Leadership & behavioral"}</h2>
-          <div className="concept-grid">{behavioral.map((c) => <ConceptCard key={c.id} c={c} locale={locale} showDomain />)}</div>
-        </section>
-      )}
-
-      <section>
-        <h2>{L("numbersBank")}</h2>
-        <Filter scope="numbers" placeholder={L("filter")} allLabel={L("all")}
-          domains={domains.map((d, i) => ({ id: d.id, title: t(d.title, locale), hue: hueFor(i) }))} />
-        <div id="numbers" className="numbers-bank">
-          {domains.map((d, i) => (
-            <div key={d.id} data-section className="nb-domain" style={{ ["--h" as string]: hueFor(i) }}>
-              <h3>{t(d.title, locale)}</h3>
-              <ul>
-                {conceptsOf(d.id).flatMap((c) => (c.numbers ?? []).map((x, j) => (
-                  <li key={`${c.id}-${j}`} data-domain={d.id} data-filter={norm(t(x, locale) + " " + t(c.title, locale))}>
-                    <Markdown inline src={t(x, locale)} locale={locale} />{" "}
-                    <Link href={`/${locale}/c/${c.id}/`} className="nb-src">{t(c.title, locale)}</Link>
-                  </li>
-                )))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      </section>
+      <div className="hub">
+        {cards.map(([href, icon, title, sub]) => (
+          <Link key={href} className="pc" href={`/${locale}/${href}`}>
+            <span className="pc-icon"><Icon name={icon} size={22} /></span>
+            <div className="pc-text"><h2>{title}</h2><p>{sub}</p></div>
+            <Icon name="right" size={18} />
+          </Link>
+        ))}
+      </div>
     </main>
   );
 }
