@@ -280,19 +280,19 @@ function Session({ reps, startAt, prior, data, locale, title, onRep, onFinish, o
         <span className={s.eyebrow}>{doneLabel}</span>
         <strong className={s.big}>{Math.round(mean * 100)}%</strong>
         <p>{mmss(results.reduce((a, b) => a + b.ms, 0))} {t.time} · {t.xp(xp)}</p>
+        <div className={s.sumActions}>
+          {/* Today's workout is a mission task: its primary goes back to Hoy (a full load, at the top). */}
+          {home && <a className="btn btn-primary" href={home}>{locale === "es" ? "Seguir con tu día" : "Continue your day"} →</a>}
+          {share && <ShareButton text={share(results)} locale={locale} />}
+          {share && <ShareImage c={summaryOf(today(), results)} scores={results.map((r) => r.score)} streak={streak} text={share(results)} locale={locale} />}
+          <button type="button" className={home ? "btn" : "btn btn-primary"} onClick={onClose}>{t.back}</button>
+        </div>
         <ul className={s.recap}>
           {results.map((r, k) => (
             <li key={k}><Icon name={ICON[r.skill]} size={16} /><span>{t.skills[r.skill]}</span><b className={r.score === 1 ? s.goodText : r.score > 0 ? s.midText : s.badText}>{Math.round(r.score * 100)}%</b></li>
           ))}
         </ul>
         {vs && <Versus me={summaryOf(vs.date, results)} them={vs} locale={locale} />}
-        <div className={s.sumActions}>
-          {share && <ShareButton text={share(results)} locale={locale} />}
-          {share && <ShareImage c={summaryOf(today(), results)} scores={results.map((r) => r.score)} streak={streak} text={share(results)} locale={locale} />}
-          {/* Today's workout is a mission task: its primary goes back to Hoy (a full load, at the top). */}
-          {home && <a className="btn btn-primary" href={home}>{locale === "es" ? "Seguir con tu día" : "Continue your day"} →</a>}
-          <button type="button" className={home ? "btn" : "btn btn-primary"} onClick={onClose}>{t.back}</button>
-        </div>
       </div>
     );
   }

@@ -15,11 +15,11 @@ export interface PathStop { id: string; t: string; m: string }
 
 const T = {
   en: { mission: "Today's mission", dayDone: "Day complete 🔥", dayDoneSub: "Come back tomorrow to keep your streak. Want more? Practice anything.", more: "Practice more",
-    learn: "Learn a concept", learnHow: "read it and answer “Check yourself”", review: "Review", dueSub: (n: number) => `${n} due · what you're about to forget`, freshSub: "New cards from what you've read, ~5 min", reviewedSub: (n: number) => `${n} card${n === 1 ? "" : "s"} reviewed today`, gym: "Gym", gymSub: "8 reps by hand, ~12 min",
+    learn: "Learn a concept", learnHow: "read it and answer “Check yourself”", review: "Review", dueSub: (n: number) => `${n} due · what you're about to forget`, freshSub: "New cards from what you've read, ~5 min", reviewedSub: (n: number) => `${n} card${n === 1 ? "" : "s"} reviewed today`, gym: "Gym", gymSub: "8 reps by hand, ~12 min", gymDoneSub: (p: number) => `Done today · ${p}%`,
     locked: "After your first concept", go: { learn: "Learn now", review: "Review now", gym: "Go to the Gym" } as Record<TaskId, string>,
     level: "Level", streak: (n: number) => `${n}-day streak`, path: "Your path", pathDone: "Path complete!", studied: "studied" },
   es: { mission: "Misión de hoy", dayDone: "Día completo 🔥", dayDoneSub: "Vuelve mañana para mantener tu racha. ¿Quieres más? Practica lo que quieras.", more: "Practicar más",
-    learn: "Aprende un concepto", learnHow: "léelo y responde «Pruébate»", review: "Repasa", dueSub: (n: number) => `${n} pendiente${n === 1 ? "" : "s"} · lo que estás por olvidar`, freshSub: "Tarjetas nuevas de lo que leíste, ~5 min", reviewedSub: (n: number) => `${n} tarjeta${n === 1 ? "" : "s"} repasada${n === 1 ? "" : "s"} hoy`, gym: "Gimnasio", gymSub: "8 ejercicios a mano, ~12 min",
+    learn: "Aprende un concepto", learnHow: "léelo y responde «Pruébate»", review: "Repasa", dueSub: (n: number) => `${n} pendiente${n === 1 ? "" : "s"} · lo que estás por olvidar`, freshSub: "Tarjetas nuevas de lo que leíste, ~5 min", reviewedSub: (n: number) => `${n} tarjeta${n === 1 ? "" : "s"} repasada${n === 1 ? "" : "s"} hoy`, gym: "Gimnasio", gymSub: "8 ejercicios a mano, ~12 min", gymDoneSub: (p: number) => `Hecho hoy · ${p} %`,
     locked: "Tras tu primer concepto", go: { learn: "Aprender ahora", review: "Repasar ahora", gym: "Ir al Gimnasio" } as Record<TaskId, string>,
     level: "Nivel", streak: (n: number) => `Racha de ${n} día${n === 1 ? "" : "s"}`, path: "Tu ruta", pathDone: "¡Ruta completa!", studied: "estudiados" },
 };
@@ -28,8 +28,10 @@ const ICON: Record<TaskId, string> = { learn: "book", review: "cycle", gym: "zap
 export function Today({ order, locale }: { order: PathStop[]; locale: Locale }) {
   const t = T[locale];
   const [s] = useStudyState();
-  const [gymDone, setGymDone] = useState(false);
-  useEffect(() => { setGymDone(!!loadGym().days[gymToday()]?.done); }, []);
+  // Today's workout score when it is done (null until then).
+  const [gymScore, setGymScore] = useState<number | null>(null);
+  useEffect(() => { const d = loadGym().days[gymToday()]; setGymScore(d?.done ? d.score : null); }, []);
+  const gymDone = gymScore !== null;
   const now = useMemo(() => new Date(), []);
 
   const view = useMemo(() => {
@@ -67,7 +69,7 @@ export function Today({ order, locale }: { order: PathStop[]; locale: Locale }) 
   const label = (id: TaskId) => (id === "learn" ? t.learn : id === "review" ? t.review : t.gym);
   const sub = (id: TaskId, locked: boolean) => (locked ? t.locked
     : id === "learn" ? (learnDone && learned ? learned.t : next ? (view.studied ? next.t : `${next.t} · ${t.learnHow}`) : t.pathDone)
-    : id === "review" ? (mission.tasks[1].state === "done" ? t.reviewedSub(view.reviewed) : view.due ? t.dueSub(view.due) : t.freshSub) : t.gymSub);
+    : id === "review" ? (mission.tasks[1].state === "done" ? t.reviewedSub(view.reviewed) : view.due ? t.dueSub(view.due) : t.freshSub) : gymScore !== null ? t.gymDoneSub(Math.round(gymScore * 100)) : t.gymSub);
 
   return (
     <>
